@@ -31,6 +31,7 @@ Guidance for coding agents working in PolyQuest.
 - C++ belongs under `Source/PolyQuest/`. Keep engine includes before project includes; use forward declarations where practical; generated headers remain the final include.
 - Never manually patch `.uasset` or `.umap` files. Use the live Unreal Editor through the documented MCP route.
 - Imported Marketplace/Fab assets are read-only unless the user explicitly authorizes edits. Do not import, delete, reparent, or retarget assets as incidental setup work.
+- `Content/Assets/` is the user-owned external resource reservoir for raw packages and source files. Its presence under `Content/` does not make a package an imported Unreal asset, PolyQuest product asset, or approved production baseline. Do not bulk import, move, duplicate, reparent, retarget, wire it into product Blueprints/AnimBPs/DataAssets, or stage raw resource files without a specific accepted stage and explicit user approval.
 - Generated folders remain untracked: `Binaries/`, `DerivedDataCache/`, `Intermediate/`, `Saved/`, `.vs/`, `.idea/`, solution files, and `.slnx` workspaces. Track `Config/`, `Content/`, `Source/`, `.uproject`, project docs, and project-owned plugins.
 - Git LFS is mandatory for `*.uasset` and `*.umap`. Before committing LFS-routed assets, verify at least one staged asset is an LFS pointer.
 - Formal review and closeout ignore user-owned `Content/*.uasset` changes by default unless the user explicitly asks to inspect or include them.
@@ -50,6 +51,13 @@ Reason: <concrete fit or reason not to delegate>
 - A small local fix may stay on the main-thread fast path only when its behavior, validation path, and ownership are already clear; it must not change reflection, module dependencies, assets, persistence, timers, delegates, montage callbacks, teardown, action cancellation, input priority, or damage resolution.
 - At most one child is active for the root task. Do not fan out implementation, review, or Explorer work. Do not delegate live Editor mutation, `.uasset`/`.umap` work, compilation, PIE, user-visible visual acceptance, staging, commits, or external publication.
 - The main agent performs initial source exploration and architecture. An Explorer is exceptional and factual only. Reuse an Executor only for the same accepted workstream after the main agent has inspected its prior output; never reuse a Reviewer.
+
+## Hands-On Learning Mode
+
+- For new GAS, gameplay, and Editor-authoring slices, use a user-led learning mode unless the user explicitly asks for implementation. The user performs the intended hands-on work, including Gameplay Tags, GameplayAbilities, GameplayEffects, DataAssets, Blueprints, and selected C++ exercises.
+- The main agent first gives the goal, reasoning, exact narrow steps, expected result, and validation boundary. It then performs a focused read-only check and explains any correction; it does not silently complete the exercise for the user.
+- The agent may edit only after an explicit request such as "implement", "write the code", or "fix it". This mode does not prevent the main agent from owning architecture, accepted plans, review conclusions, documentation, focused staging, or commits.
+- Apply this mode to learning-driven new systems, not to routine read-only inspection, user-requested review, targeted bug fixes, or explicitly delegated implementation.
 
 ## Planning, Roadmap, And Documentation
 

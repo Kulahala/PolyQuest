@@ -2,38 +2,41 @@
 
 ## Purpose And Scope
 
-PolyQuest is a UE 5.8 C++ GAS-first, single-player stylized action RPG. It is a new implementation, not an in-place conversion of the UE 5.7 FSM project.
+PolyQuest is a UE 5.8 C++ GAS-first, single-player stylized action RPG. It rebuilds the proven player-facing contracts from the UE 5.7 `Test` project, rather than performing an in-place copy of its FSM implementation, assets, or save data.
 
-The previous `Test` project remains a separate FSM reference and validation baseline. PolyQuest may reuse proven gameplay contracts after deliberate redesign, but it does not copy its C++ state machine, save schema, authored assets, or Marketplace content wholesale.
+The previous `Test` project remains the FSM behavior reference and validation baseline. PolyQuest reuses proven gameplay contracts after deliberate GAS redesign, but does not retain its C++ state machine, save schema, authored assets, or Marketplace content wholesale.
 
 ## Current State
 
 - UE 5.8 Third Person C++ template created.
 - Official Unreal MCP and VibeUE-enhanced editor access verified read-only.
 - `GameplayAbilities` is available in the editor; game-module GAS dependencies and product GAS code do not exist yet.
-- New stylized Polygon/Fab assets have not been imported or selected as the production Skeleton baseline.
+- External resource packs are held as raw, untracked source packages under `Content/Assets/`; none has been imported, selected as the production Skeleton baseline, or integrated into PolyQuest gameplay.
+
+## Done Milestones
+
+- [x] `TODO-00A: Repository And Documentation Bootstrap v1`
+  - Established the UE 5.8 template baseline, Git LFS, generated-output ignores, project documentation, and verified official Unreal MCP/VibeUE read routes.
+  - Committed as `f64fbd2`; no GAS gameplay code, production asset integration, or template retirement was included.
 
 ## Milestones
 
 ### Foundation
 
-- [ ] `TODO-00A: Repository And Documentation Bootstrap v1`
-  - Establish Git/LFS, project documentation, editor-tool routing, and a clean template baseline.
-  - No gameplay code, asset migration, or GAS module integration.
-
 - [ ] `TODO-00B: GAS Core Contract v1`
   - Add required game-module GAS dependencies.
-  - Decide and implement Player ASC ownership, initial AttributeSet lifecycle, and a minimal native gameplay-tag taxonomy.
+  - Decide and implement Player ASC ownership, initial AttributeSet lifecycle, and a minimal config-first Gameplay Tag taxonomy; promote native tag constants only where the C++ contract needs them.
+  - Use user-led learning mode: the user authors the initial tags and designated GAS exercises with stepwise guidance and focused read-only checks.
   - Prove editor/build integration before gameplay abilities.
 
 ### Player Combat Vertical Slice
 
 - [ ] `TODO-01A: Player Ability Lifecycle And Light Attack v1`
   - Prove `Input -> GameplayAbility -> CommitAbility -> Montage/Notify -> damage path -> EndAbility` with temporary template assets.
-  - Do not port the Test action FSM or combo system.
+  - Recreate only the relevant Test behavior contract; do not port the Test action FSM or combo implementation.
 
 - [ ] `TODO-01B: First Stylized Player Asset Integration v1`
-  - Import one approved Polygon player/weapon set and validate Skeleton, sockets, AnimBP, Montage, root motion, and the existing light-attack Ability path.
+  - Select and integrate one approved Polygon player/weapon set from `Content/Assets/`, then validate Skeleton, sockets, AnimBP, Montage, root motion, and the existing light-attack Ability path.
   - Replace no broader asset set until this compatibility slice passes PIE.
 
 - [ ] `TODO-01C: Dodge, Interruption, And Stamina v1`
@@ -42,7 +45,7 @@ The previous `Test` project remains a separate FSM reference and validation base
 ### Combat And World Expansion
 
 - [ ] `TODO-02A: Enemy GAS Combat And Stance Break v1`
-  - Add the first enemy ASC, damage/poise flow, and a narrow stance-break contract.
+  - Add the first enemy ASC, damage/poise flow, a narrow stance-break contract, and StateTree-driven high-level enemy intent.
 
 - [ ] `TODO-02B: Defensive Combat v1`
   - Add block/parry only after damage, interruption, and enemy state contracts are stable.
@@ -59,10 +62,20 @@ The previous `Test` project remains a separate FSM reference and validation base
 - [ ] `TODO-06A: First Stylized Level And Boss Route v1`
   - Integrate the validated systems into a deliberate level route and boss encounter.
 
+## Accepted Technical Direction
+
+- **Test migration boundary:** migrate verified player-facing behavior and acceptance cases, not the old FSM, `EActionState`, save identifiers, or authored asset topology.
+- **Gameplay authority:** GAS owns ability activation, costs, blocking/cancellation tags, combat state, damage, poise, hit reaction, and death. Animation owns timing and presentation; it is not a second gameplay state source.
+- **Enemy AI:** StateTree is the default high-level behavior brain for both ordinary enemies and Bosses. It owns patrol, alert, chase, combat intent, return-home, phase selection, and high-level transitions; it requests GAS abilities rather than directly applying combat mutations.
+- **Bosses:** Bosses use a separate StateTree and combat data profile, not a different AI framework merely because they do not patrol. Encounter, fog-gate, persistence, and rewards remain outside the Boss StateTree.
+- **No parallel FSM:** do not retain an enemy HFSM or `EEnemyState` as a competing runtime truth beside StateTree and GAS tags.
+- **Behavior Tree escalation gate:** do not introduce Behavior Trees unless concrete production behavior requires deeply nested reactive arbitration, dynamic subtrees, or broad concurrent services that remain unclear and untestable in StateTree.
+- **External resources:** `Content/Assets/` is a raw source reservoir. A resource becomes an imported product integration only when an approved stage names it and validates its exact Skeleton, socket, animation, or gameplay surface.
+
 ## Recommendations
 
 - **Template retirement:** retain generated template variants until PolyQuest owns an equivalent technical slice. Delete unused variants only after the replacement opens and plays correctly in PIE, with a focused source/asset commit.
-- **StateTree:** retain the enabled UE 5.8 StateTree tooling as an evaluated option, not a requirement. Adopt it for enemy AI only after the first enemy behavior needs reusable authored decision flow.
+- **Behavior Trees:** keep Behavior Tree tooling available but unadopted. Re-evaluate it only at the documented escalation gate; do not split ordinary enemies and Bosses across AI frameworks preemptively.
 - **Motion Warping:** add product-level Motion Warping only when the selected stylized animation set contains a concrete root-motion alignment requirement.
 
 ## Known Risks And Validation Debt

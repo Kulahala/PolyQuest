@@ -77,3 +77,6 @@ Plugins/**/Intermediate/*
 
 # Cache files for the editor to use
 DerivedDataCache/*
+
+# Raw external resource packages. Import approved product assets outside this reservoir.
+/Content/Assets/
