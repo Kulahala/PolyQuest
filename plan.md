@@ -14,8 +14,17 @@
 
 <!-- No active feedback. -->
 
+## Validation Evidence
+
+- 2026-08-06: The user confirmed `PolyQuestEditor` compilation.
+- 2026-08-06: PIE showed the active `BP_Player` possessed by `BP_PlayerController`; `ShowDebug AbilitySystem` displayed the authority ASC with `Health`, `MaxHealth`, `Stamina`, and `MaxStamina` all at `100.00`.
+- 2026-08-06: The user confirmed movement, look, and jump work through the new player route.
+- 2026-08-06: `Config/Tags/PolyQuestGameplayTags.ini` was read back with exactly the nine approved project tags.
+- 2026-08-06: Main-thread static review, `git diff --check`, CodeGraph inspection, and refreshed code-review-graph status/impact checks completed without a blocking finding.
+- 2026-08-06: Fresh `gpt-5.6-luna` / `xhigh` Reviewer completed the bounded adversarial review and returned `No blocking finding`.
+
 ---
 
 ## Active Plan
 
-<!-- No active plan. TODO-00A is complete; begin TODO-00B only after an approved implementation plan. -->
+<!-- No active plan. TODO-00B is complete after user compile/PIE, tag readback, static review, and fresh adversarial review. The next milestone is TODO-01A. -->

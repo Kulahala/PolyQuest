@@ -17,6 +17,9 @@ public class PolyQuest : ModuleRules
 			"AIModule",
 			"StateTreeModule",
 			"GameplayStateTreeModule",
+			"GameplayAbilities",
+			"GameplayTags",
+			"GameplayTasks",
 			"UMG",
 			"Slate"
 		});

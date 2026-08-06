@@ -3,7 +3,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "GameFramework/Character.h"
+#include "Character/BaseCharacter.h"
 #include "Logging/LogMacros.h"
 #include "PolyQuestCharacter.generated.h"
 
@@ -19,7 +19,7 @@ DECLARE_LOG_CATEGORY_EXTERN(LogTemplateCharacter, Log, All);
  *  Implements a controllable orbiting camera
  */
 UCLASS(abstract)
-class APolyQuestCharacter : public ACharacter
+class APolyQuestCharacter : public ABaseCharacter
 {
 	GENERATED_BODY()
 
