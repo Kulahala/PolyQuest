@@ -10,21 +10,11 @@
 
 ---
 
-## Feedback
+## Stage Handoff
 
-<!-- No active feedback. -->
+No active stage. `TODO-01A: Player Ability Lifecycle And One-Hit Attack v1` has completed local validation and review.
 
-## Validation Evidence
-
-- 2026-08-06: The user confirmed `PolyQuestEditor` compilation.
-- 2026-08-06: PIE showed the active `BP_Player` possessed by `BP_PlayerController`; `ShowDebug AbilitySystem` displayed the authority ASC with `Health`, `MaxHealth`, `Stamina`, and `MaxStamina` all at `100.00`.
-- 2026-08-06: The user confirmed movement, look, and jump work through the new player route.
-- 2026-08-06: `Config/Tags/PolyQuestGameplayTags.ini` was read back with exactly the nine approved project tags.
-- 2026-08-06: Main-thread static review, `git diff --check`, CodeGraph inspection, and refreshed code-review-graph status/impact checks completed without a blocking finding.
-- 2026-08-06: Fresh `gpt-5.6-luna` / `xhigh` Reviewer completed the bounded adversarial review and returned `No blocking finding`.
-
----
-
-## Active Plan
-
-<!-- No active plan. TODO-00B is complete after user compile/PIE, tag readback, static review, and fresh adversarial review. The next milestone is TODO-01A. -->
+- The user confirmed `PolyQuestEditor` compilation and PIE behavior for the complete LMB-to-target-ASC path, including normal recovery, reactivation blocking during the active Montage, one cost application, one target damage application, no-target safety, and preserved movement/look/jump.
+- Main review repaired the premature completion path caused by treating Montage blend-out as full completion. Natural end now uses `OnCompleted`; interrupted, cancelled, invalid-configuration, and `ABaseCharacter::EndPlay()` paths still converge through `EndAbility()`.
+- A fresh adversarial review found no P0/P1 issue. The retained conditional P2 is future direct `UAbilityTask_PlayMontageAndWait::ExternalCancel()` use: before any future caller relies on it, define Montage-stop behavior and route the cleanup through the ability contract.
+- This commit stages native source, tags, stage documents, and only stable imported sequence/model packages. Mutable GA/GE/Montage/AnimBP/player/input authoring assets remain uncommitted local WIP, so the recorded PIE fixture is not reproducible from this commit alone.

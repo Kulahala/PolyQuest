@@ -5,9 +5,11 @@
 #include "Camera/CameraComponent.h"
 #include "Components/CapsuleComponent.h"
 #include "EnhancedInputComponent.h"
+#include "AbilitySystemComponent.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/Controller.h"
 #include "GameFramework/SpringArmComponent.h"
+#include "GameplayTagContainer.h"
 #include "InputActionValue.h"
 #include "PolyQuest.h"
 
@@ -48,11 +50,33 @@ void APlayerCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputCom
 		EnhancedInputComponent->BindAction(MoveAction, ETriggerEvent::Triggered, this, &APlayerCharacter::Move);
 		EnhancedInputComponent->BindAction(MouseLookAction, ETriggerEvent::Triggered, this, &APlayerCharacter::Look);
 		EnhancedInputComponent->BindAction(LookAction, ETriggerEvent::Triggered, this, &APlayerCharacter::Look);
+		EnhancedInputComponent->BindAction(LightAttackAction, ETriggerEvent::Started, this, &APlayerCharacter::LightAttack);
 	}
 	else
 	{
 		UE_LOG(LogPolyQuest, Error, TEXT("'%s' Failed to find an Enhanced Input component! The player character requires Enhanced Input."), *GetNameSafe(this));
 	}
+}
+
+void APlayerCharacter::LightAttack(const FInputActionValue&)
+{
+	UAbilitySystemComponent* CharacterASC = GetAbilitySystemComponent();
+	if (!CharacterASC)
+	{
+		UE_LOG(LogPolyQuest, Warning, TEXT("'%s' cannot request a light attack without an Ability System Component."), *GetNameSafe(this));
+		return;
+	}
+
+	const FGameplayTag LightAttackTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Attack.Light")), false);
+	if (!LightAttackTag.IsValid())
+	{
+		UE_LOG(LogPolyQuest, Warning, TEXT("'%s' cannot request a light attack because the Ability.Attack.Light tag is invalid."), *GetNameSafe(this));
+		return;
+	}
+
+	FGameplayTagContainer AbilityTags;
+	AbilityTags.AddTag(LightAttackTag);
+	CharacterASC->TryActivateAbilitiesByTag(AbilityTags);
 }
 
 void APlayerCharacter::Move(const FInputActionValue& Value)

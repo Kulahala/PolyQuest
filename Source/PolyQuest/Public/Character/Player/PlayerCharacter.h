@@ -45,6 +45,10 @@ protected:
 	UPROPERTY(EditAnywhere, Category="Input")
 	UInputAction* MouseLookAction;
 
+	/** Input action used to request the light attack ability. */
+	UPROPERTY(EditAnywhere, Category="Input")
+	UInputAction* LightAttackAction;
+
 public:
 	APlayerCharacter();
 
@@ -57,6 +61,9 @@ protected:
 
 	/** Convert the Enhanced Input look action to controller input. */
 	void Look(const FInputActionValue& Value);
+
+	/** Request the light attack ability through the character ASC. */
+	void LightAttack(const FInputActionValue& Value);
 
 public:
 	/** Handles movement input from controls or UI interfaces. */

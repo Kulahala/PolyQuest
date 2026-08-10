@@ -10,8 +10,9 @@ The previous `Test` project remains the FSM behavior reference and validation ba
 
 - UE 5.8 Third Person C++ template created.
 - Official Unreal MCP and VibeUE-enhanced editor access verified read-only.
-- `GameplayAbilities` is available in the editor; `TODO-00B` has added the game-module GAS dependencies, established the player ASC/AttributeSet contract, and registered the initial project Gameplay Tags.
-- External resource packs are held as raw, untracked source packages under `Content/Assets/`; none has been imported, selected as the production Skeleton baseline, or integrated into PolyQuest gameplay.
+- `GameplayAbilities` is available in the editor; `TODO-00B` added the game-module GAS dependencies, established the player ASC/AttributeSet contract, and registered the initial project Gameplay Tags.
+- `TODO-01A` has completed its native C++ lifecycle and a local PIE fixture. Its selected player mesh/Skeleton/material closure and animation sequences are stable source assets; its GameplayAbility, GameplayEffects, Montage, AnimBP, `BP_Player`, and input assets remain deliberately uncommitted authoring WIP.
+- External source packages remain under `Content/Assets/`. Imported content is not a production integration merely because it is present locally; skeleton, weapon, socket, animation, and presentation decisions still require their named stage validation.
 
 ## Test-To-PolyQuest Migration Contract Inventory
 
@@ -45,16 +46,16 @@ The old `Test` project is evidence for player-facing behavior, not a source tree
   - Established the UE 5.8 template baseline, Git LFS, generated-output ignores, project documentation, and verified official Unreal MCP/VibeUE read routes.
   - Committed as `f64fbd2`; no GAS gameplay code, production asset integration, or template retirement was included.
 - [x] `TODO-00B: GAS Core Contract v1`
-  - Added the public GAS module dependencies, established character-owned ASC and AttributeSet initialization on possession, and registered the nine config-first project Gameplay Tags.
+  - Added the public GAS module dependencies, established character-owned ASC and AttributeSet initialization on possession, and registered the initial config-first project Gameplay Tags.
   - The user compiled `PolyQuestEditor`, verified the active `BP_Player`/`BP_PlayerController` route in PIE, confirmed the four attributes through `ShowDebug AbilitySystem`, and validated movement, look, and jump. No ability, effect, cue, replication, or combat behavior was added.
+- [x] `TODO-01A: Player Ability Lifecycle And One-Hit Attack v1`
+  - Established the first local player attack path: Enhanced Input requests `Ability.Attack.Light`; the ASC activates `ULightAttackAbility`; `CommitAbility()` applies the authored cost; Montage timing emits `Event.Attack.Light.Hit`; one sphere sweep applies an authored damage effect through the target ASC; all completion and teardown paths converge through `EndAbility()`.
+  - The user compiled `PolyQuestEditor` and verified the local PIE fixture: movement/look/jump remain intact, a successful light attack spends stamina once, damages the target once, rejects reactivation during the active Montage, and works again after normal recovery.
+  - Main review repaired premature end-on-blend-out behavior. A fresh adversarial review found no remaining P0/P1 issue. The local authored GA/GE/Montage/AnimBP/player/input configuration is intentionally excluded from this commit while it evolves, so this records validated local behavior rather than a clone-ready fixture.
 
 ## Milestones
 
 ### Player Combat Vertical Slice
-
-- [ ] `TODO-01A: Player Ability Lifecycle And One-Hit Attack v1`
-  - Prove `Input -> GameplayAbility -> CommitAbility -> Montage/semantic Notify -> validated hit path -> GameplayEffect -> EndAbility` with temporary template assets.
-  - Establish one explicit cleanup route for natural finish, interruption, invalid notify, and teardown. Do not introduce combo, charge, sprint, or production asset assumptions yet.
 
 - [ ] `TODO-00C: Template Cleanup v1`
   - Run after `TODO-01A` has completed its temporary-template compile/PIE proof, so the first ability does not lose its validation fixtures.
@@ -166,7 +167,8 @@ The old `Test` project is evidence for player-facing behavior, not a source tree
 
 ## Known Risks And Validation Debt
 
-- The player GAS foundation is complete; the next validation boundary is the first real ability in `TODO-01A`, which must introduce its own grant, activation, cost, timing, hit, and cleanup contracts without expanding TODO-00B.
+- `UAbilityTask_PlayMontageAndWait::ExternalCancel()` can end a task without an explicit guarantee that the Montage stops. Static inspection found no current PolyQuest caller. When `TODO-01C` or a later Stun/explicit-interrupt path needs task-level cancellation, it must define montage-stop behavior, converge through `EndAbility()`, and add focused PIE coverage before relying on that path.
+- `TODO-01A` deliberately withholds its mutable authoring assets from this commit. A curated stable asset baseline is required before the local fixture can be reproduced from a clean checkout; this is a versioning boundary, not a failure of the local compile/PIE validation.
 - The generated template contains multiple sample gameplay variants. Extending them directly would blur sample behavior with PolyQuest product behavior; `TODO-00A` records them as reference-only until explicit retirement.
 
 ## Stage Completion Standard

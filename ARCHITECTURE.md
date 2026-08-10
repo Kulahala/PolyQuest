@@ -12,7 +12,11 @@ StateTreeModule, GameplayStateTreeModule, GameplayAbilities,
 GameplayTags, GameplayTasks, UMG, Slate
 ```
 
-The live UE 5.8 editor resolves the GameplayAbilities plugin, and the module links the GAS runtime dependencies. PolyQuest has completed its first single-player GAS foundation: the active player exposes an ASC, a four-attribute AttributeSet, and a project-owned Gameplay Tag config source. No gameplay ability or effect has been authored yet.
+The live UE 5.8 editor resolves the GameplayAbilities plugin, and the module links the GAS runtime dependencies. PolyQuest has completed its first single-player GAS foundation: the active player exposes an ASC, a four-attribute AttributeSet, and a project-owned Gameplay Tag config source.
+
+`TODO-01A` adds the first locally compiled and PIE-verified player ability path: LMB requests a native light-attack ability, the ability commits an authored stamina cost, a Montage Notify emits a semantic Gameplay Event, one pawn sweep finds a target character, and an authored damage GameplayEffect is applied through the target ASC. The local fixture has passed the user-owned recovery, repeated-input, cost, no-target, and target-damage checks.
+
+This commit intentionally keeps mutable authoring assets out of version control: the GameplayAbility Blueprint, GameplayEffects, Montage, AnimBP, `BP_Player`, and input assets remain local development WIP. Selected meshes, Skeleton/material dependencies, and animation sequences are a stable source-asset baseline, but this commit alone is not a clone-ready reproduction of the local PIE fixture.
 
 ## Generated Template Boundary
 
@@ -26,7 +30,9 @@ The live UE 5.8 editor resolves the GameplayAbilities plugin, and the module lin
 
 - `ABaseCharacter` owns one `UAbilitySystemComponent` and one `UCharacterAttributeSet` default subobject.
 - The AttributeSet is registered exactly once through `AddAttributeSetSubobject(...)` during character construction. Its current fields are `Health`, `MaxHealth`, `Stamina`, and `MaxStamina`, initialized to `100.0f`.
-- In the current single-player boundary, `OwnerActor == AvatarActor == ABaseCharacter`. `PossessedBy()` initializes the actor info with `InitAbilityActorInfo(this, this)` after the superclass possession path.
+- In the current single-player boundary, `OwnerActor == AvatarActor == ABaseCharacter`. `BeginPlay()` initializes actor info with `InitAbilityActorInfo(this, this)` so an unpossessed test target can receive a GameplayEffect. `PossessedBy()` initializes it again after the superclass possession path.
+- `StartupAbilities` is a Blueprint-configured list on `ABaseCharacter`. Authority grants each class during possession only when `FindAbilitySpecFromClass()` confirms it is not already present, so a repeated possession path cannot duplicate a spec.
+- `EndPlay()` calls `CancelAllAbilities()` before character teardown. This is the character-level teardown entry for active Montages, AbilityTasks, and owned ability tags.
 - The player-specific camera, movement, look, and jump input layer belongs to `APlayerCharacter`; the base character has no unconditional tick or player input contract.
 
 ### Runtime Routing And Input
@@ -34,11 +40,21 @@ The live UE 5.8 editor resolves the GameplayAbilities plugin, and the module lin
 - `BP_GameMode` is the active default GameMode and selects `BP_Player` as the default Pawn and `BP_PlayerController` as the PlayerController.
 - `APolyQuestPlayerController` installs `IMC_Default` for normal input and adds `IMC_MouseLook` only when touch controls are not active.
 - The old Third Person Blueprint route remains available only as a compatibility fixture and is not the active player route.
+- `APlayerCharacter` binds `LightAttackAction` on `Started`. Its handler only requests abilities tagged `Ability.Attack.Light` through `TryActivateAbilitiesByTag()`; it never plays a Montage, spends Stamina, traces, or mutates an Attribute directly.
+
+### Light Attack Ability Lifecycle
+
+- `ULightAttackAbility` is `InstancedPerActor` and `ServerOnly` within the current single-player boundary. It owns `Ability.Attack.Light`, owns `State.Action.Attacking` while active, and is blocked by attacking, dodging, dead, and stunned state tags.
+- Before `CommitAbility()`, it validates its ASC, animation instance, Montage, inherited cost GameplayEffect class, damage GameplayEffect class, and `Event.Attack.Light.Hit` tag. A missing required configuration logs a warning and ends without applying cost, starting tasks, or recording hit state.
+- After a successful commit, `UAbilityTask_PlayMontageAndWait` owns presentation lifetime and `UAbilityTask_WaitGameplayEvent` listens for the semantic hit event. `UAnimNotify_LightAttackHit` only sends that event from a mesh owner implementing `IAbilitySystemInterface`; it never traces or changes Attributes itself.
+- The first received hit event is consumed by a per-activation guard. The ability performs one forward sphere sweep on `ECC_Pawn`, ignores its avatar, selects the nearest other `ABaseCharacter`, creates the damage spec from the source ASC, and applies it to the target ASC. There is no team filter, weapon collision, multi-hit window, generic hit resolver, or direct `Health` write in this slice.
+- Natural Montage completion enters `EndAbility()` through `OnCompleted`. Interrupted, cancelled, character-teardown, and configuration-failure paths converge there as well; cleanup ends both tasks and prevents duplicate cleanup. Blend-out is not treated as natural completion, so the recovery tail is not cut short.
+- Future direct task-level `ExternalCancel()` callers must define whether they also stop the Montage and must still converge through ability cleanup. There is no current caller; this is a conditional cancellation-contract requirement for later Dodge, Stun, or explicit interruption work.
 
 ### Gameplay Tags
 
 - Project tags are config-authored in `Config/Tags/PolyQuestGameplayTags.ini`; there is no native tag singleton or Blueprint tag library in this stage.
-- The approved leaf tags are `Ability.Attack.Light`, `Ability.Dodge`, `Input.Attack.Light`, `Input.Dodge`, `State.Action.Attacking`, `State.Action.Dodging`, `State.Status.Dead`, `State.Status.Stunned`, and `State.Status.Exhausted`.
+- The approved leaf tags are `Ability.Attack.Light`, `Ability.Dodge`, `Event.Attack.Light.Hit`, `Input.Attack.Light`, `Input.Dodge`, `State.Action.Attacking`, `State.Action.Dodging`, `State.Status.Dead`, `State.Status.Stunned`, and `State.Status.Exhausted`.
 - Plugin and native test tag sources remain engine/plugin-owned and are not part of the PolyQuest taxonomy.
 
 ## Not Yet Established
@@ -46,8 +62,8 @@ The live UE 5.8 editor resolves the GameplayAbilities plugin, and the module lin
 The following remain future stage contracts:
 
 - Enemy ASC topology and StateTree-to-GAS intent requests.
-- Ability activation, grants, cancellation, GameplayEffects, GameplayCues, montage timing, damage, and death contracts.
-- Attribute mutation, stamina costs, persistence ownership, and multiplayer/PlayerState ownership.
+- Combo, charge, sprint, dodge, player death, GameplayCues, and generic hit-resolution contracts.
+- Team filtering, weapon collision, multi-hit windows, persistence ownership, and multiplayer/PlayerState ownership.
 - Stylized combat weapon, Skeleton, socket, animation, and Motion Warping topology.
 
 These decisions belong to their owning roadmap stages; they are not implied by the TODO-00B foundation.
