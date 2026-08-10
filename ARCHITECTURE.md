@@ -18,11 +18,15 @@ The live UE 5.8 editor resolves the GameplayAbilities plugin, and the module lin
 
 This commit intentionally keeps mutable authoring assets out of version control: the GameplayAbility Blueprint, GameplayEffects, Montage, AnimBP, `BP_Player`, and input assets remain local development WIP. Selected meshes, Skeleton/material dependencies, and animation sequences are a stable source-asset baseline, but this commit alone is not a clone-ready reproduction of the local PIE fixture.
 
-## Generated Template Boundary
+## Product Entry And Template Retirement
 
-`Source/PolyQuest/` contains the base Third Person classes plus generated `Variant_Combat`, `Variant_Platforming`, and `Variant_SideScrolling` sample code. Those variants are template content, not PolyQuest-owned combat, input, AI, save, or ability contracts.
+`/Game/Maps/Scene01` is the product prototype map. `Config/DefaultEngine.ini` sets it as both the game default map and the editor startup map.
 
-`APolyQuestCharacter` and `BP_ThirdPersonCharacter` remain compatibility fixtures. The active player route is `APlayerCharacter -> ABaseCharacter -> BP_Player`, configured through `BP_GameMode` and `BP_PlayerController`. New product gameplay must be introduced through a documented PolyQuest stage rather than by extending a generated variant opportunistically.
+The active player route is `BP_GameMode -> BP_Player -> APlayerCharacter -> ABaseCharacter`, while `BP_PlayerController -> APolyQuestPlayerController` owns desktop mapping-context installation. `APolyQuestGameMode` and `APolyQuestPlayerController` remain the same reflected `/Script/PolyQuest` Blueprint roots after their source moved to `Framework/`.
+
+`APolyQuestPlayerController` adds each authored `DefaultMappingContexts` entry only for a local desktop player. `BP_PlayerController` supplies `IMC_Default` and `IMC_MouseLook`; the retired mobile touch widget, forced-touch setting, and mobile-excluded context path are not part of the product route.
+
+`APolyQuestCharacter`, the `ThirdPerson` map/Blueprint closure, and the generated `Variant_Combat`, `Variant_Platforming`, and `Variant_SideScrolling` source/content closures have been retired. New product gameplay is introduced through documented PolyQuest stages rather than by extending a generated template variant.
 
 ## GAS Core Contract
 
@@ -38,8 +42,7 @@ This commit intentionally keeps mutable authoring assets out of version control:
 ### Runtime Routing And Input
 
 - `BP_GameMode` is the active default GameMode and selects `BP_Player` as the default Pawn and `BP_PlayerController` as the PlayerController.
-- `APolyQuestPlayerController` installs `IMC_Default` for normal input and adds `IMC_MouseLook` only when touch controls are not active.
-- The old Third Person Blueprint route remains available only as a compatibility fixture and is not the active player route.
+- `APolyQuestPlayerController` installs the Blueprint-authored desktop `DefaultMappingContexts` for local players; the current controller Blueprint supplies `IMC_Default` and `IMC_MouseLook`.
 - `APlayerCharacter` binds `LightAttackAction` on `Started`. Its handler only requests abilities tagged `Ability.Attack.Light` through `TryActivateAbilitiesByTag()`; it never plays a Montage, spends Stamina, traces, or mutates an Attribute directly.
 
 ### Light Attack Ability Lifecycle

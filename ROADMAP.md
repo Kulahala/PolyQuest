@@ -12,6 +12,7 @@ The previous `Test` project remains the FSM behavior reference and validation ba
 - Official Unreal MCP and VibeUE-enhanced editor access verified read-only.
 - `GameplayAbilities` is available in the editor; `TODO-00B` added the game-module GAS dependencies, established the player ASC/AttributeSet contract, and registered the initial project Gameplay Tags.
 - `TODO-01A` has completed its native C++ lifecycle and a local PIE fixture. Its selected player mesh/Skeleton/material closure and animation sequences are stable source assets; its GameplayAbility, GameplayEffects, Montage, AnimBP, `BP_Player`, and input assets remain deliberately uncommitted authoring WIP.
+- `TODO-00C` replaced the active template route with `/Game/Maps/Scene01`, a desktop-only product Controller route, and a closed ThirdPerson/Variant retirement. The user recompiled `PolyQuestEditor` and replayed the existing PIE validation path after cleanup.
 - External source packages remain under `Content/Assets/`. Imported content is not a production integration merely because it is present locally; skeleton, weapon, socket, animation, and presentation decisions still require their named stage validation.
 
 ## Test-To-PolyQuest Migration Contract Inventory
@@ -52,16 +53,14 @@ The old `Test` project is evidence for player-facing behavior, not a source tree
   - Established the first local player attack path: Enhanced Input requests `Ability.Attack.Light`; the ASC activates `ULightAttackAbility`; `CommitAbility()` applies the authored cost; Montage timing emits `Event.Attack.Light.Hit`; one sphere sweep applies an authored damage effect through the target ASC; all completion and teardown paths converge through `EndAbility()`.
   - The user compiled `PolyQuestEditor` and verified the local PIE fixture: movement/look/jump remain intact, a successful light attack spends stamina once, damages the target once, rejects reactivation during the active Montage, and works again after normal recovery.
   - Main review repaired premature end-on-blend-out behavior. A fresh adversarial review found no remaining P0/P1 issue. The local authored GA/GE/Montage/AnimBP/player/input configuration is intentionally excluded from this commit while it evolves, so this records validated local behavior rather than a clone-ready fixture.
+- [x] `TODO-00C: Template Cleanup v1`
+  - Replaced the template map route with `/Game/Maps/Scene01`, moved the retained GameMode and PlayerController source roots into `Framework/` without changing their reflected class names, and reduced the PlayerController to local desktop mapping-context setup.
+  - Retired `APolyQuestCharacter`, the ThirdPerson map/Blueprint/External Actor closure, the generated Variant source/content closures, and legacy Third Person redirects after scoped Editor-reference and static evidence.
+  - The user compiled `PolyQuestEditor` and verified Scene01 startup, desktop input, movement, look, jump, LMB stamina cost, and target damage. Main normal review and an adversarial fallback found no blocking issue; the requested independent Reviewer could not start because the configured service returned HTTP 503.
 
 ## Milestones
 
 ### Player Combat Vertical Slice
-
-- [ ] `TODO-00C: Template Cleanup v1`
-  - Run after `TODO-01A` has completed its temporary-template compile/PIE proof, so the first ability does not lose its validation fixtures.
-  - Use Editor Reference Viewer/Asset Registry evidence to retire the old `ThirdPerson` map and Blueprint parent chain, then remove only closed sets of template source/assets with no remaining references.
-  - Remove root template classes only after `BP_Player`, `BP_GameMode`, and `BP_PlayerController` no longer depend on them; remove `Variant_Combat`, `Variant_Platforming`, and `Variant_SideScrolling` source only together with their retired assets and Build.cs include paths.
-  - Keep `ABaseCharacter`, `APlayerCharacter`, `UCharacterAttributeSet`, project GAS config, and product-owned Blueprints. Use a focused cleanup commit and a fresh compile/PIE startup check.
 
 - [ ] `TODO-01B: First Stylized Player Asset Integration v1`
   - Select and integrate one approved Polygon player/weapon set from `Content/Assets/`, then validate Skeleton, sockets, AnimBP, Montage, root motion, and the existing light-attack Ability path.
@@ -169,7 +168,6 @@ The old `Test` project is evidence for player-facing behavior, not a source tree
 
 - `UAbilityTask_PlayMontageAndWait::ExternalCancel()` can end a task without an explicit guarantee that the Montage stops. Static inspection found no current PolyQuest caller. When `TODO-01C` or a later Stun/explicit-interrupt path needs task-level cancellation, it must define montage-stop behavior, converge through `EndAbility()`, and add focused PIE coverage before relying on that path.
 - `TODO-01A` deliberately withholds its mutable authoring assets from this commit. A curated stable asset baseline is required before the local fixture can be reproduced from a clean checkout; this is a versioning boundary, not a failure of the local compile/PIE validation.
-- The generated template contains multiple sample gameplay variants. Extending them directly would blur sample behavior with PolyQuest product behavior; `TODO-00A` records them as reference-only until explicit retirement.
 
 ## Stage Completion Standard
 

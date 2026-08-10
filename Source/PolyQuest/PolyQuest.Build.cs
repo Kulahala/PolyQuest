@@ -27,20 +27,7 @@ public class PolyQuest : ModuleRules
 		PrivateDependencyModuleNames.AddRange(new string[] { });
 
 		PublicIncludePaths.AddRange(new string[] {
-			"PolyQuest",
-			"PolyQuest/Variant_Platforming",
-			"PolyQuest/Variant_Platforming/Animation",
-			"PolyQuest/Variant_Combat",
-			"PolyQuest/Variant_Combat/AI",
-			"PolyQuest/Variant_Combat/Animation",
-			"PolyQuest/Variant_Combat/Gameplay",
-			"PolyQuest/Variant_Combat/Interfaces",
-			"PolyQuest/Variant_Combat/UI",
-			"PolyQuest/Variant_SideScrolling",
-			"PolyQuest/Variant_SideScrolling/AI",
-			"PolyQuest/Variant_SideScrolling/Gameplay",
-			"PolyQuest/Variant_SideScrolling/Interfaces",
-			"PolyQuest/Variant_SideScrolling/UI"
+			"PolyQuest"
 		});
 
 		// Uncomment if you are using Slate UI
