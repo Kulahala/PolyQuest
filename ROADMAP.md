@@ -57,14 +57,15 @@ The old `Test` project is evidence for player-facing behavior, not a source tree
   - Replaced the template map route with `/Game/Maps/Scene01`, moved the retained GameMode and PlayerController source roots into `Framework/` without changing their reflected class names, and reduced the PlayerController to local desktop mapping-context setup.
   - Retired `APolyQuestCharacter`, the ThirdPerson map/Blueprint/External Actor closure, the generated Variant source/content closures, and legacy Third Person redirects after scoped Editor-reference and static evidence.
   - The user compiled `PolyQuestEditor` and verified Scene01 startup, desktop input, movement, look, jump, LMB stamina cost, and target damage. Main normal review and an adversarial fallback found no blocking issue; the requested independent Reviewer could not start because the configured service returned HTTP 503.
+- [x] `TODO-01B: First Stylized Player Asset Integration v1`
+  - Integrated the local Dungeon Knight presentation fixture: `SM_Wep_Ornate_Sword_02` is display-attached through `Weapon_R`, and one retargeted root-motion sword attack plays through the existing GAS light-attack path.
+  - The user verified in Scene01 PIE that the sword remains attached, the Montage drives Actor movement cleanly, a single attack spends Stamina and damages once, repeated activation is blocked, no-target recovery succeeds, and movement/look/jump do not regress. The retargeted Sequence has no hit Notify; the Montage has one `Light Attack Hit` on `DefaultGroup.DefaultSlot`.
+  - No C++ gameplay contract changed. Socket, Blueprint, AnimBP, Montage, GA/GE, input, and retargeting authoring assets remain local WIP; the separate stable asset subset does not recreate the playable fixture from a clean checkout.
+  - Main normal review and an adversarial fallback found no source-level blocker. The requested fresh independent Reviewer could not start because the configured service returned HTTP 503.
 
 ## Milestones
 
 ### Player Combat Vertical Slice
-
-- [ ] `TODO-01B: First Stylized Player Asset Integration v1`
-  - Select and integrate one approved Polygon player/weapon set from `Content/Assets/`, then validate Skeleton, sockets, AnimBP, Montage, root motion, and the existing light-attack Ability path.
-  - Replace no broader asset set until this compatibility slice passes PIE.
 
 - [ ] `TODO-01C: Dodge, Stamina, And Action Interruption v1`
   - Establish tag/effect-based action blocking, cancellation, stamina cost, deliberate overdraft/exhaustion policy, dodge direction, invulnerability timing, and teardown.
@@ -168,6 +169,7 @@ The old `Test` project is evidence for player-facing behavior, not a source tree
 
 - `UAbilityTask_PlayMontageAndWait::ExternalCancel()` can end a task without an explicit guarantee that the Montage stops. Static inspection found no current PolyQuest caller. When `TODO-01C` or a later Stun/explicit-interrupt path needs task-level cancellation, it must define montage-stop behavior, converge through `EndAbility()`, and add focused PIE coverage before relying on that path.
 - `TODO-01A` deliberately withholds its mutable authoring assets from this commit. A curated stable asset baseline is required before the local fixture can be reproduced from a clean checkout; this is a versioning boundary, not a failure of the local compile/PIE validation.
+- `TODO-01B` intentionally skips the sword/sequence Reference Viewer dependency-closure audit by user decision. Its direct stable-asset commit may therefore omit material or Skeleton dependencies and must not be treated as a clean-checkout asset baseline; rerun the closure audit before promoting it as one.
 
 ## Stage Completion Standard
 

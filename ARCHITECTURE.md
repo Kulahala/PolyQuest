@@ -54,6 +54,14 @@ The active player route is `BP_GameMode -> BP_Player -> APlayerCharacter -> ABas
 - Natural Montage completion enters `EndAbility()` through `OnCompleted`. Interrupted, cancelled, character-teardown, and configuration-failure paths converge there as well; cleanup ends both tasks and prevents duplicate cleanup. Blend-out is not treated as natural completion, so the recovery tail is not cut short.
 - Future direct task-level `ExternalCancel()` callers must define whether they also stop the Montage and must still converge through ability cleanup. There is no current caller; this is a conditional cancellation-contract requirement for later Dodge, Stun, or explicit interruption work.
 
+### Stylized Player Presentation
+
+- The local player fixture keeps `SK_Character_Hero_Knight_Male` on `SKEL_Character_Dungeon`. `Weapon_R` is a socket below `hand_r`; `BP_Player` attaches the display-only `WeaponMesh` there with `SM_Wep_Ornate_Sword_02`.
+- The weapon is presentation only in this slice: it has no gameplay collision, overlap, physics, equipment state, or trace ownership. The existing ability-owned forward sphere sweep remains the only light-attack hit delivery path.
+- `AM_Light_Attack01_Sword` plays the retargeted root-motion sequence `Anim_SAS_V2_ComboAttack02_01_Root` through `DefaultGroup.DefaultSlot`. `ABP_Player_Dungeon` uses `Root Motion from Montages Only`, so the Montage drives the Character's tested forward movement without a new movement component or Motion Warping contract.
+- The retargeted Sequence contains no light-attack Notify. The Montage contains one `UAnimNotify_LightAttackHit`, which emits the existing semantic event; the ability still owns the one-hit guard, sweep, cost, and target GameplayEffect.
+- The Socket, player Blueprint, AnimBP, Montage, GA/GE, input assets, and retargeting assets remain deliberately local mutable authoring WIP. The stable direct sword and retargeted Sequence assets can be versioned separately, but this subset does not recreate the local playable fixture from a clean checkout.
+
 ### Gameplay Tags
 
 - Project tags are config-authored in `Config/Tags/PolyQuestGameplayTags.ini`; there is no native tag singleton or Blueprint tag library in this stage.
