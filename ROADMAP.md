@@ -22,6 +22,7 @@ The old `Test` project is evidence for player-facing behavior, not a source tree
 | Verified Test contract | PolyQuest reconstruction boundary | Owning stage |
 | --- | --- | --- |
 | Focused player profile plus small attack/action/reaction DataAssets | A PolyQuest character/ability manifest grants abilities and references focused authored data. It does not become a second runtime state machine. | `TODO-01A`, `TODO-01B` |
+| Shared physical input intent across weapon and loadout combat styles, including press/hold/release semantics | A shared Gameplay Mapping Context emits stable input intent; GAS and the active weapon/loadout route that intent to the current melee, charged, ranged, or selected spell ability. | `TODO-01C1` |
 | One complete `Montage + EntrySection` per linear combo entry, with local damage, stamina, poise, and optional warp data | A GAS-owned linear combo-chain asset. Each entry remains a complete authored attack module; runtime continuation state remains inside the active attack ability. | `TODO-01D` |
 | One LMB pre-input during `ComboWindow`; early and late continuation during `ComboBranchWindow` | The active light-attack ability owns one continuation buffer. Notify states emit semantic begin/end events only; there is no global input buffer. | `TODO-01D` |
 | Recovery `CancelWindow` permits Dodge, Parry, Block, or Potion only after each action's own preflight | A scoped cancellation opportunity exposed by the active attack ability. Higher-priority actions remain immediate ability requests, not buffered actions. | `TODO-01C`, `TODO-01D`, `TODO-02D`, `TODO-03B` |
@@ -71,13 +72,19 @@ The old `Test` project is evidence for player-facing behavior, not a source tree
   - Establish tag/effect-based action blocking, cancellation, stamina cost, deliberate overdraft/exhaustion policy, dodge direction, invulnerability timing, and teardown.
   - The first action-cancellation contract must work before attacks expose a recovery cancel window.
 
+- [ ] `TODO-01C1: Combat Input Intent Routing And Hold/Release v1`
+  - Establish one shared Gameplay Mapping Context: `PrimaryAction`, `Aim`, and ability-slot input express player intent without selecting a weapon-specific ability in the input layer.
+  - Route `PrimaryAction` through the active weapon/loadout to the appropriate GAS ability: a melee weapon's Light/Charged attack, a bow's Ranged.Fire, or the currently selected spell/weapon ability. Keep ability identity tags separate from physical input intent.
+  - Prove press, hold, and release ownership, including the melee charge contract and the handoff boundary needed by future bow charge/release and spell-slot selection.
+  - Do not create per-weapon Mapping Contexts, a universal input buffer, or the concrete weapon/loadout abilities themselves. This stage is a prerequisite for `TODO-01D`, `TODO-01E`, `TODO-02E`, and any future Magic stage.
+
 - [ ] `TODO-01D: Data-Driven Combo, Branch Window, And Recovery Cancel v1`
   - Rebuild the proven linear per-entry combo design: one complete authored `Entry -> Recovery -> End` Montage per chain entry and one focused combo DataAsset per weapon/ability set.
-  - Preserve one-LMB buffering, early/late BranchWindow continuation, recovery CancelWindow behavior, cross-Montage stale-callback safety, and failure-safe cleanup through the active light-attack ability.
+  - Consume the `TODO-01C1` `PrimaryAction` intent while preserving one-input buffering, early/late BranchWindow continuation, recovery CancelWindow behavior, cross-Montage stale-callback safety, and failure-safe cleanup through the active light-attack ability.
   - Do not create a branching combo graph, a universal input buffer, disconnected wind-up/strike/recovery assets, or a parallel action FSM.
 
 - [ ] `TODO-01E: Charged And Sprint Attack v1`
-  - Add hold-to-charge/release and sprint-attack abilities after the basic attack, stamina, cancellation, and authored combo boundaries are stable.
+  - Add hold-to-charge/release and sprint-attack abilities after the basic attack, stamina, cancellation, authored combo, and `TODO-01C1` input-intent boundaries are stable.
   - Keep the proven intent order explicit: an eligible combo continuation owns LMB first; otherwise sprint and hold/charge rules decide the new attack. These attacks are not extra combo entries by default.
 
 ### First Enemy And Combat Targeting
@@ -150,6 +157,7 @@ The old `Test` project is evidence for player-facing behavior, not a source tree
 
 - **Test migration boundary:** migrate verified player-facing behavior and acceptance cases, not the old FSM, `EActionState`, save identifiers, or authored asset topology.
 - **Gameplay authority:** GAS owns ability activation, costs, blocking/cancellation tags, combat state, damage, poise, hit reaction, and death. Animation owns timing and presentation; it is not a second gameplay state source.
+- **Input intent:** Physical controls express stable player intent; the active weapon/loadout and GAS determine the concrete ability. Mapping Contexts change for control modes, not for profession labels or weapon inventory alone.
 - **Data ownership:** a PolyQuest character/ability manifest composes focused authored assets. Combo entries, action settings, enemy attack profiles, and reaction data are modular tuning inputs; none stores mutable gameplay state or replaces ability/effect ownership.
 - **Combo contract:** one active light-attack ability owns at most one buffered LMB continuation. `ComboWindow` accepts it, `ComboBranchWindow` consumes early input or retries late input, and `CancelWindow` exposes only a scoped immediate-cancel opportunity for preflight-valid actions.
 - **Montage lifetime:** a successor combo entry must explicitly reject stale completion/interruption events from a prior entry. Natural completion, cancellation, hit/death teardown, invalid timing events, and asset failure converge through one ability cleanup path.
