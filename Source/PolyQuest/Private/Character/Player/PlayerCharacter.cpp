@@ -2,21 +2,36 @@
 
 #include "Character/Player/PlayerCharacter.h"
 
+#include "Abilities/GameplayAbilityTypes.h"
+#include "AbilitySystemBlueprintLibrary.h"
+#include "AbilitySystemComponent.h"
+#include "ActiveGameplayEffectHandle.h"
 #include "Camera/CameraComponent.h"
 #include "Components/CapsuleComponent.h"
 #include "EnhancedInputComponent.h"
-#include "AbilitySystemComponent.h"
-#include "ActiveGameplayEffectHandle.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/Controller.h"
 #include "GameFramework/SpringArmComponent.h"
 #include "GameplayEffect.h"
 #include "GameplayTagContainer.h"
 #include "InputActionValue.h"
+
+#include "Combat/Input/CombatLoadoutDefinition.h"
 #include "PolyQuest.h"
 
 APlayerCharacter::APlayerCharacter()
 {
+	AbilitySlotActions.SetNum(4);
+	PrimaryAttackInputTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Input.PrimaryAttack")), false);
+	AimInputTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Input.Aim")), false);
+	AbilitySlotInputTags.Add(FGameplayTag::RequestGameplayTag(FName(TEXT("Input.AbilitySlot.1")), false));
+	AbilitySlotInputTags.Add(FGameplayTag::RequestGameplayTag(FName(TEXT("Input.AbilitySlot.2")), false));
+	AbilitySlotInputTags.Add(FGameplayTag::RequestGameplayTag(FName(TEXT("Input.AbilitySlot.3")), false));
+	AbilitySlotInputTags.Add(FGameplayTag::RequestGameplayTag(FName(TEXT("Input.AbilitySlot.4")), false));
+	InputPressedEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Input.Pressed")), false);
+	InputReleasedEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Input.Released")), false);
+	InputCanceledEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Input.Canceled")), false);
+
 	GetCapsuleComponent()->InitCapsuleSize(42.f, 96.0f);
 
 	bUseControllerRotationPitch = false;
@@ -45,6 +60,7 @@ APlayerCharacter::APlayerCharacter()
 void APlayerCharacter::BeginPlay()
 {
 	Super::BeginPlay();
+	SetActiveCombatLoadout(InitialCombatLoadout);
 
 	if (bStaminaRegenEffectApplied || !HasAuthority())
 	{
@@ -85,34 +101,46 @@ void APlayerCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputCom
 		EnhancedInputComponent->BindAction(MoveAction, ETriggerEvent::Canceled, this, &APlayerCharacter::ClearMoveInput);
 		EnhancedInputComponent->BindAction(MouseLookAction, ETriggerEvent::Triggered, this, &APlayerCharacter::Look);
 		EnhancedInputComponent->BindAction(LookAction, ETriggerEvent::Triggered, this, &APlayerCharacter::Look);
-		EnhancedInputComponent->BindAction(LightAttackAction, ETriggerEvent::Started, this, &APlayerCharacter::LightAttack);
+		if (PrimaryAttackAction)
+		{
+			EnhancedInputComponent->BindAction(PrimaryAttackAction, ETriggerEvent::Started, this, &APlayerCharacter::HandlePrimaryAttackStarted);
+			EnhancedInputComponent->BindAction(PrimaryAttackAction, ETriggerEvent::Completed, this, &APlayerCharacter::HandlePrimaryAttackCompleted);
+			EnhancedInputComponent->BindAction(PrimaryAttackAction, ETriggerEvent::Canceled, this, &APlayerCharacter::HandlePrimaryAttackCanceled);
+		}
+		else
+		{
+			UE_LOG(LogPolyQuest, Warning, TEXT("'%s' has no PrimaryAttackAction configured."), *GetNameSafe(this));
+		}
+
+		if (AimAction)
+		{
+			EnhancedInputComponent->BindAction(AimAction, ETriggerEvent::Started, this, &APlayerCharacter::HandleAimActionStarted);
+			EnhancedInputComponent->BindAction(AimAction, ETriggerEvent::Completed, this, &APlayerCharacter::HandleAimActionCompleted);
+			EnhancedInputComponent->BindAction(AimAction, ETriggerEvent::Canceled, this, &APlayerCharacter::HandleAimActionCanceled);
+		}
+		else
+		{
+			UE_LOG(LogPolyQuest, Warning, TEXT("'%s' has no AimAction configured."), *GetNameSafe(this));
+		}
+
+		for (int32 SlotIndex = 0; SlotIndex < AbilitySlotActions.Num(); ++SlotIndex)
+		{
+			if (!AbilitySlotActions[SlotIndex])
+			{
+				continue;
+			}
+
+			EnhancedInputComponent->BindAction(AbilitySlotActions[SlotIndex], ETriggerEvent::Started, this, &APlayerCharacter::HandleAbilitySlotStarted, SlotIndex);
+			EnhancedInputComponent->BindAction(AbilitySlotActions[SlotIndex], ETriggerEvent::Completed, this, &APlayerCharacter::HandleAbilitySlotCompleted, SlotIndex);
+			EnhancedInputComponent->BindAction(AbilitySlotActions[SlotIndex], ETriggerEvent::Canceled, this, &APlayerCharacter::HandleAbilitySlotCanceled, SlotIndex);
+		}
+
 		EnhancedInputComponent->BindAction(DodgeAction, ETriggerEvent::Started, this, &APlayerCharacter::Dodge);
 	}
 	else
 	{
 		UE_LOG(LogPolyQuest, Error, TEXT("'%s' Failed to find an Enhanced Input component! The player character requires Enhanced Input."), *GetNameSafe(this));
 	}
-}
-
-void APlayerCharacter::LightAttack(const FInputActionValue&)
-{
-	UAbilitySystemComponent* CharacterASC = GetAbilitySystemComponent();
-	if (!CharacterASC)
-	{
-		UE_LOG(LogPolyQuest, Warning, TEXT("'%s' cannot request a light attack without an Ability System Component."), *GetNameSafe(this));
-		return;
-	}
-
-	const FGameplayTag LightAttackTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Attack.Light")), false);
-	if (!LightAttackTag.IsValid())
-	{
-		UE_LOG(LogPolyQuest, Warning, TEXT("'%s' cannot request a light attack because the Ability.Attack.Light tag is invalid."), *GetNameSafe(this));
-		return;
-	}
-
-	FGameplayTagContainer AbilityTags;
-	AbilityTags.AddTag(LightAttackTag);
-	CharacterASC->TryActivateAbilitiesByTag(AbilityTags);
 }
 
 void APlayerCharacter::Move(const FInputActionValue& Value)
@@ -173,6 +201,161 @@ void APlayerCharacter::DoJumpStart()
 void APlayerCharacter::DoJumpEnd()
 {
 	StopJumping();
+}
+
+bool APlayerCharacter::SetActiveCombatLoadout(UCombatLoadoutDefinition* NewCombatLoadout)
+{
+	if (!NewCombatLoadout)
+	{
+		UE_LOG(LogPolyQuest, Warning, TEXT("'%s' rejected a null CombatLoadout."), *GetNameSafe(this));
+		return false;
+	}
+
+	if (!NewCombatLoadout->IsRouteTableValid())
+	{
+		UE_LOG(LogPolyQuest, Warning, TEXT("'%s' rejected CombatLoadout '%s' because its input routes contain an invalid or duplicate input intent."), *GetNameSafe(this), *GetNameSafe(NewCombatLoadout));
+		return false;
+	}
+
+	ActiveCombatLoadout = NewCombatLoadout;
+	return true;
+}
+
+bool APlayerCharacter::IsCombatInputHeld(FGameplayTag InputIntentTag) const
+{
+	return InputIntentTag.IsValid() && HeldCombatInputStartTimes.Contains(InputIntentTag);
+}
+
+float APlayerCharacter::GetCombatInputHeldDuration(FGameplayTag InputIntentTag) const
+{
+	const float* StartTime = HeldCombatInputStartTimes.Find(InputIntentTag);
+	const UWorld* World = GetWorld();
+	return StartTime && World ? FMath::Max(World->GetTimeSeconds() - *StartTime, 0.0f) : 0.0f;
+}
+
+void APlayerCharacter::HandlePrimaryAttackStarted(const FInputActionValue&)
+{
+	HandleCombatInputStarted(PrimaryAttackInputTag);
+}
+
+void APlayerCharacter::HandlePrimaryAttackCompleted(const FInputActionValue&)
+{
+	HandleCombatInputEnded(PrimaryAttackInputTag, false);
+}
+
+void APlayerCharacter::HandlePrimaryAttackCanceled(const FInputActionValue&)
+{
+	HandleCombatInputEnded(PrimaryAttackInputTag, true);
+}
+
+void APlayerCharacter::HandleAimActionStarted(const FInputActionValue&)
+{
+	HandleCombatInputStarted(AimInputTag);
+}
+
+void APlayerCharacter::HandleAimActionCompleted(const FInputActionValue&)
+{
+	HandleCombatInputEnded(AimInputTag, false);
+}
+
+void APlayerCharacter::HandleAimActionCanceled(const FInputActionValue&)
+{
+	HandleCombatInputEnded(AimInputTag, true);
+}
+
+void APlayerCharacter::HandleAbilitySlotStarted(const FInputActionValue&, int32 SlotIndex)
+{
+	HandleCombatInputStarted(GetAbilitySlotInputIntentTag(SlotIndex));
+}
+
+void APlayerCharacter::HandleAbilitySlotCompleted(const FInputActionValue&, int32 SlotIndex)
+{
+	HandleCombatInputEnded(GetAbilitySlotInputIntentTag(SlotIndex), false);
+}
+
+void APlayerCharacter::HandleAbilitySlotCanceled(const FInputActionValue&, int32 SlotIndex)
+{
+	HandleCombatInputEnded(GetAbilitySlotInputIntentTag(SlotIndex), true);
+}
+
+void APlayerCharacter::HandleCombatInputStarted(const FGameplayTag& InputIntentTag)
+{
+	if (!InputIntentTag.IsValid() || HeldCombatInputStartTimes.Contains(InputIntentTag))
+	{
+		return;
+	}
+
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return;
+	}
+
+	HeldCombatInputStartTimes.Add(InputIntentTag, World->GetTimeSeconds());
+	SendCombatInputEvent(InputPressedEventTag, InputIntentTag, 0.0f);
+	RequestAbilityForInputIntent(InputIntentTag);
+}
+
+void APlayerCharacter::HandleCombatInputEnded(const FGameplayTag& InputIntentTag, bool bWasCanceled)
+{
+	const float* StartTime = HeldCombatInputStartTimes.Find(InputIntentTag);
+	if (!StartTime)
+	{
+		return;
+	}
+
+	const float HeldDuration = GetCombatInputHeldDuration(InputIntentTag);
+	HeldCombatInputStartTimes.Remove(InputIntentTag);
+	SendCombatInputEvent(bWasCanceled ? InputCanceledEventTag : InputReleasedEventTag, InputIntentTag, HeldDuration);
+}
+
+void APlayerCharacter::SendCombatInputEvent(const FGameplayTag& EventTag, const FGameplayTag& InputIntentTag, float HeldDuration)
+{
+	if (!EventTag.IsValid() || !InputIntentTag.IsValid())
+	{
+		return;
+	}
+
+	FGameplayEventData EventData;
+	EventData.EventTag = EventTag;
+	EventData.Instigator = this;
+	EventData.Target = this;
+	EventData.InstigatorTags.AddTag(InputIntentTag);
+	EventData.EventMagnitude = HeldDuration;
+	UAbilitySystemBlueprintLibrary::SendGameplayEventToActor(this, EventTag, EventData);
+
+	UE_LOG(LogPolyQuest, Verbose, TEXT("CombatInput: owner='%s', event='%s', intent='%s', held=%.3f."), *GetNameSafe(this), *EventTag.ToString(), *InputIntentTag.ToString(), HeldDuration);
+}
+
+void APlayerCharacter::RequestAbilityForInputIntent(const FGameplayTag& InputIntentTag)
+{
+	if (!ActiveCombatLoadout)
+	{
+		return;
+	}
+
+	FGameplayTag AbilityTag;
+	if (!ActiveCombatLoadout->TryGetAbilityTagForInputIntent(InputIntentTag, AbilityTag) || !AbilityTag.IsValid())
+	{
+		return;
+	}
+
+	UAbilitySystemComponent* CharacterASC = GetAbilitySystemComponent();
+	if (!CharacterASC)
+	{
+		UE_LOG(LogPolyQuest, Warning, TEXT("'%s' cannot route '%s' without an Ability System Component."), *GetNameSafe(this), *InputIntentTag.ToString());
+		return;
+	}
+
+	FGameplayTagContainer AbilityTags;
+	AbilityTags.AddTag(AbilityTag);
+	const bool bActivated = CharacterASC->TryActivateAbilitiesByTag(AbilityTags);
+	UE_LOG(LogPolyQuest, Verbose, TEXT("CombatInput: owner='%s', intent='%s', ability='%s', activationRequested=%s."), *GetNameSafe(this), *InputIntentTag.ToString(), *AbilityTag.ToString(), bActivated ? TEXT("true") : TEXT("false"));
+}
+
+FGameplayTag APlayerCharacter::GetAbilitySlotInputIntentTag(int32 SlotIndex) const
+{
+	return AbilitySlotInputTags.IsValidIndex(SlotIndex) ? AbilitySlotInputTags[SlotIndex] : FGameplayTag();
 }
 
 void APlayerCharacter::Dodge(const FInputActionValue&)

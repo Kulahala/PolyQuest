@@ -46,7 +46,10 @@ The active player route is `BP_GameMode -> BP_Player -> APlayerCharacter -> ABas
 
 - `BP_GameMode` is the active default GameMode and selects `BP_Player` as the default Pawn and `BP_PlayerController` as the PlayerController.
 - `APolyQuestPlayerController` installs the Blueprint-authored desktop `DefaultMappingContexts` for local players; the current controller Blueprint supplies `IMC_Default` and `IMC_MouseLook`.
-- `APlayerCharacter` binds `LightAttackAction` on `Started`. Its handler only requests abilities tagged `Ability.Attack.Light` through `TryActivateAbilitiesByTag()`; it never plays a Montage, spends Stamina, traces, or mutates an Attribute directly.
+- `APlayerCharacter` binds `PrimaryAttackAction`, `AimAction`, and four fixed `AbilitySlotActions`. Every combat-input `Started` records held time, sends `Event.Input.Pressed` with the actual `Input.*` tag in `FGameplayEventData::InstigatorTags`, then resolves the active Combat Loadout through the ASC. `Completed` sends `Released`; `Canceled` sends `Canceled`; both clear the held state. The input layer never plays a Montage, spends Stamina, traces, or mutates an Attribute directly.
+- `DA_CombatLoadout_StraightSword` currently maps `Input.PrimaryAttack -> Ability.Attack.Light`; absent Aim and Slot routes intentionally express an input event without activating an Ability. A Loadout change affects future input starts only and never grants, revokes, or cancels Abilities. Future equipment owns the corresponding Ability-grant policy separately.
+- `Event.Input.Pressed`, `Event.Input.Released`, and `Event.Input.Canceled` are semantic delivery events for already active Abilities using `WaitGameplayEvent`; they are not general `AbilityTriggers`. A future event-triggered Ability must use a dedicated outer event tag or validate the payload's input intent before activation, because the generic outer event alone does not distinguish Primary, Aim, and Slot input.
+- Current validation is keyboard/mouse-only by explicit scope decision. Gamepad Right Shoulder and Left Trigger mappings are deferred rather than treated as verified controller support.
 - `APlayerCharacter` binds `DodgeAction` on `Started` and only requests `Ability.Dodge`. It caches the latest movement input so Dodge can derive one camera-relative world direction, suppresses new translation and Jump starts while `State.Action.Dodging` is present, and keeps camera look available. Jump release always calls `StopJumping()` so a pre-Dodge UE jump request cannot remain latched after the roll.
 
 ### Light Attack Ability Lifecycle
@@ -77,7 +80,7 @@ The active player route is `BP_GameMode -> BP_Player -> APlayerCharacter -> ABas
 ### Gameplay Tags
 
 - Project tags are config-authored in `Config/Tags/PolyQuestGameplayTags.ini`; there is no native tag singleton or Blueprint tag library in this stage.
-- The approved leaf tags are `Ability.Attack.Light`, `Ability.Dodge`, `Event.Attack.Light.Hit`, `Event.Action.CancelWindow.Dodge.Begin`, `Event.Action.CancelWindow.Dodge.End`, `Event.Dodge.Invulnerability.Begin`, `Event.Dodge.Invulnerability.End`, `Input.Attack.Light`, `Input.Dodge`, `State.Action.Attacking`, `State.Action.CanCancel.Dodge`, `State.Action.Dodging`, `State.Resource.Stamina.RegenBlocked`, `State.Status.Dead`, `State.Status.Exhausted`, `State.Status.Invulnerable`, and `State.Status.Stunned`.
+- The approved leaf tags are `Ability.Attack.Light`, `Ability.Dodge`, `Event.Attack.Light.Hit`, `Event.Action.CancelWindow.Dodge.Begin`, `Event.Action.CancelWindow.Dodge.End`, `Event.Dodge.Invulnerability.Begin`, `Event.Dodge.Invulnerability.End`, `Event.Input.Canceled`, `Event.Input.Pressed`, `Event.Input.Released`, `Input.AbilitySlot.1` through `.4`, `Input.Aim`, `Input.Dodge`, `Input.PrimaryAttack`, `State.Action.Attacking`, `State.Action.CanCancel.Dodge`, `State.Action.Dodging`, `State.Resource.Stamina.RegenBlocked`, `State.Status.Dead`, `State.Status.Exhausted`, `State.Status.Invulnerable`, and `State.Status.Stunned`.
 - Plugin and native test tag sources remain engine/plugin-owned and are not part of the PolyQuest taxonomy.
 
 ## Not Yet Established
@@ -87,6 +90,6 @@ The following remain future stage contracts:
 - Enemy ASC topology and StateTree-to-GAS intent requests.
 - Combo, charge, sprint, player death, GameplayCues, and generic hit-resolution contracts.
 - Team filtering, weapon collision, multi-hit windows, persistence ownership, and multiplayer/PlayerState ownership.
-- Equipment/loadout, additional weapon, Skeleton, animation, and Motion Warping topology.
+- Weapon equipment, Ability-grant/revocation, multi-weapon Loadout switching, additional Skeleton/animation, and Motion Warping topology.
 
 These decisions belong to their owning roadmap stages; they are not implied by the TODO-00B foundation.

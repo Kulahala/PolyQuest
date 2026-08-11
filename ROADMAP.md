@@ -69,20 +69,19 @@ The old `Test` project is evidence for player-facing behavior, not a source tree
   - The user confirmed `PolyQuestEditor` compilation and Scene01 PIE validation for Root Motion Dodge direction, positive-Stamina overdraft to zero, exhaustion/recovery, repeated input blocking, movement/jump lock with camera control, recovery-only attack cancellation, invulnerability timing, teardown cleanup, and the repaired no-delayed-jump regression.
   - Main normal review found and repaired a latched Jump release during Dodge. Main adversarial fallback found no further source-level blocker. The requested fresh `gpt-5.6-luna / xhigh` Reviewer returned HTTP 503, so no independent-review result is claimed.
   - GA/GE, Montage, AnimBP, Blueprint, input, retargeting, map, and verification assets remain local mutable WIP and are not a clean-checkout fixture.
+- [x] `TODO-01C1: Combat Input Intent Routing And Hold/Release v1`
+  - Added one native `UCombatLoadoutDefinition` route table and unified `PrimaryAttack`, Aim, and direct Ability Slot input handling. A `Started` event publishes the physical `Input.*` intent before resolving the active Loadout to a GAS Ability Tag; release and cancellation publish distinct events and clear held state without launching another Ability.
+  - The production local `DA_CombatLoadout_StraightSword` currently routes only `Input.PrimaryAttack -> Ability.Attack.Light`; the user confirmed the Scene01 PIE route and a temporary Slot 1 direct-activation fixture. Aim and unconfigured production slots remain intentional no-ops. Keyboard/mouse is the accepted validation scope; gamepad mappings are deferred.
+  - Removed the retired `IA_Attack_Light` route and config Tag after a scoped Editor/source/asset audit. `Event.Input.*` is documented as active-Ability event delivery rather than a generic `AbilityTrigger` source. Main review found no remaining source blocker; the requested fresh `gpt-5.6-luna / xhigh` Reviewer could not start because the provider returned HTTP 503.
+  - Input, Loadout, Blueprint, GA/GE, Montage, AnimBP, and map assets remain local mutable WIP and are excluded from the focused source/config/document commit.
 
 ## Milestones
 
 ### Player Combat Vertical Slice
 
-- [ ] `TODO-01C1: Combat Input Intent Routing And Hold/Release v1`
-  - Establish one shared Gameplay Mapping Context: `PrimaryAction`, `Aim`, and ability-slot input express player intent without selecting a weapon-specific ability in the input layer.
-  - Route `PrimaryAction` through the active weapon/loadout to the appropriate GAS ability: a melee weapon's Light/Charged attack, a bow's Ranged.Fire, or the currently selected spell/weapon ability. Keep ability identity tags separate from physical input intent.
-  - Prove press, hold, and release ownership, including the melee charge contract and the handoff boundary needed by future bow charge/release and spell-slot selection.
-  - Do not create per-weapon Mapping Contexts, a universal input buffer, or the concrete weapon/loadout abilities themselves. This stage is a prerequisite for `TODO-01D`, `TODO-01E`, `TODO-02E`, and any future Magic stage.
-
 - [ ] `TODO-01D: Data-Driven Combo, Branch Window, And Recovery Cancel v1`
   - Rebuild the proven linear per-entry combo design: one complete authored `Entry -> Recovery -> End` Montage per chain entry and one focused combo DataAsset per weapon/ability set.
-  - Consume the `TODO-01C1` `PrimaryAction` intent while preserving one-input buffering, early/late BranchWindow continuation, recovery CancelWindow behavior, cross-Montage stale-callback safety, and failure-safe cleanup through the active light-attack ability.
+  - Consume the `TODO-01C1` `PrimaryAttack` intent while preserving one-input buffering, early/late BranchWindow continuation, recovery CancelWindow behavior, cross-Montage stale-callback safety, and failure-safe cleanup through the active light-attack ability.
   - Do not create a branching combo graph, a universal input buffer, disconnected wind-up/strike/recovery assets, or a parallel action FSM.
 
 - [ ] `TODO-01E: Charged And Sprint Attack v1`
