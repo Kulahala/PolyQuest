@@ -18,6 +18,8 @@ The live UE 5.8 editor resolves the GameplayAbilities plugin, and the module lin
 
 `TODO-01C` extends that local fixture with a ground-only, camera-relative Root Motion Dodge. A shared Stamina-action lifecycle permits a positive remainder to overdraw to zero, gates later actions through exhaustion, delays periodic recovery after committed actions, and uses semantic NotifyState events for attack cancellation and Dodge invulnerability timing.
 
+`TODO-01D` extends the light-attack fixture with a data-driven two-entry linear combo. The active ability owns one buffered `Input.PrimaryAttack`, identity-filtered semantic animation events, per-entry cost and hit consumption, recovery Dodge cancellation, and one teardown path across both Montages.
+
 This commit intentionally keeps mutable authoring assets out of version control: the GameplayAbility Blueprint, GameplayEffects, Montage, AnimBP, `BP_Player`, and input assets remain local development WIP. Selected meshes, Skeleton/material dependencies, and animation sequences are a stable source-asset baseline, but this commit alone is not a clone-ready reproduction of the local PIE fixture.
 
 ## Product Entry And Template Retirement
@@ -54,11 +56,14 @@ The active player route is `BP_GameMode -> BP_Player -> APlayerCharacter -> ABas
 
 ### Light Attack Ability Lifecycle
 
-- `ULightAttackAbility` is `InstancedPerActor` and `ServerOnly` within the current single-player boundary. It owns `Ability.Attack.Light`, owns `State.Action.Attacking` while active, and is blocked by attacking, dodging, dead, and stunned state tags.
-- Before `CommitAbility()`, it validates its ASC, animation instance, Montage, inherited cost GameplayEffect class, damage GameplayEffect class, and `Event.Attack.Light.Hit` tag. A missing required configuration logs a warning and ends without applying cost, starting tasks, or recording hit state.
-- After a successful commit, `UAbilityTask_PlayMontageAndWait` owns presentation lifetime and `UAbilityTask_WaitGameplayEvent` listens for the semantic hit event. `UAnimNotify_LightAttackHit` only sends that event from a mesh owner implementing `IAbilitySystemInterface`; it never traces or changes Attributes itself.
-- The first received hit event is consumed by a per-activation guard. The ability performs one forward sphere sweep on `ECC_Pawn`, ignores its avatar, selects the nearest other `ABaseCharacter`, creates the damage spec from the source ASC, and applies it to the target ASC. There is no team filter, weapon collision, multi-hit window, generic hit resolver, or direct `Health` write in this slice.
-- Natural Montage completion enters `EndAbility()` through `OnCompleted`. Interrupted, cancelled, character-teardown, and configuration-failure paths converge there as well; cleanup ends both tasks and prevents duplicate cleanup. Blend-out is not treated as natural completion, so the recovery tail is not cut short.
+- `ULightAttackAbility` is `InstancedPerActor` and `ServerOnly` within the current single-player boundary. It owns `Ability.Attack.Light`, owns `State.Action.Attacking` while active, and is blocked by attacking, dodging, dead, exhausted, and stunned state tags.
+- Before the initial `CommitAbility()`, it validates its ASC, animation instance, inherited Cost/Damage/regen-delay GameplayEffect classes, required event tags, and a nonempty `UComboChainDataAsset` containing unique non-null complete Montages. A missing required configuration logs a warning and ends without applying cost, starting tasks, or recording hit state.
+- `UComboChainDataAsset` stores ordered Montage references only. It holds no active entry, buffered input, target, cost state, or other mutable runtime state; `ULightAttackAbility` owns those values for the entire chain.
+- The initial entry commits once through `CommitAbility()`. A continuation first passes `CheckCost()` and then commits only its Cost through `CommitAbilityCost()`, so each accepted entry spends Stamina once while the shared Stamina-action base applies regeneration delay when the whole Ability ends.
+- Persistent `UAbilityTask_WaitGameplayEvent` listeners receive hit, Dodge-cancel, primary-input, Combo InputWindow, and Combo BranchWindow semantics across the chain. `UAbilityTask_PlayMontageAndWait` starts the selected entry, while an identity-filtered `UAnimInstance::OnMontageEnded` callback owns natural completion or interruption; an end event from a replaced Montage cannot end its successor.
+- `UAnimNotify_LightAttackHit` and the combat action-window NotifyStates send semantic events from an ASC-capable mesh owner and attach their source animation in `FGameplayEventData::OptionalObject`. The Ability accepts only events from its current entry Montage. It permits one buffered `Input.PrimaryAttack`: an early input is consumed when the BranchWindow opens, while an input during an open BranchWindow continues immediately.
+- The first accepted hit event for each entry is consumed by a per-entry guard. The ability performs one forward sphere sweep on `ECC_Pawn`, ignores its avatar, selects the nearest other `ABaseCharacter`, creates the damage spec from the source ASC, and applies it to the target ASC. There is no team filter, weapon collision, multi-hit window, generic hit resolver, or direct `Health` write in this slice.
+- Natural completion, interruption, Dodge cancellation, character teardown, and configuration failure converge through `EndAbility()`. Cleanup removes the Montage delegate, ends all tasks, removes the scoped Dodge-cancel tag, clears entry/buffer state, and prevents duplicate cleanup.
 - Future direct task-level `ExternalCancel()` callers must define whether they also stop the Montage and must still converge through ability cleanup. There is no current caller; this is a conditional cancellation-contract requirement for later Stun or explicit interruption work.
 
 ### Stamina Actions And Dodge Lifecycle
@@ -80,7 +85,7 @@ The active player route is `BP_GameMode -> BP_Player -> APlayerCharacter -> ABas
 ### Gameplay Tags
 
 - Project tags are config-authored in `Config/Tags/PolyQuestGameplayTags.ini`; there is no native tag singleton or Blueprint tag library in this stage.
-- The approved leaf tags are `Ability.Attack.Light`, `Ability.Dodge`, `Event.Attack.Light.Hit`, `Event.Action.CancelWindow.Dodge.Begin`, `Event.Action.CancelWindow.Dodge.End`, `Event.Dodge.Invulnerability.Begin`, `Event.Dodge.Invulnerability.End`, `Event.Input.Canceled`, `Event.Input.Pressed`, `Event.Input.Released`, `Input.AbilitySlot.1` through `.4`, `Input.Aim`, `Input.Dodge`, `Input.PrimaryAttack`, `State.Action.Attacking`, `State.Action.CanCancel.Dodge`, `State.Action.Dodging`, `State.Resource.Stamina.RegenBlocked`, `State.Status.Dead`, `State.Status.Exhausted`, `State.Status.Invulnerable`, and `State.Status.Stunned`.
+- The approved leaf tags are `Ability.Attack.Light`, `Ability.Dodge`, `Event.Attack.Light.Hit`, `Event.Attack.Light.Combo.InputWindow.Begin`, `Event.Attack.Light.Combo.InputWindow.End`, `Event.Attack.Light.Combo.BranchWindow.Begin`, `Event.Attack.Light.Combo.BranchWindow.End`, `Event.Action.CancelWindow.Dodge.Begin`, `Event.Action.CancelWindow.Dodge.End`, `Event.Dodge.Invulnerability.Begin`, `Event.Dodge.Invulnerability.End`, `Event.Input.Canceled`, `Event.Input.Pressed`, `Event.Input.Released`, `Input.AbilitySlot.1` through `.4`, `Input.Aim`, `Input.Dodge`, `Input.PrimaryAttack`, `State.Action.Attacking`, `State.Action.CanCancel.Dodge`, `State.Action.Dodging`, `State.Resource.Stamina.RegenBlocked`, `State.Status.Dead`, `State.Status.Exhausted`, `State.Status.Invulnerable`, and `State.Status.Stunned`.
 - Plugin and native test tag sources remain engine/plugin-owned and are not part of the PolyQuest taxonomy.
 
 ## Not Yet Established
@@ -88,7 +93,7 @@ The active player route is `BP_GameMode -> BP_Player -> APlayerCharacter -> ABas
 The following remain future stage contracts:
 
 - Enemy ASC topology and StateTree-to-GAS intent requests.
-- Combo, charge, sprint, player death, GameplayCues, and generic hit-resolution contracts.
+- Charged/sprint attacks, player death, GameplayCues, generic hit-resolution, and nonlinear or multi-weapon combo-extension contracts.
 - Team filtering, weapon collision, multi-hit windows, persistence ownership, and multiplayer/PlayerState ownership.
 - Weapon equipment, Ability-grant/revocation, multi-weapon Loadout switching, additional Skeleton/animation, and Motion Warping topology.
 

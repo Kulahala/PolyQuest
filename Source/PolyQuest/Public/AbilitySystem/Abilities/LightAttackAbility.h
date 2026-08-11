@@ -8,7 +8,9 @@
 
 class UAbilityTask_PlayMontageAndWait;
 class UAbilityTask_WaitGameplayEvent;
+class UAnimInstance;
 class UAnimMontage;
+class UComboChainDataAsset;
 class UGameplayEffect;
 
 UCLASS()
@@ -33,8 +35,8 @@ public:
 		bool bWasCancelled) override;
 
 protected:
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Attack")
-	TObjectPtr<UAnimMontage> AttackMontage;
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combo")
+	TObjectPtr<UComboChainDataAsset> ComboDefinition;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Attack")
 	TSubclassOf<UGameplayEffect> DamageGameplayEffectClass;
@@ -64,22 +66,48 @@ private:
 	UPROPERTY(Transient)
 	TObjectPtr<UAbilityTask_WaitGameplayEvent> DodgeCancelWindowEndTask;
 
+	UPROPERTY(Transient)
+	TObjectPtr<UAbilityTask_WaitGameplayEvent> PrimaryAttackPressedTask;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UAbilityTask_WaitGameplayEvent> ComboInputWindowBeginTask;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UAbilityTask_WaitGameplayEvent> ComboInputWindowEndTask;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UAbilityTask_WaitGameplayEvent> ComboBranchWindowBeginTask;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UAbilityTask_WaitGameplayEvent> ComboBranchWindowEndTask;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UAnimInstance> BoundAnimInstance;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UAnimMontage> ActiveEntryMontage;
+
 	FGameplayTag DodgeCancelWindowBeginEventTag;
 	FGameplayTag DodgeCancelWindowEndEventTag;
 	FGameplayTag DodgeCancelableStateTag;
+	FGameplayTag PrimaryAttackPressedEventTag;
+	FGameplayTag PrimaryAttackInputTag;
+	FGameplayTag ComboInputWindowBeginEventTag;
+	FGameplayTag ComboInputWindowEndEventTag;
+	FGameplayTag ComboBranchWindowBeginEventTag;
+	FGameplayTag ComboBranchWindowEndEventTag;
 
+	int32 ActiveEntryIndex = INDEX_NONE;
 	bool bHitEventConsumed = false;
 	bool bDodgeCancelable = false;
+	bool bComboInputWindowOpen = false;
+	bool bComboBranchWindowOpen = false;
+	bool bContinuationBuffered = false;
+	bool bComboTransitionInProgress = false;
 	bool bEndAbilityRequested = false;
 
 	UFUNCTION()
-	void OnMontageCompleted();
-
-	UFUNCTION()
-	void OnMontageInterrupted();
-
-	UFUNCTION()
-	void OnMontageCancelled();
+	void OnActiveMontageEnded(UAnimMontage* Montage, bool bInterrupted);
 
 	UFUNCTION()
 	void OnHitEventReceived(FGameplayEventData Payload);
@@ -90,7 +118,27 @@ private:
 	UFUNCTION()
 	void OnDodgeCancelWindowEnd(FGameplayEventData Payload);
 
+	UFUNCTION()
+	void OnPrimaryAttackPressed(FGameplayEventData Payload);
+
+	UFUNCTION()
+	void OnComboInputWindowBegin(FGameplayEventData Payload);
+
+	UFUNCTION()
+	void OnComboInputWindowEnd(FGameplayEventData Payload);
+
+	UFUNCTION()
+	void OnComboBranchWindowBegin(FGameplayEventData Payload);
+
+	UFUNCTION()
+	void OnComboBranchWindowEnd(FGameplayEventData Payload);
+
 	void EndFromMontage(bool bWasCancelled);
+	bool ValidateComboDefinition() const;
+	bool StartComboEntry(int32 EntryIndex);
+	bool IsGameplayEventFromActiveMontage(const FGameplayEventData& Payload) const;
+	bool IsPrimaryAttackInputEvent(const FGameplayEventData& Payload) const;
+	void TryConsumeBufferedComboContinuation();
 	void PerformHitTrace();
 	void SetDodgeCancelable(bool bShouldBeCancelable);
 };

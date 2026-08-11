@@ -8,7 +8,7 @@
 #include "GameplayTagContainer.h"
 #include "PolyQuest.h"
 
-void UAnimNotify_LightAttackHit::Notify(USkeletalMeshComponent* MeshComp, UAnimSequenceBase*, const FAnimNotifyEventReference&)
+void UAnimNotify_LightAttackHit::Notify(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, const FAnimNotifyEventReference&)
 {
 	AActor* Owner = MeshComp ? MeshComp->GetOwner() : nullptr;
 	IAbilitySystemInterface* AbilitySystemInterface = Cast<IAbilitySystemInterface>(Owner);
@@ -29,6 +29,7 @@ void UAnimNotify_LightAttackHit::Notify(USkeletalMeshComponent* MeshComp, UAnimS
 	EventData.EventTag = HitEventTag;
 	EventData.Instigator = Owner;
 	EventData.Target = Owner;
+	EventData.OptionalObject = Animation;
 	UAbilitySystemBlueprintLibrary::SendGameplayEventToActor(Owner, HitEventTag, EventData);
 }
 

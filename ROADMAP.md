@@ -71,18 +71,19 @@ The old `Test` project is evidence for player-facing behavior, not a source tree
   - GA/GE, Montage, AnimBP, Blueprint, input, retargeting, map, and verification assets remain local mutable WIP and are not a clean-checkout fixture.
 - [x] `TODO-01C1: Combat Input Intent Routing And Hold/Release v1`
   - Added one native `UCombatLoadoutDefinition` route table and unified `PrimaryAttack`, Aim, and direct Ability Slot input handling. A `Started` event publishes the physical `Input.*` intent before resolving the active Loadout to a GAS Ability Tag; release and cancellation publish distinct events and clear held state without launching another Ability.
-  - The production local `DA_CombatLoadout_StraightSword` currently routes only `Input.PrimaryAttack -> Ability.Attack.Light`; the user confirmed the Scene01 PIE route and a temporary Slot 1 direct-activation fixture. Aim and unconfigured production slots remain intentional no-ops. Keyboard/mouse is the accepted validation scope; gamepad mappings are deferred.
+  - The production local `DA_CombatLoadout_StraightSword` currently routes only `Input.PrimaryAttack -> Ability.Attack.Light`; the user confirmed the Scene01 PIE route and a temporary Slot 1 direct-activation fixture. Aim and unconfigured production slots remain intentional no-ops. Keyboard/mouse is the accepted validation scope; controller evidence is tracked under `Known Risks And Validation Debt`.
   - Removed the retired `IA_Attack_Light` route and config Tag after a scoped Editor/source/asset audit. `Event.Input.*` is documented as active-Ability event delivery rather than a generic `AbilityTrigger` source. Main review found no remaining source blocker; the requested fresh `gpt-5.6-luna / xhigh` Reviewer could not start because the provider returned HTTP 503.
   - Input, Loadout, Blueprint, GA/GE, Montage, AnimBP, and map assets remain local mutable WIP and are excluded from the focused source/config/document commit.
+
+- [x] `TODO-01D: Data-Driven Combo, Branch Window, And Recovery Cancel v1`
+  - Replaced the single-Montage light-attack configuration with `UComboChainDataAsset`: each entry is one unique complete Montage, while `ULightAttackAbility` owns the active entry, one buffered `Input.PrimaryAttack`, per-entry Cost/Hit consumption, and recovery Dodge cancellation.
+  - Montage identity now guards all hit/window events and end callbacks. Source animation is carried through `FGameplayEventData::OptionalObject`, so a replaced Montage cannot damage, reopen a window, or end its successor.
+  - The user compiled `PolyQuestEditor` and confirmed the authored Scene01 PIE combo route. Main normal review and a Main adversarial fallback found no confirmed P0-P2 source or semantic-event blocker; the requested fresh `gpt-5.6-luna / xhigh` Reviewer did not start because the provider returned HTTP 503, so no independent-review result is claimed.
+  - Combo DataAsset, GA/GE, Montages, AnimBP, Blueprint, input, map, retargeting, and presentation assets remain local mutable WIP. The focused commit contains only native source, Gameplay Tag config, and documentation.
 
 ## Milestones
 
 ### Player Combat Vertical Slice
-
-- [ ] `TODO-01D: Data-Driven Combo, Branch Window, And Recovery Cancel v1`
-  - Rebuild the proven linear per-entry combo design: one complete authored `Entry -> Recovery -> End` Montage per chain entry and one focused combo DataAsset per weapon/ability set.
-  - Consume the `TODO-01C1` `PrimaryAttack` intent while preserving one-input buffering, early/late BranchWindow continuation, recovery CancelWindow behavior, cross-Montage stale-callback safety, and failure-safe cleanup through the active light-attack ability.
-  - Do not create a branching combo graph, a universal input buffer, disconnected wind-up/strike/recovery assets, or a parallel action FSM.
 
 - [ ] `TODO-01E: Charged And Sprint Attack v1`
   - Add hold-to-charge/release and sprint-attack abilities after the basic attack, stamina, cancellation, authored combo, and `TODO-01C1` input-intent boundaries are stable.
@@ -149,6 +150,10 @@ The old `Test` project is evidence for player-facing behavior, not a source tree
 - [ ] `TODO-07A: HUD, Debug, Feedback, And Demo Polish v1`
   - Add only the HUD, debug surfaces, VFX/SFX, camera, navigation readability, and presentation feedback needed to make the validated loop legible.
   - This is not a vehicle for new combat mechanics or a generic UI framework.
+  - After the core player-combat framework and selected weapon animation set are stable, run one focused combat-presentation retune over provisional Montages: final source-animation selection, per-weapon Montage composition, root-motion feel, and manually authored segment rates.
+  - Re-author `LightAttackHit`, Combo Input/Branch, Dodge Cancel, and Dodge Invulnerability timing against the final motions while retaining the proven one-buffer, Branch consumption, one-hit-per-entry, and ability-owned gameplay contracts.
+  - If that retune needs runtime playback-rate control, create a separate approved RateWindow lifecycle stage. It must restore rates on natural completion, interruption, cancellation, combo handoff, `EndAbility()`, and EndPlay; temporary authored segment rates are not that system.
+  - Re-run focused PIE visual and teardown checks for contact readability, root-motion continuity, hit/cancel timing, and stale tags/tasks after interruption.
 
 - [ ] `TODO-07B: Full Route Regression v1`
   - Establish the repeatable manual validation matrix for New Game, Continue, checkpoint/rest, ordinary enemy reset, cleared encounter restore, equipment and consumables, drops/fixed rewards, player/enemy ranged combat, punish abilities, Boss completion, and completion Continue.
@@ -179,6 +184,8 @@ The old `Test` project is evidence for player-facing behavior, not a source tree
 - `UAbilityTask_PlayMontageAndWait::ExternalCancel()` can end a task without an explicit guarantee that the Montage stops. Static inspection found no current PolyQuest caller. When `TODO-01C` or a later Stun/explicit-interrupt path needs task-level cancellation, it must define montage-stop behavior, converge through `EndAbility()`, and add focused PIE coverage before relying on that path.
 - `TODO-01A` deliberately withholds its mutable authoring assets from this commit. A curated stable asset baseline is required before the local fixture can be reproduced from a clean checkout; this is a versioning boundary, not a failure of the local compile/PIE validation.
 - `TODO-01B` intentionally skips the sword/sequence Reference Viewer dependency-closure audit by user decision. Its direct stable-asset commit may therefore omit material or Skeleton dependencies and must not be treated as a clean-checkout asset baseline; rerun the closure audit before promoting it as one.
+- `TODO-01C1` has accepted keyboard/mouse PIE evidence only. Right Shoulder and Left Trigger mapping behavior and physical controller operation are not verified controller support. Before presenting controller support, adding controller-specific UX, or producing a controller-facing build, read back the intended Mapping Context entries and pass focused hardware validation for every intended controller action; until then, do not claim gamepad support.
+- `TODO-01D` spends a continuation Cost before `UAbilityTask_PlayMontageAndWait` confirms that the successor Montage actually started. A rare playback-start failure after valid preflight can therefore consume Stamina and end the Ability without an automatic refund. The normal AnimInstance/Slot path has user PIE evidence, but failure injection is unverified. Before defining a final combat asset baseline or adding runtime playback-rate control, define the atomicity or refund semantics and add focused failure-injection coverage.
 
 ## Stage Completion Standard
 

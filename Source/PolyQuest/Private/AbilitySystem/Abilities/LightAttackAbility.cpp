@@ -1,11 +1,12 @@
 #include "AbilitySystem/Abilities/LightAttackAbility.h"
 
 #include "AbilitySystemComponent.h"
-#include "Animation/AnimInstance.h"
-#include "Animation/AnimMontage.h"
 #include "Abilities/Tasks/AbilityTask_PlayMontageAndWait.h"
 #include "Abilities/Tasks/AbilityTask_WaitGameplayEvent.h"
+#include "Animation/AnimInstance.h"
+#include "Animation/AnimMontage.h"
 #include "Character/BaseCharacter.h"
+#include "Combat/ComboChainDataAsset.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "Engine/World.h"
 #include "GameplayEffect.h"
@@ -28,6 +29,12 @@ ULightAttackAbility::ULightAttackAbility()
 	DodgeCancelWindowBeginEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Action.CancelWindow.Dodge.Begin")), false);
 	DodgeCancelWindowEndEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Action.CancelWindow.Dodge.End")), false);
 	DodgeCancelableStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Action.CanCancel.Dodge")), false);
+	PrimaryAttackPressedEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Input.Pressed")), false);
+	PrimaryAttackInputTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Input.PrimaryAttack")), false);
+	ComboInputWindowBeginEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Attack.Light.Combo.InputWindow.Begin")), false);
+	ComboInputWindowEndEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Attack.Light.Combo.InputWindow.End")), false);
+	ComboBranchWindowBeginEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Attack.Light.Combo.BranchWindow.Begin")), false);
+	ComboBranchWindowEndEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Attack.Light.Combo.BranchWindow.End")), false);
 }
 
 void ULightAttackAbility::ActivateAbility(
@@ -37,6 +44,15 @@ void ULightAttackAbility::ActivateAbility(
 	const FGameplayEventData*)
 {
 	bEndAbilityRequested = false;
+	bHitEventConsumed = false;
+	bDodgeCancelable = false;
+	bComboInputWindowOpen = false;
+	bComboBranchWindowOpen = false;
+	bContinuationBuffered = false;
+	bComboTransitionInProgress = false;
+	ActiveEntryIndex = INDEX_NONE;
+	ActiveEntryMontage = nullptr;
+	BoundAnimInstance = nullptr;
 
 	UAbilitySystemComponent* AbilitySystemComponent = GetAbilitySystemComponentFromActorInfo();
 	AActor* AvatarActor = GetAvatarActorFromActorInfo();
@@ -44,27 +60,46 @@ void ULightAttackAbility::ActivateAbility(
 	USkeletalMeshComponent* SkeletalMesh = Character ? Character->GetMesh() : nullptr;
 	UAnimInstance* AnimInstance = SkeletalMesh ? SkeletalMesh->GetAnimInstance() : nullptr;
 
-	if (!AbilitySystemComponent || !AnimInstance || !AttackMontage || !CostGameplayEffectClass || !DamageGameplayEffectClass || !StaminaRegenDelayGameplayEffectClass || !HitEventTag.IsValid()
-		|| !DodgeCancelWindowBeginEventTag.IsValid() || !DodgeCancelWindowEndEventTag.IsValid() || !DodgeCancelableStateTag.IsValid())
+	if (!AbilitySystemComponent || !AnimInstance || !CostGameplayEffectClass || !DamageGameplayEffectClass || !StaminaRegenDelayGameplayEffectClass || !HitEventTag.IsValid()
+		|| !DodgeCancelWindowBeginEventTag.IsValid() || !DodgeCancelWindowEndEventTag.IsValid() || !DodgeCancelableStateTag.IsValid()
+		|| !PrimaryAttackPressedEventTag.IsValid() || !PrimaryAttackInputTag.IsValid() || !ComboInputWindowBeginEventTag.IsValid()
+		|| !ComboInputWindowEndEventTag.IsValid() || !ComboBranchWindowBeginEventTag.IsValid() || !ComboBranchWindowEndEventTag.IsValid()
+		|| !ValidateComboDefinition())
 	{
-		UE_LOG(LogPolyQuest, Warning, TEXT("Light attack activation aborted for '%s': ASC, AnimInstance, montage, cost effect, damage effect, Stamina regeneration delay effect, hit event tag, and Dodge cancel tags are required."), *GetNameSafe(AvatarActor));
+		UE_LOG(LogPolyQuest, Warning, TEXT("Light attack activation aborted for '%s': ASC, AnimInstance, valid ComboDefinition, cost effect, damage effect, Stamina regeneration delay effect, and required gameplay tags are required."), *GetNameSafe(AvatarActor));
 		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
 		return;
 	}
 
-	bHitEventConsumed = false;
-	bDodgeCancelable = false;
-	MontageTask = UAbilityTask_PlayMontageAndWait::CreatePlayMontageAndWaitProxy(this, NAME_None, AttackMontage);
-	HitEventTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, HitEventTag, nullptr, true, true);
-	DodgeCancelWindowBeginTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, DodgeCancelWindowBeginEventTag, nullptr, true, true);
-	DodgeCancelWindowEndTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, DodgeCancelWindowEndEventTag, nullptr, true, true);
+	HitEventTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, HitEventTag, nullptr, false, true);
+	DodgeCancelWindowBeginTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, DodgeCancelWindowBeginEventTag, nullptr, false, true);
+	DodgeCancelWindowEndTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, DodgeCancelWindowEndEventTag, nullptr, false, true);
+	PrimaryAttackPressedTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, PrimaryAttackPressedEventTag, nullptr, false, true);
+	ComboInputWindowBeginTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, ComboInputWindowBeginEventTag, nullptr, false, true);
+	ComboInputWindowEndTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, ComboInputWindowEndEventTag, nullptr, false, true);
+	ComboBranchWindowBeginTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, ComboBranchWindowBeginEventTag, nullptr, false, true);
+	ComboBranchWindowEndTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, ComboBranchWindowEndEventTag, nullptr, false, true);
 
-	if (!MontageTask || !HitEventTask || !DodgeCancelWindowBeginTask || !DodgeCancelWindowEndTask)
+	if (!HitEventTask || !DodgeCancelWindowBeginTask || !DodgeCancelWindowEndTask || !PrimaryAttackPressedTask || !ComboInputWindowBeginTask
+		|| !ComboInputWindowEndTask || !ComboBranchWindowBeginTask || !ComboBranchWindowEndTask)
 	{
-		UE_LOG(LogPolyQuest, Warning, TEXT("Light attack activation aborted for '%s': failed to create an AbilityTask."), *GetNameSafe(AvatarActor));
+		UE_LOG(LogPolyQuest, Warning, TEXT("Light attack activation aborted for '%s': failed to create a GameplayEvent AbilityTask."), *GetNameSafe(AvatarActor));
 		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
 		return;
 	}
+
+	HitEventTask->EventReceived.AddDynamic(this, &ULightAttackAbility::OnHitEventReceived);
+	DodgeCancelWindowBeginTask->EventReceived.AddDynamic(this, &ULightAttackAbility::OnDodgeCancelWindowBegin);
+	DodgeCancelWindowEndTask->EventReceived.AddDynamic(this, &ULightAttackAbility::OnDodgeCancelWindowEnd);
+	PrimaryAttackPressedTask->EventReceived.AddDynamic(this, &ULightAttackAbility::OnPrimaryAttackPressed);
+	ComboInputWindowBeginTask->EventReceived.AddDynamic(this, &ULightAttackAbility::OnComboInputWindowBegin);
+	ComboInputWindowEndTask->EventReceived.AddDynamic(this, &ULightAttackAbility::OnComboInputWindowEnd);
+	ComboBranchWindowBeginTask->EventReceived.AddDynamic(this, &ULightAttackAbility::OnComboBranchWindowBegin);
+	ComboBranchWindowEndTask->EventReceived.AddDynamic(this, &ULightAttackAbility::OnComboBranchWindowEnd);
+
+	BoundAnimInstance = AnimInstance;
+	BoundAnimInstance->OnMontageEnded.RemoveDynamic(this, &ULightAttackAbility::OnActiveMontageEnded);
+	BoundAnimInstance->OnMontageEnded.AddDynamic(this, &ULightAttackAbility::OnActiveMontageEnded);
 
 	if (!CommitAbility(Handle, ActorInfo, ActivationInfo))
 	{
@@ -73,17 +108,20 @@ void ULightAttackAbility::ActivateAbility(
 		return;
 	}
 
-	MontageTask->OnCompleted.AddDynamic(this, &ULightAttackAbility::OnMontageCompleted);
-	MontageTask->OnInterrupted.AddDynamic(this, &ULightAttackAbility::OnMontageInterrupted);
-	MontageTask->OnCancelled.AddDynamic(this, &ULightAttackAbility::OnMontageCancelled);
-	HitEventTask->EventReceived.AddDynamic(this, &ULightAttackAbility::OnHitEventReceived);
-	DodgeCancelWindowBeginTask->EventReceived.AddDynamic(this, &ULightAttackAbility::OnDodgeCancelWindowBegin);
-	DodgeCancelWindowEndTask->EventReceived.AddDynamic(this, &ULightAttackAbility::OnDodgeCancelWindowEnd);
-
 	HitEventTask->ReadyForActivation();
 	DodgeCancelWindowBeginTask->ReadyForActivation();
 	DodgeCancelWindowEndTask->ReadyForActivation();
-	MontageTask->ReadyForActivation();
+	PrimaryAttackPressedTask->ReadyForActivation();
+	ComboInputWindowBeginTask->ReadyForActivation();
+	ComboInputWindowEndTask->ReadyForActivation();
+	ComboBranchWindowBeginTask->ReadyForActivation();
+	ComboBranchWindowEndTask->ReadyForActivation();
+
+	if (!StartComboEntry(0))
+	{
+		UE_LOG(LogPolyQuest, Warning, TEXT("Light attack activation aborted for '%s': failed to start ComboDefinition entry 0."), *GetNameSafe(AvatarActor));
+		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
+	}
 }
 
 void ULightAttackAbility::EndAbility(
@@ -100,6 +138,16 @@ void ULightAttackAbility::EndAbility(
 
 	bEndAbilityRequested = true;
 	SetDodgeCancelable(false);
+
+	if (BoundAnimInstance)
+	{
+		BoundAnimInstance->OnMontageEnded.RemoveDynamic(this, &ULightAttackAbility::OnActiveMontageEnded);
+		if (ActiveEntryMontage && BoundAnimInstance->Montage_IsActive(ActiveEntryMontage))
+		{
+			BoundAnimInstance->Montage_Stop(0.0f, ActiveEntryMontage);
+		}
+		BoundAnimInstance = nullptr;
+	}
 
 	if (MontageTask)
 	{
@@ -125,23 +173,137 @@ void ULightAttackAbility::EndAbility(
 		DodgeCancelWindowEndTask = nullptr;
 	}
 
+	if (PrimaryAttackPressedTask)
+	{
+		PrimaryAttackPressedTask->EndTask();
+		PrimaryAttackPressedTask = nullptr;
+	}
+
+	if (ComboInputWindowBeginTask)
+	{
+		ComboInputWindowBeginTask->EndTask();
+		ComboInputWindowBeginTask = nullptr;
+	}
+
+	if (ComboInputWindowEndTask)
+	{
+		ComboInputWindowEndTask->EndTask();
+		ComboInputWindowEndTask = nullptr;
+	}
+
+	if (ComboBranchWindowBeginTask)
+	{
+		ComboBranchWindowBeginTask->EndTask();
+		ComboBranchWindowBeginTask = nullptr;
+	}
+
+	if (ComboBranchWindowEndTask)
+	{
+		ComboBranchWindowEndTask->EndTask();
+		ComboBranchWindowEndTask = nullptr;
+	}
+
 	bHitEventConsumed = false;
+	bComboInputWindowOpen = false;
+	bComboBranchWindowOpen = false;
+	bContinuationBuffered = false;
+	bComboTransitionInProgress = false;
+	ActiveEntryIndex = INDEX_NONE;
+	ActiveEntryMontage = nullptr;
+
 	Super::EndAbility(Handle, ActorInfo, ActivationInfo, bReplicateEndAbility, bWasCancelled);
 }
 
-void ULightAttackAbility::OnMontageCompleted()
+void ULightAttackAbility::OnActiveMontageEnded(UAnimMontage* Montage, bool bInterrupted)
 {
-	EndFromMontage(false);
+	if (bEndAbilityRequested || Montage != ActiveEntryMontage.Get())
+	{
+		return;
+	}
+
+	EndFromMontage(bInterrupted);
 }
 
-void ULightAttackAbility::OnMontageInterrupted()
+void ULightAttackAbility::OnHitEventReceived(FGameplayEventData Payload)
 {
-	EndFromMontage(true);
+	if (!IsGameplayEventFromActiveMontage(Payload) || bHitEventConsumed)
+	{
+		return;
+	}
+
+	bHitEventConsumed = true;
+	PerformHitTrace();
 }
 
-void ULightAttackAbility::OnMontageCancelled()
+void ULightAttackAbility::OnDodgeCancelWindowBegin(FGameplayEventData Payload)
 {
-	EndFromMontage(true);
+	if (IsGameplayEventFromActiveMontage(Payload))
+	{
+		SetDodgeCancelable(true);
+	}
+}
+
+void ULightAttackAbility::OnDodgeCancelWindowEnd(FGameplayEventData Payload)
+{
+	if (IsGameplayEventFromActiveMontage(Payload))
+	{
+		SetDodgeCancelable(false);
+	}
+}
+
+void ULightAttackAbility::OnPrimaryAttackPressed(FGameplayEventData Payload)
+{
+	if (!IsPrimaryAttackInputEvent(Payload) || bComboTransitionInProgress || !ComboDefinition || ActiveEntryIndex == INDEX_NONE
+		|| ActiveEntryIndex + 1 >= ComboDefinition->GetEntryCount() || (!bComboInputWindowOpen && !bComboBranchWindowOpen) || bContinuationBuffered)
+	{
+		return;
+	}
+
+	bContinuationBuffered = true;
+	UE_LOG(LogPolyQuest, Verbose, TEXT("LightAttack.Combo: buffered primary input for entry %d."), ActiveEntryIndex + 1);
+
+	if (bComboBranchWindowOpen)
+	{
+		TryConsumeBufferedComboContinuation();
+	}
+}
+
+void ULightAttackAbility::OnComboInputWindowBegin(FGameplayEventData Payload)
+{
+	if (IsGameplayEventFromActiveMontage(Payload))
+	{
+		bComboInputWindowOpen = true;
+	}
+}
+
+void ULightAttackAbility::OnComboInputWindowEnd(FGameplayEventData Payload)
+{
+	if (IsGameplayEventFromActiveMontage(Payload))
+	{
+		bComboInputWindowOpen = false;
+	}
+}
+
+void ULightAttackAbility::OnComboBranchWindowBegin(FGameplayEventData Payload)
+{
+	if (!IsGameplayEventFromActiveMontage(Payload))
+	{
+		return;
+	}
+
+	bComboBranchWindowOpen = true;
+	TryConsumeBufferedComboContinuation();
+}
+
+void ULightAttackAbility::OnComboBranchWindowEnd(FGameplayEventData Payload)
+{
+	if (!IsGameplayEventFromActiveMontage(Payload))
+	{
+		return;
+	}
+
+	bComboBranchWindowOpen = false;
+	bContinuationBuffered = false;
 }
 
 void ULightAttackAbility::EndFromMontage(bool bWasCancelled)
@@ -152,28 +314,133 @@ void ULightAttackAbility::EndFromMontage(bool bWasCancelled)
 	}
 }
 
-void ULightAttackAbility::OnHitEventReceived(FGameplayEventData)
+bool ULightAttackAbility::ValidateComboDefinition() const
 {
-	if (bEndAbilityRequested || bHitEventConsumed)
+	if (!ComboDefinition || ComboDefinition->GetEntryCount() <= 0)
+	{
+		UE_LOG(LogPolyQuest, Warning, TEXT("Light attack ComboDefinition is missing or empty."));
+		return false;
+	}
+
+	TSet<const UAnimMontage*> SeenMontages;
+	for (int32 EntryIndex = 0; EntryIndex < ComboDefinition->GetEntryCount(); ++EntryIndex)
+	{
+		const FComboChainEntry* Entry = ComboDefinition->GetEntry(EntryIndex);
+		const UAnimMontage* EntryMontage = Entry ? Entry->Montage.Get() : nullptr;
+		if (!EntryMontage)
+		{
+			UE_LOG(LogPolyQuest, Warning, TEXT("Light attack ComboDefinition '%s' entry %d has no Montage."), *GetNameSafe(ComboDefinition), EntryIndex);
+			return false;
+		}
+
+		if (SeenMontages.Contains(EntryMontage))
+		{
+			UE_LOG(LogPolyQuest, Warning, TEXT("Light attack ComboDefinition '%s' reuses Montage '%s'. Each entry must have a unique complete Montage."), *GetNameSafe(ComboDefinition), *GetNameSafe(EntryMontage));
+			return false;
+		}
+
+		SeenMontages.Add(EntryMontage);
+	}
+
+	return true;
+}
+
+bool ULightAttackAbility::StartComboEntry(int32 EntryIndex)
+{
+	const FComboChainEntry* Entry = ComboDefinition ? ComboDefinition->GetEntry(EntryIndex) : nullptr;
+	UAnimMontage* EntryMontage = Entry ? Entry->Montage.Get() : nullptr;
+	if (bEndAbilityRequested || !BoundAnimInstance || !EntryMontage)
+	{
+		return false;
+	}
+
+	UAbilityTask_PlayMontageAndWait* NewMontageTask = UAbilityTask_PlayMontageAndWait::CreatePlayMontageAndWaitProxy(this, NAME_None, EntryMontage);
+	if (!NewMontageTask)
+	{
+		return false;
+	}
+
+	const int32 PreviousEntryIndex = ActiveEntryIndex;
+	UAnimMontage* PreviousEntryMontage = ActiveEntryMontage.Get();
+	UAbilityTask_PlayMontageAndWait* PreviousMontageTask = MontageTask.Get();
+
+	// Set the new identity before playback interrupts the prior montage.
+	SetDodgeCancelable(false);
+	bHitEventConsumed = false;
+	bComboInputWindowOpen = false;
+	bComboBranchWindowOpen = false;
+	bContinuationBuffered = false;
+	ActiveEntryIndex = EntryIndex;
+	ActiveEntryMontage = EntryMontage;
+	MontageTask = NewMontageTask;
+	NewMontageTask->ReadyForActivation();
+
+	if (!BoundAnimInstance->Montage_IsActive(EntryMontage))
+	{
+		NewMontageTask->EndTask();
+		MontageTask = PreviousMontageTask;
+		ActiveEntryIndex = PreviousEntryIndex;
+		ActiveEntryMontage = PreviousEntryMontage;
+		return false;
+	}
+
+	UE_LOG(LogPolyQuest, Verbose, TEXT("LightAttack.Combo: started entry %d with montage '%s'."), EntryIndex + 1, *GetNameSafe(EntryMontage));
+	return true;
+}
+
+bool ULightAttackAbility::IsGameplayEventFromActiveMontage(const FGameplayEventData& Payload) const
+{
+	const AActor* AvatarActor = GetAvatarActorFromActorInfo();
+	return !bEndAbilityRequested && ActiveEntryMontage && AvatarActor && Payload.Instigator == AvatarActor && Payload.Target == AvatarActor
+		&& Payload.OptionalObject.Get() == ActiveEntryMontage.Get();
+}
+
+bool ULightAttackAbility::IsPrimaryAttackInputEvent(const FGameplayEventData& Payload) const
+{
+	const AActor* AvatarActor = GetAvatarActorFromActorInfo();
+	return !bEndAbilityRequested && AvatarActor && Payload.Instigator == AvatarActor && Payload.Target == AvatarActor
+		&& Payload.InstigatorTags.HasTagExact(PrimaryAttackInputTag);
+}
+
+void ULightAttackAbility::TryConsumeBufferedComboContinuation()
+{
+	if (bEndAbilityRequested || bComboTransitionInProgress || !bContinuationBuffered || !bComboBranchWindowOpen || !ComboDefinition
+		|| ActiveEntryIndex == INDEX_NONE)
 	{
 		return;
 	}
 
-	bHitEventConsumed = true;
-	PerformHitTrace();
-}
-
-void ULightAttackAbility::OnDodgeCancelWindowBegin(FGameplayEventData)
-{
-	if (!bEndAbilityRequested)
+	const int32 NextEntryIndex = ActiveEntryIndex + 1;
+	if (!ComboDefinition->GetEntry(NextEntryIndex))
 	{
-		SetDodgeCancelable(true);
+		bContinuationBuffered = false;
+		return;
 	}
-}
 
-void ULightAttackAbility::OnDodgeCancelWindowEnd(FGameplayEventData)
-{
-	SetDodgeCancelable(false);
+	bContinuationBuffered = false;
+	if (!CurrentActorInfo || !CheckCost(CurrentSpecHandle, CurrentActorInfo, nullptr))
+	{
+		UE_LOG(LogPolyQuest, Verbose, TEXT("LightAttack.Combo: entry %d was rejected because its Stamina cost cannot be paid."), NextEntryIndex + 1);
+		return;
+	}
+
+	bComboTransitionInProgress = true;
+	if (!CommitAbilityCost(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, nullptr))
+	{
+		bComboTransitionInProgress = false;
+		UE_LOG(LogPolyQuest, Warning, TEXT("LightAttack.Combo: failed to commit the Stamina cost for entry %d."), NextEntryIndex + 1);
+		return;
+	}
+
+	if (!StartComboEntry(NextEntryIndex))
+	{
+		bComboTransitionInProgress = false;
+		UE_LOG(LogPolyQuest, Warning, TEXT("LightAttack.Combo: failed to start entry %d after committing its cost."), NextEntryIndex + 1);
+		EndFromMontage(true);
+		return;
+	}
+
+	bComboTransitionInProgress = false;
 }
 
 void ULightAttackAbility::SetDodgeCancelable(bool bShouldBeCancelable)

@@ -13,6 +13,7 @@ Guidance for coding agents working in PolyQuest.
 ## Project And Build
 
 - PolyQuest is a Windows UE 5.8 C++ project. The runtime module is `PolyQuest`; use its module name and API macro rather than identifiers copied from the retired `Test` project.
+- 行为参考项目：`E:\GameDevelop\Test`。
 - PolyQuest originated from the UE 5.8 Third Person C++ template. The generated ThirdPerson and `Variant_Combat` / `Variant_Platforming` / `Variant_SideScrolling` closures were retired in TODO-00C; do not reintroduce them as PolyQuest gameplay architecture.
 - PolyQuest is a single-developer, single-player stylized action RPG being rebuilt from Test's validated combat ideas while replacing the runtime architecture with GAS and new assets. Reuse proven behavior contracts selectively, but do not copy the old Test FSM, Test save schema, or Marketplace content as a shortcut; GAS remains PolyQuest's runtime source of truth.
 - `PolyQuest.Build.cs` links `GameplayAbilities`, `GameplayTags`, and `GameplayTasks`. `ABaseCharacter` owns the single-player ASC and `UCharacterAttributeSet`; `Config/Tags/PolyQuestGameplayTags.ini` owns the project's Gameplay Tag taxonomy.
@@ -71,6 +72,7 @@ Reason: <concrete fit or reason not to delegate>
 - `plan.md` is the short-lived active-stage handoff. It contains the approved scope, source/assets/public contracts, execution order, validation, document impact, commit boundary, active feedback, and transient coordination detail.
 - Put an accepted future requirement into `ROADMAP.md` by prerequisite and player-loop value. If a new fact materially changes an active plan, pause, explain the changed assumption, update the plan or roadmap deliberately, and obtain approval before proceeding.
 - After approved validation and review, move a completed roadmap stage to Done Milestones, mark it `[x]`, retain only its compact durable result, and clear completed working detail from `plan.md` according to its header.
+- Before documentation approval or commit, perform a mandatory debt-handoff check: compare the active plan's review and validation record with `ROADMAP.md`. Every unresolved accepted risk, unpassed validation gate, or approved follow-up must have one canonical Roadmap entry, either under its owning milestone or `Known Risks And Validation Debt`, with current evidence and a concrete closure trigger. Saying only that something is "deferred" is insufficient. `plan.md` may retain a pointer, while `ARCHITECTURE.md` must not hold future TODOs or mutable tuning work.
 - Record a non-blocking risk only when it names the affected boundary, current evidence, player/technical impact, resolution condition, and owning stage or release gate. Blockers are fixed in the current stage; optional ideas remain Recommendations with adoption conditions.
 
 ## Tooling And Editor Boundaries
