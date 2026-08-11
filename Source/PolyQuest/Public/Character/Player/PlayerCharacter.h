@@ -7,6 +7,7 @@
 #include "PlayerCharacter.generated.h"
 
 class UCameraComponent;
+class UGameplayEffect;
 class UInputAction;
 class UInputComponent;
 class USpringArmComponent;
@@ -49,10 +50,20 @@ protected:
 	UPROPERTY(EditAnywhere, Category="Input")
 	UInputAction* LightAttackAction;
 
+	/** Input action used to request the Dodge ability. */
+	UPROPERTY(EditAnywhere, Category="Input")
+	UInputAction* DodgeAction;
+
+	/** Continuous periodic GameplayEffect that recovers Stamina when its tag requirements allow it. */
+	UPROPERTY(EditDefaultsOnly, Category="GAS|Stamina")
+	TSubclassOf<UGameplayEffect> StaminaRegenGameplayEffectClass;
+
 public:
 	APlayerCharacter();
 
 protected:
+	virtual void BeginPlay() override;
+
 	/** Initialize Enhanced Input bindings for the player pawn. */
 	virtual void SetupPlayerInputComponent(UInputComponent* PlayerInputComponent) override;
 
@@ -64,6 +75,12 @@ protected:
 
 	/** Request the light attack ability through the character ASC. */
 	void LightAttack(const FInputActionValue& Value);
+
+	/** Request the Dodge ability through the character ASC. */
+	void Dodge(const FInputActionValue& Value);
+
+	/** Clears cached directional input after movement input ends. */
+	void ClearMoveInput(const FInputActionValue& Value);
 
 public:
 	/** Handles movement input from controls or UI interfaces. */
@@ -82,9 +99,18 @@ public:
 	UFUNCTION(BlueprintCallable, Category="Input")
 	virtual void DoJumpEnd();
 
+	/** Returns the current camera-relative Dodge direction, defaulting to camera forward. */
+	FVector GetDodgeWorldDirection() const;
+
 	/** Returns the player camera boom. */
 	FORCEINLINE USpringArmComponent* GetCameraBoom() const { return CameraBoom; }
 
 	/** Returns the player follow camera. */
 	FORCEINLINE UCameraComponent* GetFollowCamera() const { return FollowCamera; }
+
+private:
+	bool IsDodging() const;
+
+	FVector2D CurrentMoveInput = FVector2D::ZeroVector;
+	bool bStaminaRegenEffectApplied = false;
 };

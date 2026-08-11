@@ -13,6 +13,7 @@ The previous `Test` project remains the FSM behavior reference and validation ba
 - `GameplayAbilities` is available in the editor; `TODO-00B` added the game-module GAS dependencies, established the player ASC/AttributeSet contract, and registered the initial project Gameplay Tags.
 - `TODO-01A` has completed its native C++ lifecycle and a local PIE fixture. Its selected player mesh/Skeleton/material closure and animation sequences are stable source assets; its GameplayAbility, GameplayEffects, Montage, AnimBP, `BP_Player`, and input assets remain deliberately uncommitted authoring WIP.
 - `TODO-00C` replaced the active template route with `/Game/Maps/Scene01`, a desktop-only product Controller route, and a closed ThirdPerson/Variant retirement. The user recompiled `PolyQuestEditor` and replayed the existing PIE validation path after cleanup.
+- `TODO-01C` has completed the first local GAS Dodge, Stamina exhaustion/recovery, attack cancellation, and NotifyState-timed invulnerability loop. Its authored GA/GE, Montage, AnimBP, Blueprint, input, retargeting, map, and test-fixture assets remain deliberately local WIP.
 - External source packages remain under `Content/Assets/`. Imported content is not a production integration merely because it is present locally; skeleton, weapon, socket, animation, and presentation decisions still require their named stage validation.
 
 ## Test-To-PolyQuest Migration Contract Inventory
@@ -63,14 +64,15 @@ The old `Test` project is evidence for player-facing behavior, not a source tree
   - The user verified in Scene01 PIE that the sword remains attached, the Montage drives Actor movement cleanly, a single attack spends Stamina and damages once, repeated activation is blocked, no-target recovery succeeds, and movement/look/jump do not regress. The retargeted Sequence has no hit Notify; the Montage has one `Light Attack Hit` on `DefaultGroup.DefaultSlot`.
   - No C++ gameplay contract changed. Socket, Blueprint, AnimBP, Montage, GA/GE, input, and retargeting authoring assets remain local WIP; the separate stable asset subset does not recreate the playable fixture from a clean checkout.
   - Main normal review and an adversarial fallback found no source-level blocker. The requested fresh independent Reviewer could not start because the configured service returned HTTP 503.
+- [x] `TODO-01C: Dodge, Stamina, And Action Interruption v1`
+  - Added `UStaminaActionAbility`, Stamina clamping/exhaustion ownership, a ground-only camera-relative `UDodgeAbility`, attack recovery cancellation, NotifyState-timed invulnerability, and unified ability cleanup for Montage tasks and temporary effects.
+  - The user confirmed `PolyQuestEditor` compilation and Scene01 PIE validation for Root Motion Dodge direction, positive-Stamina overdraft to zero, exhaustion/recovery, repeated input blocking, movement/jump lock with camera control, recovery-only attack cancellation, invulnerability timing, teardown cleanup, and the repaired no-delayed-jump regression.
+  - Main normal review found and repaired a latched Jump release during Dodge. Main adversarial fallback found no further source-level blocker. The requested fresh `gpt-5.6-luna / xhigh` Reviewer returned HTTP 503, so no independent-review result is claimed.
+  - GA/GE, Montage, AnimBP, Blueprint, input, retargeting, map, and verification assets remain local mutable WIP and are not a clean-checkout fixture.
 
 ## Milestones
 
 ### Player Combat Vertical Slice
-
-- [ ] `TODO-01C: Dodge, Stamina, And Action Interruption v1`
-  - Establish tag/effect-based action blocking, cancellation, stamina cost, deliberate overdraft/exhaustion policy, dodge direction, invulnerability timing, and teardown.
-  - The first action-cancellation contract must work before attacks expose a recovery cancel window.
 
 - [ ] `TODO-01C1: Combat Input Intent Routing And Hold/Release v1`
   - Establish one shared Gameplay Mapping Context: `PrimaryAction`, `Aim`, and ability-slot input express player intent without selecting a weapon-specific ability in the input layer.

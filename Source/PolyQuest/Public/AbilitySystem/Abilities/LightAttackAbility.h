@@ -1,7 +1,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "Abilities/GameplayAbility.h"
+#include "AbilitySystem/Abilities/StaminaActionAbility.h"
 #include "Abilities/GameplayAbilityTypes.h"
 #include "GameplayTagContainer.h"
 #include "LightAttackAbility.generated.h"
@@ -12,7 +12,7 @@ class UAnimMontage;
 class UGameplayEffect;
 
 UCLASS()
-class POLYQUEST_API ULightAttackAbility : public UGameplayAbility
+class POLYQUEST_API ULightAttackAbility : public UStaminaActionAbility
 {
 	GENERATED_BODY()
 
@@ -58,7 +58,18 @@ private:
 	UPROPERTY(Transient)
 	TObjectPtr<UAbilityTask_WaitGameplayEvent> HitEventTask;
 
+	UPROPERTY(Transient)
+	TObjectPtr<UAbilityTask_WaitGameplayEvent> DodgeCancelWindowBeginTask;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UAbilityTask_WaitGameplayEvent> DodgeCancelWindowEndTask;
+
+	FGameplayTag DodgeCancelWindowBeginEventTag;
+	FGameplayTag DodgeCancelWindowEndEventTag;
+	FGameplayTag DodgeCancelableStateTag;
+
 	bool bHitEventConsumed = false;
+	bool bDodgeCancelable = false;
 	bool bEndAbilityRequested = false;
 
 	UFUNCTION()
@@ -73,6 +84,13 @@ private:
 	UFUNCTION()
 	void OnHitEventReceived(FGameplayEventData Payload);
 
+	UFUNCTION()
+	void OnDodgeCancelWindowBegin(FGameplayEventData Payload);
+
+	UFUNCTION()
+	void OnDodgeCancelWindowEnd(FGameplayEventData Payload);
+
 	void EndFromMontage(bool bWasCancelled);
 	void PerformHitTrace();
+	void SetDodgeCancelable(bool bShouldBeCancelable);
 };

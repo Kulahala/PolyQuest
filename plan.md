@@ -12,11 +12,11 @@
 
 ## No Active Stage
 
-`TODO-01B: First Stylized Player Asset Integration v1` is closed.
+`TODO-01C: Dodge, Stamina, And Action Interruption v1` is closed.
 
-- User-confirmed Scene01 PIE evidence covers stable sword attachment, root-motion Actor advance, one Stamina cost, one target hit, blocked repeated activation, no-target recovery, and movement/look/jump regression checks.
-- Editor readback confirms `ABP_Player_Dungeon` uses `Root Motion from Montages Only`; `AM_Light_Attack01_Sword` uses `DefaultGroup.DefaultSlot` with one `Light Attack Hit`; the retargeted Sequence has no Notify.
-- Main completed normal review and an adversarial fallback with no source-level blocker. The requested fresh `gpt-5.6-luna / xhigh` Reviewer was unavailable before analysis because the service returned HTTP 503; no independent review result is claimed.
-- The user explicitly deferred the Reference Viewer dependency-closure audit. Only direct stable assets are eligible for this commit; mutable authoring assets remain local WIP, and the committed subset is not a clean-checkout fixture.
+- User-confirmed Scene01 PIE evidence covers directional Root Motion Dodge, positive-Stamina overdraft to zero, exhaustion/recovery, repeated-input blocking, movement/jump lock with camera control, recovery-only attack cancellation, NotifyState-timed invulnerability, teardown cleanup, and the no-delayed-jump repair regression.
+- Main normal review repaired the latched Jump release path. The Main delta review confirmed the completed input binding reaches unconditional `StopJumping()` and `git diff --check` passes.
+- The requested fresh `gpt-5.6-luna / xhigh` Reviewer was unavailable because the provider returned HTTP 503. Main adversarial review is recorded as a fallback, not independent evidence.
+- Mutable GA/GE, Montage, AnimBP, Blueprint, input, retargeting, map, and verification assets remain local WIP and are excluded from the scoped commit.
 
-Choose the next active stage from `ROADMAP.md` and record its own scope, evidence gates, delegation decision, and commit boundary here.
+Choose the next active stage from `ROADMAP.md` and record its scope, evidence gates, delegation decision, and commit boundary here.

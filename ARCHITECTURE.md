@@ -16,6 +16,8 @@ The live UE 5.8 editor resolves the GameplayAbilities plugin, and the module lin
 
 `TODO-01A` adds the first locally compiled and PIE-verified player ability path: LMB requests a native light-attack ability, the ability commits an authored stamina cost, a Montage Notify emits a semantic Gameplay Event, one pawn sweep finds a target character, and an authored damage GameplayEffect is applied through the target ASC. The local fixture has passed the user-owned recovery, repeated-input, cost, no-target, and target-damage checks.
 
+`TODO-01C` extends that local fixture with a ground-only, camera-relative Root Motion Dodge. A shared Stamina-action lifecycle permits a positive remainder to overdraw to zero, gates later actions through exhaustion, delays periodic recovery after committed actions, and uses semantic NotifyState events for attack cancellation and Dodge invulnerability timing.
+
 This commit intentionally keeps mutable authoring assets out of version control: the GameplayAbility Blueprint, GameplayEffects, Montage, AnimBP, `BP_Player`, and input assets remain local development WIP. Selected meshes, Skeleton/material dependencies, and animation sequences are a stable source-asset baseline, but this commit alone is not a clone-ready reproduction of the local PIE fixture.
 
 ## Product Entry And Template Retirement
@@ -34,6 +36,7 @@ The active player route is `BP_GameMode -> BP_Player -> APlayerCharacter -> ABas
 
 - `ABaseCharacter` owns one `UAbilitySystemComponent` and one `UCharacterAttributeSet` default subobject.
 - The AttributeSet is registered exactly once through `AddAttributeSetSubobject(...)` during character construction. Its current fields are `Health`, `MaxHealth`, `Stamina`, and `MaxStamina`, initialized to `100.0f`.
+- `UCharacterAttributeSet` clamps both current and base Stamina to `[0, MaxStamina]`. After a Stamina GameplayEffect executes, it adds the loose `State.Status.Exhausted` tag at zero and removes it after recovery; Attributes themselves remain the source of truth.
 - In the current single-player boundary, `OwnerActor == AvatarActor == ABaseCharacter`. `BeginPlay()` initializes actor info with `InitAbilityActorInfo(this, this)` so an unpossessed test target can receive a GameplayEffect. `PossessedBy()` initializes it again after the superclass possession path.
 - `StartupAbilities` is a Blueprint-configured list on `ABaseCharacter`. Authority grants each class during possession only when `FindAbilitySpecFromClass()` confirms it is not already present, so a repeated possession path cannot duplicate a spec.
 - `EndPlay()` calls `CancelAllAbilities()` before character teardown. This is the character-level teardown entry for active Montages, AbilityTasks, and owned ability tags.
@@ -44,6 +47,7 @@ The active player route is `BP_GameMode -> BP_Player -> APlayerCharacter -> ABas
 - `BP_GameMode` is the active default GameMode and selects `BP_Player` as the default Pawn and `BP_PlayerController` as the PlayerController.
 - `APolyQuestPlayerController` installs the Blueprint-authored desktop `DefaultMappingContexts` for local players; the current controller Blueprint supplies `IMC_Default` and `IMC_MouseLook`.
 - `APlayerCharacter` binds `LightAttackAction` on `Started`. Its handler only requests abilities tagged `Ability.Attack.Light` through `TryActivateAbilitiesByTag()`; it never plays a Montage, spends Stamina, traces, or mutates an Attribute directly.
+- `APlayerCharacter` binds `DodgeAction` on `Started` and only requests `Ability.Dodge`. It caches the latest movement input so Dodge can derive one camera-relative world direction, suppresses new translation and Jump starts while `State.Action.Dodging` is present, and keeps camera look available. Jump release always calls `StopJumping()` so a pre-Dodge UE jump request cannot remain latched after the roll.
 
 ### Light Attack Ability Lifecycle
 
@@ -52,7 +56,15 @@ The active player route is `BP_GameMode -> BP_Player -> APlayerCharacter -> ABas
 - After a successful commit, `UAbilityTask_PlayMontageAndWait` owns presentation lifetime and `UAbilityTask_WaitGameplayEvent` listens for the semantic hit event. `UAnimNotify_LightAttackHit` only sends that event from a mesh owner implementing `IAbilitySystemInterface`; it never traces or changes Attributes itself.
 - The first received hit event is consumed by a per-activation guard. The ability performs one forward sphere sweep on `ECC_Pawn`, ignores its avatar, selects the nearest other `ABaseCharacter`, creates the damage spec from the source ASC, and applies it to the target ASC. There is no team filter, weapon collision, multi-hit window, generic hit resolver, or direct `Health` write in this slice.
 - Natural Montage completion enters `EndAbility()` through `OnCompleted`. Interrupted, cancelled, character-teardown, and configuration-failure paths converge there as well; cleanup ends both tasks and prevents duplicate cleanup. Blend-out is not treated as natural completion, so the recovery tail is not cut short.
-- Future direct task-level `ExternalCancel()` callers must define whether they also stop the Montage and must still converge through ability cleanup. There is no current caller; this is a conditional cancellation-contract requirement for later Dodge, Stun, or explicit interruption work.
+- Future direct task-level `ExternalCancel()` callers must define whether they also stop the Montage and must still converge through ability cleanup. There is no current caller; this is a conditional cancellation-contract requirement for later Stun or explicit interruption work.
+
+### Stamina Actions And Dodge Lifecycle
+
+- `UStaminaActionAbility` is the narrow base for Stamina-consuming actions. It permits activation only while current Stamina is positive, allows the authored cost GameplayEffect to consume the remaining amount, and lets the AttributeSet clamp the result to zero. After a successfully committed action ends, it applies the authored regeneration-delay effect through the owner ASC.
+- `ULightAttackAbility` now derives from that base and listens for semantic Dodge-cancel window Begin/End events. It owns `State.Action.CanCancel.Dodge` only while its active Montage window permits an interruption, then removes that loose tag from every normal, cancelled, interrupted, and teardown path.
+- `UDodgeAbility` is `InstancedPerActor` and `ServerOnly` in the current single-player boundary. It requires grounded movement, rejects dead, stunned, exhausted, or already-Dodging states, and may interrupt a light attack only when the attack owns `State.Action.CanCancel.Dodge`. It validates its authored cost, recovery-delay, invulnerability effect, Montage, and tags before committing; only after commit does it cancel the eligible attack and begin the Root Motion Montage task.
+- The Dodge ability listens for semantic invulnerability Begin/End events and owns the active invulnerability-effect handle. Montage completion, interruption, cancellation, `EndPlay()`, or a late event all converge through `EndAbility()`, which ends tasks and removes that effect.
+- `UAnimNotifyState_ActionDodgeCancelWindow` and `UAnimNotifyState_DodgeInvulnerability` are separate reflected types in one combat-action-window source group. They require only an ASC-capable mesh owner and send Gameplay Events; they do not mutate Attributes, Gameplay Tags, or ability state directly.
 
 ### Stylized Player Presentation
 
@@ -65,7 +77,7 @@ The active player route is `BP_GameMode -> BP_Player -> APlayerCharacter -> ABas
 ### Gameplay Tags
 
 - Project tags are config-authored in `Config/Tags/PolyQuestGameplayTags.ini`; there is no native tag singleton or Blueprint tag library in this stage.
-- The approved leaf tags are `Ability.Attack.Light`, `Ability.Dodge`, `Event.Attack.Light.Hit`, `Input.Attack.Light`, `Input.Dodge`, `State.Action.Attacking`, `State.Action.Dodging`, `State.Status.Dead`, `State.Status.Stunned`, and `State.Status.Exhausted`.
+- The approved leaf tags are `Ability.Attack.Light`, `Ability.Dodge`, `Event.Attack.Light.Hit`, `Event.Action.CancelWindow.Dodge.Begin`, `Event.Action.CancelWindow.Dodge.End`, `Event.Dodge.Invulnerability.Begin`, `Event.Dodge.Invulnerability.End`, `Input.Attack.Light`, `Input.Dodge`, `State.Action.Attacking`, `State.Action.CanCancel.Dodge`, `State.Action.Dodging`, `State.Resource.Stamina.RegenBlocked`, `State.Status.Dead`, `State.Status.Exhausted`, `State.Status.Invulnerable`, and `State.Status.Stunned`.
 - Plugin and native test tag sources remain engine/plugin-owned and are not part of the PolyQuest taxonomy.
 
 ## Not Yet Established
@@ -73,8 +85,8 @@ The active player route is `BP_GameMode -> BP_Player -> APlayerCharacter -> ABas
 The following remain future stage contracts:
 
 - Enemy ASC topology and StateTree-to-GAS intent requests.
-- Combo, charge, sprint, dodge, player death, GameplayCues, and generic hit-resolution contracts.
+- Combo, charge, sprint, player death, GameplayCues, and generic hit-resolution contracts.
 - Team filtering, weapon collision, multi-hit windows, persistence ownership, and multiplayer/PlayerState ownership.
-- Stylized combat weapon, Skeleton, socket, animation, and Motion Warping topology.
+- Equipment/loadout, additional weapon, Skeleton, animation, and Motion Warping topology.
 
 These decisions belong to their owning roadmap stages; they are not implied by the TODO-00B foundation.

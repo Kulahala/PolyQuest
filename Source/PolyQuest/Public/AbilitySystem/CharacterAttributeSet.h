@@ -19,6 +19,10 @@ class POLYQUEST_API UCharacterAttributeSet : public UAttributeSet
 public:
 	UCharacterAttributeSet();
 
+	virtual void PreAttributeChange(const FGameplayAttribute& Attribute, float& NewValue) override;
+	virtual void PreAttributeBaseChange(const FGameplayAttribute& Attribute, float& NewValue) const override;
+	virtual void PostGameplayEffectExecute(const FGameplayEffectModCallbackData& Data) override;
+
 	UPROPERTY(BlueprintReadOnly, Category = "Attributes")
 	FGameplayAttributeData Health;
 	PQ_ATTRIBUTE_ACCESSORS(UCharacterAttributeSet, Health)
