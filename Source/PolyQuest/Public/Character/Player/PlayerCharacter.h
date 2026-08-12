@@ -147,7 +147,8 @@ private:
 	void RequestAbilityForInputIntent(const FGameplayTag& InputIntentTag);
 	FGameplayTag GetAbilitySlotInputIntentTag(int32 SlotIndex) const;
 
-	bool IsDodging() const;
+	bool IsMovementInputBlocked() const;
+	bool IsJumpInputBlocked() const;
 
 	UPROPERTY(Transient)
 	TObjectPtr<UCombatLoadoutDefinition> ActiveCombatLoadout;
@@ -160,5 +161,7 @@ private:
 	FGameplayTag InputPressedEventTag;
 	FGameplayTag InputReleasedEventTag;
 	FGameplayTag InputCanceledEventTag;
+	FGameplayTag MovementInputBlockedTag;
+	FGameplayTag JumpInputBlockedTag;
 	bool bStaminaRegenEffectApplied = false;
 };

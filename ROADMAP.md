@@ -14,6 +14,7 @@ The previous `Test` project remains the FSM behavior reference and validation ba
 - `TODO-01A` has completed its native C++ lifecycle and a local PIE fixture. Its selected player mesh/Skeleton/material closure and animation sequences are stable source assets; its GameplayAbility, GameplayEffects, Montage, AnimBP, `BP_Player`, and input assets remain deliberately uncommitted authoring WIP.
 - `TODO-00C` replaced the active template route with `/Game/Maps/Scene01`, a desktop-only product Controller route, and a closed ThirdPerson/Variant retirement. The user recompiled `PolyQuestEditor` and replayed the existing PIE validation path after cleanup.
 - `TODO-01C` has completed the first local GAS Dodge, Stamina exhaustion/recovery, attack cancellation, and NotifyState-timed invulnerability loop. Its authored GA/GE, Montage, AnimBP, Blueprint, input, retargeting, map, and test-fixture assets remain deliberately local WIP.
+- `TODO-01E` has completed the native Primary short/hold arbitration and Charged Attack lifecycle. Its authored GA/GE, Montage, retargeted Sequence, Blueprint, Loadout, and input assets remain deliberately local WIP.
 - External source packages remain under `Content/Assets/`. Imported content is not a production integration merely because it is present locally; skeleton, weapon, socket, animation, and presentation decisions still require their named stage validation.
 
 ## Test-To-PolyQuest Migration Contract Inventory
@@ -28,7 +29,8 @@ The old `Test` project is evidence for player-facing behavior, not a source tree
 | One LMB pre-input during `ComboWindow`; early and late continuation during `ComboBranchWindow` | The active light-attack ability owns one continuation buffer. Notify states emit semantic begin/end events only; there is no global input buffer. | `TODO-01D` |
 | Recovery `CancelWindow` permits Dodge, Parry, Block, or Potion only after each action's own preflight | A scoped cancellation opportunity exposed by the active attack ability. Higher-priority actions remain immediate ability requests, not buffered actions. | `TODO-01C`, `TODO-01D`, `TODO-02D`, `TODO-03B` |
 | Weapon-collision notify state, swept trace, team filtering, one-hit protection, and centralized hit resolution | A single GAS damage path driven by semantic attack timing and a validated hit resolver. Animation timing never directly owns health or poise mutation. | `TODO-01A`, `TODO-02B` |
-| Sprint attack, hold-to-charge, release attack, stamina exhaustion, and interruption cleanup | Separate player abilities with explicit input priority and effect/tag lifecycle; do not fold them into the linear combo asset. | `TODO-01C`, `TODO-01E` |
+| Hold-to-charge, release attack, stamina exhaustion, and interruption cleanup | A dedicated charged-attack ability consumes the existing hold/release intent after Combo continuation arbitration; do not fold it into the linear combo asset. | `TODO-01C`, `TODO-01E` |
+| Sprint state and Sprint Attack | Establish and validate a real Sprint movement/input/stamina contract before a Sprint Attack may consume it. | `TODO-01F` |
 | Lock-on targeting, target switching, camera/facing ownership, and free-run exception | A focused target-lock and camera component boundary that consumes valid enemy targets but does not duplicate GAS combat state. | `TODO-02C` |
 | Enemy attack-entry DataAssets, poise/stance break, hit/death safety, melee/ranged delivery | StateTree selects high-level intent; enemy GameplayAbilities execute attacks and GameplayEffects own combat mutation. | `TODO-02A`, `TODO-02B`, `TODO-02E` |
 | Checkpoint, item ownership, transient Gold, fixed rewards, clear persistence, fog gate, and one-time defeat behavior | New PolyQuest persistence contracts with new stable IDs and validation fixtures. No old SaveGame schema or identifiers transfer. | `TODO-03A` through `TODO-04A` |
@@ -71,7 +73,7 @@ The old `Test` project is evidence for player-facing behavior, not a source tree
   - GA/GE, Montage, AnimBP, Blueprint, input, retargeting, map, and verification assets remain local mutable WIP and are not a clean-checkout fixture.
 - [x] `TODO-01C1: Combat Input Intent Routing And Hold/Release v1`
   - Added one native `UCombatLoadoutDefinition` route table and unified `PrimaryAttack`, Aim, and direct Ability Slot input handling. A `Started` event publishes the physical `Input.*` intent before resolving the active Loadout to a GAS Ability Tag; release and cancellation publish distinct events and clear held state without launching another Ability.
-  - The production local `DA_CombatLoadout_StraightSword` currently routes only `Input.PrimaryAttack -> Ability.Attack.Light`; the user confirmed the Scene01 PIE route and a temporary Slot 1 direct-activation fixture. Aim and unconfigured production slots remain intentional no-ops. Keyboard/mouse is the accepted validation scope; controller evidence is tracked under `Known Risks And Validation Debt`.
+  - The production local `DA_CombatLoadout_StraightSword` originally routed only `Input.PrimaryAttack -> Ability.Attack.Light`; `TODO-01E` now routes it to `Ability.Attack.Primary` for short/hold arbitration. Aim and unconfigured production slots remain intentional no-ops. Keyboard/mouse is the accepted validation scope; controller evidence is tracked under `Known Risks And Validation Debt`.
   - Removed the retired `IA_Attack_Light` route and config Tag after a scoped Editor/source/asset audit. `Event.Input.*` is documented as active-Ability event delivery rather than a generic `AbilityTrigger` source. Main review found no remaining source blocker; the requested fresh `gpt-5.6-luna / xhigh` Reviewer could not start because the provider returned HTTP 503.
   - Input, Loadout, Blueprint, GA/GE, Montage, AnimBP, and map assets remain local mutable WIP and are excluded from the focused source/config/document commit.
 
@@ -81,13 +83,19 @@ The old `Test` project is evidence for player-facing behavior, not a source tree
   - The user compiled `PolyQuestEditor` and confirmed the authored Scene01 PIE combo route. Main normal review and a Main adversarial fallback found no confirmed P0-P2 source or semantic-event blocker; the requested fresh `gpt-5.6-luna / xhigh` Reviewer did not start because the provider returned HTTP 503, so no independent-review result is claimed.
   - Combo DataAsset, GA/GE, Montages, AnimBP, Blueprint, input, map, retargeting, and presentation assets remain local mutable WIP. The focused commit contains only native source, Gameplay Tag config, and documentation.
 
+- [x] `TODO-01E: Charged Attack v1`
+  - Added a no-cost `UPrimaryAttackAbility` that preserves Combo priority, then resolves a held `Input.PrimaryAttack`: a short normal release requests Light Attack, while a held release routes to Charged Attack. `Event.Attack.Charged.ReleaseHandoff` carries the original held duration when Released arrives before the `0.2 s` delay callback, so the Character's cleared held-input cache cannot lose the Charged release.
+  - Added `UChargedAttackAbility` with HoldReady pause, release-time Stamina Cost, `1.0x` through `1.8x` SetByCaller damage, one identity-filtered hit, Root Motion resume from the same playhead, and unified task/delegate/tag cleanup. Primary, Light, Charged, and Dodge use shared movement/jump input-block tags; Dodge cancels Primary during arbitration and Charged while it is charging, then returns to the authored recovery CancelWindow after release.
+  - The user confirmed `PolyQuestEditor` compilation and the authored Scene01 PIE route, including the repaired threshold timing behavior. Main normal review and Main adversarial review found no confirmed P0-P2 source blocker. The requested fresh `gpt-5.6-luna / xhigh` Reviewer did not start because the provider returned HTTP 503, so no independent-review result is claimed.
+  - GA/GE, Montage, Sequence, Blueprint, AnimBP, Loadout, input, map, and imported assets remain local mutable WIP. The focused commit contains only native source, Gameplay Tag config, and documentation.
+
 ## Milestones
 
 ### Player Combat Vertical Slice
 
-- [ ] `TODO-01E: Charged And Sprint Attack v1`
-  - Add hold-to-charge/release and sprint-attack abilities after the basic attack, stamina, cancellation, authored combo, and `TODO-01C1` input-intent boundaries are stable.
-  - Keep the proven intent order explicit: an eligible combo continuation owns LMB first; otherwise sprint and hold/charge rules decide the new attack. These attacks are not extra combo entries by default.
+- [ ] `TODO-01F: Sprint Foundation And Sprint Attack v1`
+  - Establish a real Sprint input, movement, Stamina, cancellation, and validation contract before adding one Sprint Attack that requires the active Sprint state. Do not infer Sprint from a transient movement-speed check at attack time.
+  - Keep Sprint Attack separate from Charged Attack and the linear Combo asset. Lock-on free-run behavior remains owned by `TODO-02C`, so this stage validates only the unlocked Sprint route and the explicit handoff points required for later lock-on work.
 
 ### First Enemy And Combat Targeting
 
@@ -186,6 +194,7 @@ The old `Test` project is evidence for player-facing behavior, not a source tree
 - `TODO-01B` intentionally skips the sword/sequence Reference Viewer dependency-closure audit by user decision. Its direct stable-asset commit may therefore omit material or Skeleton dependencies and must not be treated as a clean-checkout asset baseline; rerun the closure audit before promoting it as one.
 - `TODO-01C1` has accepted keyboard/mouse PIE evidence only. Right Shoulder and Left Trigger mapping behavior and physical controller operation are not verified controller support. Before presenting controller support, adding controller-specific UX, or producing a controller-facing build, read back the intended Mapping Context entries and pass focused hardware validation for every intended controller action; until then, do not claim gamepad support.
 - `TODO-01D` spends a continuation Cost before `UAbilityTask_PlayMontageAndWait` confirms that the successor Montage actually started. A rare playback-start failure after valid preflight can therefore consume Stamina and end the Ability without an automatic refund. The normal AnimInstance/Slot path has user PIE evidence, but failure injection is unverified. Before defining a final combat asset baseline or adding runtime playback-rate control, define the atomicity or refund semantics and add focused failure-injection coverage.
+- `TODO-01E` has manual threshold validation, including the repaired normal-release-before-delay route, but no deterministic same-frame input/timer injection test. Before changing input-event dispatch order, introducing prediction/networking, or relying on frame-exact charge thresholds, add a deterministic automated fixture or controlled logging harness that exercises both callback orders and verifies exactly one Light or Charged activation.
 
 ## Stage Completion Standard
 

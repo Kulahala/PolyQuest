@@ -13,3 +13,23 @@ public:
 	virtual void Notify(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, const FAnimNotifyEventReference& EventReference) override;
 	virtual FString GetNotifyName_Implementation() const override;
 };
+
+UCLASS()
+class POLYQUEST_API UAnimNotify_ChargedAttackHoldReady : public UAnimNotify
+{
+	GENERATED_BODY()
+
+public:
+	virtual void Notify(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, const FAnimNotifyEventReference& EventReference) override;
+	virtual FString GetNotifyName_Implementation() const override;
+};
+
+UCLASS()
+class POLYQUEST_API UAnimNotify_ChargedAttackHit : public UAnimNotify
+{
+	GENERATED_BODY()
+
+public:
+	virtual void Notify(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, const FAnimNotifyEventReference& EventReference) override;
+	virtual FString GetNotifyName_Implementation() const override;
+};

@@ -19,13 +19,18 @@ UDodgeAbility::UDodgeAbility()
 
 	AbilityTags.AddTag(FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Dodge")), false));
 	ActivationOwnedTags.AddTag(FGameplayTag::RequestGameplayTag(FName(TEXT("State.Action.Dodging")), false));
+	ActivationOwnedTags.AddTag(FGameplayTag::RequestGameplayTag(FName(TEXT("State.Input.Block.Movement")), false));
+	ActivationOwnedTags.AddTag(FGameplayTag::RequestGameplayTag(FName(TEXT("State.Input.Block.Jump")), false));
 	ActivationBlockedTags.AddTag(FGameplayTag::RequestGameplayTag(FName(TEXT("State.Action.Dodging")), false));
 	ActivationBlockedTags.AddTag(FGameplayTag::RequestGameplayTag(FName(TEXT("State.Status.Dead")), false));
 	ActivationBlockedTags.AddTag(FGameplayTag::RequestGameplayTag(FName(TEXT("State.Status.Exhausted")), false));
 	ActivationBlockedTags.AddTag(FGameplayTag::RequestGameplayTag(FName(TEXT("State.Status.Stunned")), false));
 
-	AttackAbilityTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Attack.Light")), false);
+	PrimaryAttackAbilityTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Attack.Primary")), false);
+	LightAttackAbilityTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Attack.Light")), false);
+	ChargedAttackAbilityTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Attack.Charged")), false);
 	AttackingStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Action.Attacking")), false);
+	ChargingStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Action.Charging")), false);
 	DodgeCancelableStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Action.CanCancel.Dodge")), false);
 	InvulnerabilityBeginEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Dodge.Invulnerability.Begin")), false);
 	InvulnerabilityEndEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Dodge.Invulnerability.End")), false);
@@ -53,7 +58,8 @@ bool UDodgeAbility::CanActivateAbility(
 
 	const bool bIsAttacking = AttackingStateTag.IsValid() && AbilitySystemComponent->HasMatchingGameplayTag(AttackingStateTag);
 	const bool bCanCancelAttack = DodgeCancelableStateTag.IsValid() && AbilitySystemComponent->HasMatchingGameplayTag(DodgeCancelableStateTag);
-	return !bIsAttacking || bCanCancelAttack;
+	const bool bIsCharging = ChargingStateTag.IsValid() && AbilitySystemComponent->HasMatchingGameplayTag(ChargingStateTag);
+	return !bIsAttacking || bCanCancelAttack || bIsCharging;
 }
 
 void UDodgeAbility::ActivateAbility(
@@ -72,8 +78,9 @@ void UDodgeAbility::ActivateAbility(
 	const FVector DodgeDirection = PlayerCharacter ? PlayerCharacter->GetDodgeWorldDirection() : FVector::ZeroVector;
 
 	if (!AbilitySystemComponent || !PlayerCharacter || !AnimInstance || !DodgeMontage || !CostGameplayEffectClass
-		|| !StaminaRegenDelayGameplayEffectClass || !InvulnerabilityGameplayEffectClass || !AttackAbilityTag.IsValid()
-		|| !AttackingStateTag.IsValid() || !DodgeCancelableStateTag.IsValid() || !InvulnerabilityBeginEventTag.IsValid() || !InvulnerabilityEndEventTag.IsValid())
+		|| !StaminaRegenDelayGameplayEffectClass || !InvulnerabilityGameplayEffectClass || !PrimaryAttackAbilityTag.IsValid()
+		|| !LightAttackAbilityTag.IsValid() || !ChargedAttackAbilityTag.IsValid() || !AttackingStateTag.IsValid()
+		|| !ChargingStateTag.IsValid() || !DodgeCancelableStateTag.IsValid() || !InvulnerabilityBeginEventTag.IsValid() || !InvulnerabilityEndEventTag.IsValid())
 	{
 		UE_LOG(LogPolyQuest, Warning, TEXT("Dodge activation aborted for '%s': ASC, player, AnimInstance, montage, cost, regeneration delay, invulnerability effect, and required tags are required."), *GetNameSafe(PlayerCharacter));
 		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
@@ -97,12 +104,16 @@ void UDodgeAbility::ActivateAbility(
 		return;
 	}
 
-	if (AbilitySystemComponent->HasMatchingGameplayTag(AttackingStateTag))
+	const bool bCanCancelAttack = AbilitySystemComponent->HasMatchingGameplayTag(DodgeCancelableStateTag);
+	const bool bWasCharging = AbilitySystemComponent->HasMatchingGameplayTag(ChargingStateTag);
+	FGameplayTagContainer AbilityTagsToCancel;
+	AbilityTagsToCancel.AddTag(PrimaryAttackAbilityTag);
+	if (bCanCancelAttack || bWasCharging)
 	{
-		FGameplayTagContainer AttackAbilityTags;
-		AttackAbilityTags.AddTag(AttackAbilityTag);
-		AbilitySystemComponent->CancelAbilities(&AttackAbilityTags, nullptr, this);
+		AbilityTagsToCancel.AddTag(LightAttackAbilityTag);
+		AbilityTagsToCancel.AddTag(ChargedAttackAbilityTag);
 	}
+	AbilitySystemComponent->CancelAbilities(&AbilityTagsToCancel, nullptr, this);
 
 	if (!DodgeDirection.IsNearlyZero())
 	{

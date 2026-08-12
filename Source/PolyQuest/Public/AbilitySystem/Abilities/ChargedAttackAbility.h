@@ -1,0 +1,154 @@
+#pragma once
+
+#include "CoreMinimal.h"
+#include "AbilitySystem/Abilities/StaminaActionAbility.h"
+#include "Abilities/GameplayAbilityTypes.h"
+#include "GameplayTagContainer.h"
+#include "ChargedAttackAbility.generated.h"
+
+class UAbilityTask_PlayMontageAndWait;
+class UAbilityTask_WaitGameplayEvent;
+class UAnimInstance;
+class UAnimMontage;
+class UGameplayEffect;
+
+/**
+ * Holds a root-motion attack at an authored pose, then releases one charged hit.
+ */
+UCLASS()
+class POLYQUEST_API UChargedAttackAbility : public UStaminaActionAbility
+{
+	GENERATED_BODY()
+
+public:
+	UChargedAttackAbility();
+
+	virtual bool CanActivateAbility(
+		const FGameplayAbilitySpecHandle Handle,
+		const FGameplayAbilityActorInfo* ActorInfo,
+		const FGameplayTagContainer* SourceTags = nullptr,
+		const FGameplayTagContainer* TargetTags = nullptr,
+		OUT FGameplayTagContainer* OptionalRelevantTags = nullptr) const override;
+
+	virtual bool ShouldAbilityRespondToEvent(
+		const FGameplayAbilityActorInfo* ActorInfo,
+		const FGameplayEventData* Payload) const override;
+
+	virtual void ActivateAbility(
+		const FGameplayAbilitySpecHandle Handle,
+		const FGameplayAbilityActorInfo* ActorInfo,
+		const FGameplayAbilityActivationInfo ActivationInfo,
+		const FGameplayEventData* TriggerEventData) override;
+
+	virtual void EndAbility(
+		const FGameplayAbilitySpecHandle Handle,
+		const FGameplayAbilityActorInfo* ActorInfo,
+		const FGameplayAbilityActivationInfo ActivationInfo,
+		bool bReplicateEndAbility,
+		bool bWasCancelled) override;
+
+protected:
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Charged Attack")
+	TObjectPtr<UAnimMontage> ChargedAttackMontage;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Charged Attack")
+	TSubclassOf<UGameplayEffect> DamageGameplayEffectClass;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Charged Attack", meta = (ClampMin = "0.0"))
+	float BaseDamage = 20.0f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Charged Attack|Charge", meta = (ClampMin = "0.0"))
+	float MinimumChargeDuration = 0.45f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Charged Attack|Charge", meta = (ClampMin = "0.0"))
+	float MaximumChargeDuration = 1.2f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Charged Attack|Charge", meta = (ClampMin = "1.0"))
+	float MaximumDamageMultiplier = 1.8f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Charged Attack|Trace", meta = (ClampMin = "0.0"))
+	float TraceRadius = 50.0f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Charged Attack|Trace")
+	float TraceHeightOffset = 0.0f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Charged Attack|Trace", meta = (ClampMin = "0.0"))
+	float TraceDistance = 150.0f;
+
+private:
+	UPROPERTY(Transient)
+	TObjectPtr<UAbilityTask_PlayMontageAndWait> MontageTask;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UAbilityTask_WaitGameplayEvent> HoldReadyTask;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UAbilityTask_WaitGameplayEvent> HitEventTask;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UAbilityTask_WaitGameplayEvent> InputReleasedTask;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UAbilityTask_WaitGameplayEvent> InputCanceledTask;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UAbilityTask_WaitGameplayEvent> DodgeCancelWindowBeginTask;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UAbilityTask_WaitGameplayEvent> DodgeCancelWindowEndTask;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UAnimInstance> BoundAnimInstance;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UAnimMontage> ActiveMontage;
+
+	FGameplayTag PrimaryAttackInputTag;
+	FGameplayTag InputReleasedEventTag;
+	FGameplayTag InputCanceledEventTag;
+	FGameplayTag ChargedReleaseHandoffEventTag;
+	FGameplayTag HoldReadyEventTag;
+	FGameplayTag HitEventTag;
+	FGameplayTag DodgeCancelWindowBeginEventTag;
+	FGameplayTag DodgeCancelWindowEndEventTag;
+	FGameplayTag DodgeCancelableStateTag;
+	FGameplayTag ChargingStateTag;
+	FGameplayTag DamageDataTag;
+	float DamageMultiplier = 1.0f;
+	bool bHitEventConsumed = false;
+	bool bDodgeCancelable = false;
+	bool bChargingStateApplied = false;
+	bool bMontagePausedAtHoldReady = false;
+	bool bReleaseStarted = false;
+	bool bEndAbilityRequested = false;
+
+	UFUNCTION()
+	void OnActiveMontageEnded(UAnimMontage* Montage, bool bInterrupted);
+
+	UFUNCTION()
+	void OnHoldReady(FGameplayEventData Payload);
+
+	UFUNCTION()
+	void OnHitEventReceived(FGameplayEventData Payload);
+
+	UFUNCTION()
+	void OnInputReleased(FGameplayEventData Payload);
+
+	UFUNCTION()
+	void OnInputCanceled(FGameplayEventData Payload);
+
+	UFUNCTION()
+	void OnDodgeCancelWindowBegin(FGameplayEventData Payload);
+
+	UFUNCTION()
+	void OnDodgeCancelWindowEnd(FGameplayEventData Payload);
+
+	void BeginRelease(float HeldDuration);
+	void EndFromMontage(bool bWasCancelled);
+	bool IsGameplayEventFromActiveMontage(const FGameplayEventData& Payload) const;
+	bool IsPrimaryAttackInputEvent(const FGameplayEventData& Payload) const;
+	bool IsChargedReleaseHandoffEvent(const FGameplayEventData* Payload, const AActor* AvatarActor) const;
+	void PerformHitTrace();
+	void SetCharging(bool bShouldCharge);
+	void SetDodgeCancelable(bool bShouldBeCancelable);
+};

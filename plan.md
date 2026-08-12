@@ -12,6 +12,6 @@
 
 ## No Active Stage
 
-`TODO-01D: Data-Driven Combo, Branch Window, And Recovery Cancel v1` is closed. Its durable runtime result is recorded under Done Milestones in `ROADMAP.md`; accepted presentation and playback-failure debt has its canonical record in `ROADMAP.md`.
+`TODO-01E: Charged Attack v1` is closed. Its stable runtime contract is recorded under Done Milestones in `ROADMAP.md` and `ARCHITECTURE.md`; its deterministic input/timer validation gap has a canonical entry in `ROADMAP.md`.
 
 Choose the next active stage from `ROADMAP.md` and record its scope, evidence gates, delegation decision, and commit boundary here.

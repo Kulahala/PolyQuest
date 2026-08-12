@@ -59,8 +59,11 @@ private:
 	UPROPERTY(Transient)
 	TObjectPtr<UAbilityTask_WaitGameplayEvent> InvulnerabilityEndTask;
 
-	FGameplayTag AttackAbilityTag;
+	FGameplayTag PrimaryAttackAbilityTag;
+	FGameplayTag LightAttackAbilityTag;
+	FGameplayTag ChargedAttackAbilityTag;
 	FGameplayTag AttackingStateTag;
+	FGameplayTag ChargingStateTag;
 	FGameplayTag DodgeCancelableStateTag;
 	FGameplayTag InvulnerabilityBeginEventTag;
 	FGameplayTag InvulnerabilityEndEventTag;

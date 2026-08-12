@@ -31,6 +31,8 @@ APlayerCharacter::APlayerCharacter()
 	InputPressedEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Input.Pressed")), false);
 	InputReleasedEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Input.Released")), false);
 	InputCanceledEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Input.Canceled")), false);
+	MovementInputBlockedTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Input.Block.Movement")), false);
+	JumpInputBlockedTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Input.Block.Jump")), false);
 
 	GetCapsuleComponent()->InitCapsuleSize(42.f, 96.0f);
 
@@ -163,7 +165,7 @@ void APlayerCharacter::Look(const FInputActionValue& Value)
 
 void APlayerCharacter::DoMove(float Right, float Forward)
 {
-	if (IsDodging())
+	if (IsMovementInputBlocked())
 	{
 		return;
 	}
@@ -192,7 +194,7 @@ void APlayerCharacter::DoLook(float Yaw, float Pitch)
 
 void APlayerCharacter::DoJumpStart()
 {
-	if (!IsDodging())
+	if (!IsJumpInputBlocked())
 	{
 		Jump();
 	}
@@ -390,9 +392,14 @@ FVector APlayerCharacter::GetDodgeWorldDirection() const
 	return DesiredDirection.IsNearlyZero() ? ForwardDirection : DesiredDirection.GetSafeNormal();
 }
 
-bool APlayerCharacter::IsDodging() const
+bool APlayerCharacter::IsMovementInputBlocked() const
 {
 	const UAbilitySystemComponent* CharacterASC = GetAbilitySystemComponent();
-	const FGameplayTag DodgingTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Action.Dodging")), false);
-	return CharacterASC && DodgingTag.IsValid() && CharacterASC->HasMatchingGameplayTag(DodgingTag);
+	return CharacterASC && MovementInputBlockedTag.IsValid() && CharacterASC->HasMatchingGameplayTag(MovementInputBlockedTag);
+}
+
+bool APlayerCharacter::IsJumpInputBlocked() const
+{
+	const UAbilitySystemComponent* CharacterASC = GetAbilitySystemComponent();
+	return CharacterASC && JumpInputBlockedTag.IsValid() && CharacterASC->HasMatchingGameplayTag(JumpInputBlockedTag);
 }
