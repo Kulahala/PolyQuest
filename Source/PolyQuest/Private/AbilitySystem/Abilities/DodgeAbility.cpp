@@ -71,6 +71,8 @@ void UDodgeAbility::ActivateAbility(
 {
 	bEndAbilityRequested = false;
 	InvulnerabilityEffectHandle.Invalidate();
+	BoundAnimInstance = nullptr;
+	ActiveMontage = nullptr;
 
 	UAbilitySystemComponent* AbilitySystemComponent = GetAbilitySystemComponentFromActorInfo();
 	APlayerCharacter* PlayerCharacter = Cast<APlayerCharacter>(GetAvatarActorFromActorInfo());
@@ -89,8 +91,8 @@ void UDodgeAbility::ActivateAbility(
 	}
 
 	MontageTask = UAbilityTask_PlayMontageAndWait::CreatePlayMontageAndWaitProxy(this, NAME_None, DodgeMontage);
-	InvulnerabilityBeginTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, InvulnerabilityBeginEventTag, nullptr, true, true);
-	InvulnerabilityEndTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, InvulnerabilityEndEventTag, nullptr, true, true);
+	InvulnerabilityBeginTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, InvulnerabilityBeginEventTag, nullptr, false, true);
+	InvulnerabilityEndTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, InvulnerabilityEndEventTag, nullptr, false, true);
 	if (!MontageTask || !InvulnerabilityBeginTask || !InvulnerabilityEndTask)
 	{
 		UE_LOG(LogPolyQuest, Warning, TEXT("Dodge activation aborted for '%s': failed to create an AbilityTask."), *GetNameSafe(PlayerCharacter));
@@ -104,6 +106,11 @@ void UDodgeAbility::ActivateAbility(
 		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
 		return;
 	}
+
+	BoundAnimInstance = AnimInstance;
+	ActiveMontage = DodgeMontage;
+	BoundAnimInstance->OnMontageEnded.RemoveDynamic(this, &UDodgeAbility::OnActiveMontageEnded);
+	BoundAnimInstance->OnMontageEnded.AddDynamic(this, &UDodgeAbility::OnActiveMontageEnded);
 
 	const bool bCanCancelAttack = AbilitySystemComponent->HasMatchingGameplayTag(DodgeCancelableStateTag);
 	const bool bWasCharging = AbilitySystemComponent->HasMatchingGameplayTag(ChargingStateTag);
@@ -122,15 +129,24 @@ void UDodgeAbility::ActivateAbility(
 		PlayerCharacter->SetActorRotation(DodgeDirection.Rotation());
 	}
 
-	MontageTask->OnCompleted.AddDynamic(this, &UDodgeAbility::OnMontageCompleted);
-	MontageTask->OnInterrupted.AddDynamic(this, &UDodgeAbility::OnMontageInterrupted);
-	MontageTask->OnCancelled.AddDynamic(this, &UDodgeAbility::OnMontageCancelled);
 	InvulnerabilityBeginTask->EventReceived.AddDynamic(this, &UDodgeAbility::OnInvulnerabilityBegin);
 	InvulnerabilityEndTask->EventReceived.AddDynamic(this, &UDodgeAbility::OnInvulnerabilityEnd);
 
 	InvulnerabilityBeginTask->ReadyForActivation();
 	InvulnerabilityEndTask->ReadyForActivation();
 	MontageTask->ReadyForActivation();
+
+	// Montage startup can synchronously invoke the bound end delegate and clear all transient state.
+	if (bEndAbilityRequested)
+	{
+		return;
+	}
+
+	if (!BoundAnimInstance || !ActiveMontage || !BoundAnimInstance->Montage_IsActive(ActiveMontage.Get()))
+	{
+		UE_LOG(LogPolyQuest, Warning, TEXT("Dodge activation aborted for '%s': montage '%s' did not start."), *GetNameSafe(PlayerCharacter), *GetNameSafe(DodgeMontage));
+		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
+	}
 }
 
 void UDodgeAbility::EndAbility(
@@ -147,6 +163,15 @@ void UDodgeAbility::EndAbility(
 
 	bEndAbilityRequested = true;
 	ClearInvulnerabilityEffect();
+	if (BoundAnimInstance)
+	{
+		BoundAnimInstance->OnMontageEnded.RemoveDynamic(this, &UDodgeAbility::OnActiveMontageEnded);
+		if (ActiveMontage && BoundAnimInstance->Montage_IsActive(ActiveMontage.Get()))
+		{
+			BoundAnimInstance->Montage_Stop(0.0f, ActiveMontage.Get());
+		}
+		BoundAnimInstance = nullptr;
+	}
 
 	if (MontageTask)
 	{
@@ -166,27 +191,24 @@ void UDodgeAbility::EndAbility(
 		InvulnerabilityEndTask = nullptr;
 	}
 
+	ActiveMontage = nullptr;
+
 	Super::EndAbility(Handle, ActorInfo, ActivationInfo, bReplicateEndAbility, bWasCancelled);
 }
 
-void UDodgeAbility::OnMontageCompleted()
+void UDodgeAbility::OnActiveMontageEnded(UAnimMontage* Montage, bool bInterrupted)
 {
-	EndFromMontage(false);
+	if (bEndAbilityRequested || Montage != ActiveMontage.Get())
+	{
+		return;
+	}
+
+	EndFromMontage(bInterrupted);
 }
 
-void UDodgeAbility::OnMontageInterrupted()
+void UDodgeAbility::OnInvulnerabilityBegin(FGameplayEventData Payload)
 {
-	EndFromMontage(true);
-}
-
-void UDodgeAbility::OnMontageCancelled()
-{
-	EndFromMontage(true);
-}
-
-void UDodgeAbility::OnInvulnerabilityBegin(FGameplayEventData)
-{
-	if (bEndAbilityRequested || InvulnerabilityEffectHandle.IsValid())
+	if (!IsGameplayEventFromActiveMontage(Payload) || InvulnerabilityEffectHandle.IsValid())
 	{
 		return;
 	}
@@ -211,9 +233,12 @@ void UDodgeAbility::OnInvulnerabilityBegin(FGameplayEventData)
 	}
 }
 
-void UDodgeAbility::OnInvulnerabilityEnd(FGameplayEventData)
+void UDodgeAbility::OnInvulnerabilityEnd(FGameplayEventData Payload)
 {
-	ClearInvulnerabilityEffect();
+	if (IsGameplayEventFromActiveMontage(Payload))
+	{
+		ClearInvulnerabilityEffect();
+	}
 }
 
 void UDodgeAbility::EndFromMontage(bool bWasCancelled)
@@ -237,4 +262,11 @@ void UDodgeAbility::ClearInvulnerabilityEffect()
 	}
 
 	InvulnerabilityEffectHandle.Invalidate();
+}
+
+bool UDodgeAbility::IsGameplayEventFromActiveMontage(const FGameplayEventData& Payload) const
+{
+	const AActor* AvatarActor = GetAvatarActorFromActorInfo();
+	return !bEndAbilityRequested && ActiveMontage && AvatarActor && Payload.Instigator == AvatarActor && Payload.Target == AvatarActor
+		&& Payload.OptionalObject.Get() == ActiveMontage.Get();
 }

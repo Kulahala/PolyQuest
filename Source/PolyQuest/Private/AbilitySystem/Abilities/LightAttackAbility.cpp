@@ -377,6 +377,12 @@ bool ULightAttackAbility::StartComboEntry(int32 EntryIndex)
 	MontageTask = NewMontageTask;
 	NewMontageTask->ReadyForActivation();
 
+	// A zero-length or otherwise immediately completed Montage can synchronously run EndAbility.
+	if (bEndAbilityRequested)
+	{
+		return false;
+	}
+
 	if (!BoundAnimInstance->Montage_IsActive(EntryMontage))
 	{
 		NewMontageTask->EndTask();

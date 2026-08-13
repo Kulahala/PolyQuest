@@ -8,6 +8,7 @@
 
 class UAbilityTask_PlayMontageAndWait;
 class UAbilityTask_WaitGameplayEvent;
+class UAnimInstance;
 class UAnimMontage;
 class UGameplayEffect;
 
@@ -59,6 +60,12 @@ private:
 	UPROPERTY(Transient)
 	TObjectPtr<UAbilityTask_WaitGameplayEvent> InvulnerabilityEndTask;
 
+	UPROPERTY(Transient)
+	TObjectPtr<UAnimInstance> BoundAnimInstance;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UAnimMontage> ActiveMontage;
+
 	FGameplayTag PrimaryAttackAbilityTag;
 	FGameplayTag LightAttackAbilityTag;
 	FGameplayTag ChargedAttackAbilityTag;
@@ -72,13 +79,7 @@ private:
 	bool bEndAbilityRequested = false;
 
 	UFUNCTION()
-	void OnMontageCompleted();
-
-	UFUNCTION()
-	void OnMontageInterrupted();
-
-	UFUNCTION()
-	void OnMontageCancelled();
+	void OnActiveMontageEnded(UAnimMontage* Montage, bool bInterrupted);
 
 	UFUNCTION()
 	void OnInvulnerabilityBegin(FGameplayEventData Payload);
@@ -88,4 +89,5 @@ private:
 
 	void EndFromMontage(bool bWasCancelled);
 	void ClearInvulnerabilityEffect();
+	bool IsGameplayEventFromActiveMontage(const FGameplayEventData& Payload) const;
 };

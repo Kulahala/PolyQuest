@@ -148,6 +148,12 @@ void UChargedAttackAbility::ActivateAbility(
 	DodgeCancelWindowEndTask->ReadyForActivation();
 	MontageTask->ReadyForActivation();
 
+	// A zero-length or otherwise immediately completed Montage can synchronously run EndAbility.
+	if (bEndAbilityRequested)
+	{
+		return;
+	}
+
 	if (!BoundAnimInstance->Montage_IsActive(ActiveMontage.Get()))
 	{
 		UE_LOG(LogPolyQuest, Warning, TEXT("Charged attack activation aborted for '%s': montage '%s' did not start."), *GetNameSafe(PlayerCharacter), *GetNameSafe(ChargedAttackMontage));

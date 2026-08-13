@@ -24,6 +24,8 @@ The live UE 5.8 editor resolves the GameplayAbilities plugin, and the module lin
 
 `TODO-01F` establishes ground Sprint, Stamina-costed Jump, Sprint Jump air speed, and one optional Loadout-owned Sprint Attack. `MoveSpeed` is an Attribute consumed by CharacterMovement; Sprint state is an ASC-owned tag rather than a Player boolean or a transient speed comparison. The user has compiled and PIE-validated the configured Scene01 route, while the dedicated Sprint locomotion loop remains presentation work deferred to `TODO-07A`.
 
+`TODO-01G` health-reviewed the player-combat foundation and hardened the shared Montage lifetime contract: synchronous startup completion must not access state already cleared by `EndAbility()`, while Dodge identity-filters Montage and invulnerability events and removes its effect, delegate, tasks, and active Montage through the same cleanup path.
+
 Focused native source/config commits intentionally keep mutable authoring assets out of version control: the GameplayAbility Blueprint, GameplayEffects, Montage, AnimBP, `BP_Player`, and input assets remain local development WIP. Selected meshes, Skeleton/material dependencies, and animation sequences are a stable source-asset baseline, but the source/config subset alone is not a clone-ready reproduction of the local PIE fixture.
 
 ## Product Entry And Template Retirement

@@ -12,6 +12,8 @@
 
 ## No Active Stage
 
-`TODO-01F: Sprint Foundation And Sprint Attack v1` is closed. Its validated runtime contract, review record, deferred Sprint Loop presentation work, and future shared hit-resolution boundary are recorded in `ARCHITECTURE.md` and `ROADMAP.md`.
+`TODO-01G: Player Combat Foundation Health Review v1` is review-approved after Main normal review and a Main adversarial fallback. The requested fresh `gpt-5.6-luna / xhigh` Reviewer could not start because the provider returned HTTP 503 with no available channel, so no independent-review result is claimed.
 
-Choose the next active stage from `ROADMAP.md` and record its scope, evidence gates, delegation decision, and commit boundary here.
+The user confirmed the requested Scene01 keyboard/mouse PIE regression. Static evidence includes CodeGraph/source review, Gameplay Tag alignment, Code Review Graph impact context, and `git diff --check`. Unreal Editor MCP readback was unavailable in this session, so active authored-asset readback remains an evidence limitation rather than an independently verified result.
+
+Stable implementation facts and all accepted validation debt are recorded in `ARCHITECTURE.md` and `ROADMAP.md`. Choose the next active stage from `ROADMAP.md` and record its scope, evidence gates, delegation decision, and commit boundary here.
