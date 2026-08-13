@@ -65,3 +65,13 @@ FString UAnimNotify_ChargedAttackHit::GetNotifyName_Implementation() const
 {
 	return FString("Charged Attack Hit");
 }
+
+void UAnimNotify_SprintAttackHit::Notify(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, const FAnimNotifyEventReference&)
+{
+	SendAttackGameplayEvent(MeshComp, Animation, TEXT("Event.Attack.Sprint.Hit"), TEXT("Sprint attack hit notify"));
+}
+
+FString UAnimNotify_SprintAttackHit::GetNotifyName_Implementation() const
+{
+	return FString("Sprint Attack Hit");
+}

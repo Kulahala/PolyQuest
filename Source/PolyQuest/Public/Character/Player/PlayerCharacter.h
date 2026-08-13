@@ -3,6 +3,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "ActiveGameplayEffectHandle.h"
 #include "Character/BaseCharacter.h"
 #include "GameplayTagContainer.h"
 #include "PlayerCharacter.generated.h"
@@ -64,6 +65,10 @@ protected:
 	UPROPERTY(EditAnywhere, Category="Input")
 	UInputAction* DodgeAction;
 
+	/** Physical hold input that requests ground Sprint while directional movement remains active. */
+	UPROPERTY(EditAnywhere, Category="Input")
+	UInputAction* SprintAction;
+
 	/** Continuous periodic GameplayEffect that recovers Stamina when its tag requirements allow it. */
 	UPROPERTY(EditDefaultsOnly, Category="GAS|Stamina")
 	TSubclassOf<UGameplayEffect> StaminaRegenGameplayEffectClass;
@@ -77,6 +82,8 @@ public:
 
 protected:
 	virtual void BeginPlay() override;
+	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
+	virtual void OnMovementModeChanged(EMovementMode PrevMovementMode, uint8 PreviousCustomMode = 0) override;
 
 	/** Initialize Enhanced Input bindings for the player pawn. */
 	virtual void SetupPlayerInputComponent(UInputComponent* PlayerInputComponent) override;
@@ -125,6 +132,27 @@ public:
 	/** Returns the current camera-relative Dodge direction, defaulting to camera forward. */
 	FVector GetDodgeWorldDirection() const;
 
+	/** True only when physical Sprint intent and current movement state permit a new Sprint request. */
+	bool CanAttemptSprint() const;
+
+	/** Returns whether the ASC currently owns the real active Sprint state tag. */
+	bool HasActiveSprint() const;
+
+	/** True only when current physical input still qualifies PrimaryAttack for the active Sprint route. */
+	bool ShouldRequestSprintAttack() const;
+
+	/** Cancels the active Sprint ability without storing a second Sprint-state boolean. */
+	void CancelSprintAbility();
+
+	/** Applies the air-only Sprint Jump speed effect until landing. */
+	bool ApplySprintJumpAirSpeed(TSubclassOf<UGameplayEffect> SprintJumpAirSpeedGameplayEffectClass);
+
+	/** Removes the air-only Sprint Jump speed effect after landing, teardown, or a failed takeoff. */
+	void ClearSprintJumpAirSpeed();
+
+	/** Closes the exhausted-until-release gate when a Sprint drain reaches zero. */
+	void MarkSprintRequiresReleaseAfterExhaustion();
+
 	/** Returns the player camera boom. */
 	FORCEINLINE USpringArmComponent* GetCameraBoom() const { return CameraBoom; }
 
@@ -141,14 +169,20 @@ private:
 	void HandleAbilitySlotStarted(const FInputActionValue& Value, int32 SlotIndex);
 	void HandleAbilitySlotCompleted(const FInputActionValue& Value, int32 SlotIndex);
 	void HandleAbilitySlotCanceled(const FInputActionValue& Value, int32 SlotIndex);
+	void HandleSprintStarted(const FInputActionValue& Value);
+	void HandleSprintCompleted(const FInputActionValue& Value);
+	void HandleSprintCanceled(const FInputActionValue& Value);
 	void HandleCombatInputStarted(const FGameplayTag& InputIntentTag);
 	void HandleCombatInputEnded(const FGameplayTag& InputIntentTag, bool bWasCanceled);
 	void SendCombatInputEvent(const FGameplayTag& EventTag, const FGameplayTag& InputIntentTag, float HeldDuration);
 	void RequestAbilityForInputIntent(const FGameplayTag& InputIntentTag);
 	FGameplayTag GetAbilitySlotInputIntentTag(int32 SlotIndex) const;
+	void TryStartSprint();
+	void BindSprintStateEvents();
+	void UnbindSprintStateEvents();
+	void OnSprintRelevantTagChanged(const FGameplayTag Tag, int32 NewCount);
 
 	bool IsMovementInputBlocked() const;
-	bool IsJumpInputBlocked() const;
 
 	UPROPERTY(Transient)
 	TObjectPtr<UCombatLoadoutDefinition> ActiveCombatLoadout;
@@ -162,6 +196,20 @@ private:
 	FGameplayTag InputReleasedEventTag;
 	FGameplayTag InputCanceledEventTag;
 	FGameplayTag MovementInputBlockedTag;
-	FGameplayTag JumpInputBlockedTag;
+	FGameplayTag SprintAbilityTag;
+	FGameplayTag SprintStateTag;
+	FGameplayTag AttackingStateTag;
+	FGameplayTag DodgingStateTag;
+	FGameplayTag DeadStateTag;
+	FGameplayTag StunnedStateTag;
+	FActiveGameplayEffectHandle SprintJumpAirSpeedEffectHandle;
+	FDelegateHandle MovementInputBlockedTagChangedHandle;
+	FDelegateHandle AttackingStateTagChangedHandle;
+	FDelegateHandle DodgingStateTagChangedHandle;
+	FDelegateHandle DeadStateTagChangedHandle;
+	FDelegateHandle StunnedStateTagChangedHandle;
+	TWeakObjectPtr<UAbilitySystemComponent> SprintStateBoundAbilitySystemComponent;
+	bool bSprintInputHeld = false;
+	bool bSprintRequiresReleaseAfterExhaustion = false;
 	bool bStaminaRegenEffectApplied = false;
 };

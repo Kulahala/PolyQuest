@@ -29,6 +29,7 @@ UDodgeAbility::UDodgeAbility()
 	PrimaryAttackAbilityTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Attack.Primary")), false);
 	LightAttackAbilityTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Attack.Light")), false);
 	ChargedAttackAbilityTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Attack.Charged")), false);
+	SprintAttackAbilityTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Attack.Sprint")), false);
 	AttackingStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Action.Attacking")), false);
 	ChargingStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Action.Charging")), false);
 	DodgeCancelableStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Action.CanCancel.Dodge")), false);
@@ -79,7 +80,7 @@ void UDodgeAbility::ActivateAbility(
 
 	if (!AbilitySystemComponent || !PlayerCharacter || !AnimInstance || !DodgeMontage || !CostGameplayEffectClass
 		|| !StaminaRegenDelayGameplayEffectClass || !InvulnerabilityGameplayEffectClass || !PrimaryAttackAbilityTag.IsValid()
-		|| !LightAttackAbilityTag.IsValid() || !ChargedAttackAbilityTag.IsValid() || !AttackingStateTag.IsValid()
+		|| !LightAttackAbilityTag.IsValid() || !ChargedAttackAbilityTag.IsValid() || !SprintAttackAbilityTag.IsValid() || !AttackingStateTag.IsValid()
 		|| !ChargingStateTag.IsValid() || !DodgeCancelableStateTag.IsValid() || !InvulnerabilityBeginEventTag.IsValid() || !InvulnerabilityEndEventTag.IsValid())
 	{
 		UE_LOG(LogPolyQuest, Warning, TEXT("Dodge activation aborted for '%s': ASC, player, AnimInstance, montage, cost, regeneration delay, invulnerability effect, and required tags are required."), *GetNameSafe(PlayerCharacter));
@@ -112,6 +113,7 @@ void UDodgeAbility::ActivateAbility(
 	{
 		AbilityTagsToCancel.AddTag(LightAttackAbilityTag);
 		AbilityTagsToCancel.AddTag(ChargedAttackAbilityTag);
+		AbilityTagsToCancel.AddTag(SprintAttackAbilityTag);
 	}
 	AbilitySystemComponent->CancelAbilities(&AbilityTagsToCancel, nullptr, this);
 

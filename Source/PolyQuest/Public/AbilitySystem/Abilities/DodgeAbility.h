@@ -62,6 +62,7 @@ private:
 	FGameplayTag PrimaryAttackAbilityTag;
 	FGameplayTag LightAttackAbilityTag;
 	FGameplayTag ChargedAttackAbilityTag;
+	FGameplayTag SprintAttackAbilityTag;
 	FGameplayTag AttackingStateTag;
 	FGameplayTag ChargingStateTag;
 	FGameplayTag DodgeCancelableStateTag;

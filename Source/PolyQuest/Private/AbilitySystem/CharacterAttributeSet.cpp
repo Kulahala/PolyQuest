@@ -19,6 +19,7 @@ UCharacterAttributeSet::UCharacterAttributeSet()
 	MaxHealth = 100.0f;
 	Stamina = 100.0f;
 	MaxStamina = 100.0f;
+	MoveSpeed = 500.0f;
 }
 
 void UCharacterAttributeSet::PreAttributeChange(const FGameplayAttribute& Attribute, float& NewValue)
@@ -29,6 +30,10 @@ void UCharacterAttributeSet::PreAttributeChange(const FGameplayAttribute& Attrib
 	{
 		NewValue = FMath::Clamp(NewValue, 0.0f, FMath::Max(0.0f, GetMaxStamina()));
 	}
+	else if (Attribute == GetMoveSpeedAttribute())
+	{
+		NewValue = FMath::Max(NewValue, 0.0f);
+	}
 }
 
 void UCharacterAttributeSet::PreAttributeBaseChange(const FGameplayAttribute& Attribute, float& NewValue) const
@@ -38,6 +43,10 @@ void UCharacterAttributeSet::PreAttributeBaseChange(const FGameplayAttribute& At
 	if (Attribute == GetStaminaAttribute())
 	{
 		NewValue = FMath::Clamp(NewValue, 0.0f, FMath::Max(0.0f, GetMaxStamina()));
+	}
+	else if (Attribute == GetMoveSpeedAttribute())
+	{
+		NewValue = FMath::Max(NewValue, 0.0f);
 	}
 }
 
@@ -57,12 +66,7 @@ void UCharacterAttributeSet::PostGameplayEffectExecute(const FGameplayEffectModC
 		return;
 	}
 
-	if (GetStamina() <= 0.0f)
-	{
-		AbilitySystemComponent->AddLooseGameplayTag(ExhaustedTag);
-	}
-	else
-	{
-		AbilitySystemComponent->RemoveLooseGameplayTag(ExhaustedTag);
-	}
+	// Stamina may execute multiple effects while clamped at zero. Set an exact
+	// loose-tag count so repeated drains cannot leave Exhausted latched after recovery.
+	AbilitySystemComponent->SetLooseGameplayTagCount(ExhaustedTag, GetStamina() <= 0.0f ? 1 : 0);
 }

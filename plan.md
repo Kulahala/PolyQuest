@@ -12,6 +12,6 @@
 
 ## No Active Stage
 
-`TODO-01E: Charged Attack v1` is closed. Its stable runtime contract is recorded under Done Milestones in `ROADMAP.md` and `ARCHITECTURE.md`; its deterministic input/timer validation gap has a canonical entry in `ROADMAP.md`.
+`TODO-01F: Sprint Foundation And Sprint Attack v1` is closed. Its validated runtime contract, review record, deferred Sprint Loop presentation work, and future shared hit-resolution boundary are recorded in `ARCHITECTURE.md` and `ROADMAP.md`.
 
 Choose the next active stage from `ROADMAP.md` and record its scope, evidence gates, delegation decision, and commit boundary here.

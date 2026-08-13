@@ -4,7 +4,9 @@
 #include "AbilitySystemComponent.h"
 #include "Abilities/GameplayAbility.h"
 #include "GameplayAbilitySpec.h"
+#include "GameplayEffectTypes.h"
 #include "GameFramework/Controller.h"
+#include "GameFramework/CharacterMovementComponent.h"
 
 ABaseCharacter::ABaseCharacter()
 {
@@ -38,6 +40,7 @@ void ABaseCharacter::InitializeAbilityActorInfo()
 	}
 
 	AbilitySystemComponent->InitAbilityActorInfo(this, this);
+	BindMoveSpeedAttribute();
 }
 
 void ABaseCharacter::GrantStartupAbilities()
@@ -60,6 +63,8 @@ void ABaseCharacter::GrantStartupAbilities()
 
 void ABaseCharacter::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
+	UnbindMoveSpeedAttribute();
+
 	if (AbilitySystemComponent)
 	{
 		AbilitySystemComponent->CancelAllAbilities();
@@ -71,4 +76,51 @@ void ABaseCharacter::EndPlay(const EEndPlayReason::Type EndPlayReason)
 UAbilitySystemComponent* ABaseCharacter::GetAbilitySystemComponent() const
 {
 	return AbilitySystemComponent.Get();
+}
+
+void ABaseCharacter::BindMoveSpeedAttribute()
+{
+	UAbilitySystemComponent* CurrentAbilitySystemComponent = AbilitySystemComponent.Get();
+	if (!CurrentAbilitySystemComponent)
+	{
+		return;
+	}
+
+	if (MoveSpeedBoundAbilitySystemComponent.Get() != CurrentAbilitySystemComponent)
+	{
+		UnbindMoveSpeedAttribute();
+		MoveSpeedBoundAbilitySystemComponent = CurrentAbilitySystemComponent;
+		MoveSpeedAttributeChangedHandle = CurrentAbilitySystemComponent->GetGameplayAttributeValueChangeDelegate(UCharacterAttributeSet::GetMoveSpeedAttribute())
+			.AddUObject(this, &ABaseCharacter::OnMoveSpeedAttributeChanged);
+	}
+
+	if (UCharacterMovementComponent* MovementComponent = GetCharacterMovement())
+	{
+		MovementComponent->MaxWalkSpeed = FMath::Max(
+			CurrentAbilitySystemComponent->GetNumericAttribute(UCharacterAttributeSet::GetMoveSpeedAttribute()),
+			0.0f);
+	}
+}
+
+void ABaseCharacter::UnbindMoveSpeedAttribute()
+{
+	if (UAbilitySystemComponent* BoundAbilitySystemComponent = MoveSpeedBoundAbilitySystemComponent.Get())
+	{
+		if (MoveSpeedAttributeChangedHandle.IsValid())
+		{
+			BoundAbilitySystemComponent->GetGameplayAttributeValueChangeDelegate(UCharacterAttributeSet::GetMoveSpeedAttribute())
+				.Remove(MoveSpeedAttributeChangedHandle);
+		}
+	}
+
+	MoveSpeedAttributeChangedHandle.Reset();
+	MoveSpeedBoundAbilitySystemComponent.Reset();
+}
+
+void ABaseCharacter::OnMoveSpeedAttributeChanged(const FOnAttributeChangeData& ChangeData)
+{
+	if (UCharacterMovementComponent* MovementComponent = GetCharacterMovement())
+	{
+		MovementComponent->MaxWalkSpeed = FMath::Max(ChangeData.NewValue, 0.0f);
+	}
 }

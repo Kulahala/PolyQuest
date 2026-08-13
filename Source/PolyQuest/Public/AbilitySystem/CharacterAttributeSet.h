@@ -38,6 +38,11 @@ public:
 	UPROPERTY(BlueprintReadOnly, Category = "Attributes")
 	FGameplayAttributeData MaxStamina;
 	PQ_ATTRIBUTE_ACCESSORS(UCharacterAttributeSet, MaxStamina)
+
+	/** Final horizontal movement-speed cap consumed by CharacterMovement. */
+	UPROPERTY(BlueprintReadOnly, Category = "Attributes")
+	FGameplayAttributeData MoveSpeed;
+	PQ_ATTRIBUTE_ACCESSORS(UCharacterAttributeSet, MoveSpeed)
 };
 
 #undef PQ_ATTRIBUTE_ACCESSORS

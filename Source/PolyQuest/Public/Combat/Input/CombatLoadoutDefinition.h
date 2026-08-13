@@ -63,8 +63,19 @@ public:
 		return false;
 	}
 
+	/** Returns the optional Sprint Attack Ability owned by this loadout. */
+	bool TryGetSprintAttackAbilityTag(FGameplayTag& OutAbilityTag) const
+	{
+		OutAbilityTag = SprintAttackAbilityTag;
+		return OutAbilityTag.IsValid();
+	}
+
 protected:
 	/** Optional direct Ability routes for this loadout; invalid Ability tags are intentional no-op routes. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat Input", meta = (AllowPrivateAccess = "true"))
 	TArray<FCombatInputAbilityRoute> InputAbilityRoutes;
+
+	/** Optional direct Sprint Attack for this loadout; an invalid tag falls back to Primary Attack. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat Input", meta = (AllowPrivateAccess = "true"))
+	FGameplayTag SprintAttackAbilityTag;
 };

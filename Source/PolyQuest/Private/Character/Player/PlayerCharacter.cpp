@@ -16,6 +16,7 @@
 #include "GameplayTagContainer.h"
 #include "InputActionValue.h"
 
+#include "AbilitySystem/CharacterAttributeSet.h"
 #include "Combat/Input/CombatLoadoutDefinition.h"
 #include "PolyQuest.h"
 
@@ -32,7 +33,12 @@ APlayerCharacter::APlayerCharacter()
 	InputReleasedEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Input.Released")), false);
 	InputCanceledEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Input.Canceled")), false);
 	MovementInputBlockedTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Input.Block.Movement")), false);
-	JumpInputBlockedTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Input.Block.Jump")), false);
+	SprintAbilityTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Movement.Sprint")), false);
+	SprintStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Movement.Sprinting")), false);
+	AttackingStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Action.Attacking")), false);
+	DodgingStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Action.Dodging")), false);
+	DeadStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Status.Dead")), false);
+	StunnedStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Status.Stunned")), false);
 
 	GetCapsuleComponent()->InitCapsuleSize(42.f, 96.0f);
 
@@ -63,6 +69,7 @@ void APlayerCharacter::BeginPlay()
 {
 	Super::BeginPlay();
 	SetActiveCombatLoadout(InitialCombatLoadout);
+	BindSprintStateEvents();
 
 	if (bStaminaRegenEffectApplied || !HasAuthority())
 	{
@@ -89,6 +96,28 @@ void APlayerCharacter::BeginPlay()
 	{
 		UE_LOG(LogPolyQuest, Warning, TEXT("'%s' failed to apply its configured Stamina regeneration GameplayEffect."), *GetNameSafe(this));
 	}
+}
+
+void APlayerCharacter::EndPlay(const EEndPlayReason::Type EndPlayReason)
+{
+	UnbindSprintStateEvents();
+	ClearSprintJumpAirSpeed();
+
+	Super::EndPlay(EndPlayReason);
+}
+
+void APlayerCharacter::OnMovementModeChanged(EMovementMode PrevMovementMode, uint8 PreviousCustomMode)
+{
+	Super::OnMovementModeChanged(PrevMovementMode, PreviousCustomMode);
+
+	if (!GetCharacterMovement()->IsMovingOnGround())
+	{
+		CancelSprintAbility();
+		return;
+	}
+
+	ClearSprintJumpAirSpeed();
+	TryStartSprint();
 }
 
 void APlayerCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputComponent)
@@ -138,6 +167,17 @@ void APlayerCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputCom
 		}
 
 		EnhancedInputComponent->BindAction(DodgeAction, ETriggerEvent::Started, this, &APlayerCharacter::Dodge);
+
+		if (SprintAction)
+		{
+			EnhancedInputComponent->BindAction(SprintAction, ETriggerEvent::Started, this, &APlayerCharacter::HandleSprintStarted);
+			EnhancedInputComponent->BindAction(SprintAction, ETriggerEvent::Completed, this, &APlayerCharacter::HandleSprintCompleted);
+			EnhancedInputComponent->BindAction(SprintAction, ETriggerEvent::Canceled, this, &APlayerCharacter::HandleSprintCanceled);
+		}
+		else
+		{
+			UE_LOG(LogPolyQuest, Warning, TEXT("'%s' has no SprintAction configured."), *GetNameSafe(this));
+		}
 	}
 	else
 	{
@@ -150,11 +190,20 @@ void APlayerCharacter::Move(const FInputActionValue& Value)
 	const FVector2D MovementVector = Value.Get<FVector2D>();
 	CurrentMoveInput = MovementVector;
 	DoMove(MovementVector.X, MovementVector.Y);
+	if (MovementVector.IsNearlyZero())
+	{
+		CancelSprintAbility();
+	}
+	else
+	{
+		TryStartSprint();
+	}
 }
 
 void APlayerCharacter::ClearMoveInput(const FInputActionValue&)
 {
 	CurrentMoveInput = FVector2D::ZeroVector;
+	CancelSprintAbility();
 }
 
 void APlayerCharacter::Look(const FInputActionValue& Value)
@@ -194,10 +243,17 @@ void APlayerCharacter::DoLook(float Yaw, float Pitch)
 
 void APlayerCharacter::DoJumpStart()
 {
-	if (!IsJumpInputBlocked())
+	UAbilitySystemComponent* CharacterASC = GetAbilitySystemComponent();
+	const FGameplayTag JumpAbilityTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Movement.Jump")), false);
+	if (!CharacterASC || !JumpAbilityTag.IsValid())
 	{
-		Jump();
+		UE_LOG(LogPolyQuest, Warning, TEXT("'%s' cannot request Jump without an ASC and valid Ability.Movement.Jump tag."), *GetNameSafe(this));
+		return;
 	}
+
+	FGameplayTagContainer AbilityTags;
+	AbilityTags.AddTag(JumpAbilityTag);
+	CharacterASC->TryActivateAbilitiesByTag(AbilityTags);
 }
 
 void APlayerCharacter::DoJumpEnd()
@@ -280,6 +336,26 @@ void APlayerCharacter::HandleAbilitySlotCanceled(const FInputActionValue&, int32
 	HandleCombatInputEnded(GetAbilitySlotInputIntentTag(SlotIndex), true);
 }
 
+void APlayerCharacter::HandleSprintStarted(const FInputActionValue&)
+{
+	bSprintInputHeld = true;
+	TryStartSprint();
+}
+
+void APlayerCharacter::HandleSprintCompleted(const FInputActionValue&)
+{
+	bSprintInputHeld = false;
+	bSprintRequiresReleaseAfterExhaustion = false;
+	CancelSprintAbility();
+}
+
+void APlayerCharacter::HandleSprintCanceled(const FInputActionValue&)
+{
+	bSprintInputHeld = false;
+	bSprintRequiresReleaseAfterExhaustion = false;
+	CancelSprintAbility();
+}
+
 void APlayerCharacter::HandleCombatInputStarted(const FGameplayTag& InputIntentTag)
 {
 	if (!InputIntentTag.IsValid() || HeldCombatInputStartTimes.Contains(InputIntentTag))
@@ -334,6 +410,25 @@ void APlayerCharacter::RequestAbilityForInputIntent(const FGameplayTag& InputInt
 	if (!ActiveCombatLoadout)
 	{
 		return;
+	}
+
+	if (InputIntentTag == PrimaryAttackInputTag && ShouldRequestSprintAttack())
+	{
+		FGameplayTag SprintAttackAbilityTag;
+		if (ActiveCombatLoadout->TryGetSprintAttackAbilityTag(SprintAttackAbilityTag) && SprintAttackAbilityTag.IsValid())
+		{
+			UAbilitySystemComponent* CharacterASC = GetAbilitySystemComponent();
+			if (CharacterASC)
+			{
+				FGameplayTagContainer SprintAttackAbilityTags;
+				SprintAttackAbilityTags.AddTag(SprintAttackAbilityTag);
+				if (CharacterASC->TryActivateAbilitiesByTag(SprintAttackAbilityTags))
+				{
+					UE_LOG(LogPolyQuest, Verbose, TEXT("CombatInput: owner='%s', intent='%s', ability='%s', activationRequested=true."), *GetNameSafe(this), *InputIntentTag.ToString(), *SprintAttackAbilityTag.ToString());
+					return;
+				}
+			}
+		}
 	}
 
 	FGameplayTag AbilityTag;
@@ -398,8 +493,178 @@ bool APlayerCharacter::IsMovementInputBlocked() const
 	return CharacterASC && MovementInputBlockedTag.IsValid() && CharacterASC->HasMatchingGameplayTag(MovementInputBlockedTag);
 }
 
-bool APlayerCharacter::IsJumpInputBlocked() const
+bool APlayerCharacter::CanAttemptSprint() const
 {
 	const UAbilitySystemComponent* CharacterASC = GetAbilitySystemComponent();
-	return CharacterASC && JumpInputBlockedTag.IsValid() && CharacterASC->HasMatchingGameplayTag(JumpInputBlockedTag);
+	const UCharacterMovementComponent* MovementComponent = GetCharacterMovement();
+	return bSprintInputHeld && !bSprintRequiresReleaseAfterExhaustion && !CurrentMoveInput.IsNearlyZero()
+		&& CharacterASC && CharacterASC->GetNumericAttribute(UCharacterAttributeSet::GetStaminaAttribute()) > 0.0f
+		&& MovementComponent && MovementComponent->IsMovingOnGround()
+		&& !IsMovementInputBlocked()
+		&& !(AttackingStateTag.IsValid() && CharacterASC->HasMatchingGameplayTag(AttackingStateTag))
+		&& !(DodgingStateTag.IsValid() && CharacterASC->HasMatchingGameplayTag(DodgingStateTag))
+		&& !(DeadStateTag.IsValid() && CharacterASC->HasMatchingGameplayTag(DeadStateTag))
+		&& !(StunnedStateTag.IsValid() && CharacterASC->HasMatchingGameplayTag(StunnedStateTag));
+}
+
+bool APlayerCharacter::HasActiveSprint() const
+{
+	const UAbilitySystemComponent* CharacterASC = GetAbilitySystemComponent();
+	return CharacterASC && SprintStateTag.IsValid() && CharacterASC->HasMatchingGameplayTag(SprintStateTag);
+}
+
+void APlayerCharacter::CancelSprintAbility()
+{
+	UAbilitySystemComponent* CharacterASC = GetAbilitySystemComponent();
+	if (!CharacterASC || !SprintAbilityTag.IsValid() || !HasActiveSprint())
+	{
+		return;
+	}
+
+	FGameplayTagContainer AbilityTags;
+	AbilityTags.AddTag(SprintAbilityTag);
+	CharacterASC->CancelAbilities(&AbilityTags, nullptr);
+}
+
+bool APlayerCharacter::ApplySprintJumpAirSpeed(TSubclassOf<UGameplayEffect> SprintJumpAirSpeedGameplayEffectClass)
+{
+	UAbilitySystemComponent* CharacterASC = GetAbilitySystemComponent();
+	const UGameplayEffect* SprintJumpAirSpeedEffect = SprintJumpAirSpeedGameplayEffectClass
+		? SprintJumpAirSpeedGameplayEffectClass->GetDefaultObject<UGameplayEffect>()
+		: nullptr;
+	if (!CharacterASC || !SprintJumpAirSpeedEffect)
+	{
+		return false;
+	}
+
+	ClearSprintJumpAirSpeed();
+	SprintJumpAirSpeedEffectHandle = CharacterASC->ApplyGameplayEffectToSelf(
+		SprintJumpAirSpeedEffect,
+		1.0f,
+		CharacterASC->MakeEffectContext());
+	return SprintJumpAirSpeedEffectHandle.IsValid();
+}
+
+void APlayerCharacter::MarkSprintRequiresReleaseAfterExhaustion()
+{
+	bSprintRequiresReleaseAfterExhaustion = true;
+}
+
+void APlayerCharacter::TryStartSprint()
+{
+	if (!CanAttemptSprint() || HasActiveSprint() || !SprintAbilityTag.IsValid())
+	{
+		return;
+	}
+
+	if (UAbilitySystemComponent* CharacterASC = GetAbilitySystemComponent())
+	{
+		FGameplayTagContainer AbilityTags;
+		AbilityTags.AddTag(SprintAbilityTag);
+		CharacterASC->TryActivateAbilitiesByTag(AbilityTags);
+	}
+}
+
+void APlayerCharacter::BindSprintStateEvents()
+{
+	UAbilitySystemComponent* CharacterASC = GetAbilitySystemComponent();
+	if (!CharacterASC || SprintStateBoundAbilitySystemComponent.Get() == CharacterASC)
+	{
+		return;
+	}
+
+	UnbindSprintStateEvents();
+	SprintStateBoundAbilitySystemComponent = CharacterASC;
+	if (MovementInputBlockedTag.IsValid())
+	{
+		MovementInputBlockedTagChangedHandle = CharacterASC->RegisterGameplayTagEvent(MovementInputBlockedTag)
+			.AddUObject(this, &APlayerCharacter::OnSprintRelevantTagChanged);
+	}
+	if (AttackingStateTag.IsValid())
+	{
+		AttackingStateTagChangedHandle = CharacterASC->RegisterGameplayTagEvent(AttackingStateTag)
+			.AddUObject(this, &APlayerCharacter::OnSprintRelevantTagChanged);
+	}
+	if (DodgingStateTag.IsValid())
+	{
+		DodgingStateTagChangedHandle = CharacterASC->RegisterGameplayTagEvent(DodgingStateTag)
+			.AddUObject(this, &APlayerCharacter::OnSprintRelevantTagChanged);
+	}
+	if (DeadStateTag.IsValid())
+	{
+		DeadStateTagChangedHandle = CharacterASC->RegisterGameplayTagEvent(DeadStateTag)
+			.AddUObject(this, &APlayerCharacter::OnSprintRelevantTagChanged);
+	}
+	if (StunnedStateTag.IsValid())
+	{
+		StunnedStateTagChangedHandle = CharacterASC->RegisterGameplayTagEvent(StunnedStateTag)
+			.AddUObject(this, &APlayerCharacter::OnSprintRelevantTagChanged);
+	}
+}
+
+void APlayerCharacter::UnbindSprintStateEvents()
+{
+	UAbilitySystemComponent* CharacterASC = SprintStateBoundAbilitySystemComponent.Get();
+	if (CharacterASC)
+	{
+		if (MovementInputBlockedTagChangedHandle.IsValid())
+		{
+			CharacterASC->UnregisterGameplayTagEvent(MovementInputBlockedTagChangedHandle, MovementInputBlockedTag);
+		}
+		if (AttackingStateTagChangedHandle.IsValid())
+		{
+			CharacterASC->UnregisterGameplayTagEvent(AttackingStateTagChangedHandle, AttackingStateTag);
+		}
+		if (DodgingStateTagChangedHandle.IsValid())
+		{
+			CharacterASC->UnregisterGameplayTagEvent(DodgingStateTagChangedHandle, DodgingStateTag);
+		}
+		if (DeadStateTagChangedHandle.IsValid())
+		{
+			CharacterASC->UnregisterGameplayTagEvent(DeadStateTagChangedHandle, DeadStateTag);
+		}
+		if (StunnedStateTagChangedHandle.IsValid())
+		{
+			CharacterASC->UnregisterGameplayTagEvent(StunnedStateTagChangedHandle, StunnedStateTag);
+		}
+	}
+
+	MovementInputBlockedTagChangedHandle.Reset();
+	AttackingStateTagChangedHandle.Reset();
+	DodgingStateTagChangedHandle.Reset();
+	DeadStateTagChangedHandle.Reset();
+	StunnedStateTagChangedHandle.Reset();
+	SprintStateBoundAbilitySystemComponent.Reset();
+}
+
+void APlayerCharacter::OnSprintRelevantTagChanged(const FGameplayTag, int32 NewCount)
+{
+	if (NewCount > 0)
+	{
+		CancelSprintAbility();
+		return;
+	}
+
+	TryStartSprint();
+}
+
+void APlayerCharacter::ClearSprintJumpAirSpeed()
+{
+	if (!SprintJumpAirSpeedEffectHandle.IsValid())
+	{
+		return;
+	}
+
+	if (UAbilitySystemComponent* CharacterASC = GetAbilitySystemComponent())
+	{
+		CharacterASC->RemoveActiveGameplayEffect(SprintJumpAirSpeedEffectHandle);
+	}
+
+	SprintJumpAirSpeedEffectHandle.Invalidate();
+}
+
+bool APlayerCharacter::ShouldRequestSprintAttack() const
+{
+	const UCharacterMovementComponent* MovementComponent = GetCharacterMovement();
+	return HasActiveSprint() && !CurrentMoveInput.IsNearlyZero() && MovementComponent && MovementComponent->IsMovingOnGround();
 }

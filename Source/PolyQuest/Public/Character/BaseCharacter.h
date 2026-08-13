@@ -11,6 +11,7 @@ class AController;
 class UAbilitySystemComponent;
 class UCharacterAttributeSet;
 class UGameplayAbility;
+struct FOnAttributeChangeData;
 
 UCLASS(Abstract)
 class POLYQUEST_API ABaseCharacter : public ACharacter, public IAbilitySystemInterface
@@ -28,6 +29,9 @@ public:
 protected:
 	void InitializeAbilityActorInfo();
 	void GrantStartupAbilities();
+	void BindMoveSpeedAttribute();
+	void UnbindMoveSpeedAttribute();
+	void OnMoveSpeedAttributeChanged(const FOnAttributeChangeData& ChangeData);
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "GAS")
 	TArray<TSubclassOf<UGameplayAbility>> StartupAbilities;
@@ -38,4 +42,7 @@ private:
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "GAS", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<UCharacterAttributeSet> Attributes;
+
+	TWeakObjectPtr<UAbilitySystemComponent> MoveSpeedBoundAbilitySystemComponent;
+	FDelegateHandle MoveSpeedAttributeChangedHandle;
 };

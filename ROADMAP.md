@@ -15,6 +15,7 @@ The previous `Test` project remains the FSM behavior reference and validation ba
 - `TODO-00C` replaced the active template route with `/Game/Maps/Scene01`, a desktop-only product Controller route, and a closed ThirdPerson/Variant retirement. The user recompiled `PolyQuestEditor` and replayed the existing PIE validation path after cleanup.
 - `TODO-01C` has completed the first local GAS Dodge, Stamina exhaustion/recovery, attack cancellation, and NotifyState-timed invulnerability loop. Its authored GA/GE, Montage, AnimBP, Blueprint, input, retargeting, map, and test-fixture assets remain deliberately local WIP.
 - `TODO-01E` has completed the native Primary short/hold arbitration and Charged Attack lifecycle. Its authored GA/GE, Montage, retargeted Sequence, Blueprint, Loadout, and input assets remain deliberately local WIP.
+- `TODO-01F` has completed the native Sprint, Jump, Sprint Jump air-speed, and optional Sprint Attack lifecycle. Its authored GA/GE, Montage, retargeted Sequence, Blueprint, AnimBP, Loadout, input, and map assets remain deliberately local WIP; the dedicated Sprint locomotion loop is deferred to `TODO-07A`.
 - External source packages remain under `Content/Assets/`. Imported content is not a production integration merely because it is present locally; skeleton, weapon, socket, animation, and presentation decisions still require their named stage validation.
 
 ## Test-To-PolyQuest Migration Contract Inventory
@@ -89,13 +90,13 @@ The old `Test` project is evidence for player-facing behavior, not a source tree
   - The user confirmed `PolyQuestEditor` compilation and the authored Scene01 PIE route, including the repaired threshold timing behavior. Main normal review and Main adversarial review found no confirmed P0-P2 source blocker. The requested fresh `gpt-5.6-luna / xhigh` Reviewer did not start because the provider returned HTTP 503, so no independent-review result is claimed.
   - GA/GE, Montage, Sequence, Blueprint, AnimBP, Loadout, input, map, and imported assets remain local mutable WIP. The focused commit contains only native source, Gameplay Tag config, and documentation.
 
+- [x] `TODO-01F: Sprint Foundation And Sprint Attack v1`
+  - Added the `MoveSpeed` Attribute, one idempotent CharacterMovement synchronization delegate, a continuous ground Sprint, Stamina-costed Jump, Sprint Jump air-speed cleanup, and Loadout-owned Sprint Attack routing. Sprint is ASC-tag truth rather than an input-layer Boolean; a Sprint Attack commits its cost before ending Sprint, plays one Root Motion Montage, consumes one identity-filtered Sprint Hit event, and permits Dodge only during its authored recovery cancel window.
+  - The user confirmed `PolyQuestEditor` compilation and Scene01 PIE coverage for Sprint start/stop/cost/exhaustion/re-entry, normal and Sprint Jump behavior, Sprint Attack hit/cost/damage, and the repaired Exhausted-tag recovery path. The current BlendSpace presentation is accepted temporarily; a dedicated Sprint Loop remains a separate `TODO-07A` presentation task.
+  - Main normal review repaired repeated loose `State.Status.Exhausted` additions that could otherwise leave action abilities blocked after Stamina recovered. Main adversarial fallback found no additional confirmed source blocker. The requested fresh `gpt-5.6-luna / xhigh` Reviewer could not start because the provider returned HTTP 503, so no independent-review result is claimed.
+  - GA/GE, Montage, Sequence, Blueprint, AnimBP, Loadout, input, map, and imported assets remain local mutable WIP. The focused commit contains only native source, Gameplay Tag config, and documentation.
+
 ## Milestones
-
-### Player Combat Vertical Slice
-
-- [ ] `TODO-01F: Sprint Foundation And Sprint Attack v1`
-  - Establish a real Sprint input, movement, Stamina, cancellation, and validation contract before adding one Sprint Attack that requires the active Sprint state. Do not infer Sprint from a transient movement-speed check at attack time.
-  - Keep Sprint Attack separate from Charged Attack and the linear Combo asset. Lock-on free-run behavior remains owned by `TODO-02C`, so this stage validates only the unlocked Sprint route and the explicit handoff points required for later lock-on work.
 
 ### First Enemy And Combat Targeting
 
@@ -105,6 +106,7 @@ The old `Test` project is evidence for player-facing behavior, not a source tree
 
 - [ ] `TODO-02B: Enemy Attack Profiles, Poise, And Stance Break v1`
   - Rebuild data-authored enemy attack selection, configurable distance/cooldown/attack presentation, hit reaction, poise depletion, stance break, death, and safe interruption around the first enemy.
+  - Upgrade the current per-action one-shot forward sphere sweeps into a shared semantic weapon-trace window and hit resolver: swept weapon or authored attack volume, per-target-once protection, team filtering, target context, and common GAS effect delivery for both player and enemy attacks. Action abilities retain activation, cost, state, cancellation, and the authority to validate the semantic event; animation never writes Health or Poise directly.
   - Keep attack data separate from StateTree intent and do not import the old local HFSM.
 
 - [ ] `TODO-02C: Lock-On And Combat Camera v1`
@@ -175,7 +177,7 @@ The old `Test` project is evidence for player-facing behavior, not a source tree
 - **Data ownership:** a PolyQuest character/ability manifest composes focused authored assets. Combo entries, action settings, enemy attack profiles, and reaction data are modular tuning inputs; none stores mutable gameplay state or replaces ability/effect ownership.
 - **Combo contract:** one active light-attack ability owns at most one buffered LMB continuation. `ComboWindow` accepts it, `ComboBranchWindow` consumes early input or retries late input, and `CancelWindow` exposes only a scoped immediate-cancel opportunity for preflight-valid actions.
 - **Montage lifetime:** a successor combo entry must explicitly reject stale completion/interruption events from a prior entry. Natural completion, cancellation, hit/death teardown, invalid timing events, and asset failure converge through one ability cleanup path.
-- **Combat timing:** weapon collision, potion heal, projectile release, parry active frames, hyper armor, combo windows, and cancellation windows are semantic animation events. Their receiver validates the active ability and current target/context before applying gameplay.
+- **Combat timing:** weapon collision, potion heal, projectile release, parry active frames, hyper armor, combo windows, and cancellation windows are semantic animation events. Their receiver validates the active ability and current target/context before applying gameplay. Current Light, Charged, and Sprint Attack hit notifies share narrow event dispatch but intentionally retain separate event tags; `TODO-02B` owns any consolidation into a reusable trace window and hit resolver.
 - **Enemy AI:** StateTree is the default high-level behavior brain for both ordinary enemies and Bosses. It owns patrol, alert, chase, combat intent, return-home, phase selection, and high-level transitions; it requests GAS abilities rather than directly applying combat mutations.
 - **Bosses:** Bosses use a separate StateTree and combat data profile, not a different AI framework merely because they do not patrol. Encounter, fog-gate, persistence, and rewards remain outside the Boss StateTree.
 - **No parallel FSM:** do not retain an enemy HFSM or `EEnemyState` as a competing runtime truth beside StateTree and GAS tags.
@@ -186,6 +188,7 @@ The old `Test` project is evidence for player-facing behavior, not a source tree
 
 - **Behavior Trees:** keep Behavior Tree tooling available but unadopted. Re-evaluate it only at the documented escalation gate; do not split ordinary enemies and Bosses across AI frameworks preemptively.
 - **Motion Warping:** add product-level Motion Warping only when the selected stylized animation set contains a concrete root-motion alignment requirement.
+- **Shared Dodge/Sprint key:** do not bind independent `IA_Dodge` and `IA_Sprint` actions directly to one physical key. Re-evaluate only if the product deliberately adopts short-press Dodge plus hold Sprint; then create a focused input-arbitration stage that defines threshold, release/cancel behavior, action priority, keyboard/controller parity, and exhausted-state re-entry before changing mappings.
 
 ## Known Risks And Validation Debt
 
@@ -195,6 +198,10 @@ The old `Test` project is evidence for player-facing behavior, not a source tree
 - `TODO-01C1` has accepted keyboard/mouse PIE evidence only. Right Shoulder and Left Trigger mapping behavior and physical controller operation are not verified controller support. Before presenting controller support, adding controller-specific UX, or producing a controller-facing build, read back the intended Mapping Context entries and pass focused hardware validation for every intended controller action; until then, do not claim gamepad support.
 - `TODO-01D` spends a continuation Cost before `UAbilityTask_PlayMontageAndWait` confirms that the successor Montage actually started. A rare playback-start failure after valid preflight can therefore consume Stamina and end the Ability without an automatic refund. The normal AnimInstance/Slot path has user PIE evidence, but failure injection is unverified. Before defining a final combat asset baseline or adding runtime playback-rate control, define the atomicity or refund semantics and add focused failure-injection coverage.
 - `TODO-01E` has manual threshold validation, including the repaired normal-release-before-delay route, but no deterministic same-frame input/timer injection test. Before changing input-event dispatch order, introducing prediction/networking, or relying on frame-exact charge thresholds, add a deterministic automated fixture or controlled logging harness that exercises both callback orders and verifies exactly one Light or Charged activation.
+
+## Deferred TODOs
+
+- **Deferred Sprint Loop Presentation (`TODO-07A`):** `TODO-01F` validates Sprint speed, Stamina, cancellation, and Sprint Jump independently of a dedicated loop. The current locomotion BlendSpace remains intentional temporary presentation while Sprint is active. When the selected locomotion set is stable, retarget and validate an In-Place Dungeon Knight Sprint Loop, let `ABP_Player_Dungeon` read `State.Movement.Sprinting` only for presentation, and run focused PIE checks for cadence, foot sliding, Root Motion isolation, and transitions back to ordinary locomotion. Do not describe a dedicated Sprint Loop as integrated before that work passes.
 
 ## Stage Completion Standard
 
