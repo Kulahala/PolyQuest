@@ -12,8 +12,10 @@
 
 ## No Active Stage
 
-`TODO-01G: Player Combat Foundation Health Review v1` is review-approved after Main normal review and a Main adversarial fallback. The requested fresh `gpt-5.6-luna / xhigh` Reviewer could not start because the provider returned HTTP 503 with no available channel, so no independent-review result is claimed.
+`TODO-01H: Weapon Motion Trace And Hit Resolver Foundation v1` is review-approved after Main normal review and a Main adversarial fallback. The requested `gpt-5.6-luna / xhigh` Reviewer was unavailable; an additional independent read-only source review found no P0-P2 C++/Gameplay Tag/config blocker.
 
-The user confirmed the requested Scene01 keyboard/mouse PIE regression. Static evidence includes CodeGraph/source review, Gameplay Tag alignment, Code Review Graph impact context, and `git diff --check`. Unreal Editor MCP readback was unavailable in this session, so active authored-asset readback remains an evidence limitation rather than an independently verified result.
+The user confirmed `PolyQuestEditor` compilation and Scene01 PIE validation. No fresh final Editor readback of `BladeTraceBase` / `BladeTraceTip` coordinates was obtained during closeout, so this record makes no final marker-coordinate claim.
+
+Static evidence includes CodeGraph/source review, Gameplay Tag and collision-channel alignment, scoped code-review-graph impact context, and `git diff --check`. The native shared hit foundation intentionally excludes mutable Blueprint, Montage, GameplayEffect, AnimBP, input, map, and fixture authoring WIP, so it is not a clean-checkout reproduction of the local combat fixture.
 
 Stable implementation facts and all accepted validation debt are recorded in `ARCHITECTURE.md` and `ROADMAP.md`. Choose the next active stage from `ROADMAP.md` and record its scope, evidence gates, delegation decision, and commit boundary here.

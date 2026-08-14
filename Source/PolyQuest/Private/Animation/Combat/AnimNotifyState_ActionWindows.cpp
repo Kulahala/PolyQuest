@@ -66,6 +66,31 @@ FString UAnimNotifyState_DodgeInvulnerability::GetNotifyName_Implementation() co
 	return FString("Dodge Invulnerability");
 }
 
+void UAnimNotify_ChargedAttackHoldReady::Notify(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, const FAnimNotifyEventReference&)
+{
+	SendGameplayEvent(MeshComp, Animation, TEXT("Event.Attack.Charged.HoldReady"), TEXT("Charged attack hold-ready notify"));
+}
+
+FString UAnimNotify_ChargedAttackHoldReady::GetNotifyName_Implementation() const
+{
+	return FString("Charged Attack Hold Ready");
+}
+
+void UAnimNotifyState_AttackTraceWindow::NotifyBegin(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, float, const FAnimNotifyEventReference&)
+{
+	SendGameplayEvent(MeshComp, Animation, TEXT("Event.Attack.TraceWindow.Begin"), TEXT("Attack trace window"));
+}
+
+void UAnimNotifyState_AttackTraceWindow::NotifyEnd(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, const FAnimNotifyEventReference&)
+{
+	SendGameplayEvent(MeshComp, Animation, TEXT("Event.Attack.TraceWindow.End"), TEXT("Attack trace window"));
+}
+
+FString UAnimNotifyState_AttackTraceWindow::GetNotifyName_Implementation() const
+{
+	return FString("Attack Trace Window");
+}
+
 void UAnimNotifyState_ComboInputWindow::NotifyBegin(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, float, const FAnimNotifyEventReference&)
 {
 	SendGameplayEvent(MeshComp, Animation, TEXT("Event.Attack.Light.Combo.InputWindow.Begin"), TEXT("Combo input window"));

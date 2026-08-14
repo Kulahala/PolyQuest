@@ -7,6 +7,7 @@
 #include "ChargedAttackAbility.generated.h"
 
 class UAbilityTask_PlayMontageAndWait;
+class UAbilityTask_MeleeTraceWindow;
 class UAbilityTask_WaitGameplayEvent;
 class UAnimInstance;
 class UAnimMontage;
@@ -66,15 +67,6 @@ protected:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Charged Attack|Charge", meta = (ClampMin = "1.0"))
 	float MaximumDamageMultiplier = 1.8f;
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Charged Attack|Trace", meta = (ClampMin = "0.0"))
-	float TraceRadius = 50.0f;
-
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Charged Attack|Trace")
-	float TraceHeightOffset = 0.0f;
-
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Charged Attack|Trace", meta = (ClampMin = "0.0"))
-	float TraceDistance = 150.0f;
-
 private:
 	UPROPERTY(Transient)
 	TObjectPtr<UAbilityTask_PlayMontageAndWait> MontageTask;
@@ -83,7 +75,13 @@ private:
 	TObjectPtr<UAbilityTask_WaitGameplayEvent> HoldReadyTask;
 
 	UPROPERTY(Transient)
-	TObjectPtr<UAbilityTask_WaitGameplayEvent> HitEventTask;
+	TObjectPtr<UAbilityTask_WaitGameplayEvent> TraceWindowBeginTask;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UAbilityTask_WaitGameplayEvent> TraceWindowEndTask;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UAbilityTask_MeleeTraceWindow> TraceWindowTask;
 
 	UPROPERTY(Transient)
 	TObjectPtr<UAbilityTask_WaitGameplayEvent> InputReleasedTask;
@@ -108,14 +106,14 @@ private:
 	FGameplayTag InputCanceledEventTag;
 	FGameplayTag ChargedReleaseHandoffEventTag;
 	FGameplayTag HoldReadyEventTag;
-	FGameplayTag HitEventTag;
+	FGameplayTag TraceWindowBeginEventTag;
+	FGameplayTag TraceWindowEndEventTag;
 	FGameplayTag DodgeCancelWindowBeginEventTag;
 	FGameplayTag DodgeCancelWindowEndEventTag;
 	FGameplayTag DodgeCancelableStateTag;
 	FGameplayTag ChargingStateTag;
 	FGameplayTag DamageDataTag;
 	float DamageMultiplier = 1.0f;
-	bool bHitEventConsumed = false;
 	bool bDodgeCancelable = false;
 	bool bChargingStateApplied = false;
 	bool bMontagePausedAtHoldReady = false;
@@ -129,7 +127,10 @@ private:
 	void OnHoldReady(FGameplayEventData Payload);
 
 	UFUNCTION()
-	void OnHitEventReceived(FGameplayEventData Payload);
+	void OnTraceWindowBegin(FGameplayEventData Payload);
+
+	UFUNCTION()
+	void OnTraceWindowEnd(FGameplayEventData Payload);
 
 	UFUNCTION()
 	void OnInputReleased(FGameplayEventData Payload);
@@ -148,7 +149,8 @@ private:
 	bool IsGameplayEventFromActiveMontage(const FGameplayEventData& Payload) const;
 	bool IsPrimaryAttackInputEvent(const FGameplayEventData& Payload) const;
 	bool IsChargedReleaseHandoffEvent(const FGameplayEventData* Payload, const AActor* AvatarActor) const;
-	void PerformHitTrace();
+	void OpenTraceWindow();
+	void CloseTraceWindow();
 	void SetCharging(bool bShouldCharge);
 	void SetDodgeCancelable(bool bShouldBeCancelable);
 };

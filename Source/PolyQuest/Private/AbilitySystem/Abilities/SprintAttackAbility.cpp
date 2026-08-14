@@ -1,5 +1,6 @@
 #include "AbilitySystem/Abilities/SprintAttackAbility.h"
 
+#include "AbilitySystem/Tasks/AbilityTask_MeleeTraceWindow.h"
 #include "AbilitySystemComponent.h"
 #include "Abilities/Tasks/AbilityTask_PlayMontageAndWait.h"
 #include "Abilities/Tasks/AbilityTask_WaitGameplayEvent.h"
@@ -8,7 +9,6 @@
 #include "Character/BaseCharacter.h"
 #include "Character/Player/PlayerCharacter.h"
 #include "Components/SkeletalMeshComponent.h"
-#include "Engine/World.h"
 #include "GameplayEffect.h"
 #include "GameplayTagContainer.h"
 #include "PolyQuest.h"
@@ -30,7 +30,8 @@ USprintAttackAbility::USprintAttackAbility()
 	MovementInputBlockedTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Input.Block.Movement")), false);
 	JumpInputBlockedTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Input.Block.Jump")), false);
 	StaminaRegenBlockedTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Resource.Stamina.RegenBlocked")), false);
-	HitEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Attack.Sprint.Hit")), false);
+	TraceWindowBeginEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Attack.TraceWindow.Begin")), false);
+	TraceWindowEndEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Attack.TraceWindow.End")), false);
 	DodgeCancelWindowBeginEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Action.CancelWindow.Dodge.Begin")), false);
 	DodgeCancelWindowEndEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Action.CancelWindow.Dodge.End")), false);
 	DodgeCancelableStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Action.CanCancel.Dodge")), false);
@@ -63,7 +64,6 @@ void USprintAttackAbility::ActivateAbility(
 	const FGameplayEventData*)
 {
 	bEndAbilityRequested = false;
-	bHitEventConsumed = false;
 	bDodgeCancelable = false;
 	bRuntimeActionTagsApplied = false;
 	ActiveMontage = nullptr;
@@ -75,7 +75,8 @@ void USprintAttackAbility::ActivateAbility(
 	UAnimInstance* AnimInstance = SkeletalMesh ? SkeletalMesh->GetAnimInstance() : nullptr;
 	if (!AbilitySystemComponent || !PlayerCharacter || !AnimInstance || !SprintAttackMontage || !CostGameplayEffectClass
 		|| !DamageGameplayEffectClass || !StaminaRegenDelayGameplayEffectClass || !SprintStateTag.IsValid() || !AttackingStateTag.IsValid()
-		|| !MovementInputBlockedTag.IsValid() || !JumpInputBlockedTag.IsValid() || !StaminaRegenBlockedTag.IsValid() || !HitEventTag.IsValid()
+		|| !MovementInputBlockedTag.IsValid() || !JumpInputBlockedTag.IsValid() || !StaminaRegenBlockedTag.IsValid()
+		|| !TraceWindowBeginEventTag.IsValid() || !TraceWindowEndEventTag.IsValid()
 		|| !DodgeCancelWindowBeginEventTag.IsValid() || !DodgeCancelWindowEndEventTag.IsValid() || !DodgeCancelableStateTag.IsValid()
 		|| !AbilitySystemComponent->HasMatchingGameplayTag(SprintStateTag) || !PlayerCharacter->ShouldRequestSprintAttack())
 	{
@@ -85,10 +86,11 @@ void USprintAttackAbility::ActivateAbility(
 	}
 
 	MontageTask = UAbilityTask_PlayMontageAndWait::CreatePlayMontageAndWaitProxy(this, NAME_None, SprintAttackMontage);
-	HitEventTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, HitEventTag, nullptr, false, true);
+	TraceWindowBeginTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, TraceWindowBeginEventTag, nullptr, false, true);
+	TraceWindowEndTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, TraceWindowEndEventTag, nullptr, false, true);
 	DodgeCancelWindowBeginTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, DodgeCancelWindowBeginEventTag, nullptr, false, true);
 	DodgeCancelWindowEndTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, DodgeCancelWindowEndEventTag, nullptr, false, true);
-	if (!MontageTask || !HitEventTask || !DodgeCancelWindowBeginTask || !DodgeCancelWindowEndTask)
+	if (!MontageTask || !TraceWindowBeginTask || !TraceWindowEndTask || !DodgeCancelWindowBeginTask || !DodgeCancelWindowEndTask)
 	{
 		UE_LOG(LogPolyQuest, Warning, TEXT("Sprint attack activation aborted for '%s': failed to create an AbilityTask."), *GetNameSafe(PlayerCharacter));
 		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
@@ -106,11 +108,13 @@ void USprintAttackAbility::ActivateAbility(
 	ActiveMontage = SprintAttackMontage;
 	BoundAnimInstance->OnMontageEnded.RemoveDynamic(this, &USprintAttackAbility::OnActiveMontageEnded);
 	BoundAnimInstance->OnMontageEnded.AddDynamic(this, &USprintAttackAbility::OnActiveMontageEnded);
-	HitEventTask->EventReceived.AddDynamic(this, &USprintAttackAbility::OnHitEventReceived);
+	TraceWindowBeginTask->EventReceived.AddDynamic(this, &USprintAttackAbility::OnTraceWindowBegin);
+	TraceWindowEndTask->EventReceived.AddDynamic(this, &USprintAttackAbility::OnTraceWindowEnd);
 	DodgeCancelWindowBeginTask->EventReceived.AddDynamic(this, &USprintAttackAbility::OnDodgeCancelWindowBegin);
 	DodgeCancelWindowEndTask->EventReceived.AddDynamic(this, &USprintAttackAbility::OnDodgeCancelWindowEnd);
 
-	HitEventTask->ReadyForActivation();
+	TraceWindowBeginTask->ReadyForActivation();
+	TraceWindowEndTask->ReadyForActivation();
 	DodgeCancelWindowBeginTask->ReadyForActivation();
 	DodgeCancelWindowEndTask->ReadyForActivation();
 	MontageTask->ReadyForActivation();
@@ -147,6 +151,7 @@ void USprintAttackAbility::EndAbility(
 	bEndAbilityRequested = true;
 	SetDodgeCancelable(false);
 	SetRuntimeActionTags(false);
+	CloseTraceWindow();
 
 	if (BoundAnimInstance)
 	{
@@ -164,10 +169,16 @@ void USprintAttackAbility::EndAbility(
 		MontageTask = nullptr;
 	}
 
-	if (HitEventTask)
+	if (TraceWindowBeginTask)
 	{
-		HitEventTask->EndTask();
-		HitEventTask = nullptr;
+		TraceWindowBeginTask->EndTask();
+		TraceWindowBeginTask = nullptr;
+	}
+
+	if (TraceWindowEndTask)
+	{
+		TraceWindowEndTask->EndTask();
+		TraceWindowEndTask = nullptr;
 	}
 
 	if (DodgeCancelWindowBeginTask)
@@ -182,7 +193,6 @@ void USprintAttackAbility::EndAbility(
 		DodgeCancelWindowEndTask = nullptr;
 	}
 
-	bHitEventConsumed = false;
 	ActiveMontage = nullptr;
 
 	Super::EndAbility(Handle, ActorInfo, ActivationInfo, bReplicateEndAbility, bWasCancelled);
@@ -198,15 +208,20 @@ void USprintAttackAbility::OnActiveMontageEnded(UAnimMontage* Montage, bool bInt
 	EndFromMontage(bInterrupted);
 }
 
-void USprintAttackAbility::OnHitEventReceived(FGameplayEventData Payload)
+void USprintAttackAbility::OnTraceWindowBegin(FGameplayEventData Payload)
 {
-	if (!IsGameplayEventFromActiveMontage(Payload) || bHitEventConsumed)
+	if (IsGameplayEventFromActiveMontage(Payload))
 	{
-		return;
+		OpenTraceWindow();
 	}
+}
 
-	bHitEventConsumed = true;
-	PerformHitTrace();
+void USprintAttackAbility::OnTraceWindowEnd(FGameplayEventData Payload)
+{
+	if (IsGameplayEventFromActiveMontage(Payload))
+	{
+		CloseTraceWindow();
+	}
 }
 
 void USprintAttackAbility::OnDodgeCancelWindowBegin(FGameplayEventData Payload)
@@ -240,61 +255,43 @@ bool USprintAttackAbility::IsGameplayEventFromActiveMontage(const FGameplayEvent
 		&& Payload.OptionalObject.Get() == ActiveMontage.Get();
 }
 
-void USprintAttackAbility::PerformHitTrace()
+void USprintAttackAbility::OpenTraceWindow()
 {
-	AActor* AvatarActor = GetAvatarActorFromActorInfo();
-	UAbilitySystemComponent* SourceAbilitySystemComponent = GetAbilitySystemComponentFromActorInfo();
-	UWorld* World = AvatarActor ? AvatarActor->GetWorld() : nullptr;
-	if (!AvatarActor || !SourceAbilitySystemComponent || !World)
+	if (bEndAbilityRequested)
 	{
 		return;
 	}
 
-	const FVector Start = AvatarActor->GetActorLocation() + FVector(0.0f, 0.0f, TraceHeightOffset);
-	const FVector End = Start + AvatarActor->GetActorForwardVector() * TraceDistance;
-	const FCollisionShape CollisionShape = FCollisionShape::MakeSphere(TraceRadius);
-	FCollisionQueryParams QueryParams;
-	QueryParams.AddIgnoredActor(AvatarActor);
-
-	TArray<FHitResult> HitResults;
-	World->SweepMultiByChannel(HitResults, Start, End, FQuat::Identity, ECC_Pawn, CollisionShape, QueryParams);
-
-	ABaseCharacter* NearestTarget = nullptr;
-	float NearestDistanceSquared = TNumericLimits<float>::Max();
-	for (const FHitResult& HitResult : HitResults)
+	if (TraceWindowTask && !TraceWindowTask->IsTraceWindowOpen())
 	{
-		ABaseCharacter* TargetCharacter = Cast<ABaseCharacter>(HitResult.GetActor());
-		if (!TargetCharacter || TargetCharacter == AvatarActor)
-		{
-			continue;
-		}
+		TraceWindowTask = nullptr;
+	}
 
-		const float DistanceSquared = FVector::DistSquared(Start, TargetCharacter->GetActorLocation());
-		if (DistanceSquared < NearestDistanceSquared)
+	if (TraceWindowTask)
+	{
+		return;
+	}
+
+	ABaseCharacter* Character = Cast<ABaseCharacter>(GetAvatarActorFromActorInfo());
+	TraceWindowTask = Character
+		? UAbilityTask_MeleeTraceWindow::OpenMeleeTraceWindow(this, Character->GetMeleeTraceSource(), DamageGameplayEffectClass, GetAbilityLevel(), FGameplayTag(), 0.0f)
+		: nullptr;
+	if (TraceWindowTask)
+	{
+		TraceWindowTask->ReadyForActivation();
+		if (!TraceWindowTask->IsTraceWindowOpen())
 		{
-			NearestTarget = TargetCharacter;
-			NearestDistanceSquared = DistanceSquared;
+			TraceWindowTask = nullptr;
 		}
 	}
+}
 
-	if (!NearestTarget)
+void USprintAttackAbility::CloseTraceWindow()
+{
+	if (TraceWindowTask)
 	{
-		return;
-	}
-
-	UAbilitySystemComponent* TargetAbilitySystemComponent = NearestTarget->GetAbilitySystemComponent();
-	if (!TargetAbilitySystemComponent)
-	{
-		return;
-	}
-
-	const FGameplayEffectSpecHandle DamageSpecHandle = SourceAbilitySystemComponent->MakeOutgoingSpec(
-		DamageGameplayEffectClass,
-		GetAbilityLevel(),
-		SourceAbilitySystemComponent->MakeEffectContext());
-	if (DamageSpecHandle.IsValid() && DamageSpecHandle.Data.IsValid())
-	{
-		TargetAbilitySystemComponent->ApplyGameplayEffectSpecToSelf(*DamageSpecHandle.Data.Get());
+		TraceWindowTask->EndTask();
+		TraceWindowTask = nullptr;
 	}
 }
 

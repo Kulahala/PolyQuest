@@ -7,6 +7,7 @@
 #include "LightAttackAbility.generated.h"
 
 class UAbilityTask_PlayMontageAndWait;
+class UAbilityTask_MeleeTraceWindow;
 class UAbilityTask_WaitGameplayEvent;
 class UAnimInstance;
 class UAnimMontage;
@@ -41,24 +42,18 @@ protected:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Attack")
 	TSubclassOf<UGameplayEffect> DamageGameplayEffectClass;
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Attack")
-	FGameplayTag HitEventTag;
-
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Attack|Trace", meta = (ClampMin = "0.0"))
-	float TraceRadius = 50.0f;
-
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Attack|Trace")
-	float TraceHeightOffset = 0.0f;
-
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Attack|Trace", meta = (ClampMin = "0.0"))
-	float TraceDistance = 150.0f;
-
 private:
 	UPROPERTY(Transient)
 	TObjectPtr<UAbilityTask_PlayMontageAndWait> MontageTask;
 
 	UPROPERTY(Transient)
-	TObjectPtr<UAbilityTask_WaitGameplayEvent> HitEventTask;
+	TObjectPtr<UAbilityTask_WaitGameplayEvent> TraceWindowBeginTask;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UAbilityTask_WaitGameplayEvent> TraceWindowEndTask;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UAbilityTask_MeleeTraceWindow> TraceWindowTask;
 
 	UPROPERTY(Transient)
 	TObjectPtr<UAbilityTask_WaitGameplayEvent> DodgeCancelWindowBeginTask;
@@ -90,6 +85,8 @@ private:
 	FGameplayTag DodgeCancelWindowBeginEventTag;
 	FGameplayTag DodgeCancelWindowEndEventTag;
 	FGameplayTag DodgeCancelableStateTag;
+	FGameplayTag TraceWindowBeginEventTag;
+	FGameplayTag TraceWindowEndEventTag;
 	FGameplayTag PrimaryAttackPressedEventTag;
 	FGameplayTag PrimaryAttackInputTag;
 	FGameplayTag ComboInputWindowBeginEventTag;
@@ -98,7 +95,6 @@ private:
 	FGameplayTag ComboBranchWindowEndEventTag;
 
 	int32 ActiveEntryIndex = INDEX_NONE;
-	bool bHitEventConsumed = false;
 	bool bDodgeCancelable = false;
 	bool bComboInputWindowOpen = false;
 	bool bComboBranchWindowOpen = false;
@@ -110,7 +106,10 @@ private:
 	void OnActiveMontageEnded(UAnimMontage* Montage, bool bInterrupted);
 
 	UFUNCTION()
-	void OnHitEventReceived(FGameplayEventData Payload);
+	void OnTraceWindowBegin(FGameplayEventData Payload);
+
+	UFUNCTION()
+	void OnTraceWindowEnd(FGameplayEventData Payload);
 
 	UFUNCTION()
 	void OnDodgeCancelWindowBegin(FGameplayEventData Payload);
@@ -139,6 +138,7 @@ private:
 	bool IsGameplayEventFromActiveMontage(const FGameplayEventData& Payload) const;
 	bool IsPrimaryAttackInputEvent(const FGameplayEventData& Payload) const;
 	void TryConsumeBufferedComboContinuation();
-	void PerformHitTrace();
+	void OpenTraceWindow();
+	void CloseTraceWindow();
 	void SetDodgeCancelable(bool bShouldBeCancelable);
 };

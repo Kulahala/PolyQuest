@@ -3,6 +3,8 @@
 #include "AbilitySystem/CharacterAttributeSet.h"
 #include "AbilitySystemComponent.h"
 #include "Abilities/GameplayAbility.h"
+#include "Combat/Melee/MeleeTraceSourceComponent.h"
+#include "Components/CapsuleComponent.h"
 #include "GameplayAbilitySpec.h"
 #include "GameplayEffectTypes.h"
 #include "GameFramework/Controller.h"
@@ -12,6 +14,8 @@ ABaseCharacter::ABaseCharacter()
 {
 	AbilitySystemComponent = CreateDefaultSubobject<UAbilitySystemComponent>(TEXT("AbilitySystemComponent"));
 	Attributes = CreateDefaultSubobject<UCharacterAttributeSet>(TEXT("Attributes"));
+	MeleeTraceSource = CreateDefaultSubobject<UMeleeTraceSourceComponent>(TEXT("MeleeTraceSource"));
+	GetCapsuleComponent()->SetCollisionResponseToChannel(ECC_GameTraceChannel1, ECR_Block);
 	AbilitySystemComponent->AddAttributeSetSubobject(Attributes.Get());
 }
 
@@ -76,6 +80,16 @@ void ABaseCharacter::EndPlay(const EEndPlayReason::Type EndPlayReason)
 UAbilitySystemComponent* ABaseCharacter::GetAbilitySystemComponent() const
 {
 	return AbilitySystemComponent.Get();
+}
+
+int32 ABaseCharacter::GetCombatTeamId_Implementation() const
+{
+	return CombatTeamId;
+}
+
+UMeleeTraceSourceComponent* ABaseCharacter::GetMeleeTraceSource() const
+{
+	return MeleeTraceSource.Get();
 }
 
 void ABaseCharacter::BindMoveSpeedAttribute()

@@ -1,5 +1,6 @@
 #include "AbilitySystem/Abilities/LightAttackAbility.h"
 
+#include "AbilitySystem/Tasks/AbilityTask_MeleeTraceWindow.h"
 #include "AbilitySystemComponent.h"
 #include "Abilities/Tasks/AbilityTask_PlayMontageAndWait.h"
 #include "Abilities/Tasks/AbilityTask_WaitGameplayEvent.h"
@@ -8,7 +9,6 @@
 #include "Character/BaseCharacter.h"
 #include "Combat/ComboChainDataAsset.h"
 #include "Components/SkeletalMeshComponent.h"
-#include "Engine/World.h"
 #include "GameplayEffect.h"
 #include "PolyQuest.h"
 
@@ -27,10 +27,11 @@ ULightAttackAbility::ULightAttackAbility()
 	ActivationBlockedTags.AddTag(FGameplayTag::RequestGameplayTag(FName(TEXT("State.Status.Exhausted")), false));
 	ActivationBlockedTags.AddTag(FGameplayTag::RequestGameplayTag(FName(TEXT("State.Status.Stunned")), false));
 
-	HitEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Attack.Light.Hit")), false);
 	DodgeCancelWindowBeginEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Action.CancelWindow.Dodge.Begin")), false);
 	DodgeCancelWindowEndEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Action.CancelWindow.Dodge.End")), false);
 	DodgeCancelableStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Action.CanCancel.Dodge")), false);
+	TraceWindowBeginEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Attack.TraceWindow.Begin")), false);
+	TraceWindowEndEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Attack.TraceWindow.End")), false);
 	PrimaryAttackPressedEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Input.Pressed")), false);
 	PrimaryAttackInputTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Input.PrimaryAttack")), false);
 	ComboInputWindowBeginEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Attack.Light.Combo.InputWindow.Begin")), false);
@@ -46,7 +47,6 @@ void ULightAttackAbility::ActivateAbility(
 	const FGameplayEventData*)
 {
 	bEndAbilityRequested = false;
-	bHitEventConsumed = false;
 	bDodgeCancelable = false;
 	bComboInputWindowOpen = false;
 	bComboBranchWindowOpen = false;
@@ -62,8 +62,9 @@ void ULightAttackAbility::ActivateAbility(
 	USkeletalMeshComponent* SkeletalMesh = Character ? Character->GetMesh() : nullptr;
 	UAnimInstance* AnimInstance = SkeletalMesh ? SkeletalMesh->GetAnimInstance() : nullptr;
 
-	if (!AbilitySystemComponent || !AnimInstance || !CostGameplayEffectClass || !DamageGameplayEffectClass || !StaminaRegenDelayGameplayEffectClass || !HitEventTag.IsValid()
+	if (!AbilitySystemComponent || !AnimInstance || !CostGameplayEffectClass || !DamageGameplayEffectClass || !StaminaRegenDelayGameplayEffectClass
 		|| !DodgeCancelWindowBeginEventTag.IsValid() || !DodgeCancelWindowEndEventTag.IsValid() || !DodgeCancelableStateTag.IsValid()
+		|| !TraceWindowBeginEventTag.IsValid() || !TraceWindowEndEventTag.IsValid()
 		|| !PrimaryAttackPressedEventTag.IsValid() || !PrimaryAttackInputTag.IsValid() || !ComboInputWindowBeginEventTag.IsValid()
 		|| !ComboInputWindowEndEventTag.IsValid() || !ComboBranchWindowBeginEventTag.IsValid() || !ComboBranchWindowEndEventTag.IsValid()
 		|| !ValidateComboDefinition())
@@ -73,7 +74,8 @@ void ULightAttackAbility::ActivateAbility(
 		return;
 	}
 
-	HitEventTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, HitEventTag, nullptr, false, true);
+	TraceWindowBeginTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, TraceWindowBeginEventTag, nullptr, false, true);
+	TraceWindowEndTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, TraceWindowEndEventTag, nullptr, false, true);
 	DodgeCancelWindowBeginTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, DodgeCancelWindowBeginEventTag, nullptr, false, true);
 	DodgeCancelWindowEndTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, DodgeCancelWindowEndEventTag, nullptr, false, true);
 	PrimaryAttackPressedTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, PrimaryAttackPressedEventTag, nullptr, false, true);
@@ -82,7 +84,7 @@ void ULightAttackAbility::ActivateAbility(
 	ComboBranchWindowBeginTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, ComboBranchWindowBeginEventTag, nullptr, false, true);
 	ComboBranchWindowEndTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, ComboBranchWindowEndEventTag, nullptr, false, true);
 
-	if (!HitEventTask || !DodgeCancelWindowBeginTask || !DodgeCancelWindowEndTask || !PrimaryAttackPressedTask || !ComboInputWindowBeginTask
+	if (!TraceWindowBeginTask || !TraceWindowEndTask || !DodgeCancelWindowBeginTask || !DodgeCancelWindowEndTask || !PrimaryAttackPressedTask || !ComboInputWindowBeginTask
 		|| !ComboInputWindowEndTask || !ComboBranchWindowBeginTask || !ComboBranchWindowEndTask)
 	{
 		UE_LOG(LogPolyQuest, Warning, TEXT("Light attack activation aborted for '%s': failed to create a GameplayEvent AbilityTask."), *GetNameSafe(AvatarActor));
@@ -90,7 +92,8 @@ void ULightAttackAbility::ActivateAbility(
 		return;
 	}
 
-	HitEventTask->EventReceived.AddDynamic(this, &ULightAttackAbility::OnHitEventReceived);
+	TraceWindowBeginTask->EventReceived.AddDynamic(this, &ULightAttackAbility::OnTraceWindowBegin);
+	TraceWindowEndTask->EventReceived.AddDynamic(this, &ULightAttackAbility::OnTraceWindowEnd);
 	DodgeCancelWindowBeginTask->EventReceived.AddDynamic(this, &ULightAttackAbility::OnDodgeCancelWindowBegin);
 	DodgeCancelWindowEndTask->EventReceived.AddDynamic(this, &ULightAttackAbility::OnDodgeCancelWindowEnd);
 	PrimaryAttackPressedTask->EventReceived.AddDynamic(this, &ULightAttackAbility::OnPrimaryAttackPressed);
@@ -110,7 +113,8 @@ void ULightAttackAbility::ActivateAbility(
 		return;
 	}
 
-	HitEventTask->ReadyForActivation();
+	TraceWindowBeginTask->ReadyForActivation();
+	TraceWindowEndTask->ReadyForActivation();
 	DodgeCancelWindowBeginTask->ReadyForActivation();
 	DodgeCancelWindowEndTask->ReadyForActivation();
 	PrimaryAttackPressedTask->ReadyForActivation();
@@ -140,6 +144,7 @@ void ULightAttackAbility::EndAbility(
 
 	bEndAbilityRequested = true;
 	SetDodgeCancelable(false);
+	CloseTraceWindow();
 
 	if (BoundAnimInstance)
 	{
@@ -157,10 +162,16 @@ void ULightAttackAbility::EndAbility(
 		MontageTask = nullptr;
 	}
 
-	if (HitEventTask)
+	if (TraceWindowBeginTask)
 	{
-		HitEventTask->EndTask();
-		HitEventTask = nullptr;
+		TraceWindowBeginTask->EndTask();
+		TraceWindowBeginTask = nullptr;
+	}
+
+	if (TraceWindowEndTask)
+	{
+		TraceWindowEndTask->EndTask();
+		TraceWindowEndTask = nullptr;
 	}
 
 	if (DodgeCancelWindowBeginTask)
@@ -205,7 +216,6 @@ void ULightAttackAbility::EndAbility(
 		ComboBranchWindowEndTask = nullptr;
 	}
 
-	bHitEventConsumed = false;
 	bComboInputWindowOpen = false;
 	bComboBranchWindowOpen = false;
 	bContinuationBuffered = false;
@@ -226,15 +236,20 @@ void ULightAttackAbility::OnActiveMontageEnded(UAnimMontage* Montage, bool bInte
 	EndFromMontage(bInterrupted);
 }
 
-void ULightAttackAbility::OnHitEventReceived(FGameplayEventData Payload)
+void ULightAttackAbility::OnTraceWindowBegin(FGameplayEventData Payload)
 {
-	if (!IsGameplayEventFromActiveMontage(Payload) || bHitEventConsumed)
+	if (IsGameplayEventFromActiveMontage(Payload))
 	{
-		return;
+		OpenTraceWindow();
 	}
+}
 
-	bHitEventConsumed = true;
-	PerformHitTrace();
+void ULightAttackAbility::OnTraceWindowEnd(FGameplayEventData Payload)
+{
+	if (IsGameplayEventFromActiveMontage(Payload))
+	{
+		CloseTraceWindow();
+	}
 }
 
 void ULightAttackAbility::OnDodgeCancelWindowBegin(FGameplayEventData Payload)
@@ -368,7 +383,7 @@ bool ULightAttackAbility::StartComboEntry(int32 EntryIndex)
 
 	// Set the new identity before playback interrupts the prior montage.
 	SetDodgeCancelable(false);
-	bHitEventConsumed = false;
+	CloseTraceWindow();
 	bComboInputWindowOpen = false;
 	bComboBranchWindowOpen = false;
 	bContinuationBuffered = false;
@@ -487,60 +502,42 @@ void ULightAttackAbility::SetDodgeCancelable(bool bShouldBeCancelable)
 	bDodgeCancelable = false;
 }
 
-void ULightAttackAbility::PerformHitTrace()
+void ULightAttackAbility::OpenTraceWindow()
 {
-	AActor* AvatarActor = GetAvatarActorFromActorInfo();
-	UAbilitySystemComponent* SourceAbilitySystemComponent = GetAbilitySystemComponentFromActorInfo();
-	UWorld* World = AvatarActor ? AvatarActor->GetWorld() : nullptr;
-	if (!AvatarActor || !SourceAbilitySystemComponent || !World)
+	if (bEndAbilityRequested)
 	{
 		return;
 	}
 
-	const FVector Start = AvatarActor->GetActorLocation() + FVector(0.0f, 0.0f, TraceHeightOffset);
-	const FVector End = Start + AvatarActor->GetActorForwardVector() * TraceDistance;
-	const FCollisionShape CollisionShape = FCollisionShape::MakeSphere(TraceRadius);
-	FCollisionQueryParams QueryParams;
-	QueryParams.AddIgnoredActor(AvatarActor);
-
-	TArray<FHitResult> HitResults;
-	World->SweepMultiByChannel(HitResults, Start, End, FQuat::Identity, ECC_Pawn, CollisionShape, QueryParams);
-
-	ABaseCharacter* NearestTarget = nullptr;
-	float NearestDistanceSquared = TNumericLimits<float>::Max();
-	for (const FHitResult& HitResult : HitResults)
+	if (TraceWindowTask && !TraceWindowTask->IsTraceWindowOpen())
 	{
-		ABaseCharacter* TargetCharacter = Cast<ABaseCharacter>(HitResult.GetActor());
-		if (!TargetCharacter || TargetCharacter == AvatarActor)
-		{
-			continue;
-		}
+		TraceWindowTask = nullptr;
+	}
 
-		const float DistanceSquared = FVector::DistSquared(Start, TargetCharacter->GetActorLocation());
-		if (DistanceSquared < NearestDistanceSquared)
+	if (TraceWindowTask)
+	{
+		return;
+	}
+
+	ABaseCharacter* Character = Cast<ABaseCharacter>(GetAvatarActorFromActorInfo());
+	TraceWindowTask = Character
+		? UAbilityTask_MeleeTraceWindow::OpenMeleeTraceWindow(this, Character->GetMeleeTraceSource(), DamageGameplayEffectClass, GetAbilityLevel(), FGameplayTag(), 0.0f)
+		: nullptr;
+	if (TraceWindowTask)
+	{
+		TraceWindowTask->ReadyForActivation();
+		if (!TraceWindowTask->IsTraceWindowOpen())
 		{
-			NearestTarget = TargetCharacter;
-			NearestDistanceSquared = DistanceSquared;
+			TraceWindowTask = nullptr;
 		}
 	}
+}
 
-	if (!NearestTarget)
+void ULightAttackAbility::CloseTraceWindow()
+{
+	if (TraceWindowTask)
 	{
-		return;
-	}
-
-	UAbilitySystemComponent* TargetAbilitySystemComponent = NearestTarget->GetAbilitySystemComponent();
-	if (!TargetAbilitySystemComponent)
-	{
-		return;
-	}
-
-	const FGameplayEffectSpecHandle DamageSpecHandle = SourceAbilitySystemComponent->MakeOutgoingSpec(
-		DamageGameplayEffectClass,
-		GetAbilityLevel(),
-		SourceAbilitySystemComponent->MakeEffectContext());
-	if (DamageSpecHandle.IsValid() && DamageSpecHandle.Data.IsValid())
-	{
-		TargetAbilitySystemComponent->ApplyGameplayEffectSpecToSelf(*DamageSpecHandle.Data.Get());
+		TraceWindowTask->EndTask();
+		TraceWindowTask = nullptr;
 	}
 }

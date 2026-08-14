@@ -1,5 +1,6 @@
 #include "AbilitySystem/Abilities/ChargedAttackAbility.h"
 
+#include "AbilitySystem/Tasks/AbilityTask_MeleeTraceWindow.h"
 #include "AbilitySystemComponent.h"
 #include "Abilities/GameplayAbilityTriggerType.h"
 #include "Abilities/Tasks/AbilityTask_PlayMontageAndWait.h"
@@ -9,7 +10,6 @@
 #include "Character/BaseCharacter.h"
 #include "Character/Player/PlayerCharacter.h"
 #include "Components/SkeletalMeshComponent.h"
-#include "Engine/World.h"
 #include "GameplayEffect.h"
 #include "GameplayTagContainer.h"
 #include "PolyQuest.h"
@@ -35,7 +35,8 @@ UChargedAttackAbility::UChargedAttackAbility()
 	InputCanceledEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Input.Canceled")), false);
 	ChargedReleaseHandoffEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Attack.Charged.ReleaseHandoff")), false);
 	HoldReadyEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Attack.Charged.HoldReady")), false);
-	HitEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Attack.Charged.Hit")), false);
+	TraceWindowBeginEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Attack.TraceWindow.Begin")), false);
+	TraceWindowEndEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Attack.TraceWindow.End")), false);
 	DodgeCancelWindowBeginEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Action.CancelWindow.Dodge.Begin")), false);
 	DodgeCancelWindowEndEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Action.CancelWindow.Dodge.End")), false);
 	DodgeCancelableStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Action.CanCancel.Dodge")), false);
@@ -86,7 +87,6 @@ void UChargedAttackAbility::ActivateAbility(
 	const FGameplayEventData* TriggerEventData)
 {
 	bEndAbilityRequested = false;
-	bHitEventConsumed = false;
 	bDodgeCancelable = false;
 	bChargingStateApplied = false;
 	bMontagePausedAtHoldReady = false;
@@ -103,7 +103,8 @@ void UChargedAttackAbility::ActivateAbility(
 
 	if (!AbilitySystemComponent || !PlayerCharacter || !AnimInstance || !ChargedAttackMontage
 		|| !CostGameplayEffectClass || !DamageGameplayEffectClass || !StaminaRegenDelayGameplayEffectClass || !PrimaryAttackInputTag.IsValid()
-		|| !InputReleasedEventTag.IsValid() || !InputCanceledEventTag.IsValid() || !ChargedReleaseHandoffEventTag.IsValid() || !HoldReadyEventTag.IsValid() || !HitEventTag.IsValid()
+		|| !InputReleasedEventTag.IsValid() || !InputCanceledEventTag.IsValid() || !ChargedReleaseHandoffEventTag.IsValid() || !HoldReadyEventTag.IsValid()
+		|| !TraceWindowBeginEventTag.IsValid() || !TraceWindowEndEventTag.IsValid()
 		|| !DodgeCancelWindowBeginEventTag.IsValid() || !DodgeCancelWindowEndEventTag.IsValid() || !DodgeCancelableStateTag.IsValid()
 		|| !ChargingStateTag.IsValid() || !DamageDataTag.IsValid() || MinimumChargeDuration > MaximumChargeDuration
 		|| MaximumDamageMultiplier < 1.0f || (!bReleasedPrimaryHandoff && !PlayerCharacter->IsCombatInputHeld(PrimaryAttackInputTag)))
@@ -115,13 +116,14 @@ void UChargedAttackAbility::ActivateAbility(
 
 	MontageTask = UAbilityTask_PlayMontageAndWait::CreatePlayMontageAndWaitProxy(this, NAME_None, ChargedAttackMontage);
 	HoldReadyTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, HoldReadyEventTag, nullptr, false, true);
-	HitEventTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, HitEventTag, nullptr, false, true);
+	TraceWindowBeginTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, TraceWindowBeginEventTag, nullptr, false, true);
+	TraceWindowEndTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, TraceWindowEndEventTag, nullptr, false, true);
 	InputReleasedTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, InputReleasedEventTag, nullptr, false, true);
 	InputCanceledTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, InputCanceledEventTag, nullptr, false, true);
 	DodgeCancelWindowBeginTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, DodgeCancelWindowBeginEventTag, nullptr, false, true);
 	DodgeCancelWindowEndTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, DodgeCancelWindowEndEventTag, nullptr, false, true);
 
-	if (!MontageTask || !HoldReadyTask || !HitEventTask || !InputReleasedTask || !InputCanceledTask || !DodgeCancelWindowBeginTask || !DodgeCancelWindowEndTask)
+	if (!MontageTask || !HoldReadyTask || !TraceWindowBeginTask || !TraceWindowEndTask || !InputReleasedTask || !InputCanceledTask || !DodgeCancelWindowBeginTask || !DodgeCancelWindowEndTask)
 	{
 		UE_LOG(LogPolyQuest, Warning, TEXT("Charged attack activation aborted for '%s': failed to create an AbilityTask."), *GetNameSafe(PlayerCharacter));
 		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
@@ -134,14 +136,16 @@ void UChargedAttackAbility::ActivateAbility(
 	BoundAnimInstance->OnMontageEnded.AddDynamic(this, &UChargedAttackAbility::OnActiveMontageEnded);
 
 	HoldReadyTask->EventReceived.AddDynamic(this, &UChargedAttackAbility::OnHoldReady);
-	HitEventTask->EventReceived.AddDynamic(this, &UChargedAttackAbility::OnHitEventReceived);
+	TraceWindowBeginTask->EventReceived.AddDynamic(this, &UChargedAttackAbility::OnTraceWindowBegin);
+	TraceWindowEndTask->EventReceived.AddDynamic(this, &UChargedAttackAbility::OnTraceWindowEnd);
 	InputReleasedTask->EventReceived.AddDynamic(this, &UChargedAttackAbility::OnInputReleased);
 	InputCanceledTask->EventReceived.AddDynamic(this, &UChargedAttackAbility::OnInputCanceled);
 	DodgeCancelWindowBeginTask->EventReceived.AddDynamic(this, &UChargedAttackAbility::OnDodgeCancelWindowBegin);
 	DodgeCancelWindowEndTask->EventReceived.AddDynamic(this, &UChargedAttackAbility::OnDodgeCancelWindowEnd);
 
 	HoldReadyTask->ReadyForActivation();
-	HitEventTask->ReadyForActivation();
+	TraceWindowBeginTask->ReadyForActivation();
+	TraceWindowEndTask->ReadyForActivation();
 	InputReleasedTask->ReadyForActivation();
 	InputCanceledTask->ReadyForActivation();
 	DodgeCancelWindowBeginTask->ReadyForActivation();
@@ -186,6 +190,7 @@ void UChargedAttackAbility::EndAbility(
 	bEndAbilityRequested = true;
 	SetCharging(false);
 	SetDodgeCancelable(false);
+	CloseTraceWindow();
 
 	if (BoundAnimInstance)
 	{
@@ -209,10 +214,16 @@ void UChargedAttackAbility::EndAbility(
 		HoldReadyTask = nullptr;
 	}
 
-	if (HitEventTask)
+	if (TraceWindowBeginTask)
 	{
-		HitEventTask->EndTask();
-		HitEventTask = nullptr;
+		TraceWindowBeginTask->EndTask();
+		TraceWindowBeginTask = nullptr;
+	}
+
+	if (TraceWindowEndTask)
+	{
+		TraceWindowEndTask->EndTask();
+		TraceWindowEndTask = nullptr;
 	}
 
 	if (InputReleasedTask)
@@ -239,7 +250,6 @@ void UChargedAttackAbility::EndAbility(
 		DodgeCancelWindowEndTask = nullptr;
 	}
 
-	bHitEventConsumed = false;
 	bMontagePausedAtHoldReady = false;
 	bReleaseStarted = false;
 	DamageMultiplier = 1.0f;
@@ -275,15 +285,20 @@ void UChargedAttackAbility::OnHoldReady(FGameplayEventData Payload)
 	bMontagePausedAtHoldReady = true;
 }
 
-void UChargedAttackAbility::OnHitEventReceived(FGameplayEventData Payload)
+void UChargedAttackAbility::OnTraceWindowBegin(FGameplayEventData Payload)
 {
-	if (!bReleaseStarted || !IsGameplayEventFromActiveMontage(Payload) || bHitEventConsumed)
+	if (bReleaseStarted && IsGameplayEventFromActiveMontage(Payload))
 	{
-		return;
+		OpenTraceWindow();
 	}
+}
 
-	bHitEventConsumed = true;
-	PerformHitTrace();
+void UChargedAttackAbility::OnTraceWindowEnd(FGameplayEventData Payload)
+{
+	if (IsGameplayEventFromActiveMontage(Payload))
+	{
+		CloseTraceWindow();
+	}
 }
 
 void UChargedAttackAbility::OnInputReleased(FGameplayEventData Payload)
@@ -392,62 +407,43 @@ bool UChargedAttackAbility::IsChargedReleaseHandoffEvent(const FGameplayEventDat
 		&& Payload->InstigatorTags.HasTagExact(PrimaryAttackInputTag);
 }
 
-void UChargedAttackAbility::PerformHitTrace()
+void UChargedAttackAbility::OpenTraceWindow()
 {
-	AActor* AvatarActor = GetAvatarActorFromActorInfo();
-	UAbilitySystemComponent* SourceAbilitySystemComponent = GetAbilitySystemComponentFromActorInfo();
-	UWorld* World = AvatarActor ? AvatarActor->GetWorld() : nullptr;
-	if (!AvatarActor || !SourceAbilitySystemComponent || !World)
+	if (bEndAbilityRequested || !bReleaseStarted)
 	{
 		return;
 	}
 
-	const FVector Start = AvatarActor->GetActorLocation() + FVector(0.0f, 0.0f, TraceHeightOffset);
-	const FVector End = Start + AvatarActor->GetActorForwardVector() * TraceDistance;
-	const FCollisionShape CollisionShape = FCollisionShape::MakeSphere(TraceRadius);
-	FCollisionQueryParams QueryParams;
-	QueryParams.AddIgnoredActor(AvatarActor);
-
-	TArray<FHitResult> HitResults;
-	World->SweepMultiByChannel(HitResults, Start, End, FQuat::Identity, ECC_Pawn, CollisionShape, QueryParams);
-
-	ABaseCharacter* NearestTarget = nullptr;
-	float NearestDistanceSquared = TNumericLimits<float>::Max();
-	for (const FHitResult& HitResult : HitResults)
+	if (TraceWindowTask && !TraceWindowTask->IsTraceWindowOpen())
 	{
-		ABaseCharacter* TargetCharacter = Cast<ABaseCharacter>(HitResult.GetActor());
-		if (!TargetCharacter || TargetCharacter == AvatarActor)
-		{
-			continue;
-		}
+		TraceWindowTask = nullptr;
+	}
 
-		const float DistanceSquared = FVector::DistSquared(Start, TargetCharacter->GetActorLocation());
-		if (DistanceSquared < NearestDistanceSquared)
+	if (TraceWindowTask)
+	{
+		return;
+	}
+
+	ABaseCharacter* Character = Cast<ABaseCharacter>(GetAvatarActorFromActorInfo());
+	TraceWindowTask = Character
+		? UAbilityTask_MeleeTraceWindow::OpenMeleeTraceWindow(this, Character->GetMeleeTraceSource(), DamageGameplayEffectClass, GetAbilityLevel(), DamageDataTag, -BaseDamage * DamageMultiplier)
+		: nullptr;
+	if (TraceWindowTask)
+	{
+		TraceWindowTask->ReadyForActivation();
+		if (!TraceWindowTask->IsTraceWindowOpen())
 		{
-			NearestTarget = TargetCharacter;
-			NearestDistanceSquared = DistanceSquared;
+			TraceWindowTask = nullptr;
 		}
 	}
+}
 
-	if (!NearestTarget)
+void UChargedAttackAbility::CloseTraceWindow()
+{
+	if (TraceWindowTask)
 	{
-		return;
-	}
-
-	UAbilitySystemComponent* TargetAbilitySystemComponent = NearestTarget->GetAbilitySystemComponent();
-	if (!TargetAbilitySystemComponent)
-	{
-		return;
-	}
-
-	const FGameplayEffectSpecHandle DamageSpecHandle = SourceAbilitySystemComponent->MakeOutgoingSpec(
-		DamageGameplayEffectClass,
-		GetAbilityLevel(),
-		SourceAbilitySystemComponent->MakeEffectContext());
-	if (DamageSpecHandle.IsValid() && DamageSpecHandle.Data.IsValid())
-	{
-		DamageSpecHandle.Data->SetSetByCallerMagnitude(DamageDataTag, -BaseDamage * DamageMultiplier);
-		TargetAbilitySystemComponent->ApplyGameplayEffectSpecToSelf(*DamageSpecHandle.Data.Get());
+		TraceWindowTask->EndTask();
+		TraceWindowTask = nullptr;
 	}
 }
 
