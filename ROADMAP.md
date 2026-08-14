@@ -18,6 +18,7 @@ The previous `Test` project remains the FSM behavior reference and validation ba
 - `TODO-01F` has completed the native Sprint, Jump, Sprint Jump air-speed, and optional Sprint Attack lifecycle. Its authored GA/GE, Montage, retargeted Sequence, Blueprint, AnimBP, Loadout, input, and map assets remain deliberately local WIP; the dedicated Sprint locomotion loop is deferred to `TODO-07B`.
 - `TODO-01G` has completed a health review of the player-combat foundation. It repaired synchronous Montage-end reentry in Light and Charged startup and aligned Dodge with active-Montage identity filtering and unified teardown.
 - `TODO-01H` has completed the native shared melee-delivery foundation for Light, Charged, and Sprint Attack. The fixed `WeaponMesh` / `BladeTraceBase` / `BladeTraceTip` lookup remains a v1 fixture; mutable authored combat assets remain local WIP and are not a clean-checkout fixture.
+- `TODO-02A` has completed the first enemy native AI and melee-intent foundation. The configured local Scene01 fixture has user-confirmed PIE and visual evidence; its mutable Blueprint, StateTree, Gameplay Ability/Effect, Montage, AnimBP, marker, collision, map, and imported-asset setup remains local WIP.
 - External source packages remain under `Content/Assets/`. Imported content is not a production integration merely because it is present locally; skeleton, weapon, socket, animation, and presentation decisions still require their named stage validation.
 
 ## Test-To-PolyQuest Migration Contract Inventory
@@ -109,14 +110,15 @@ The old `Test` project is evidence for player-facing behavior, not a source tree
   - `WeaponMesh` / `BladeTraceBase` / `BladeTraceTip` are fixed v1 fixture names, not an equipment architecture. `TODO-03A` must replace them with an equipped-weapon trace-sample provider or authored weapon data while reusing the Trace Window task and shared resolver.
   - The user confirmed `PolyQuestEditor` compilation and Scene01 PIE validation. Main review plus an independent read-only source review found no P0-P2 C++/Gameplay Tag/config blocker. Blueprint, Montage, GameplayEffect, AnimBP, input, map, collision-fixture, and marker authoring remain deliberately excluded mutable WIP; this native shared-hit foundation is not a clean-checkout reproduction of the complete combat fixture.
 
+- [x] `TODO-02A: First Enemy GAS Combat And StateTree Intent v1`
+  - Replaced the provisional integer team identifier with exact `Team.Player` and `Team.Enemy` tags. Invalid or equal tags fail closed in the shared melee resolver. The Player registers as a Sight source; `AEnemyCharacter` inherits the existing ASC and trace fixture while `AEnemyAIController` owns Sight, target, focus, home, and StateTree lifecycle.
+  - The first native StateTree contract selects Patrol, Alert, Chase, Combat, and Return intent. It requests one `UEnemyMeleeAbility` and observes its ASC-owned action tag; StateTree does not directly play Montages, apply damage, modify Health/Poise, or establish another enemy FSM. The enemy Ability identity-filters Trace Window events and reuses `UAbilityTask_MeleeTraceWindow` and `FMeleeHitResolver`.
+  - The user confirmed the configured Scene01 PIE and visual route after the authored enemy fixture was completed. Main normal review and a Main adversarial fallback found no P0-P2 C++/Gameplay Tag/config blocker. A fresh `gpt-5.6-luna / xhigh` Reviewer was unavailable, so no independent-review result is claimed.
+  - The focused commit intentionally excludes all mutable authored fixture WIP: Content assets, Blueprints, StateTree, GA/GE, Montage, AnimBP, marker/collision tuning, map, input, project settings, and imported resources. It is not a clean-checkout reproduction of the local combat fixture.
+
 ## Milestones
 
 ### First Enemy And Combat Targeting
-
-- [ ] `TODO-02A: First Enemy GAS Combat And StateTree Intent v1`
-  - Add the first enemy ASC, a small StateTree for patrol/alert/chase/combat/return intent, and one executable melee attack ability using the proven shared weapon-motion trace and hit-resolver path.
-  - StateTree requests abilities and observes authoritative tags; it does not own health, poise, hit, death, cooldown mutation, or a second enemy FSM.
-  - Before the enemy can receive or deliver melee contact, configure a `CombatTeamId` distinct from the player's temporary value and a `MeleeTrace` `Block` collision response on its endpoint. Before the enemy's first attack, replace the v1 integer fixture with config-authored `Team.*` Gameplay Tags on player and enemy endpoints. The shared resolver remains the only same-team/hostile relation evaluator; do not expand this into party, social, or a full attitude system.
 
 - [ ] `TODO-02B: Lock-On And Combat Camera v1`
   - Add valid-target selection, manual target switching, facing/camera ownership, lock break rules, and the sprint free-run exception after a real enemy target exists.
@@ -125,6 +127,7 @@ The old `Test` project is evidence for player-facing behavior, not a source tree
 - [ ] `TODO-02C: Enemy Combat Profiles, Reactions, Poise, And Stance Break v1`
   - Rebuild data-authored enemy attack selection, configurable distance/cooldown/attack presentation, hit reaction, poise depletion, stance break, death, and safe interruption around the first enemy.
   - Reuse `TODO-01H` for melee delivery. Attack Profiles tune attack selection and authored trace/damage data but do not create a second hit resolver or let animation directly mutate Health or Poise.
+  - Define one profile-owned enemy reach contract before changing melee distance, character dimensions, or Chase behavior. Its StateTree MoveTo reach-test settings and Controller/attack-range checks must use the same geometry rule.
   - Keep attack data separate from StateTree intent and do not import the old local HFSM.
 
 - [ ] `TODO-02D: Defensive Combat And Hyper Armor v1`
@@ -239,6 +242,7 @@ The old `Test` project is evidence for player-facing behavior, not a source tree
 - `TODO-01C1` has accepted keyboard/mouse PIE evidence only. Right Shoulder and Left Trigger mapping behavior and physical controller operation are not verified controller support. Before presenting controller support, adding controller-specific UX, or producing a controller-facing build, read back the intended Mapping Context entries and pass focused hardware validation for every intended controller action; until then, do not claim gamepad support.
 - Light entry/continuation, Dodge, and Sprint Attack can commit a Cost before authored Montage startup is confirmed; Charged can commit before its release/resume path is known usable. Dodge can also cancel an eligible prior action after Commit but before its own startup is confirmed. A rare playback failure after valid preflight can therefore consume Stamina, end the Ability, or prematurely interrupt the prior action without an automatic recovery contract. The normal AnimInstance/Slot path has user PIE evidence, but failure injection is unverified. Before defining a final combat asset baseline or adding runtime playback-rate control, define the atomicity, refund, and interruption semantics and add focused failure-injection coverage for every affected action.
 - `TODO-01E` has manual threshold validation, including the repaired normal-release-before-delay route, but no deterministic same-frame input/timer injection test. Before changing input-event dispatch order, introducing prediction/networking, or relying on frame-exact charge thresholds, add a deterministic automated fixture or controlled logging harness that exercises both callback orders and verifies exactly one Light or Charged activation.
+- `TODO-02A` uses an exact Controller center-distance `MeleeRange`, while the authored `FStateTreeMoveToTask` can add agent and goal radii to its reach test. The user previously observed the resulting idle edge and confirmed the authored Scene01 route after correction, but Main has no final StateTree asset readback. `TODO-02C` owns the closure: before changing enemy dimensions, navigation, melee range, or attack profiles, read back both Chase reach-test flags and either disable both radius additions or replace the exact-distance contract with one documented profile-owned geometry rule; then pass a boundary-distance PIE check.
 
 ## Deferred TODOs
 

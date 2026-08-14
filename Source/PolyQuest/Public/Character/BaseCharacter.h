@@ -6,6 +6,7 @@
 #include "AbilitySystemInterface.h"
 #include "Combat/Melee/CombatTeamAgent.h"
 #include "GameFramework/Character.h"
+#include "GameplayTagContainer.h"
 #include "BaseCharacter.generated.h"
 
 class AController;
@@ -24,7 +25,7 @@ public:
 	ABaseCharacter();
 
 	virtual UAbilitySystemComponent* GetAbilitySystemComponent() const override;
-	virtual int32 GetCombatTeamId_Implementation() const override;
+	virtual FGameplayTag GetCombatTeamTag_Implementation() const override;
 	virtual void BeginPlay() override;
 	virtual void PossessedBy(AController* NewController) override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
@@ -42,9 +43,9 @@ protected:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "GAS")
 	TArray<TSubclassOf<UGameplayAbility>> StartupAbilities;
 
-	/** Equal identifiers are intentionally treated as friendly by the narrow melee resolver. */
+	/** Invalid or exactly equal tags are intentionally treated as non-hostile by the narrow melee resolver. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Team", meta = (AllowPrivateAccess = "true"))
-	int32 CombatTeamId = 0;
+	FGameplayTag CombatTeamTag;
 
 private:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "GAS", meta = (AllowPrivateAccess = "true"))

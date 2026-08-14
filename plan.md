@@ -12,10 +12,10 @@
 
 ## No Active Stage
 
-`TODO-01H: Weapon Motion Trace And Hit Resolver Foundation v1` is review-approved after Main normal review and a Main adversarial fallback. The requested `gpt-5.6-luna / xhigh` Reviewer was unavailable; an additional independent read-only source review found no P0-P2 C++/Gameplay Tag/config blocker.
+`TODO-02A: First Enemy GAS Combat And StateTree Intent v1` is review-approved after Main normal review and a Main adversarial fallback. The requested `gpt-5.6-luna / xhigh` Reviewer was unavailable, so no independent-review result is claimed.
 
-The user confirmed `PolyQuestEditor` compilation and Scene01 PIE validation. No fresh final Editor readback of `BladeTraceBase` / `BladeTraceTip` coordinates was obtained during closeout, so this record makes no final marker-coordinate claim.
+The user confirmed the configured Scene01 PIE and visual route. Main did not execute UBT, PIE, or a final Editor asset readback; the authored Blueprint, StateTree, Gameplay Ability/Effect, Montage, AnimBP, marker, collision, map, and imported-resource fixture remains user-owned mutable WIP.
 
-Static evidence includes CodeGraph/source review, Gameplay Tag and collision-channel alignment, scoped code-review-graph impact context, and `git diff --check`. The native shared hit foundation intentionally excludes mutable Blueprint, Montage, GameplayEffect, AnimBP, input, map, and fixture authoring WIP, so it is not a clean-checkout reproduction of the local combat fixture.
+Static evidence includes focused source and engine-header reads, CodeGraph, scoped code-review-graph context with direct review of untracked enemy C++ files, Gameplay Tag alignment, and `git diff --check` including no-index checks. The accepted Chase reach-semantics constraint is tracked in `ROADMAP.md` under `TODO-02C`.
 
-Stable implementation facts and all accepted validation debt are recorded in `ARCHITECTURE.md` and `ROADMAP.md`. Choose the next active stage from `ROADMAP.md` and record its scope, evidence gates, delegation decision, and commit boundary here.
+Stable implementation facts and accepted validation debt are recorded in `ARCHITECTURE.md` and `ROADMAP.md`. Choose the next active stage from `ROADMAP.md` and record its scope, evidence gates, delegation decision, and commit boundary here.

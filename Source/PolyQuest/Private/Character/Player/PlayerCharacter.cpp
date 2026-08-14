@@ -15,6 +15,8 @@
 #include "GameplayEffect.h"
 #include "GameplayTagContainer.h"
 #include "InputActionValue.h"
+#include "Perception/AIPerceptionStimuliSourceComponent.h"
+#include "Perception/AISense_Sight.h"
 
 #include "AbilitySystem/CharacterAttributeSet.h"
 #include "Combat/Input/CombatLoadoutDefinition.h"
@@ -23,6 +25,7 @@
 APlayerCharacter::APlayerCharacter()
 {
 	AbilitySlotActions.SetNum(4);
+	CombatTeamTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Team.Player")), false);
 	PrimaryAttackInputTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Input.PrimaryAttack")), false);
 	AimInputTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Input.Aim")), false);
 	AbilitySlotInputTags.Add(FGameplayTag::RequestGameplayTag(FName(TEXT("Input.AbilitySlot.1")), false));
@@ -63,6 +66,8 @@ APlayerCharacter::APlayerCharacter()
 	FollowCamera = CreateDefaultSubobject<UCameraComponent>(TEXT("FollowCamera"));
 	FollowCamera->SetupAttachment(CameraBoom, USpringArmComponent::SocketName);
 	FollowCamera->bUsePawnControlRotation = false;
+
+	SightStimuliSource = CreateDefaultSubobject<UAIPerceptionStimuliSourceComponent>(TEXT("SightStimuliSource"));
 }
 
 void APlayerCharacter::BeginPlay()
@@ -70,6 +75,10 @@ void APlayerCharacter::BeginPlay()
 	Super::BeginPlay();
 	SetActiveCombatLoadout(InitialCombatLoadout);
 	BindSprintStateEvents();
+	if (SightStimuliSource)
+	{
+		SightStimuliSource->RegisterForSense(UAISense_Sight::StaticClass());
+	}
 
 	if (bStaminaRegenEffectApplied || !HasAuthority())
 	{
@@ -100,6 +109,11 @@ void APlayerCharacter::BeginPlay()
 
 void APlayerCharacter::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
+	if (SightStimuliSource)
+	{
+		SightStimuliSource->UnregisterFromPerceptionSystem();
+	}
+
 	UnbindSprintStateEvents();
 	ClearSprintJumpAirSpeed();
 

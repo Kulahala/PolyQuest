@@ -1,0 +1,246 @@
+#include "AbilitySystem/Abilities/EnemyMeleeAbility.h"
+
+#include "AI/EnemyAIController.h"
+#include "AbilitySystem/Tasks/AbilityTask_MeleeTraceWindow.h"
+#include "AbilitySystemComponent.h"
+#include "Abilities/Tasks/AbilityTask_PlayMontageAndWait.h"
+#include "Abilities/Tasks/AbilityTask_WaitGameplayEvent.h"
+#include "Animation/AnimInstance.h"
+#include "Animation/AnimMontage.h"
+#include "Character/BaseCharacter.h"
+#include "Character/Enemy/EnemyCharacter.h"
+#include "Components/SkeletalMeshComponent.h"
+#include "GameplayEffect.h"
+#include "PolyQuest.h"
+
+UEnemyMeleeAbility::UEnemyMeleeAbility()
+{
+	InstancingPolicy = EGameplayAbilityInstancingPolicy::InstancedPerActor;
+	NetExecutionPolicy = EGameplayAbilityNetExecutionPolicy::ServerOnly;
+
+	EnemyMeleeAbilityTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Attack.Enemy.Melee")), false);
+	AttackingStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Action.Attacking")), false);
+	TraceWindowBeginEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Attack.TraceWindow.Begin")), false);
+	TraceWindowEndEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Attack.TraceWindow.End")), false);
+
+	AbilityTags.AddTag(EnemyMeleeAbilityTag);
+	ActivationOwnedTags.AddTag(AttackingStateTag);
+	ActivationBlockedTags.AddTag(AttackingStateTag);
+	ActivationBlockedTags.AddTag(FGameplayTag::RequestGameplayTag(FName(TEXT("State.Status.Dead")), false));
+	ActivationBlockedTags.AddTag(FGameplayTag::RequestGameplayTag(FName(TEXT("State.Status.Stunned")), false));
+}
+
+bool UEnemyMeleeAbility::CanActivateAbility(
+	const FGameplayAbilitySpecHandle Handle,
+	const FGameplayAbilityActorInfo* ActorInfo,
+	const FGameplayTagContainer* SourceTags,
+	const FGameplayTagContainer* TargetTags,
+	FGameplayTagContainer* OptionalRelevantTags) const
+{
+	return Super::CanActivateAbility(Handle, ActorInfo, SourceTags, TargetTags, OptionalRelevantTags)
+		&& ValidateActivationSetup(ActorInfo);
+}
+
+void UEnemyMeleeAbility::ActivateAbility(
+	const FGameplayAbilitySpecHandle Handle,
+	const FGameplayAbilityActorInfo* ActorInfo,
+	const FGameplayAbilityActivationInfo ActivationInfo,
+	const FGameplayEventData*)
+{
+	bEndAbilityRequested = false;
+	ActiveMontage = nullptr;
+	BoundAnimInstance = nullptr;
+
+	if (!ValidateActivationSetup(ActorInfo))
+	{
+		UE_LOG(LogPolyQuest, Warning, TEXT("Enemy melee activation aborted for '%s': ASC, controller target/range, AnimInstance, montage, damage effect, and trace window tags are required."), *GetNameSafe(GetAvatarActorFromActorInfo()));
+		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
+		return;
+	}
+
+	AEnemyCharacter* EnemyCharacter = Cast<AEnemyCharacter>(GetAvatarActorFromActorInfo());
+	USkeletalMeshComponent* SkeletalMesh = EnemyCharacter ? EnemyCharacter->GetMesh() : nullptr;
+	UAnimInstance* AnimInstance = SkeletalMesh ? SkeletalMesh->GetAnimInstance() : nullptr;
+
+	MontageTask = UAbilityTask_PlayMontageAndWait::CreatePlayMontageAndWaitProxy(this, NAME_None, EnemyAttackMontage);
+	TraceWindowBeginTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, TraceWindowBeginEventTag, nullptr, false, true);
+	TraceWindowEndTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, TraceWindowEndEventTag, nullptr, false, true);
+	if (!MontageTask || !TraceWindowBeginTask || !TraceWindowEndTask)
+	{
+		UE_LOG(LogPolyQuest, Warning, TEXT("Enemy melee activation aborted for '%s': failed to create an AbilityTask."), *GetNameSafe(EnemyCharacter));
+		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
+		return;
+	}
+
+	if (!CommitAbility(Handle, ActorInfo, ActivationInfo))
+	{
+		UE_LOG(LogPolyQuest, Verbose, TEXT("Enemy melee activation rejected for '%s' because CommitAbility failed."), *GetNameSafe(EnemyCharacter));
+		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
+		return;
+	}
+
+	BoundAnimInstance = AnimInstance;
+	ActiveMontage = EnemyAttackMontage;
+	BoundAnimInstance->OnMontageEnded.RemoveDynamic(this, &UEnemyMeleeAbility::OnActiveMontageEnded);
+	BoundAnimInstance->OnMontageEnded.AddDynamic(this, &UEnemyMeleeAbility::OnActiveMontageEnded);
+	TraceWindowBeginTask->EventReceived.AddDynamic(this, &UEnemyMeleeAbility::OnTraceWindowBegin);
+	TraceWindowEndTask->EventReceived.AddDynamic(this, &UEnemyMeleeAbility::OnTraceWindowEnd);
+
+	TraceWindowBeginTask->ReadyForActivation();
+	TraceWindowEndTask->ReadyForActivation();
+	MontageTask->ReadyForActivation();
+
+	// Zero-length or invalid authored montages can synchronously complete and run the unified teardown.
+	if (bEndAbilityRequested)
+	{
+		return;
+	}
+
+	if (!BoundAnimInstance || !ActiveMontage || !BoundAnimInstance->Montage_IsActive(ActiveMontage.Get()))
+	{
+		UE_LOG(LogPolyQuest, Warning, TEXT("Enemy melee activation aborted for '%s': montage '%s' did not start."), *GetNameSafe(EnemyCharacter), *GetNameSafe(EnemyAttackMontage));
+		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
+	}
+}
+
+void UEnemyMeleeAbility::EndAbility(
+	const FGameplayAbilitySpecHandle Handle,
+	const FGameplayAbilityActorInfo* ActorInfo,
+	const FGameplayAbilityActivationInfo ActivationInfo,
+	bool bReplicateEndAbility,
+	bool bWasCancelled)
+{
+	if (bEndAbilityRequested)
+	{
+		return;
+	}
+
+	bEndAbilityRequested = true;
+	CloseTraceWindow();
+
+	if (BoundAnimInstance)
+	{
+		BoundAnimInstance->OnMontageEnded.RemoveDynamic(this, &UEnemyMeleeAbility::OnActiveMontageEnded);
+		if (ActiveMontage && BoundAnimInstance->Montage_IsActive(ActiveMontage.Get()))
+		{
+			BoundAnimInstance->Montage_Stop(0.0f, ActiveMontage.Get());
+		}
+		BoundAnimInstance = nullptr;
+	}
+
+	if (MontageTask)
+	{
+		MontageTask->EndTask();
+		MontageTask = nullptr;
+	}
+
+	if (TraceWindowBeginTask)
+	{
+		TraceWindowBeginTask->EndTask();
+		TraceWindowBeginTask = nullptr;
+	}
+
+	if (TraceWindowEndTask)
+	{
+		TraceWindowEndTask->EndTask();
+		TraceWindowEndTask = nullptr;
+	}
+
+	ActiveMontage = nullptr;
+
+	Super::EndAbility(Handle, ActorInfo, ActivationInfo, bReplicateEndAbility, bWasCancelled);
+}
+
+void UEnemyMeleeAbility::OnActiveMontageEnded(UAnimMontage* Montage, bool bInterrupted)
+{
+	if (bEndAbilityRequested || Montage != ActiveMontage.Get())
+	{
+		return;
+	}
+
+	EndFromMontage(bInterrupted);
+}
+
+void UEnemyMeleeAbility::OnTraceWindowBegin(FGameplayEventData Payload)
+{
+	if (IsGameplayEventFromActiveMontage(Payload))
+	{
+		OpenTraceWindow();
+	}
+}
+
+void UEnemyMeleeAbility::OnTraceWindowEnd(FGameplayEventData Payload)
+{
+	if (IsGameplayEventFromActiveMontage(Payload))
+	{
+		CloseTraceWindow();
+	}
+}
+
+bool UEnemyMeleeAbility::ValidateActivationSetup(const FGameplayAbilityActorInfo* ActorInfo) const
+{
+	const UAbilitySystemComponent* AbilitySystemComponent = ActorInfo ? ActorInfo->AbilitySystemComponent.Get() : nullptr;
+	const AEnemyCharacter* EnemyCharacter = ActorInfo ? Cast<AEnemyCharacter>(ActorInfo->AvatarActor.Get()) : nullptr;
+	const AEnemyAIController* EnemyAIController = EnemyCharacter ? Cast<AEnemyAIController>(EnemyCharacter->GetController()) : nullptr;
+	const USkeletalMeshComponent* SkeletalMesh = EnemyCharacter ? EnemyCharacter->GetMesh() : nullptr;
+	const UAnimInstance* AnimInstance = SkeletalMesh ? SkeletalMesh->GetAnimInstance() : nullptr;
+
+	return AbilitySystemComponent && EnemyCharacter && EnemyAIController && AnimInstance && EnemyAttackMontage && DamageGameplayEffectClass
+		&& EnemyMeleeAbilityTag.IsValid() && AttackingStateTag.IsValid() && TraceWindowBeginEventTag.IsValid() && TraceWindowEndEventTag.IsValid()
+		&& EnemyAIController->HasValidCombatTarget() && EnemyAIController->IsCombatTargetInMeleeRange();
+}
+
+bool UEnemyMeleeAbility::IsGameplayEventFromActiveMontage(const FGameplayEventData& Payload) const
+{
+	const AActor* AvatarActor = GetAvatarActorFromActorInfo();
+	return !bEndAbilityRequested && ActiveMontage && AvatarActor && Payload.Instigator == AvatarActor && Payload.Target == AvatarActor
+		&& Payload.OptionalObject.Get() == ActiveMontage.Get();
+}
+
+void UEnemyMeleeAbility::EndFromMontage(bool bWasCancelled)
+{
+	if (CurrentActorInfo)
+	{
+		EndAbility(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, true, bWasCancelled);
+	}
+}
+
+void UEnemyMeleeAbility::OpenTraceWindow()
+{
+	if (bEndAbilityRequested)
+	{
+		return;
+	}
+
+	if (TraceWindowTask && !TraceWindowTask->IsTraceWindowOpen())
+	{
+		TraceWindowTask = nullptr;
+	}
+
+	if (TraceWindowTask)
+	{
+		return;
+	}
+
+	ABaseCharacter* Character = Cast<ABaseCharacter>(GetAvatarActorFromActorInfo());
+	TraceWindowTask = Character
+		? UAbilityTask_MeleeTraceWindow::OpenMeleeTraceWindow(this, Character->GetMeleeTraceSource(), DamageGameplayEffectClass, GetAbilityLevel(), FGameplayTag(), 0.0f)
+		: nullptr;
+	if (TraceWindowTask)
+	{
+		TraceWindowTask->ReadyForActivation();
+		if (!TraceWindowTask->IsTraceWindowOpen())
+		{
+			TraceWindowTask = nullptr;
+		}
+	}
+}
+
+void UEnemyMeleeAbility::CloseTraceWindow()
+{
+	if (TraceWindowTask)
+	{
+		TraceWindowTask->EndTask();
+		TraceWindowTask = nullptr;
+	}
+}

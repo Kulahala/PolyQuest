@@ -32,7 +32,9 @@ bool FMeleeHitResolver::TryResolveHit(const FMeleeHitRequest& Request)
 		return false;
 	}
 
-	if (ICombatTeamAgent::Execute_GetCombatTeamId(Request.SourceActor) == ICombatTeamAgent::Execute_GetCombatTeamId(TargetActor))
+	const FGameplayTag SourceTeamTag = ICombatTeamAgent::Execute_GetCombatTeamTag(Request.SourceActor);
+	const FGameplayTag TargetTeamTag = ICombatTeamAgent::Execute_GetCombatTeamTag(TargetActor);
+	if (!SourceTeamTag.IsValid() || !TargetTeamTag.IsValid() || SourceTeamTag.MatchesTagExact(TargetTeamTag))
 	{
 		return false;
 	}

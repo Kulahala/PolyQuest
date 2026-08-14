@@ -13,6 +13,7 @@ class UCombatLoadoutDefinition;
 class UGameplayEffect;
 class UInputAction;
 class UInputComponent;
+class UAIPerceptionStimuliSourceComponent;
 class USpringArmComponent;
 struct FInputActionValue;
 
@@ -31,6 +32,10 @@ class POLYQUEST_API APlayerCharacter : public ABaseCharacter
 	/** Follow camera attached to the spring arm. */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Components", meta=(AllowPrivateAccess="true"))
 	UCameraComponent* FollowCamera;
+
+	/** Registers this player as the explicit Sight source for the first enemy fixture. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="AI|Perception", meta=(AllowPrivateAccess="true"))
+	TObjectPtr<UAIPerceptionStimuliSourceComponent> SightStimuliSource;
 
 protected:
 	/** Input action used to start and stop jumping. */

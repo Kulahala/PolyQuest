@@ -8,7 +8,7 @@
 class USceneComponent;
 
 /**
- * Resolves Blueprint-authored blade markers for the fixed player weapon fixture.
+ * Resolves Blueprint-authored blade markers for the fixed v1 weapon fixture.
  * It deliberately has no transform of its own: the fixed fixture's Blueprint
  * component names resolve the marker transforms used by an active AbilityTask.
  */
@@ -31,7 +31,7 @@ private:
 	bool ResolveConfiguredComponents(USceneComponent*& OutWeaponDisplay, USceneComponent*& OutBladeBase, USceneComponent*& OutBladeTip);
 	void WarnInvalidConfiguration(const FString& Reason);
 
-	/** The actual weapon display component. This default matches BP_Player's read-back WeaponMesh component. */
+	/** The actual weapon display component. This v1 name is shared by the player and first enemy fixture. */
 	UPROPERTY(VisibleDefaultsOnly, BlueprintReadOnly, Category = "Melee Trace|Source", meta = (AllowPrivateAccess = "true"))
 	FName WeaponDisplayComponentName = TEXT("WeaponMesh");
 

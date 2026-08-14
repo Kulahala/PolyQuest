@@ -82,9 +82,9 @@ UAbilitySystemComponent* ABaseCharacter::GetAbilitySystemComponent() const
 	return AbilitySystemComponent.Get();
 }
 
-int32 ABaseCharacter::GetCombatTeamId_Implementation() const
+FGameplayTag ABaseCharacter::GetCombatTeamTag_Implementation() const
 {
-	return CombatTeamId;
+	return CombatTeamTag;
 }
 
 UMeleeTraceSourceComponent* ABaseCharacter::GetMeleeTraceSource() const
