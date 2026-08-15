@@ -33,6 +33,15 @@ public:
 	UFUNCTION(BlueprintPure, Category = "AI|Combat")
 	float GetMeleeRange() const { return MeleeRange; }
 
+	/** True only after OnPossess has accepted and cached the possessed enemy's authored Profile. */
+	bool HasValidAttackProfile() const;
+
+	/** The active Ability starts this only after its Montage was confirmed to have started and then cleaned up. */
+	void StartMeleeAttackCooldown(float CooldownAfterAttack);
+
+	UFUNCTION(BlueprintPure, Category = "AI|Combat")
+	bool IsMeleeAttackOnCooldown() const;
+
 	UFUNCTION(BlueprintPure, Category = "AI|Home")
 	float GetHomeAcceptanceRadius() const { return HomeAcceptanceRadius; }
 
@@ -84,8 +93,9 @@ private:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "AI|Sight", meta = (AllowPrivateAccess = "true", ClampMin = "0.0", ClampMax = "180.0", Units = "Degrees"))
 	float PeripheralVisionHalfAngleDegrees = 70.0f;
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "AI|Combat", meta = (AllowPrivateAccess = "true", ClampMin = "0.0", Units = "Centimeters"))
-	float MeleeRange = 180.0f;
+	/** Profile-owned runtime reach. StateTree binds through GetMeleeRange rather than treating this as CDO tuning. */
+	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category = "AI|Combat", meta = (AllowPrivateAccess = "true", Units = "Centimeters"))
+	float MeleeRange = 0.0f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "AI|Home", meta = (AllowPrivateAccess = "true", ClampMin = "0.0", Units = "Centimeters"))
 	float HomeAcceptanceRadius = 50.0f;
@@ -100,4 +110,7 @@ private:
 	FGameplayTag AttackingStateTag;
 	FGameplayTag TargetAcquiredEventTag;
 	FGameplayTag TargetLostEventTag;
+	float MeleeAttackCooldownEndTime = 0.0f;
+	bool bHasValidAttackProfile = false;
+	bool bHasLoggedInvalidAttackProfile = false;
 };

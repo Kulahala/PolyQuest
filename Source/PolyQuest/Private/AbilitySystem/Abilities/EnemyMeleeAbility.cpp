@@ -9,6 +9,7 @@
 #include "Animation/AnimMontage.h"
 #include "Character/BaseCharacter.h"
 #include "Character/Enemy/EnemyCharacter.h"
+#include "Combat/Enemy/EnemyAttackProfile.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "GameplayEffect.h"
 #include "PolyQuest.h"
@@ -49,6 +50,9 @@ void UEnemyMeleeAbility::ActivateAbility(
 {
 	bEndAbilityRequested = false;
 	ActiveMontage = nullptr;
+	ActiveDamageGameplayEffectClass = nullptr;
+	ActiveCooldownAfterAttack = 0.0f;
+	bAttackStarted = false;
 	BoundAnimInstance = nullptr;
 
 	if (!ValidateActivationSetup(ActorInfo))
@@ -59,10 +63,20 @@ void UEnemyMeleeAbility::ActivateAbility(
 	}
 
 	AEnemyCharacter* EnemyCharacter = Cast<AEnemyCharacter>(GetAvatarActorFromActorInfo());
+	const UEnemyAttackProfile* AttackProfile = EnemyCharacter ? EnemyCharacter->GetAttackProfile() : nullptr;
 	USkeletalMeshComponent* SkeletalMesh = EnemyCharacter ? EnemyCharacter->GetMesh() : nullptr;
 	UAnimInstance* AnimInstance = SkeletalMesh ? SkeletalMesh->GetAnimInstance() : nullptr;
+	if (!AttackProfile)
+	{
+		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
+		return;
+	}
 
-	MontageTask = UAbilityTask_PlayMontageAndWait::CreatePlayMontageAndWaitProxy(this, NAME_None, EnemyAttackMontage);
+	ActiveMontage = AttackProfile->GetAttackMontage();
+	ActiveDamageGameplayEffectClass = AttackProfile->GetDamageGameplayEffectClass();
+	ActiveCooldownAfterAttack = AttackProfile->GetCooldownAfterAttack();
+
+	MontageTask = UAbilityTask_PlayMontageAndWait::CreatePlayMontageAndWaitProxy(this, NAME_None, ActiveMontage);
 	TraceWindowBeginTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, TraceWindowBeginEventTag, nullptr, false, true);
 	TraceWindowEndTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, TraceWindowEndEventTag, nullptr, false, true);
 	if (!MontageTask || !TraceWindowBeginTask || !TraceWindowEndTask)
@@ -80,7 +94,6 @@ void UEnemyMeleeAbility::ActivateAbility(
 	}
 
 	BoundAnimInstance = AnimInstance;
-	ActiveMontage = EnemyAttackMontage;
 	BoundAnimInstance->OnMontageEnded.RemoveDynamic(this, &UEnemyMeleeAbility::OnActiveMontageEnded);
 	BoundAnimInstance->OnMontageEnded.AddDynamic(this, &UEnemyMeleeAbility::OnActiveMontageEnded);
 	TraceWindowBeginTask->EventReceived.AddDynamic(this, &UEnemyMeleeAbility::OnTraceWindowBegin);
@@ -98,9 +111,12 @@ void UEnemyMeleeAbility::ActivateAbility(
 
 	if (!BoundAnimInstance || !ActiveMontage || !BoundAnimInstance->Montage_IsActive(ActiveMontage.Get()))
 	{
-		UE_LOG(LogPolyQuest, Warning, TEXT("Enemy melee activation aborted for '%s': montage '%s' did not start."), *GetNameSafe(EnemyCharacter), *GetNameSafe(EnemyAttackMontage));
+		UE_LOG(LogPolyQuest, Warning, TEXT("Enemy melee activation aborted for '%s': montage '%s' did not start."), *GetNameSafe(EnemyCharacter), *GetNameSafe(ActiveMontage));
 		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
+		return;
 	}
+
+	bAttackStarted = true;
 }
 
 void UEnemyMeleeAbility::EndAbility(
@@ -116,6 +132,10 @@ void UEnemyMeleeAbility::EndAbility(
 	}
 
 	bEndAbilityRequested = true;
+	const bool bShouldStartCooldown = bAttackStarted;
+	const float CooldownAfterAttack = ActiveCooldownAfterAttack;
+	AEnemyCharacter* EnemyCharacter = Cast<AEnemyCharacter>(GetAvatarActorFromActorInfo());
+	AEnemyAIController* EnemyAIController = EnemyCharacter ? Cast<AEnemyAIController>(EnemyCharacter->GetController()) : nullptr;
 	CloseTraceWindow();
 
 	if (BoundAnimInstance)
@@ -147,8 +167,16 @@ void UEnemyMeleeAbility::EndAbility(
 	}
 
 	ActiveMontage = nullptr;
+	ActiveDamageGameplayEffectClass = nullptr;
+	ActiveCooldownAfterAttack = 0.0f;
+	bAttackStarted = false;
 
 	Super::EndAbility(Handle, ActorInfo, ActivationInfo, bReplicateEndAbility, bWasCancelled);
+
+	if (bShouldStartCooldown && IsValid(EnemyAIController))
+	{
+		EnemyAIController->StartMeleeAttackCooldown(CooldownAfterAttack);
+	}
 }
 
 void UEnemyMeleeAbility::OnActiveMontageEnded(UAnimMontage* Montage, bool bInterrupted)
@@ -182,10 +210,11 @@ bool UEnemyMeleeAbility::ValidateActivationSetup(const FGameplayAbilityActorInfo
 	const UAbilitySystemComponent* AbilitySystemComponent = ActorInfo ? ActorInfo->AbilitySystemComponent.Get() : nullptr;
 	const AEnemyCharacter* EnemyCharacter = ActorInfo ? Cast<AEnemyCharacter>(ActorInfo->AvatarActor.Get()) : nullptr;
 	const AEnemyAIController* EnemyAIController = EnemyCharacter ? Cast<AEnemyAIController>(EnemyCharacter->GetController()) : nullptr;
+	const UEnemyAttackProfile* AttackProfile = EnemyCharacter ? EnemyCharacter->GetAttackProfile() : nullptr;
 	const USkeletalMeshComponent* SkeletalMesh = EnemyCharacter ? EnemyCharacter->GetMesh() : nullptr;
 	const UAnimInstance* AnimInstance = SkeletalMesh ? SkeletalMesh->GetAnimInstance() : nullptr;
 
-	return AbilitySystemComponent && EnemyCharacter && EnemyAIController && AnimInstance && EnemyAttackMontage && DamageGameplayEffectClass
+	return AbilitySystemComponent && EnemyCharacter && EnemyAIController && AttackProfile && AttackProfile->IsValidAttackProfile() && EnemyAIController->HasValidAttackProfile() && AnimInstance
 		&& EnemyMeleeAbilityTag.IsValid() && AttackingStateTag.IsValid() && TraceWindowBeginEventTag.IsValid() && TraceWindowEndEventTag.IsValid()
 		&& EnemyAIController->HasValidCombatTarget() && EnemyAIController->IsCombatTargetInMeleeRange();
 }
@@ -224,7 +253,7 @@ void UEnemyMeleeAbility::OpenTraceWindow()
 
 	ABaseCharacter* Character = Cast<ABaseCharacter>(GetAvatarActorFromActorInfo());
 	TraceWindowTask = Character
-		? UAbilityTask_MeleeTraceWindow::OpenMeleeTraceWindow(this, Character->GetMeleeTraceSource(), DamageGameplayEffectClass, GetAbilityLevel(), FGameplayTag(), 0.0f)
+		? UAbilityTask_MeleeTraceWindow::OpenMeleeTraceWindow(this, Character->GetMeleeTraceSource(), ActiveDamageGameplayEffectClass, GetAbilityLevel(), FGameplayTag(), 0.0f)
 		: nullptr;
 	if (TraceWindowTask)
 	{

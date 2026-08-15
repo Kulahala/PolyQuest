@@ -45,13 +45,6 @@ public:
 		bool bReplicateEndAbility,
 		bool bWasCancelled) override;
 
-protected:
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Enemy Melee")
-	TObjectPtr<UAnimMontage> EnemyAttackMontage;
-
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Enemy Melee")
-	TSubclassOf<UGameplayEffect> DamageGameplayEffectClass;
-
 private:
 	UPROPERTY(Transient)
 	TObjectPtr<UAbilityTask_PlayMontageAndWait> MontageTask;
@@ -71,10 +64,15 @@ private:
 	UPROPERTY(Transient)
 	TObjectPtr<UAnimMontage> ActiveMontage;
 
+	UPROPERTY(Transient)
+	TSubclassOf<UGameplayEffect> ActiveDamageGameplayEffectClass;
+
 	FGameplayTag EnemyMeleeAbilityTag;
 	FGameplayTag AttackingStateTag;
 	FGameplayTag TraceWindowBeginEventTag;
 	FGameplayTag TraceWindowEndEventTag;
+	float ActiveCooldownAfterAttack = 0.0f;
+	bool bAttackStarted = false;
 	bool bEndAbilityRequested = false;
 
 	UFUNCTION()

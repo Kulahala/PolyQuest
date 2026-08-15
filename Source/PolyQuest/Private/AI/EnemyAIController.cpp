@@ -4,8 +4,11 @@
 #include "Character/Enemy/EnemyCharacter.h"
 #include "Character/Player/PlayerCharacter.h"
 #include "Components/StateTreeAIComponent.h"
+#include "Combat/Enemy/EnemyAttackProfile.h"
+#include "Engine/World.h"
 #include "Perception/AIPerceptionComponent.h"
 #include "Perception/AISenseConfig_Sight.h"
+#include "PolyQuest.h"
 
 AEnemyAIController::AEnemyAIController()
 {
@@ -33,6 +36,24 @@ void AEnemyAIController::OnPossess(APawn* InPawn)
 
 	HomeLocation = InPawn ? InPawn->GetActorLocation() : FVector::ZeroVector;
 	ConfigureSight();
+	MeleeRange = 0.0f;
+	MeleeAttackCooldownEndTime = 0.0f;
+	bHasValidAttackProfile = false;
+
+	const AEnemyCharacter* EnemyCharacter = Cast<AEnemyCharacter>(InPawn);
+	const UEnemyAttackProfile* AttackProfile = EnemyCharacter ? EnemyCharacter->GetAttackProfile() : nullptr;
+	if (!AttackProfile || !AttackProfile->IsValidAttackProfile())
+	{
+		if (!bHasLoggedInvalidAttackProfile)
+		{
+			UE_LOG(LogPolyQuest, Warning, TEXT("Enemy AI for '%s' did not start: AttackProfile requires an AttackMontage, DamageGameplayEffectClass, positive AttackRange, and non-negative CooldownAfterAttack."), *GetNameSafe(InPawn));
+			bHasLoggedInvalidAttackProfile = true;
+		}
+		return;
+	}
+
+	MeleeRange = AttackProfile->GetAttackRange();
+	bHasValidAttackProfile = true;
 
 	if (StateTreeComponent)
 	{
@@ -53,6 +74,9 @@ void AEnemyAIController::OnUnPossess()
 
 	StopMovement();
 	ClearCurrentTarget(false);
+	MeleeRange = 0.0f;
+	MeleeAttackCooldownEndTime = 0.0f;
+	bHasValidAttackProfile = false;
 
 	Super::OnUnPossess();
 }
@@ -67,9 +91,31 @@ bool AEnemyAIController::HasValidCombatTarget() const
 	return GetPawn() && IsValid(CurrentTarget.Get()) && CurrentTarget.Get() != GetPawn();
 }
 
+bool AEnemyAIController::HasValidAttackProfile() const
+{
+	return bHasValidAttackProfile && MeleeRange > 0.0f;
+}
+
+void AEnemyAIController::StartMeleeAttackCooldown(float CooldownAfterAttack)
+{
+	const UWorld* World = GetWorld();
+	if (!World || CooldownAfterAttack < 0.0f)
+	{
+		return;
+	}
+
+	MeleeAttackCooldownEndTime = World->GetTimeSeconds() + CooldownAfterAttack;
+}
+
+bool AEnemyAIController::IsMeleeAttackOnCooldown() const
+{
+	const UWorld* World = GetWorld();
+	return World && MeleeAttackCooldownEndTime > World->GetTimeSeconds();
+}
+
 bool AEnemyAIController::IsCombatTargetInMeleeRange() const
 {
-	if (!HasValidCombatTarget() || MeleeRange <= 0.0f)
+	if (!HasValidCombatTarget() || !HasValidAttackProfile())
 	{
 		return false;
 	}
@@ -77,7 +123,7 @@ bool AEnemyAIController::IsCombatTargetInMeleeRange() const
 	const APawn* ControlledPawn = GetPawn();
 	const APlayerCharacter* Target = GetCurrentTarget();
 	return ControlledPawn && Target
-		&& FVector::DistSquared(ControlledPawn->GetActorLocation(), Target->GetActorLocation()) <= FMath::Square(MeleeRange);
+		&& FVector::DistSquared2D(ControlledPawn->GetActorLocation(), Target->GetActorLocation()) <= FMath::Square(MeleeRange);
 }
 
 void AEnemyAIController::BeginAlert()
@@ -94,7 +140,8 @@ bool AEnemyAIController::TryRequestMeleeAttack()
 {
 	AEnemyCharacter* EnemyCharacter = Cast<AEnemyCharacter>(GetPawn());
 	UAbilitySystemComponent* AbilitySystemComponent = EnemyCharacter ? EnemyCharacter->GetAbilitySystemComponent() : nullptr;
-	if (!AbilitySystemComponent || !EnemyMeleeAbilityTag.IsValid() || !HasValidCombatTarget() || !IsCombatTargetInMeleeRange())
+	if (!AbilitySystemComponent || !EnemyMeleeAbilityTag.IsValid() || !HasValidAttackProfile() || IsMeleeAttackOnCooldown()
+		|| !HasValidCombatTarget() || !IsCombatTargetInMeleeRange())
 	{
 		return false;
 	}

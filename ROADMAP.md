@@ -20,6 +20,7 @@ The previous `Test` project remains the FSM behavior reference and validation ba
 - `TODO-01H` has completed the native shared melee-delivery foundation for Light, Charged, and Sprint Attack. The fixed `WeaponMesh` / `BladeTraceBase` / `BladeTraceTip` lookup remains a v1 fixture; mutable authored combat assets remain local WIP and are not a clean-checkout fixture.
 - `TODO-02A` has completed the first enemy native AI and melee-intent foundation. The configured local Scene01 fixture has user-confirmed PIE and visual evidence; its mutable Blueprint, StateTree, Gameplay Ability/Effect, Montage, AnimBP, marker, collision, map, and imported-asset setup remains local WIP.
 - `TODO-02B` has completed the fixed-world oblique Perspective camera and planar action-facing foundation. The user confirmed the focused Scene01 PIE and visual route, including the accepted position-lag response to empty-space Root Motion camera motion. Authored input, Blueprint, and Scene01 presentation assets remain local WIP.
+- `TODO-02C1` has completed the first enemy's single-attack Profile, exact 2D actor-center reach, and post-attack cooldown contract. The user confirmed compile and focused Scene01 PIE; the authored DataAsset, StateTree, Blueprint, Gameplay Ability/Effect, Montage, AnimBP, and map fixture remain local WIP.
 - External source packages remain under `Content/Assets/`. Imported content is not a production integration merely because it is present locally; skeleton, weapon, socket, animation, and presentation decisions still require their named stage validation.
 
 ## Test-To-PolyQuest Migration Contract Inventory
@@ -37,7 +38,7 @@ The old `Test` project is evidence for player-facing behavior, not a source tree
 | Hold-to-charge, release attack, stamina exhaustion, and interruption cleanup | A dedicated charged-attack ability consumes the existing hold/release intent after Combo continuation arbitration; do not fold it into the linear combo asset. | `TODO-01C`, `TODO-01E` |
 | Sprint state and Sprint Attack | Establish and validate a real Sprint movement/input/stamina contract before a Sprint Attack may consume it. | `TODO-01F` |
 | Over-shoulder lock-on, target switching, camera/facing ownership, and free-run exception | Do not migrate this Test-specific camera contract. PolyQuest uses an elevated oblique-perspective camera with camera-relative movement and an explicit planar action-facing rule; reconsider optional target assist only if focused visual validation proves it is necessary for combat readability. | `TODO-02B` |
-| Enemy attack-entry DataAssets, poise/stance break, hit/death safety, melee/ranged delivery | StateTree selects high-level intent; enemy GameplayAbilities execute attacks and GameplayEffects own combat mutation. | `TODO-02A`, `TODO-02C`, `TODO-03C` |
+| Enemy attack-entry DataAssets, poise/stance break, hit/death safety, melee/ranged delivery | StateTree selects high-level intent; enemy GameplayAbilities execute attacks and GameplayEffects own combat mutation. | `TODO-02A`, `TODO-02C1`, `TODO-02C2`, `TODO-02C3`, `TODO-03C` |
 | Checkpoint, item ownership, transient Gold, fixed rewards, clear persistence, fog gate, and one-time defeat behavior | New PolyQuest persistence contracts with new stable IDs and validation fixtures. No old SaveGame schema or identifiers transfer. | `TODO-03A`, `TODO-03D` through `TODO-04A` |
 | Front critical and backstab use a valid punish target, animation timing, alignment, damage once-only, and teardown cleanup | Two separate GAS abilities after normal combat, stance break, and target reservation contracts are proven. | `TODO-05A`, `TODO-05B` |
 
@@ -123,22 +124,32 @@ The old `Test` project is evidence for player-facing behavior, not a source tree
   - The user confirmed the focused Scene01 PIE and visual route, including the `2000cm` position-lag configuration's empty-space Root Motion camera behavior. Main completed source/caller reads, UE 5.8 API/tag-order verification, CodeGraph, code-review-graph structural analysis, error-memory lookup, `git diff --check`, and a Main adversarial fallback with no confirmed P0-P2 native blocker. The requested fresh `gpt-5.6-luna / xhigh` Reviewer returned HTTP 503, so no independent-review result is claimed.
   - The focused native commit excludes all mutable authored WIP: `Content/**`, input mappings, Blueprints, maps, animation, Montage, material, imported resources, and generated directories. By explicit user approval it also includes the small project-policy/configuration set `AGENTS.md`, `Config/DefaultEditor.ini`, `Config/DefaultGame.ini`, and `PolyQuest.uproject`; it is still not a clean-checkout recreation of the local presentation fixture. `TODO-07B` remains the sole accepted owner for any later occlusion or presentation retune shown necessary by visual evidence.
 
+- [x] `TODO-02C1: First Enemy Attack Profile And Reach Contract v1`
+  - `UEnemyAttackProfile` is the static authored input for one Montage, one damage GameplayEffect, a positive attack range, and a non-negative post-attack cooldown. It is not a selector, queue, random table, or weapon-switching system.
+  - The Controller validates the Profile before it starts StateTree logic, caches its only 2D actor-center reach as runtime `MeleeRange`, and owns cooldown expiration after an actually started attack cleans up. The enemy Ability snapshots Profile data and reuses the shared Trace Window/Resolver; the StateTree task observes the action tag and cooldown rather than creating a second combat state.
+  - Live Editor MCP readback confirmed the Root/Alert/Chase/Combat/Return topology and Chase reach binding. The user confirmed `PolyQuestEditor` compilation and focused Scene01 PIE, including the reach boundary, cooldown, interruption, target loss/reacquisition, hit rejection, and Trace cleanup.
+  - Main normal review and Main adversarial fallback found no P0-P2 C++/GAS/Tag/StateTree blocker. `gpt-5.6-luna / xhigh` was unavailable, so no independent review is claimed. All authored fixture assets remain excluded mutable WIP; this native commit is not a clean-checkout fixture.
+
 ## Milestones
 
 ### First Enemy, Camera, And Combat Presentation
 
-- [ ] `TODO-02C: Enemy Combat Profiles, Reactions, Poise, And Stance Break v1`
-  - Rebuild data-authored enemy attack selection, configurable distance/cooldown/attack presentation, hit reaction, poise depletion, stance break, death, and safe interruption around the first enemy.
-  - Reuse `TODO-01H` for melee delivery. Attack Profiles tune attack selection and authored trace/damage data but do not create a second hit resolver or let animation directly mutate Health or Poise.
-  - Define one profile-owned enemy reach contract before changing melee distance, character dimensions, or Chase behavior. Its StateTree MoveTo reach-test settings and Controller/attack-range checks must use the same geometry rule.
-  - Keep attack data separate from StateTree intent and do not import the old local HFSM.
+- [ ] `TODO-02C2: First Enemy Death And Teardown v1`
+  - Establish the first enemy-only zero-Health outcome: assign `State.Status.Dead`, cancel active GAS work, stop StateTree, movement, and Controller focus, and make dead enemies ineligible for melee resolution and target selection.
+  - The authored death presentation is subordinate to the native lifecycle; interruption and teardown must converge without stale Montage, Trace Window, movement, or AI work.
+  - Do not add player death, checkpoint/reload, respawn, drops, rewards, persistence, Poise, or hit-reaction systems. Player death remains owned by `TODO-03D` after the checkpoint/rest/reload contract exists.
+
+- [ ] `TODO-02C3: Enemy Reactions, Poise, And Stance Break v1`
+  - Add enemy-specific damage reception, Poise depletion, hit reaction, stance break, safe GAS interruption, and recovery around the proven first enemy death lifecycle.
+  - GameplayEffects and the target ASC remain the mutation path; animation only provides timing and presentation. Keep reaction/Poise data separate from StateTree intent and from mutable runtime state.
+  - Do not force a player hit-reaction or player-Poise framework merely for symmetry; plan that player-facing response only when an accepted defensive-combat slice requires it.
 
 - [ ] `TODO-02D: Defensive Combat And Hyper Armor v1`
-  - Add directional block, timed parry, guard break, and notify-timed hyper armor only after the hit resolver, poise, and action cancellation contracts are stable.
+  - Add directional block, timed parry, guard break, and notify-timed hyper armor only after `TODO-02C1` through `TODO-02C3` have proven the enemy hit resolver, Poise, and action-cancellation contracts. Any player-facing reaction needed by those mechanics receives its own accepted slice rather than expanding an enemy milestone implicitly.
   - Parry, Dodge, Block, and Potion remain immediate preflight actions during a combo CancelWindow; none becomes a global pre-input buffer.
 
 - [ ] `TODO-02E: Bidirectional Melee Combat Health And Lean Review v1`
-  - After the first enemy, oblique camera/combat-facing, enemy profiles/Poise, and defensive actions are proven, audit player/enemy melee damage delivery, any adopted target-assist behavior, team filtering, cancellation/death teardown, StateTree-to-GAS intent boundaries, and camera/facing interactions.
+  - After the first enemy, oblique camera/combat-facing, `TODO-02C1` through `TODO-02C3`, and defensive actions are proven, audit player/enemy melee damage delivery, any adopted target-assist behavior, team filtering, cancellation/death teardown, StateTree-to-GAS intent boundaries, and camera/facing interactions.
   - Add no combat feature. Repair blockers here; assign non-blocking findings to the owning combat or player-loop milestone with evidence and a concrete closure trigger.
   - A lean pass is limited to redundant input paths, expired debug fixtures, redirects, and assets/configuration proven to have zero referencers or an explicit replacement. It is not authority to remove Marketplace or authored Content by directory.
 
@@ -246,7 +257,6 @@ The old `Test` project is evidence for player-facing behavior, not a source tree
 - `TODO-01C1` has accepted keyboard/mouse PIE evidence only. Right Shoulder and Left Trigger mapping behavior and physical controller operation are not verified controller support. Before presenting controller support, adding controller-specific UX, or producing a controller-facing build, read back the intended Mapping Context entries and pass focused hardware validation for every intended controller action; until then, do not claim gamepad support.
 - Light entry/continuation, Dodge, and Sprint Attack can commit a Cost before authored Montage startup is confirmed; Charged can commit before its release/resume path is known usable. Dodge can also cancel an eligible prior action after Commit but before its own startup is confirmed. A rare playback failure after valid preflight can therefore consume Stamina, end the Ability, or prematurely interrupt the prior action without an automatic recovery contract. The normal AnimInstance/Slot path has user PIE evidence, but failure injection is unverified. Before defining a final combat asset baseline or adding runtime playback-rate control, define the atomicity, refund, and interruption semantics and add focused failure-injection coverage for every affected action.
 - `TODO-01E` has manual threshold validation, including the repaired normal-release-before-delay route, but no deterministic same-frame input/timer injection test. Before changing input-event dispatch order, introducing prediction/networking, or relying on frame-exact charge thresholds, add a deterministic automated fixture or controlled logging harness that exercises both callback orders and verifies exactly one Light or Charged activation.
-- `TODO-02A` uses an exact Controller center-distance `MeleeRange`, while the authored `FStateTreeMoveToTask` can add agent and goal radii to its reach test. The user previously observed the resulting idle edge and confirmed the authored Scene01 route after correction, but Main has no final StateTree asset readback. `TODO-02C` owns the closure: before changing enemy dimensions, navigation, melee range, or attack profiles, read back both Chase reach-test flags and either disable both radius additions or replace the exact-distance contract with one documented profile-owned geometry rule; then pass a boundary-distance PIE check.
 
 ## Deferred TODOs
 

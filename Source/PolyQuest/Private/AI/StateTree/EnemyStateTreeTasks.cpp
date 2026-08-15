@@ -41,30 +41,61 @@ EStateTreeRunStatus FEnemyStateTreeTask_RequestMeleeAttack::EnterState(FStateTre
 	InstanceData.bObservedAttacking = false;
 
 	AEnemyAIController& EnemyAIController = Context.GetExternalData(EnemyAIControllerHandle);
+	if (!EnemyAIController.HasValidCombatTarget() || !EnemyAIController.IsCombatTargetInMeleeRange())
+	{
+		return EStateTreeRunStatus::Failed;
+	}
+
 	if (EnemyAIController.IsEnemyMeleeAttackActive())
 	{
 		InstanceData.bObservedAttacking = true;
 		return EStateTreeRunStatus::Running;
 	}
 
-	if (!EnemyAIController.TryRequestMeleeAttack())
+	if (EnemyAIController.IsMeleeAttackOnCooldown())
+	{
+		return EStateTreeRunStatus::Running;
+	}
+
+	if (!EnemyAIController.TryRequestMeleeAttack() || !EnemyAIController.IsEnemyMeleeAttackActive())
 	{
 		return EStateTreeRunStatus::Failed;
 	}
 
-	InstanceData.bObservedAttacking = EnemyAIController.IsEnemyMeleeAttackActive();
+	InstanceData.bObservedAttacking = true;
 	return EStateTreeRunStatus::Running;
 }
 
 EStateTreeRunStatus FEnemyStateTreeTask_RequestMeleeAttack::Tick(FStateTreeExecutionContext& Context, const float) const
 {
 	FInstanceDataType& InstanceData = Context.GetInstanceData(*this);
-	const AEnemyAIController& EnemyAIController = Context.GetExternalData(EnemyAIControllerHandle);
+	AEnemyAIController& EnemyAIController = Context.GetExternalData(EnemyAIControllerHandle);
+	if (!EnemyAIController.HasValidCombatTarget() || !EnemyAIController.IsCombatTargetInMeleeRange())
+	{
+		return EStateTreeRunStatus::Failed;
+	}
+
 	if (EnemyAIController.IsEnemyMeleeAttackActive())
 	{
 		InstanceData.bObservedAttacking = true;
 		return EStateTreeRunStatus::Running;
 	}
 
-	return InstanceData.bObservedAttacking ? EStateTreeRunStatus::Succeeded : EStateTreeRunStatus::Failed;
+	if (InstanceData.bObservedAttacking)
+	{
+		return EStateTreeRunStatus::Succeeded;
+	}
+
+	if (EnemyAIController.IsMeleeAttackOnCooldown())
+	{
+		return EStateTreeRunStatus::Running;
+	}
+
+	if (!EnemyAIController.TryRequestMeleeAttack() || !EnemyAIController.IsEnemyMeleeAttackActive())
+	{
+		return EStateTreeRunStatus::Failed;
+	}
+
+	InstanceData.bObservedAttacking = true;
+	return EStateTreeRunStatus::Running;
 }

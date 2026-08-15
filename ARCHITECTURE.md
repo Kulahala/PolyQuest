@@ -120,11 +120,55 @@ The active player route is `BP_GameMode -> BP_Player -> APlayerCharacter -> ABas
 ### First Enemy AI And Melee Intent
 
 - `APlayerCharacter` registers its native `UAIPerceptionStimuliSourceComponent` for Sight in `BeginPlay()` and unregisters it during teardown. It defaults to `Team.Player`; `AEnemyCharacter` defaults to `Team.Enemy`, inherits the BaseCharacter ASC, startup-ability grant, `MeleeTrace` endpoint, and fixed trace-source fixture, and auto-possesses with `AEnemyAIController`.
-- `AEnemyAIController` is the one owner of a valid Player target, Controller focus, home location, Sight configuration, and `UStateTreeAIComponent` start/stop lifecycle. Perception only sends `Event.AI.Target.Acquired` or `Event.AI.Target.Lost`; it never starts a Montage, applies a GameplayEffect, or mutates an Attribute.
+- `UEnemyAttackProfile` is one static authored input for the first enemy: one Montage, one damage GameplayEffect, a positive `AttackRange`, and a non-negative `CooldownAfterAttack`. It is not a runtime attack list, selector, queue, or weapon-switching system.
+- `AEnemyAIController` is the one owner of a valid Player target, Controller focus, home location, Sight configuration, `UStateTreeAIComponent` start/stop lifecycle, and cooldown expiration. Before starting StateTree logic it validates the possessed `UEnemyAttackProfile`, then caches its Profile-owned range as instance-only `MeleeRange`; perception only sends `Event.AI.Target.Acquired` or `Event.AI.Target.Lost`, never starts a Montage, applies a GameplayEffect, or mutates an Attribute.
 - The authored StateTree selects `Patrol -> Alert -> Chase -> Combat -> Return`. Native conditions query the Controller; native tasks may stop stale movement or request the enemy Ability, but they do not store a second target/state, cancel the Ability, or mutate combat values. Combat observes the ASC-owned `State.Action.Attacking` tag until the active Ability ends naturally.
-- `UEnemyMeleeAbility` is `InstancedPerActor` and `ServerOnly`. It validates the ASC, Controller target/range, animation setup, damage effect, and Trace Window tags; it owns `Ability.Attack.Enemy.Melee` and active `State.Action.Attacking`; only matching active-Montage NotifyState events can open or close the shared trace task. Natural end, interruption, cancellation, invalid setup, and teardown converge through `EndAbility()`.
+- `UEnemyMeleeAbility` is `InstancedPerActor` and `ServerOnly`. It validates the ASC, Controller target/range, animation setup, Profile, and Trace Window tags; it snapshots the Profile Montage, damage GameplayEffect, and cooldown only for one activation. It owns `Ability.Attack.Enemy.Melee` and active `State.Action.Attacking`; only matching active-Montage NotifyState events can open or close the shared trace task. Natural end, interruption, cancellation, invalid setup, and teardown converge through `EndAbility()`. The Controller cooldown begins only when `Montage_IsActive()` had confirmed that the Montage actually started.
 - The minimal team rule uses exact `Team.*` tags: invalid or equal tags reject a hit. This is not yet a full faction, attitude, party, target-selection, or multiplayer relation system.
-- `MeleeRange` is an exact Controller center-distance check. The authored Chase `FStateTreeMoveToTask` must use the matching reach semantics: either disable both agent and goal radius additions, or deliberately replace the exact-distance contract with one documented profile-owned distance rule before changing enemy dimensions or attack reach.
+- `MeleeRange` is an exact Controller center-distance check. The authored Chase `FStateTreeMoveToTask` binds its acceptance radius to that value and disables both agent and goal radius additions; changing enemy dimensions or attack reach must preserve this one Profile-owned geometry rule.
+
+#### ST_Enemy_Goblin_Melee Authored Runtime Contract
+
+`/Game/BP/Characters/Enemy/ST_Enemy_Goblin_Melee` uses `StateTreeAIComponentSchema`, with `AIControllerClass` set to native `/Script/PolyQuest.EnemyAIController` and Context Actor Class set to `Pawn`. `BP_EnemyAIController` inherits `AEnemyAIController`; its inherited `StateTreeComponent.StateTreeRef` is this asset and automatic start remains disabled, so native `OnPossess()` starts logic only after Profile validation. Editor readback reports the asset compiled, with no root parameters, global evaluators, or global tasks. `Root` owns the five ordered leaf states `Patrol`, `Alert`, `Chase`, `Combat`, and `Return`; all six current state nodes are enabled and use `Any` task-completion mode, while every leaf currently has one completion-relevant task.
+
+##### Root
+
+- Transition 1: `OnEvent Event.AI.Target.Acquired -> Alert`; conditions: none. It is enabled, normal-priority, event-consuming, and has no payload.
+- Transition 2: `OnEvent Event.AI.Target.Lost -> Return`; conditions: none. It is enabled, normal-priority, event-consuming, and has no payload.
+- Every current transition in this asset is enabled, uses `Normal` priority, and has no transition delay. The two Root event routes additionally consume their matching event when selected.
+- These are the common target-event entry routes rather than duplicate local transitions on every child state.
+
+##### Patrol
+
+- Uses one `StateTreeDelayTask` with `Run Forever` enabled. It has no local transition and waits for the Root target events.
+
+##### Alert
+
+- Runs native `Enemy Begin Alert`, which stops stale path following and retains valid Controller focus, then succeeds immediately.
+- Transition 1: `OnStateSucceeded -> Combat`; conditions: `Enemy Has Valid Target` AND `Enemy Target Is In Melee Range`.
+- Transition 2: `OnStateSucceeded -> Chase`; conditions: `Enemy Has Valid Target`.
+- Both are enabled normal-priority transitions; their authored order preserves the in-range Combat choice before Chase.
+
+##### Chase
+
+- Uses `StateTreeMoveToTask` described by the live asset as `Move To AIController.Current Target`. `TargetActor` is bound to the Controller current target; `AcceptableRadius` is the Profile-derived Controller `MeleeRange` contract.
+- `AllowStrafe` is disabled. `AllowPartialPath`, `TrackMovingGoal`, `RequireNavigableEndLocation`, and `ProjectGoalLocation` are enabled. Both `ReachTestIncludesAgentRadius` and `ReachTestIncludesGoalRadius` are disabled so navigation arrival uses the same exact 2D actor-center boundary as Controller and Ability range checks.
+- Transition: `OnStateCompleted -> Alert`; conditions: none. It covers both Move To success and failure, after which Alert selects the next intent from current target/range conditions.
+
+##### Combat
+
+- Runs native `Enemy Request Melee Attack`. It fails if target/range becomes invalid, stays running through Controller cooldown, requests the GAS Ability only when eligible, observes `State.Action.Attacking`, and succeeds only after an observed attack finishes.
+- Transition: `OnStateCompleted -> Alert`; conditions: none. StateTree never cancels the Ability, opens trace windows, or applies damage; those stay with GAS, NotifyState timing, and the shared resolver.
+
+##### Return
+
+- Uses `StateTreeMoveToTask` described by the live asset as `Move To AIController.Home Location`. `Destination` is bound to `AIController.HomeLocation`, `TargetActor` is empty, and `AcceptableRadius` is bound to `AIController.HomeAcceptanceRadius`.
+- `AllowStrafe` and `TrackMovingGoal` are disabled. `AllowPartialPath`, `RequireNavigableEndLocation`, `ProjectGoalLocation`, `ReachTestIncludesAgentRadius`, and `ReachTestIncludesGoalRadius` are enabled. This is a home-arrival policy, not the exact melee-range geometry rule used by Chase.
+- Transition: `OnStateCompleted -> Patrol`; conditions: none. Both successful arrival and terminal Move To failure leave the return route cleanly.
+
+##### Maintenance Rule
+
+- When a stage changes this tree's state topology, events, conditions, native tasks, transition trigger/order, property bindings, or behavior-changing Move To flags, update this contract in the same stage. Do not record node layout, color, panel state, transient montage tuning, or other high-frequency presentation WIP here.
 
 ### Gameplay Tags
 
@@ -136,7 +180,7 @@ The active player route is `BP_GameMode -> BP_Player -> APlayerCharacter -> ABas
 
 The following remain future stage contracts:
 
-- Enemy attack profiles, configurable distance/cooldown policy, reactions, Poise, death, and special attacks.
+- Multiple/weighted enemy attack selection, reactions, Poise, death, and special attacks.
 - Player death, GameplayCues, and nonlinear or multi-weapon combo-extension contracts.
 - Tag-authored multi-faction/hostile relation semantics beyond the minimal equal-team rejection, persistence ownership, and multiplayer/PlayerState ownership.
 - Weapon equipment, Ability-grant/revocation, multi-weapon Loadout switching, additional Skeleton/animation, and Motion Warping topology.
