@@ -48,6 +48,8 @@ private:
 	bool bUseRagdollOnDeath = true;
 
 	FGameplayTag DeadStateTag;
+	FGameplayTag HitReactionEventTag;
+	FGameplayTag InterruptReactionDataTag;
 	FDelegateHandle HealthAttributeChangedHandle;
 	FDelegateHandle DeadStateTagChangedHandle;
 	TWeakObjectPtr<UAbilitySystemComponent> DeathBoundAbilitySystemComponent;

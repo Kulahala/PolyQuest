@@ -4,26 +4,23 @@
 #include "Abilities/GameplayAbility.h"
 #include "Abilities/GameplayAbilityTypes.h"
 #include "GameplayTagContainer.h"
-#include "EnemyMeleeAbility.generated.h"
+#include "EnemyHitReactionAbility.generated.h"
 
-class UAbilityTask_MeleeTraceWindow;
 class UAbilityTask_PlayMontageAndWait;
-class UAbilityTask_WaitGameplayEvent;
 class UAnimInstance;
 class UAnimMontage;
-class UGameplayEffect;
 
 /**
- * One server-authoritative enemy melee action. It owns only montage timing,
- * trace-window delivery, and teardown; targeting remains on the controller.
+ * Server-authoritative, non-lethal enemy hit reaction. Damage delivery stays
+ * in the shared resolver; this ability only owns the accepted interruption.
  */
 UCLASS()
-class POLYQUEST_API UEnemyMeleeAbility : public UGameplayAbility
+class POLYQUEST_API UEnemyHitReactionAbility : public UGameplayAbility
 {
 	GENERATED_BODY()
 
 public:
-	UEnemyMeleeAbility();
+	UEnemyHitReactionAbility();
 
 	virtual bool CanActivateAbility(
 		const FGameplayAbilitySpecHandle Handle,
@@ -46,17 +43,11 @@ public:
 		bool bWasCancelled) override;
 
 private:
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Enemy|Reaction", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<UAnimMontage> HitReactionMontage;
+
 	UPROPERTY(Transient)
 	TObjectPtr<UAbilityTask_PlayMontageAndWait> MontageTask;
-
-	UPROPERTY(Transient)
-	TObjectPtr<UAbilityTask_WaitGameplayEvent> TraceWindowBeginTask;
-
-	UPROPERTY(Transient)
-	TObjectPtr<UAbilityTask_WaitGameplayEvent> TraceWindowEndTask;
-
-	UPROPERTY(Transient)
-	TObjectPtr<UAbilityTask_MeleeTraceWindow> TraceWindowTask;
 
 	UPROPERTY(Transient)
 	TObjectPtr<UAnimInstance> BoundAnimInstance;
@@ -64,30 +55,17 @@ private:
 	UPROPERTY(Transient)
 	TObjectPtr<UAnimMontage> ActiveMontage;
 
-	UPROPERTY(Transient)
-	TSubclassOf<UGameplayEffect> ActiveDamageGameplayEffectClass;
-
-	FGameplayTag EnemyMeleeAbilityTag;
-	FGameplayTag AttackingStateTag;
+	FGameplayTag HitReactionAbilityTag;
+	FGameplayTag HitReactionEventTag;
 	FGameplayTag HitReactingStateTag;
-	FGameplayTag TraceWindowBeginEventTag;
-	FGameplayTag TraceWindowEndEventTag;
-	float ActiveCooldownAfterAttack = 0.0f;
-	bool bAttackStarted = false;
+	FGameplayTag EnemyMeleeAbilityTag;
+	FGameplayTagContainer EnemyMeleeAbilityTags;
+	bool bMovementLockedByReaction = false;
 	bool bEndAbilityRequested = false;
 
 	UFUNCTION()
 	void OnActiveMontageEnded(UAnimMontage* Montage, bool bInterrupted);
 
-	UFUNCTION()
-	void OnTraceWindowBegin(FGameplayEventData Payload);
-
-	UFUNCTION()
-	void OnTraceWindowEnd(FGameplayEventData Payload);
-
 	bool ValidateActivationSetup(const FGameplayAbilityActorInfo* ActorInfo) const;
-	bool IsGameplayEventFromActiveMontage(const FGameplayEventData& Payload) const;
 	void EndFromMontage(bool bWasCancelled);
-	void OpenTraceWindow();
-	void CloseTraceWindow();
 };

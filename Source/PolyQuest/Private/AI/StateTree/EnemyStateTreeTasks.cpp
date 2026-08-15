@@ -41,6 +41,11 @@ EStateTreeRunStatus FEnemyStateTreeTask_RequestMeleeAttack::EnterState(FStateTre
 	InstanceData.bObservedAttacking = false;
 
 	AEnemyAIController& EnemyAIController = Context.GetExternalData(EnemyAIControllerHandle);
+	if (EnemyAIController.IsEnemyHitReactionActive())
+	{
+		return EStateTreeRunStatus::Running;
+	}
+
 	if (!EnemyAIController.HasValidCombatTarget() || !EnemyAIController.IsCombatTargetInMeleeRange())
 	{
 		return EStateTreeRunStatus::Failed;
@@ -70,6 +75,11 @@ EStateTreeRunStatus FEnemyStateTreeTask_RequestMeleeAttack::Tick(FStateTreeExecu
 {
 	FInstanceDataType& InstanceData = Context.GetInstanceData(*this);
 	AEnemyAIController& EnemyAIController = Context.GetExternalData(EnemyAIControllerHandle);
+	if (EnemyAIController.IsEnemyHitReactionActive())
+	{
+		return EStateTreeRunStatus::Running;
+	}
+
 	if (!EnemyAIController.HasValidCombatTarget() || !EnemyAIController.IsCombatTargetInMeleeRange())
 	{
 		return EStateTreeRunStatus::Failed;

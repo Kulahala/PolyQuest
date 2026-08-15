@@ -1,11 +1,14 @@
 #include "Character/Enemy/EnemyCharacter.h"
 
 #include "AI/EnemyAIController.h"
+#include "Abilities/GameplayAbilityTypes.h"
 #include "AbilitySystem/CharacterAttributeSet.h"
 #include "AbilitySystemComponent.h"
 #include "Components/CapsuleComponent.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "GameFramework/CharacterMovementComponent.h"
+#include "GameplayEffect.h"
+#include "GameplayEffectExtension.h"
 #include "GameplayEffectTypes.h"
 #include "GameplayTagContainer.h"
 #include "PolyQuest.h"
@@ -14,6 +17,8 @@ AEnemyCharacter::AEnemyCharacter()
 {
 	CombatTeamTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Team.Enemy")), false);
 	DeadStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Status.Dead")), false);
+	HitReactionEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Reaction.Enemy.Hit")), false);
+	InterruptReactionDataTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Data.Reaction.Interrupt")), false);
 	AIControllerClass = AEnemyAIController::StaticClass();
 	AutoPossessAI = EAutoPossessAI::PlacedInWorldOrSpawned;
 	bUseControllerRotationYaw = true;
@@ -92,10 +97,40 @@ void AEnemyCharacter::UnbindDeathEvents()
 
 void AEnemyCharacter::OnHealthAttributeChanged(const FOnAttributeChangeData& ChangeData)
 {
-	if (ChangeData.NewValue <= 0.0f && !IsDead())
+	if (ChangeData.NewValue <= 0.0f)
 	{
-		SetDeadState();
+		if (!IsDead())
+		{
+			SetDeadState();
+		}
+		return;
 	}
+
+	if (!HasAuthority() || ChangeData.NewValue >= ChangeData.OldValue || IsDead() || !ChangeData.GEModData
+		|| !HitReactionEventTag.IsValid() || !InterruptReactionDataTag.IsValid())
+	{
+		return;
+	}
+
+	FGameplayTagContainer AssetTags;
+	ChangeData.GEModData->EffectSpec.GetAllAssetTags(AssetTags);
+	if (!AssetTags.HasTagExact(InterruptReactionDataTag))
+	{
+		return;
+	}
+
+	UAbilitySystemComponent* CharacterASC = GetAbilitySystemComponent();
+	if (!CharacterASC)
+	{
+		return;
+	}
+
+	FGameplayEventData ReactionEventData;
+	ReactionEventData.EventTag = HitReactionEventTag;
+	ReactionEventData.Instigator = ChangeData.GEModData->EffectSpec.GetContext().GetInstigator();
+	ReactionEventData.Target = this;
+	ReactionEventData.EventMagnitude = ChangeData.OldValue - ChangeData.NewValue;
+	CharacterASC->HandleGameplayEvent(HitReactionEventTag, &ReactionEventData);
 }
 
 void AEnemyCharacter::OnDeadStateTagChanged(const FGameplayTag, int32 NewCount)

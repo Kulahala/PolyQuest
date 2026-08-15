@@ -21,12 +21,14 @@ UEnemyMeleeAbility::UEnemyMeleeAbility()
 
 	EnemyMeleeAbilityTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Attack.Enemy.Melee")), false);
 	AttackingStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Action.Attacking")), false);
+	HitReactingStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Action.HitReacting")), false);
 	TraceWindowBeginEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Attack.TraceWindow.Begin")), false);
 	TraceWindowEndEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Attack.TraceWindow.End")), false);
 
 	AbilityTags.AddTag(EnemyMeleeAbilityTag);
 	ActivationOwnedTags.AddTag(AttackingStateTag);
 	ActivationBlockedTags.AddTag(AttackingStateTag);
+	ActivationBlockedTags.AddTag(HitReactingStateTag);
 	ActivationBlockedTags.AddTag(FGameplayTag::RequestGameplayTag(FName(TEXT("State.Status.Dead")), false));
 	ActivationBlockedTags.AddTag(FGameplayTag::RequestGameplayTag(FName(TEXT("State.Status.Stunned")), false));
 }
@@ -215,7 +217,7 @@ bool UEnemyMeleeAbility::ValidateActivationSetup(const FGameplayAbilityActorInfo
 	const UAnimInstance* AnimInstance = SkeletalMesh ? SkeletalMesh->GetAnimInstance() : nullptr;
 
 	return AbilitySystemComponent && EnemyCharacter && EnemyAIController && AttackProfile && AttackProfile->IsValidAttackProfile() && EnemyAIController->HasValidAttackProfile() && AnimInstance
-		&& EnemyMeleeAbilityTag.IsValid() && AttackingStateTag.IsValid() && TraceWindowBeginEventTag.IsValid() && TraceWindowEndEventTag.IsValid()
+		&& EnemyMeleeAbilityTag.IsValid() && AttackingStateTag.IsValid() && HitReactingStateTag.IsValid() && TraceWindowBeginEventTag.IsValid() && TraceWindowEndEventTag.IsValid()
 		&& EnemyAIController->HasValidCombatTarget() && EnemyAIController->IsCombatTargetInMeleeRange();
 }
 

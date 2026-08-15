@@ -62,6 +62,9 @@ public:
 	/** Reads the authoritative GAS action tag; it never infers attack state from montage playback. */
 	bool IsEnemyMeleeAttackActive() const;
 
+	/** Reaction state is ASC-owned. StateTree waits rather than issuing another attack request. */
+	bool IsEnemyHitReactionActive() const;
+
 	/** Stops StateTree, movement, target, and focus once the currently possessed enemy owns State.Status.Dead. */
 	void HandleControlledEnemyDeath();
 
@@ -112,6 +115,7 @@ private:
 
 	FGameplayTag EnemyMeleeAbilityTag;
 	FGameplayTag AttackingStateTag;
+	FGameplayTag HitReactingStateTag;
 	FGameplayTag TargetAcquiredEventTag;
 	FGameplayTag TargetLostEventTag;
 	float MeleeAttackCooldownEndTime = 0.0f;

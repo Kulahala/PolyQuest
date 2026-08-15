@@ -23,6 +23,7 @@ AEnemyAIController::AEnemyAIController()
 
 	EnemyMeleeAbilityTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Attack.Enemy.Melee")), false);
 	AttackingStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Action.Attacking")), false);
+	HitReactingStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Action.HitReacting")), false);
 	TargetAcquiredEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.AI.Target.Acquired")), false);
 	TargetLostEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.AI.Target.Lost")), false);
 
@@ -151,7 +152,7 @@ bool AEnemyAIController::TryRequestMeleeAttack()
 {
 	AEnemyCharacter* EnemyCharacter = Cast<AEnemyCharacter>(GetPawn());
 	UAbilitySystemComponent* AbilitySystemComponent = EnemyCharacter ? EnemyCharacter->GetAbilitySystemComponent() : nullptr;
-	if (IsControlledEnemyDead() || !AbilitySystemComponent || !EnemyMeleeAbilityTag.IsValid() || !HasValidAttackProfile() || IsMeleeAttackOnCooldown()
+	if (IsControlledEnemyDead() || IsEnemyHitReactionActive() || !AbilitySystemComponent || !EnemyMeleeAbilityTag.IsValid() || !HasValidAttackProfile() || IsMeleeAttackOnCooldown()
 		|| !HasValidCombatTarget() || !IsCombatTargetInMeleeRange())
 	{
 		return false;
@@ -168,6 +169,14 @@ bool AEnemyAIController::IsEnemyMeleeAttackActive() const
 	const UAbilitySystemComponent* AbilitySystemComponent = EnemyCharacter ? EnemyCharacter->GetAbilitySystemComponent() : nullptr;
 	return !IsControlledEnemyDead() && AbilitySystemComponent && AttackingStateTag.IsValid()
 		&& AbilitySystemComponent->HasMatchingGameplayTag(AttackingStateTag);
+}
+
+bool AEnemyAIController::IsEnemyHitReactionActive() const
+{
+	const AEnemyCharacter* EnemyCharacter = Cast<AEnemyCharacter>(GetPawn());
+	const UAbilitySystemComponent* CharacterASC = EnemyCharacter ? EnemyCharacter->GetAbilitySystemComponent() : nullptr;
+	return !IsControlledEnemyDead() && CharacterASC && HitReactingStateTag.IsValid()
+		&& CharacterASC->HasMatchingGameplayTag(HitReactingStateTag);
 }
 
 void AEnemyAIController::HandleControlledEnemyDeath()

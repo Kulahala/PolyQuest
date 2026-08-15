@@ -10,34 +10,39 @@
 
 ---
 
-## Previous Stage: TODO-02C3A - Enemy Death Presentation v1
+## Active Stage: TODO-02C3B - Enemy Hit Reaction And Safe Interrupt v1
 
-Baseline: `6df6dde`.
-
-- The user compiled `ABP_Enemy_Goblin` successfully and confirmed Scene01 PIE: idle, chase, and attack deaths enter the terminal presentation; the enemy does not revive or resume action.
-- `To Land` is a state alias for `Fall Loop` and `Jump`; `To Falling` is a state alias for `Land` and `Locomotion`. Connecting both aliases to `Dead` covers their selected source states. The `Dead` state has no exit transition.
-- The AnimBP reads `AEnemyCharacter::IsDead()` through the presentation-only `bIsDead` cache. Native C2 remains the owner of Health, the Dead Tag, AI, Ability, Montage, Trace, and movement teardown.
-- C3A had no native source/config commit candidate; all AnimBP, animation, Blueprint, map, and imported Content remains mutable WIP.
-
----
-
-## Most Recent Completed Stage: TODO-02C3D - Enemy Ragdoll Death Presentation v1
-
-Baseline: `6df6dde` with existing user-authored `Content/**` and `ROADMAP.md` WIP preserved.
+Baseline: `6c119d3 [Feature] 敌人布娃娃死亡表现 (Enemy Ragdoll Death Presentation)`.
 
 ### Objective
 
-Add an immediate, native enemy ragdoll presentation after the existing C2 terminal teardown. `State.Status.Dead` remains the only gameplay survival source. The current C3A AnimBP Dead state remains a controlled fallback when ragdoll is disabled or the Mesh has no Physics Asset; ragdoll does not create a second gameplay state or replace GAS death cleanup.
+Establish the first non-lethal, damage-semantic hard-interrupt path for the Goblin:
 
-This v1 deliberately has no hit impulse, directional selection, auto-destroy, loot, reward, respawn, replication contract, or player ragdoll.
+- Only `GE_ChargedAttack_Damage` carries `Data.Reaction.Interrupt`, so only it can request an enemy Hit Reaction.
+- Light and Sprint Attack continue to deal damage without interrupting an active enemy attack. Any small additive flinch remains owned by `TODO-07B`.
+- `State.Status.Dead` remains terminal and wins before a reaction can be requested or recover movement.
+
+The route is target-side and event driven:
+
+```text
+Charged Damage GE Asset Tag
+  -> AEnemyCharacter Health change callback
+  -> Event.Reaction.Enemy.Hit on the target ASC
+  -> UEnemyHitReactionAbility
+  -> verified reaction Montage start
+  -> explicit cancellation of Ability.Attack.Enemy.Melee
+  -> existing enemy melee EndAbility cleanup
+```
+
+There is no second damage, melee trace, AI state machine, Poise, hit-direction, reaction queue, Root Motion, or Reaction DataAsset path in this stage.
 
 ### Route And Ownership
 
 ```text
 Outer: ue-stage-workflow
 Primary: ue5-cpp-gameplay
-Support: ue5-debug-validation, unreal-mcp
-Route reason: the change crosses enemy death teardown, SkeletalMesh physics, Capsule collision, and the existing AnimBP presentation fallback; native lifecycle ownership must stay in Main.
+Support: ue5-blueprint-workflow, ue5-state-tree-ai, ue5-debug-validation
+Route reason: target-side GameplayEffect reception, GAS Ability lifecycle, safe attack interruption, and StateTree waiting share one enemy lifecycle boundary.
 ```
 
 ```text
@@ -45,81 +50,131 @@ Plan explorers: 0
 Implementation executors: 0
 Complex Executor: none
 Main parallel work: none
-Reason: AEnemyCharacter death ordering and collision/physics teardown are one lifecycle-sensitive C++ slice. Editor authoring, compilation, PIE, and visual proof remain user-owned.
+Reason: Attribute/ASC, Gameplay Tag, Ability cancellation, Controller, and StateTree behavior are shared Main-only lifecycle contracts. Splitting them would increase integration risk, and the configured Luna reviewer/runtime is unavailable.
 ```
 
-- Main owns C++, the death/physics contract, documentation, static review, and commit boundary.
-- The user owns Editor readback, optional Blueprint default inspection, `PolyQuestEditor` compilation, and Scene01 PIE/visual validation.
+- Main owns C++, Gameplay Tag configuration, plan maintenance, static checks, review, document closeout, staging, and commit boundary.
+- The user owns mutable Editor authoring, manual `PolyQuestEditor` compilation, Scene01 PIE/visual validation, and final commit approval.
+- No live Editor write is authorized in this stage. The Editor endpoint may listen, but no callable Unreal MCP toolset is injected in this session; asset conditions below are user gates, not Editor readback evidence.
 
-### Editor Evidence And Gate
+### Approved Native Changes
 
-Read-only Editor evidence for the current Goblin fixture:
+#### Gameplay Tags
 
-- Mesh: `/Game/PolygonDungeons/Meshes/Characters/SK_Character_Goblin_Warrior_Male`.
-- Skeleton: `/Game/PolygonDungeons/Meshes/Characters/SKEL_Character_Dungeon`.
-- Physics Asset: `/Game/PolygonDungeons/Meshes/Characters/PHYS_Character_Goblin_Warrior_Male`.
-- Physics Asset readback reports 21 bodies and 20 constraints; the representative `Pelvis` body uses the default physics mode.
-- `CharacterMesh0` currently uses the `CharacterMesh` profile with query-only collision; the inherited Capsule currently uses a custom Pawn query-and-physics profile. Ragdoll must switch the Mesh to the standard engine `Ragdoll` profile and disable the Capsule collision/overlaps after the physics asset has been validated.
-- `WeaponMesh` is the shared fixed-v1 static-mesh display fixture. Read-only Editor MCP confirms the Goblin fixture attaches it below `CharacterMesh0` but currently gives it `BlockAllDynamic` and `QueryAndPhysics`; that is invalid for this fixture because melee uses marker-driven `MeleeTrace`, not physical weapon collision. The same policy prevents both self-contact during ragdoll and SpringArm Camera obstruction during player swings.
+Add these project tags in `Config/Tags/PolyQuestGameplayTags.ini`:
 
-The user must only confirm in Editor that the Mesh still references this compatible Physics Asset and that the `Ragdoll` profile is available. No `.uasset` or Physics Asset edit is required for this v1.
+- `Ability.Reaction.Enemy.Hit`
+- `Event.Reaction.Enemy.Hit`
+- `State.Action.HitReacting`
+- `Data.Reaction.Interrupt`
 
-### Native Runtime Contract
+#### Target-Side Reaction Gate
 
-- Add `bUseRagdollOnDeath` as an `EditDefaultsOnly, BlueprintReadOnly` presentation option on `AEnemyCharacter`, defaulting to `true`; it is configuration, not a second survival state.
-- Add a private idempotence guard and `StartDeathRagdoll()` helper. `HandleDeath()` calls it only after the existing Dead Tag, Health clamp, Controller stop, Ability cancellation, and CharacterMovement disable have completed.
-- `ABaseCharacter` treats the exact fixed-v1 `WeaponMesh` component as visual-only: on `BeginPlay()` it disables its collision and overlap generation. It does not change the `WeaponMesh` transform, attachment, Blade marker sampling, or `MeleeTrace` delivery path. `StartDeathRagdoll()` applies the same idempotent policy again before enabling Mesh physics, then disables the Capsule collision/overlaps, assigns the Mesh collision profile `Ragdoll`, enables SkeletalMesh physics simulation, and wakes the bodies.
-- The existing C2 `EndAbility()` cleanup and `FMeleeHitResolver` Dead checks remain unchanged. No new Gameplay Tag, GameplayEffect, Ability, StateTree branch, AnimNotify, or collision channel is introduced.
-- If ragdoll is disabled or the Mesh has no Physics Asset, the existing C3A one-way `Dead` AnimBP state remains the presentation path. The fallback is intentional and is removed only when every enemy presentation is proven to have a valid Physics Asset.
+`AEnemyCharacter::OnHealthAttributeChanged()` keeps the existing `Health <= 0 -> State.Status.Dead` path first. It sends `Event.Reaction.Enemy.Hit` to its own ASC only when all of these are true:
 
-### Non-Goals
+1. This is authoritative execution.
+2. Health actually decreased and remains above zero.
+3. The enemy is not dead.
+4. `FOnAttributeChangeData::GEModData` is valid.
+5. The applied `FGameplayEffectSpec` Asset Tags contain exactly `Data.Reaction.Interrupt`.
 
-- No directional or timed impulse, hit-reaction integration, Poise/stance break, player ragdoll, network replication, corpse pooling, auto-destroy, drops, rewards, respawn, or save/persistence behavior.
-- No manual Physics Asset authoring, Blueprint graph mutation, hard-coded Content asset path, or broad collision-profile/config cleanup.
-- Do not make AnimBP responsible for enabling physics, changing collision, Health, Tags, AI, or Ability state.
+Healing, unchanged Health, direct/non-GE changes, rejected same-team or invulnerable hits, missed traces, and lethal damage do not request a reaction. `FMeleeHitResolver` stays unchanged: it owns GE delivery and target-side code decides whether the accepted effect has reaction semantics.
+
+#### UEnemyHitReactionAbility
+
+Add `UEnemyHitReactionAbility` as an `InstancedPerActor`, `ServerOnly`, Gameplay-Event-triggered ability:
+
+- Ability Tag: `Ability.Reaction.Enemy.Hit`.
+- Trigger: `Event.Reaction.Enemy.Hit` with `GameplayEvent` source.
+- Owned active Tag: `State.Action.HitReacting`.
+- Blocked Tags: `State.Status.Dead`, `State.Status.Stunned`, and `State.Action.HitReacting`.
+- One authored `EditDefaultsOnly` field: `HitReactionMontage`.
+- No Cost, Cooldown, trace, damage, queue, random selection, direction, Root Motion policy, or Reaction DataAsset.
+
+It validates ASC, `AEnemyCharacter`, non-dead state, required tags, AnimInstance, and authored Montage. It reuses the enemy melee Montage identity filter and one guarded `EndAbility()` cleanup path. Only after `Montage_IsActive()` confirms the reaction actually started does it stop/disable CharacterMovement and explicitly call `CancelAbilities()` for `Ability.Attack.Enemy.Melee`.
+
+Do not use the `CancelAbilitiesWithTag` property. UE 5.8 performs that cancellation during `PreActivate()`, before authored Montage startup is verified. Explicit post-start cancellation preserves an active enemy attack when the reaction Montage is invalid and still lets `UEnemyMeleeAbility::EndAbility()` clean its Trace Window, Montage, State Tag, task, and existing cooldown.
+
+`EndAbility()` is idempotent. It unregisters the animation delegate, stops only its active Montage, ends its task, and restores `MOVE_Walking` only if this ability actually locked movement and the enemy is still alive and not tearing down. Death and teardown never restore movement.
+
+#### Enemy Melee, Controller, And StateTree Contract
+
+- `UEnemyMeleeAbility` adds `State.Action.HitReacting` to its activation blockers and validates that tag.
+- `AEnemyAIController` exposes `IsEnemyHitReactionActive()` from the controlled enemy ASC. `TryRequestMeleeAttack()` rejects while it is active.
+- `FEnemyStateTreeTask_RequestMeleeAttack` checks the reaction state at the start of Enter and Tick, returning `Running` rather than retrying an attack. After reaction ends, it retains its current semantics: an already observed attack completes after its tag clears; otherwise cooldown still waits; range failure still lets StateTree return to Chase.
+- Do not change the authored `Patrol -> Alert -> Chase -> Combat -> Return` topology, Controller navigation ownership, Attack Profile, WeaponMesh, collision, Physics Asset, AnimBP, or StateTree serialized task layout.
+
+### Native File Boundary
+
+Add:
+
+- `Source/PolyQuest/Public/AbilitySystem/Abilities/EnemyHitReactionAbility.h`
+- `Source/PolyQuest/Private/AbilitySystem/Abilities/EnemyHitReactionAbility.cpp`
+
+Modify only:
+
+- `Source/PolyQuest/Public/Character/Enemy/EnemyCharacter.h`
+- `Source/PolyQuest/Private/Character/Enemy/EnemyCharacter.cpp`
+- `Source/PolyQuest/Public/AI/EnemyAIController.h`
+- `Source/PolyQuest/Private/AI/EnemyAIController.cpp`
+- `Source/PolyQuest/Public/AbilitySystem/Abilities/EnemyMeleeAbility.h`
+- `Source/PolyQuest/Private/AbilitySystem/Abilities/EnemyMeleeAbility.cpp`
+- `Source/PolyQuest/Private/AI/StateTree/EnemyStateTreeTasks.cpp`
+- `Config/Tags/PolyQuestGameplayTags.ini`
+- `plan.md`
+
+Do not modify `FMeleeHitResolver`, `CharacterAttributeSet`, Build.cs, project settings, `ARCHITECTURE.md`, or `ROADMAP.md` until user validation and review support closeout.
+
+### User-Owned Editor Gate
+
+1. In `GE_ChargedAttack_Damage`, add UE 5.8's **Asset Tags (on Gameplay Effect)** component and set `Data.Reaction.Interrupt`. Do not place it in Granted Tags.
+2. Do not add this tag to Light or Sprint damage GameplayEffects.
+3. Create `GA_EnemyHitReaction`, parent class `UEnemyHitReactionAbility`, and add it to `BP_Enemy_Goblin` `StartupAbilities`.
+4. Assign a verified `SKEL_Character_Dungeon`-compatible, full-body, in-place, non-Root-Motion reaction Montage using `DefaultGroup.DefaultSlot`.
+5. The reaction Montage must not contain `AttackTraceWindow`, damage, Health, Gameplay Tag, StateTree, movement, or collision behavior.
+6. Do not edit the StateTree asset, Attack Profile, collision, WeaponMesh, Physics Asset, or AnimBP for this stage.
 
 ### Validation Matrix
 
-Main static checks:
+#### Main Static Gate
 
-- Re-read the final `AEnemyCharacter` death path and direct callers with CodeGraph and source inspection.
-- Verify the Engine 5.8 SkeletalMesh physics API and the standard `Ragdoll` profile contract against the installed headers/Editor readback.
-- Run `git diff --check` and inspect the exact source/doc diff. `code-review-graph` is supplemental and may be stale relative to the working HEAD.
+- Re-read the final Health callback, reaction Ability, melee Ability, Controller, StateTree task, resolver call boundary, and Tag configuration.
+- Use CodeGraph for source call paths. Use code-review-graph only as a supplemental impact check; its `6df6dde` index is older than the `6c119d3` baseline, so direct source/diff review remains primary.
+- Inspect for inherited-member-shadowing locals before asking for a build, specifically the previously observed C4458 pattern.
+- Run `git diff --check`.
+- Do not run UBT, Visual Studio, Live Coding, Editor write operations, or PIE.
 
-Editor readback (user):
+#### User Compile And PIE Gate
 
-- `BP_Enemy_Goblin` still derives from `AEnemyCharacter`, uses `SKEL_Character_Dungeon`, and retains the compatible Physics Asset.
-- `bUseRagdollOnDeath` is enabled on the enemy CDO unless the fallback animation is intentionally being tested.
-- The Physics Asset opens without missing bodies/constraints and the standard `Ragdoll` collision profile is present.
+By explicit user acceptance, C3B closes on focused Scene01 reaction-animation playback rather than the broader original matrix below. The accepted authored reaction clip currently carries Root Motion, while C3B intentionally calls `DisableMovement()` after playback starts, so it is accepted only as an in-place presentation fixture. This is not compile evidence, root-motion displacement evidence, or a replacement for the C3C root-motion adoption gate.
 
-Compile (user):
+The retained checks below are regression reference for a later reaction-policy change; they are not blockers for this accepted C3B closeout.
 
-- Compile `PolyQuestEditor` and report the actual result. Main does not invoke UBT, Visual Studio, or Live Coding.
+- Compile `PolyQuestEditor` manually.
+- Light/Sprint non-lethal hits only reduce Health; they do not trigger reaction.
+- Charged non-lethal hits during Idle and Chase play one reaction, freeze movement, then restore navigation.
+- Charged hits during enemy attack, including an open Trace Window, stop the old attack Montage and clear `State.Action.Attacking`, Trace Window, and task without residual damage.
+- Repeated Charged hits during reaction do not replay, queue, or stack it. Afterward the enemy still obeys the existing attack cooldown.
+- Lethal Charged damage goes directly to C2/C3D Dead presentation; it does not first play reaction or restore movement.
+- Same-team, invulnerable, and missed hits do not trigger reaction. Sight loss, Return, PIE stop, and Actor teardown leave no `State.Action.HitReacting` or reaction Montage.
+- Re-run regression checks for player attack, enemy attack, same-team rejection, invulnerability rejection, and C3D ragdoll/AnimBP fallback.
 
-Scene01 PIE (user):
+### Closeout And Commit Boundary
 
-- Death from idle, chase, and active attack enters ragdoll after C2 teardown; the active Montage, `State.Action.Attacking`, Trace Window, StateTree, focus, and movement remain cleared.
-- The mesh falls and settles against the level; the original Capsule no longer blocks the player or keeps the corpse upright.
-- During ordinary player weapon swings, the SpringArm must not shorten because it hits the owning `WeaponMesh`. On enemy death, the equipped weapon remains visually attached but cannot collide with the simulated corpse or level.
-- A dead enemy cannot reacquire Sight, attack, receive or deliver meaningful melee damage, revive, or restart animation-driven movement. Health remains `0`.
-- Existing player attack, enemy attack, same-team rejection, invulnerability rejection, and C3A fallback behavior regress cleanly.
-- Optional fallback check: disable `bUseRagdollOnDeath`, confirm the C3A terminal animation still works, then restore the default.
+After the user-accepted focused playback gate and strict review:
 
-### Documentation And Commit Boundary
+- `ARCHITECTURE.md` records the stable GE Asset Tag -> target event -> reaction Ability -> post-start attack-cancel contract, plus StateTree Combat waiting during reaction.
+- `ROADMAP.md` moves `TODO-02C3B` to Done. `TODO-02C3C` remains the sole owner of Poise/stance break; `TODO-07B` owns non-interrupting light flinch presentation.
+- This plan remains as the most-recent-stage record until the next accepted plan replaces it.
 
-- C3A closeout is recorded in `ARCHITECTURE.md` and `ROADMAP.md` before this stage's implementation details are finalized.
-- At C3D closeout, `ARCHITECTURE.md` may record only the stable rule that native enemy death can hand presentation to a validated ragdoll while the ASC Dead Tag and C2 teardown remain authoritative; AnimBP remains a read-only fallback.
-- At C3D closeout, `ROADMAP.md` moves this stage to Done Milestones only after user compile, PIE, and strict review evidence.
-- Native candidate paths: `Source/PolyQuest/Public/Character/BaseCharacter.h`, `Source/PolyQuest/Private/Character/BaseCharacter.cpp`, `Source/PolyQuest/Public/Character/Enemy/EnemyCharacter.h`, `Source/PolyQuest/Private/Character/Enemy/EnemyCharacter.cpp`, the Unity Build-safe `Source/PolyQuest/Private/Combat/Melee/MeleeHitResolver.cpp` repair, and exact C3D documentation hunks. No Content or Physics Asset files are candidates.
-- Do not use `git add -A`, stage Content WIP, or commit during this turn without explicit approval.
+Native commit candidates are the new reaction Ability pair, the exact Enemy Character/Controller/Melee/StateTree C++ hunks, Gameplay Tag config, and exact documentation hunks. Explicitly exclude all `Content/**`, including GA, GE, Montage, Blueprint, AnimBP, StateTree, map, imported assets, External Actors, generated directories, and unrelated existing `ROADMAP.md` WIP. A native commit must not claim a clean checkout recreates the authored reaction fixture.
 
 ### Current Status
 
-- C3A user compile/PIE: confirmed by user.
-- Goblin Physics Asset and collision baseline: confirmed by read-only Editor MCP.
-- C3D native implementation: complete. `ABaseCharacter` disables collision and overlap generation only for the exact fixed-v1 `WeaponMesh` display component during `BeginPlay()`. `AEnemyCharacter::StartDeathRagdoll()` repeats that idempotent terminal policy before disabling the Capsule collision/overlaps, applying `Ragdoll`, starting default-body physics, and waking the bodies after C2 teardown.
-- C3D static preflight and normal review: complete. Main re-read the final Base/Enemy death, Ability teardown, Controller death gate, resolver, and fixed-weapon collision paths with CodeGraph; refreshed code-review-graph for the exact five C++ paths; checked the Unity Build helper namespace surface; and ran `git diff --check`. The graph reports no automated coverage for `BeginPlay()`, `DisableFixedWeaponDisplayCollision()`, `HandleDeath()`, `StartDeathRagdoll()`, or `TryResolveHit()`; this is coverage context, not a runtime finding.
-- C3D compile: user first reported Unity Build `C2084` because `CharacterAttributeSet.cpp` and `MeleeHitResolver.cpp` both defined anonymous-namespace `GetDeadTag()`. The Resolver helper was renamed to `GetMeleeDeadTag()`; the reported `C2440` was cascading. The user subsequently confirmed recompilation passed.
-- C3D PIE: user confirmed the focused C3D test route passed after the repair. Main did not invoke a build, Editor, or PIE session.
-- C3D strict review: Main normal review plus a separately performed Main adversarial fallback found no unresolved P0-P2 native/GAS blocker. `gpt-5.6-luna / xhigh` remained unavailable, so no independent review is claimed.
-- Debt handoff: C3D's fixed-name `WeaponMesh` collision guard is accepted only as a temporary fixture. `TODO-03A` owns a weapon component or equipment-data collision policy that preserves marker-driven melee delivery while preventing visual-weapon camera and corpse-physics interaction.
+- C3D compile and PIE evidence were user-confirmed before this stage.
+- C3B native implementation is complete: target-side GE Asset Tag reception, `UEnemyHitReactionAbility`, enemy melee blocking, Controller reaction query, and StateTree Combat waiting are in the approved native boundary.
+- Main static preflight completed: final source/caller reads through CodeGraph where indexed, direct readback for the new untracked Ability pair, Gameplay Tag cross-check, C4458-style local-name scan, memory MCP query, and `git diff --check`. The memory query found no matching reusable entry.
+- `code-review-graph` reported a high generic impact surface but its graph was built at `6df6dde`, behind `6c119d3`; it did not cover the untracked reaction Ability pair. It is recorded only as a stale-coverage supplement, not as correctness or runtime proof.
+- The user explicitly accepted focused Scene01 reaction-animation playback as the C3B runtime gate. The currently authored Root Motion clip remains visually in place because this Ability deliberately locks CharacterMovement after the Montage starts; no root-motion displacement, direction tier, Poise, or broad reaction regression is claimed by that acceptance.
+- C3B strict review is complete: Main normal review plus a separately performed Main adversarial fallback found no P0-P2 C++/GAS/Tag/StateTree blocker. `gpt-5.6-luna / xhigh` remained unavailable, so no independent review is claimed.
+- Debt handoff: `TODO-02C3C` owns a root-motion Big Reaction only after it defines a deliberate movement policy, navigation/collision behavior, interruption/death teardown, and focused PIE coverage. `TODO-07B` owns non-interrupting Small Reaction presentation.
