@@ -10,7 +10,6 @@
 #include "Components/CapsuleComponent.h"
 #include "EnhancedInputComponent.h"
 #include "GameFramework/CharacterMovementComponent.h"
-#include "GameFramework/Controller.h"
 #include "GameFramework/SpringArmComponent.h"
 #include "GameplayEffect.h"
 #include "GameplayTagContainer.h"
@@ -60,12 +59,21 @@ APlayerCharacter::APlayerCharacter()
 
 	CameraBoom = CreateDefaultSubobject<USpringArmComponent>(TEXT("CameraBoom"));
 	CameraBoom->SetupAttachment(RootComponent);
-	CameraBoom->TargetArmLength = 400.0f;
-	CameraBoom->bUsePawnControlRotation = true;
+	CameraBoom->TargetArmLength = 2000.0f;
+	CameraBoom->bUsePawnControlRotation = false;
+	CameraBoom->SetUsingAbsoluteRotation(true);
+	CameraBoom->SetRelativeRotation(FRotator(-55.0f, -45.0f, 0.0f));
+	CameraBoom->bEnableCameraLag = true;
+	CameraBoom->CameraLagSpeed = 18.0f;
+	CameraBoom->CameraLagMaxDistance = 75.0f;
+	CameraBoom->bUseCameraLagSubstepping = true;
+	CameraBoom->CameraLagMaxTimeStep = 1.0f / 60.0f;
+	CameraBoom->bEnableCameraRotationLag = false;
 
 	FollowCamera = CreateDefaultSubobject<UCameraComponent>(TEXT("FollowCamera"));
 	FollowCamera->SetupAttachment(CameraBoom, USpringArmComponent::SocketName);
 	FollowCamera->bUsePawnControlRotation = false;
+	FollowCamera->FieldOfView = 60.0f;
 
 	SightStimuliSource = CreateDefaultSubobject<UAIPerceptionStimuliSourceComponent>(TEXT("SightStimuliSource"));
 }
@@ -144,8 +152,6 @@ void APlayerCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputCom
 		EnhancedInputComponent->BindAction(MoveAction, ETriggerEvent::Triggered, this, &APlayerCharacter::Move);
 		EnhancedInputComponent->BindAction(MoveAction, ETriggerEvent::Completed, this, &APlayerCharacter::ClearMoveInput);
 		EnhancedInputComponent->BindAction(MoveAction, ETriggerEvent::Canceled, this, &APlayerCharacter::ClearMoveInput);
-		EnhancedInputComponent->BindAction(MouseLookAction, ETriggerEvent::Triggered, this, &APlayerCharacter::Look);
-		EnhancedInputComponent->BindAction(LookAction, ETriggerEvent::Triggered, this, &APlayerCharacter::Look);
 		if (PrimaryAttackAction)
 		{
 			EnhancedInputComponent->BindAction(PrimaryAttackAction, ETriggerEvent::Started, this, &APlayerCharacter::HandlePrimaryAttackStarted);
@@ -233,26 +239,15 @@ void APlayerCharacter::DoMove(float Right, float Forward)
 		return;
 	}
 
-	if (GetController() != nullptr)
-	{
-		const FRotator Rotation = GetController()->GetControlRotation();
-		const FRotator YawRotation(0, Rotation.Yaw, 0);
-
-		const FVector ForwardDirection = FRotationMatrix(YawRotation).GetUnitAxis(EAxis::X);
-		const FVector RightDirection = FRotationMatrix(YawRotation).GetUnitAxis(EAxis::Y);
-
-		AddMovementInput(ForwardDirection, Forward);
-		AddMovementInput(RightDirection, Right);
-	}
+	FVector ForwardDirection;
+	FVector RightDirection;
+	GetCameraPlanarAxes(ForwardDirection, RightDirection);
+	AddMovementInput(ForwardDirection, Forward);
+	AddMovementInput(RightDirection, Right);
 }
 
-void APlayerCharacter::DoLook(float Yaw, float Pitch)
+void APlayerCharacter::DoLook(float, float)
 {
-	if (GetController() != nullptr)
-	{
-		AddControllerYawInput(Yaw);
-		AddControllerPitchInput(Pitch);
-	}
 }
 
 void APlayerCharacter::DoJumpStart()
@@ -490,15 +485,50 @@ void APlayerCharacter::Dodge(const FInputActionValue&)
 	CharacterASC->TryActivateAbilitiesByTag(AbilityTags);
 }
 
-FVector APlayerCharacter::GetDodgeWorldDirection() const
+FVector APlayerCharacter::GetActionWorldDirection() const
 {
-	const FRotator ControlRotation = GetController() ? GetController()->GetControlRotation() : GetActorRotation();
-	const FRotator YawRotation(0.0f, ControlRotation.Yaw, 0.0f);
-	const FVector ForwardDirection = FRotationMatrix(YawRotation).GetUnitAxis(EAxis::X);
-	const FVector RightDirection = FRotationMatrix(YawRotation).GetUnitAxis(EAxis::Y);
+	FVector ForwardDirection;
+	FVector RightDirection;
+	GetCameraPlanarAxes(ForwardDirection, RightDirection);
 	const FVector DesiredDirection = ForwardDirection * CurrentMoveInput.Y + RightDirection * CurrentMoveInput.X;
+	if (!DesiredDirection.IsNearlyZero())
+	{
+		return DesiredDirection.GetSafeNormal2D();
+	}
 
-	return DesiredDirection.IsNearlyZero() ? ForwardDirection : DesiredDirection.GetSafeNormal();
+	const FVector ActorForwardDirection = GetActorForwardVector().GetSafeNormal2D();
+	return ActorForwardDirection.IsNearlyZero() ? ForwardDirection : ActorForwardDirection;
+}
+
+void APlayerCharacter::ApplyActionFacing()
+{
+	const FVector ActionDirection = GetActionWorldDirection();
+	if (!ActionDirection.IsNearlyZero())
+	{
+		SetActorRotation(FRotator(0.0f, ActionDirection.Rotation().Yaw, 0.0f));
+	}
+}
+
+void APlayerCharacter::GetCameraPlanarAxes(FVector& OutForwardDirection, FVector& OutRightDirection) const
+{
+	const FRotator CameraRotation = CameraBoom ? CameraBoom->GetComponentRotation() : GetActorRotation();
+	const FRotator CameraYawRotation(0.0f, CameraRotation.Yaw, 0.0f);
+	OutForwardDirection = FRotationMatrix(CameraYawRotation).GetUnitAxis(EAxis::X);
+	OutRightDirection = FRotationMatrix(CameraYawRotation).GetUnitAxis(EAxis::Y);
+}
+
+void APlayerCharacter::UpdateActionFacingRotationMode()
+{
+	UCharacterMovementComponent* MovementComponent = GetCharacterMovement();
+	const UAbilitySystemComponent* CharacterASC = GetAbilitySystemComponent();
+	if (!MovementComponent)
+	{
+		return;
+	}
+
+	const bool bIsAttacking = CharacterASC && AttackingStateTag.IsValid() && CharacterASC->HasMatchingGameplayTag(AttackingStateTag);
+	const bool bIsDodging = CharacterASC && DodgingStateTag.IsValid() && CharacterASC->HasMatchingGameplayTag(DodgingStateTag);
+	MovementComponent->bOrientRotationToMovement = !bIsAttacking && !bIsDodging;
 }
 
 bool APlayerCharacter::IsMovementInputBlocked() const
@@ -614,6 +644,8 @@ void APlayerCharacter::BindSprintStateEvents()
 		StunnedStateTagChangedHandle = CharacterASC->RegisterGameplayTagEvent(StunnedStateTag)
 			.AddUObject(this, &APlayerCharacter::OnSprintRelevantTagChanged);
 	}
+
+	UpdateActionFacingRotationMode();
 }
 
 void APlayerCharacter::UnbindSprintStateEvents()
@@ -653,6 +685,8 @@ void APlayerCharacter::UnbindSprintStateEvents()
 
 void APlayerCharacter::OnSprintRelevantTagChanged(const FGameplayTag, int32 NewCount)
 {
+	UpdateActionFacingRotationMode();
+
 	if (NewCount > 0)
 	{
 		CancelSprintAbility();

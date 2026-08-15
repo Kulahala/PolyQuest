@@ -78,7 +78,6 @@ void UDodgeAbility::ActivateAbility(
 	APlayerCharacter* PlayerCharacter = Cast<APlayerCharacter>(GetAvatarActorFromActorInfo());
 	USkeletalMeshComponent* SkeletalMesh = PlayerCharacter ? PlayerCharacter->GetMesh() : nullptr;
 	UAnimInstance* AnimInstance = SkeletalMesh ? SkeletalMesh->GetAnimInstance() : nullptr;
-	const FVector DodgeDirection = PlayerCharacter ? PlayerCharacter->GetDodgeWorldDirection() : FVector::ZeroVector;
 
 	if (!AbilitySystemComponent || !PlayerCharacter || !AnimInstance || !DodgeMontage || !CostGameplayEffectClass
 		|| !StaminaRegenDelayGameplayEffectClass || !InvulnerabilityGameplayEffectClass || !PrimaryAttackAbilityTag.IsValid()
@@ -124,10 +123,7 @@ void UDodgeAbility::ActivateAbility(
 	}
 	AbilitySystemComponent->CancelAbilities(&AbilityTagsToCancel, nullptr, this);
 
-	if (!DodgeDirection.IsNearlyZero())
-	{
-		PlayerCharacter->SetActorRotation(DodgeDirection.Rotation());
-	}
+	PlayerCharacter->ApplyActionFacing();
 
 	InvulnerabilityBeginTask->EventReceived.AddDynamic(this, &UDodgeAbility::OnInvulnerabilityBegin);
 	InvulnerabilityEndTask->EventReceived.AddDynamic(this, &UDodgeAbility::OnInvulnerabilityEnd);

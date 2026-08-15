@@ -20,7 +20,7 @@ The live UE 5.8 editor resolves the GameplayAbilities plugin, and the module lin
 
 `TODO-01D` extends the light-attack fixture with a data-driven two-entry linear combo. The active ability owns one buffered `Input.PrimaryAttack`, identity-filtered semantic animation events, per-entry cost and hit consumption, recovery Dodge cancellation, and one teardown path across both Montages.
 
-`TODO-01E` keeps `Input.PrimaryAttack` as one hold/release route. After an active Combo has first received the input, the no-cost Primary Ability arbitrates short release to Light Attack and a held release to Charged Attack. Charged pauses its Root Motion Montage at a semantic HoldReady event, commits its Stamina cost only on normal release, resumes the same playhead, and consumes one identity-filtered hit event. Primary, Light, Charged, and Dodge own shared movement/jump input-block tags while active; camera look remains available.
+`TODO-01E` keeps `Input.PrimaryAttack` as one hold/release route. After an active Combo has first received the input, the no-cost Primary Ability arbitrates short release to Light Attack and a held release to Charged Attack. Charged pauses its Root Motion Montage at a semantic HoldReady event, commits its Stamina cost only on normal release, resumes the same playhead, and consumes one identity-filtered hit event. Primary, Light, Charged, and Dodge own shared movement/jump input-block tags while active.
 
 `TODO-01F` establishes ground Sprint, Stamina-costed Jump, Sprint Jump air speed, and one optional Loadout-owned Sprint Attack. `MoveSpeed` is an Attribute consumed by CharacterMovement; Sprint state is an ASC-owned tag rather than a Player boolean or a transient speed comparison. The user has compiled and PIE-validated the configured Scene01 route, while the dedicated Sprint locomotion loop remains presentation work deferred to `TODO-07B`.
 
@@ -30,6 +30,8 @@ The live UE 5.8 editor resolves the GameplayAbilities plugin, and the module lin
 
 `TODO-02A` establishes the first enemy native endpoint without adding a parallel AI or combat state machine. The Player is an explicit Sight source; the enemy Controller owns perception, current target, focus, home location, and StateTree lifetime; StateTree selects Patrol, Alert, Chase, Combat, and Return intent; and one server-only enemy melee Ability reuses the existing Trace Window and GAS resolver delivery path.
 
+`TODO-02B` establishes a fixed-world elevated oblique Perspective camera rather than an over-the-shoulder orbit. `APlayerCharacter` derives movement and one-time action-facing yaw from the actual CameraBoom world yaw. ASC-owned `State.Action.Attacking` and `State.Action.Dodging` temporarily suppress ordinary movement-facing; root-motion rotation is never overwritten every frame. Native input intentionally leaves Look actions unbound, while their authored pointers remain available for future UI ownership.
+
 Focused native source/config commits intentionally keep mutable authoring assets out of version control: the GameplayAbility Blueprint, GameplayEffects, Montage, AnimBP, `BP_Player`, and input assets remain local development WIP. Selected meshes, Skeleton/material dependencies, and animation sequences are a stable source-asset baseline, but the source/config subset alone is not a clone-ready reproduction of the local PIE fixture.
 
 ## Product Entry And Template Retirement
@@ -38,7 +40,7 @@ Focused native source/config commits intentionally keep mutable authoring assets
 
 The active player route is `BP_GameMode -> BP_Player -> APlayerCharacter -> ABaseCharacter`, while `BP_PlayerController -> APolyQuestPlayerController` owns desktop mapping-context installation. `APolyQuestGameMode` and `APolyQuestPlayerController` remain the same reflected `/Script/PolyQuest` Blueprint roots after their source moved to `Framework/`.
 
-`APolyQuestPlayerController` adds each authored `DefaultMappingContexts` entry only for a local desktop player. `BP_PlayerController` supplies `IMC_Default` and `IMC_MouseLook`; the retired mobile touch widget, forced-touch setting, and mobile-excluded context path are not part of the product route.
+`APolyQuestPlayerController` adds each authored `DefaultMappingContexts` entry only for a local desktop player. The fixed-camera native route intentionally does not bind a Look action; Mapping Context asset topology remains user-owned authoring WIP. The retired mobile touch widget, forced-touch setting, and mobile-excluded context path are not part of the product route.
 
 `APolyQuestCharacter`, the `ThirdPerson` map/Blueprint closure, and the generated `Variant_Combat`, `Variant_Platforming`, and `Variant_SideScrolling` source/content closures have been retired. New product gameplay is introduced through documented PolyQuest stages rather than by extending a generated template variant.
 
@@ -57,13 +59,20 @@ The active player route is `BP_GameMode -> BP_Player -> APlayerCharacter -> ABas
 ### Runtime Routing And Input
 
 - `BP_GameMode` is the active default GameMode and selects `BP_Player` as the default Pawn and `BP_PlayerController` as the PlayerController.
-- `APolyQuestPlayerController` installs the Blueprint-authored desktop `DefaultMappingContexts` for local players; the current controller Blueprint supplies `IMC_Default` and `IMC_MouseLook`.
+- `APolyQuestPlayerController` installs Blueprint-authored desktop `DefaultMappingContexts` for local players. `APlayerCharacter` intentionally leaves `LookAction` and `MouseLookAction` unbound in the fixed-camera route; authored mapping assets remain outside the native runtime contract.
 - `APlayerCharacter` binds `PrimaryAttackAction`, `AimAction`, and four fixed `AbilitySlotActions`. Every combat-input `Started` records held time, sends `Event.Input.Pressed` with the actual `Input.*` tag in `FGameplayEventData::InstigatorTags`, then resolves the active Combat Loadout through the ASC. `Completed` sends `Released`; `Canceled` sends `Canceled`; both clear the held state. The input layer never plays a Montage, spends Stamina, traces, or mutates an Attribute directly.
 - `DA_CombatLoadout_StraightSword` currently maps `Input.PrimaryAttack -> Ability.Attack.Primary`; the Primary Ability then chooses Light or Charged after the Combo listener has had first access to the same Pressed event. Absent Aim and Slot routes intentionally express an input event without activating an Ability. A Loadout change affects future input starts only and never grants, revokes, or cancels Abilities. Future equipment owns the corresponding Ability-grant policy separately.
 - `Event.Input.Pressed`, `Event.Input.Released`, and `Event.Input.Canceled` are semantic delivery events for already active Abilities using `WaitGameplayEvent`; they are not general `AbilityTriggers`. `Event.Attack.Charged.ReleaseHandoff` is the narrow exception: its tagged payload activates Charged when a normal release at or after the threshold arrives before the `WaitDelay` callback, so Charged can use the original held duration after Character input state has been cleared. A future event-triggered Ability must use a dedicated outer event tag or validate the payload's input intent before activation, because the generic outer event alone does not distinguish Primary, Aim, and Slot input.
 - Current validation is keyboard/mouse-only by explicit scope decision. Gamepad Right Shoulder and Left Trigger mappings are deferred rather than treated as verified controller support.
-- `APlayerCharacter` binds `DodgeAction` on `Started` and only requests `Ability.Dodge`. It caches the latest movement input so Dodge can derive one camera-relative world direction, and it suppresses translation and Jump starts whenever the ASC owns `State.Input.Block.Movement` or `State.Input.Block.Jump`; camera look remains available. Jump release always calls `StopJumping()` so a pre-action UE jump request cannot remain latched.
+- `APlayerCharacter` binds `DodgeAction` on `Started` and only requests `Ability.Dodge`. It caches the latest movement input so Dodge can derive one camera-relative world direction, and it suppresses translation and Jump starts whenever the ASC owns `State.Input.Block.Movement` or `State.Input.Block.Jump`. Jump release always calls `StopJumping()` so a pre-action UE jump request cannot remain latched.
 - `SprintAction` records only held physical intent. With nonzero movement, grounded state, positive Stamina, and no blocking action tags, Player requests `Ability.Movement.Sprint`; the ASC Sprint tag remains the runtime truth. `DodgeAction` and `SprintAction` must remain distinct physical mappings until a dedicated short-press/hold input-arbitration stage owns their shared-key contract. Binding both actions directly to the same key would make their independent `Started` requests race.
+
+### Camera And Action Facing
+
+- `CameraBoom` owns a fixed-world, elevated oblique Perspective composition with SpringArm collision; it is not driven by controller look input. Movement resolves its horizontal forward/right axes from the CameraBoom's current world yaw.
+- Light, Charged, Sprint Attack, and Dodge resolve and apply one horizontal facing yaw at ability startup. With no movement input, the action keeps the actor's current horizontal forward direction. Combo continuation does not resolve a new direction.
+- While the ASC owns `State.Action.Attacking` or `State.Action.Dodging`, `APlayerCharacter` disables `CharacterMovement.bOrientRotationToMovement`. Once both tags are absent, ordinary locomotion-facing is restored. This does not force a per-frame yaw over Root Motion.
+- Hard lock-on, manual target switching, mouse ground-projection facing, a sprint free-run exception, Motion Warping, and a generic camera framework are not part of this baseline.
 
 ### Light Attack Ability Lifecycle
 

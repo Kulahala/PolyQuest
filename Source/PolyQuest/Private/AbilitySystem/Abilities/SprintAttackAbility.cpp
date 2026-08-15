@@ -104,6 +104,9 @@ void USprintAttackAbility::ActivateAbility(
 		return;
 	}
 
+	SetRuntimeActionTags(true);
+	PlayerCharacter->ApplyActionFacing();
+
 	BoundAnimInstance = AnimInstance;
 	ActiveMontage = SprintAttackMontage;
 	BoundAnimInstance->OnMontageEnded.RemoveDynamic(this, &USprintAttackAbility::OnActiveMontageEnded);
@@ -132,7 +135,6 @@ void USprintAttackAbility::ActivateAbility(
 		return;
 	}
 
-	SetRuntimeActionTags(true);
 	PlayerCharacter->CancelSprintAbility();
 }
 

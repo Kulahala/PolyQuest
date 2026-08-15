@@ -25,7 +25,7 @@ class POLYQUEST_API APlayerCharacter : public ABaseCharacter
 {
 	GENERATED_BODY()
 
-	/** Camera boom positioning the camera behind the character. */
+	/** Fixed-world camera boom for the oblique Perspective composition. */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Components", meta=(AllowPrivateAccess="true"))
 	USpringArmComponent* CameraBoom;
 
@@ -46,11 +46,11 @@ protected:
 	UPROPERTY(EditAnywhere, Category="Input")
 	UInputAction* MoveAction;
 
-	/** Input action used for gamepad look. */
+	/** Retained authored gamepad-look action; this fixed-camera route does not bind it. */
 	UPROPERTY(EditAnywhere, Category="Input")
 	UInputAction* LookAction;
 
-	/** Input action used for mouse look. */
+	/** Retained authored mouse-look action; this fixed-camera route does not bind it. */
 	UPROPERTY(EditAnywhere, Category="Input")
 	UInputAction* MouseLookAction;
 
@@ -96,7 +96,7 @@ protected:
 	/** Convert the Enhanced Input movement action to gameplay movement. */
 	void Move(const FInputActionValue& Value);
 
-	/** Convert the Enhanced Input look action to controller input. */
+	/** Retained legacy look route; fixed-camera v1 intentionally ignores it. */
 	void Look(const FInputActionValue& Value);
 
 	/** Request the Dodge ability through the character ASC. */
@@ -110,7 +110,7 @@ public:
 	UFUNCTION(BlueprintCallable, Category="Input")
 	virtual void DoMove(float Right, float Forward);
 
-	/** Handles look input from controls or UI interfaces. */
+	/** Fixed-camera v1 intentionally ignores controller look input. */
 	UFUNCTION(BlueprintCallable, Category="Input")
 	virtual void DoLook(float Yaw, float Pitch);
 
@@ -134,8 +134,11 @@ public:
 	UFUNCTION(BlueprintPure, Category="Combat|Input")
 	float GetCombatInputHeldDuration(FGameplayTag InputIntentTag) const;
 
-	/** Returns the current camera-relative Dodge direction, defaulting to camera forward. */
-	FVector GetDodgeWorldDirection() const;
+	/** Resolves the current action-facing direction from camera-relative movement or actor forward. */
+	FVector GetActionWorldDirection() const;
+
+	/** Applies the current action-facing direction as horizontal actor yaw once at action startup. */
+	void ApplyActionFacing();
 
 	/** True only when physical Sprint intent and current movement state permit a new Sprint request. */
 	bool CanAttemptSprint() const;
@@ -186,6 +189,8 @@ private:
 	void BindSprintStateEvents();
 	void UnbindSprintStateEvents();
 	void OnSprintRelevantTagChanged(const FGameplayTag Tag, int32 NewCount);
+	void GetCameraPlanarAxes(FVector& OutForwardDirection, FVector& OutRightDirection) const;
+	void UpdateActionFacingRotationMode();
 
 	bool IsMovementInputBlocked() const;
 

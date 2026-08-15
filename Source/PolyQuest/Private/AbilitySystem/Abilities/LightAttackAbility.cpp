@@ -7,6 +7,7 @@
 #include "Animation/AnimInstance.h"
 #include "Animation/AnimMontage.h"
 #include "Character/BaseCharacter.h"
+#include "Character/Player/PlayerCharacter.h"
 #include "Combat/ComboChainDataAsset.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "GameplayEffect.h"
@@ -58,18 +59,18 @@ void ULightAttackAbility::ActivateAbility(
 
 	UAbilitySystemComponent* AbilitySystemComponent = GetAbilitySystemComponentFromActorInfo();
 	AActor* AvatarActor = GetAvatarActorFromActorInfo();
-	ACharacter* Character = Cast<ACharacter>(AvatarActor);
-	USkeletalMeshComponent* SkeletalMesh = Character ? Character->GetMesh() : nullptr;
+	APlayerCharacter* PlayerCharacter = Cast<APlayerCharacter>(AvatarActor);
+	USkeletalMeshComponent* SkeletalMesh = PlayerCharacter ? PlayerCharacter->GetMesh() : nullptr;
 	UAnimInstance* AnimInstance = SkeletalMesh ? SkeletalMesh->GetAnimInstance() : nullptr;
 
-	if (!AbilitySystemComponent || !AnimInstance || !CostGameplayEffectClass || !DamageGameplayEffectClass || !StaminaRegenDelayGameplayEffectClass
+	if (!AbilitySystemComponent || !PlayerCharacter || !AnimInstance || !CostGameplayEffectClass || !DamageGameplayEffectClass || !StaminaRegenDelayGameplayEffectClass
 		|| !DodgeCancelWindowBeginEventTag.IsValid() || !DodgeCancelWindowEndEventTag.IsValid() || !DodgeCancelableStateTag.IsValid()
 		|| !TraceWindowBeginEventTag.IsValid() || !TraceWindowEndEventTag.IsValid()
 		|| !PrimaryAttackPressedEventTag.IsValid() || !PrimaryAttackInputTag.IsValid() || !ComboInputWindowBeginEventTag.IsValid()
 		|| !ComboInputWindowEndEventTag.IsValid() || !ComboBranchWindowBeginEventTag.IsValid() || !ComboBranchWindowEndEventTag.IsValid()
 		|| !ValidateComboDefinition())
 	{
-		UE_LOG(LogPolyQuest, Warning, TEXT("Light attack activation aborted for '%s': ASC, AnimInstance, valid ComboDefinition, cost effect, damage effect, Stamina regeneration delay effect, and required gameplay tags are required."), *GetNameSafe(AvatarActor));
+		UE_LOG(LogPolyQuest, Warning, TEXT("Light attack activation aborted for '%s': ASC, player, AnimInstance, valid ComboDefinition, cost effect, damage effect, Stamina regeneration delay effect, and required gameplay tags are required."), *GetNameSafe(AvatarActor));
 		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
 		return;
 	}
@@ -112,6 +113,8 @@ void ULightAttackAbility::ActivateAbility(
 		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
 		return;
 	}
+
+	PlayerCharacter->ApplyActionFacing();
 
 	TraceWindowBeginTask->ReadyForActivation();
 	TraceWindowEndTask->ReadyForActivation();

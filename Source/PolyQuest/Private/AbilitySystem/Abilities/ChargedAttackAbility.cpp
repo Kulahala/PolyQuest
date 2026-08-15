@@ -143,6 +143,8 @@ void UChargedAttackAbility::ActivateAbility(
 	DodgeCancelWindowBeginTask->EventReceived.AddDynamic(this, &UChargedAttackAbility::OnDodgeCancelWindowBegin);
 	DodgeCancelWindowEndTask->EventReceived.AddDynamic(this, &UChargedAttackAbility::OnDodgeCancelWindowEnd);
 
+	PlayerCharacter->ApplyActionFacing();
+
 	HoldReadyTask->ReadyForActivation();
 	TraceWindowBeginTask->ReadyForActivation();
 	TraceWindowEndTask->ReadyForActivation();
