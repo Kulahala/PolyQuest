@@ -41,6 +41,12 @@ void AEnemyAIController::OnPossess(APawn* InPawn)
 	bHasValidAttackProfile = false;
 
 	const AEnemyCharacter* EnemyCharacter = Cast<AEnemyCharacter>(InPawn);
+	if (EnemyCharacter && EnemyCharacter->IsDead())
+	{
+		HandleControlledEnemyDeath();
+		return;
+	}
+
 	const UEnemyAttackProfile* AttackProfile = EnemyCharacter ? EnemyCharacter->GetAttackProfile() : nullptr;
 	if (!AttackProfile || !AttackProfile->IsValidAttackProfile())
 	{
@@ -88,18 +94,18 @@ APlayerCharacter* AEnemyAIController::GetCurrentTarget() const
 
 bool AEnemyAIController::HasValidCombatTarget() const
 {
-	return GetPawn() && IsValid(CurrentTarget.Get()) && CurrentTarget.Get() != GetPawn();
+	return !IsControlledEnemyDead() && GetPawn() && IsValid(CurrentTarget.Get()) && CurrentTarget.Get() != GetPawn();
 }
 
 bool AEnemyAIController::HasValidAttackProfile() const
 {
-	return bHasValidAttackProfile && MeleeRange > 0.0f;
+	return !IsControlledEnemyDead() && bHasValidAttackProfile && MeleeRange > 0.0f;
 }
 
 void AEnemyAIController::StartMeleeAttackCooldown(float CooldownAfterAttack)
 {
 	const UWorld* World = GetWorld();
-	if (!World || CooldownAfterAttack < 0.0f)
+	if (IsControlledEnemyDead() || !World || CooldownAfterAttack < 0.0f)
 	{
 		return;
 	}
@@ -110,7 +116,7 @@ void AEnemyAIController::StartMeleeAttackCooldown(float CooldownAfterAttack)
 bool AEnemyAIController::IsMeleeAttackOnCooldown() const
 {
 	const UWorld* World = GetWorld();
-	return World && MeleeAttackCooldownEndTime > World->GetTimeSeconds();
+	return !IsControlledEnemyDead() && World && MeleeAttackCooldownEndTime > World->GetTimeSeconds();
 }
 
 bool AEnemyAIController::IsCombatTargetInMeleeRange() const
@@ -128,6 +134,11 @@ bool AEnemyAIController::IsCombatTargetInMeleeRange() const
 
 void AEnemyAIController::BeginAlert()
 {
+	if (IsControlledEnemyDead())
+	{
+		return;
+	}
+
 	StopMovement();
 
 	if (HasValidCombatTarget())
@@ -140,7 +151,7 @@ bool AEnemyAIController::TryRequestMeleeAttack()
 {
 	AEnemyCharacter* EnemyCharacter = Cast<AEnemyCharacter>(GetPawn());
 	UAbilitySystemComponent* AbilitySystemComponent = EnemyCharacter ? EnemyCharacter->GetAbilitySystemComponent() : nullptr;
-	if (!AbilitySystemComponent || !EnemyMeleeAbilityTag.IsValid() || !HasValidAttackProfile() || IsMeleeAttackOnCooldown()
+	if (IsControlledEnemyDead() || !AbilitySystemComponent || !EnemyMeleeAbilityTag.IsValid() || !HasValidAttackProfile() || IsMeleeAttackOnCooldown()
 		|| !HasValidCombatTarget() || !IsCombatTargetInMeleeRange())
 	{
 		return false;
@@ -155,11 +166,36 @@ bool AEnemyAIController::IsEnemyMeleeAttackActive() const
 {
 	const AEnemyCharacter* EnemyCharacter = Cast<AEnemyCharacter>(GetPawn());
 	const UAbilitySystemComponent* AbilitySystemComponent = EnemyCharacter ? EnemyCharacter->GetAbilitySystemComponent() : nullptr;
-	return AbilitySystemComponent && AttackingStateTag.IsValid() && AbilitySystemComponent->HasMatchingGameplayTag(AttackingStateTag);
+	return !IsControlledEnemyDead() && AbilitySystemComponent && AttackingStateTag.IsValid()
+		&& AbilitySystemComponent->HasMatchingGameplayTag(AttackingStateTag);
+}
+
+void AEnemyAIController::HandleControlledEnemyDeath()
+{
+	if (!IsControlledEnemyDead())
+	{
+		return;
+	}
+
+	if (StateTreeComponent)
+	{
+		StateTreeComponent->StopLogic(TEXT("Controlled enemy died."));
+	}
+
+	StopMovement();
+	ClearCurrentTarget(false);
+	MeleeRange = 0.0f;
+	MeleeAttackCooldownEndTime = 0.0f;
+	bHasValidAttackProfile = false;
 }
 
 void AEnemyAIController::HandleTargetPerceptionUpdated(AActor* Actor, FAIStimulus Stimulus)
 {
+	if (IsControlledEnemyDead())
+	{
+		return;
+	}
+
 	APlayerCharacter* PlayerCharacter = Cast<APlayerCharacter>(Actor);
 	if (!PlayerCharacter)
 	{
@@ -196,9 +232,15 @@ void AEnemyAIController::ConfigureSight()
 	EnemyPerceptionComponent->RequestStimuliListenerUpdate();
 }
 
+bool AEnemyAIController::IsControlledEnemyDead() const
+{
+	const AEnemyCharacter* EnemyCharacter = Cast<AEnemyCharacter>(GetPawn());
+	return EnemyCharacter && EnemyCharacter->IsDead();
+}
+
 void AEnemyAIController::SetCurrentTarget(APlayerCharacter* NewTarget)
 {
-	if (!IsValid(NewTarget))
+	if (IsControlledEnemyDead() || !IsValid(NewTarget))
 	{
 		return;
 	}

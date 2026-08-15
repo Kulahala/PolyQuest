@@ -130,17 +130,18 @@ The old `Test` project is evidence for player-facing behavior, not a source tree
   - Live Editor MCP readback confirmed the Root/Alert/Chase/Combat/Return topology and Chase reach binding. The user confirmed `PolyQuestEditor` compilation and focused Scene01 PIE, including the reach boundary, cooldown, interruption, target loss/reacquisition, hit rejection, and Trace cleanup.
   - Main normal review and Main adversarial fallback found no P0-P2 C++/GAS/Tag/StateTree blocker. `gpt-5.6-luna / xhigh` was unavailable, so no independent review is claimed. All authored fixture assets remain excluded mutable WIP; this native commit is not a clean-checkout fixture.
 
+- [x] `TODO-02C2: First Enemy Death And Teardown v1`
+  - Established the first enemy-only terminal path: terminal Health is clamped to zero, `AEnemyCharacter` promotes zero Health or another legal Dead source to an exact loose `State.Status.Dead` tag, then one idempotent teardown stops the Controller, StateTree, movement, and active GAS work.
+  - The shared melee resolver now rejects a dead source or target, so a same-frame residual Trace cannot damage after the terminal Tag is in place. Native C2 leaves the Actor/Capsule and current pose intact; it does not reference authored death-animation assets.
+  - The user confirmed `PolyQuestEditor` compilation and Scene01 PIE: after Health reaches zero the enemy no longer acts, and later attacks leave Health at zero rather than below zero. Main normal review and Main adversarial fallback found no unresolved P0-P2 C++/GAS/Tag/StateTree blocker. `gpt-5.6-luna / xhigh` remained unavailable, so no independent review is claimed.
+  - All authored Blueprints, AnimBPs, GameplayEffects, Montages, StateTree assets, maps, and imported resources remain excluded mutable WIP. `TODO-02C3` owns enemy reactions, Poise, stance break, and Tag-driven terminal presentation; `TODO-03D` owns player death, reload, and revival.
+
 ## Milestones
 
 ### First Enemy, Camera, And Combat Presentation
 
-- [ ] `TODO-02C2: First Enemy Death And Teardown v1`
-  - Establish the first enemy-only zero-Health outcome: assign `State.Status.Dead`, cancel active GAS work, stop StateTree, movement, and Controller focus, and make dead enemies ineligible for melee resolution and target selection.
-  - The authored death presentation is subordinate to the native lifecycle; interruption and teardown must converge without stale Montage, Trace Window, movement, or AI work.
-  - Do not add player death, checkpoint/reload, respawn, drops, rewards, persistence, Poise, or hit-reaction systems. Player death remains owned by `TODO-03D` after the checkpoint/rest/reload contract exists.
-
 - [ ] `TODO-02C3: Enemy Reactions, Poise, And Stance Break v1`
-  - Add enemy-specific damage reception, Poise depletion, hit reaction, stance break, safe GAS interruption, and recovery around the proven first enemy death lifecycle.
+  - Add enemy-specific damage reception, Poise depletion, hit reaction, stance break, safe GAS interruption, recovery, and the `State.Status.Dead`-driven terminal death presentation around the proven first enemy death lifecycle. The AnimBP reads the terminal Tag but never writes Health, Tags, StateTree, or Controller state.
   - GameplayEffects and the target ASC remain the mutation path; animation only provides timing and presentation. Keep reaction/Poise data separate from StateTree intent and from mutable runtime state.
   - Do not force a player hit-reaction or player-Poise framework merely for symmetry; plan that player-facing response only when an accepted defensive-combat slice requires it.
 

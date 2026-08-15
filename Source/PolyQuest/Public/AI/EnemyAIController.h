@@ -62,6 +62,9 @@ public:
 	/** Reads the authoritative GAS action tag; it never infers attack state from montage playback. */
 	bool IsEnemyMeleeAttackActive() const;
 
+	/** Stops StateTree, movement, target, and focus once the currently possessed enemy owns State.Status.Dead. */
+	void HandleControlledEnemyDeath();
+
 protected:
 	virtual void OnPossess(APawn* InPawn) override;
 	virtual void OnUnPossess() override;
@@ -71,6 +74,7 @@ private:
 	void HandleTargetPerceptionUpdated(AActor* Actor, FAIStimulus Stimulus);
 
 	void ConfigureSight();
+	bool IsControlledEnemyDead() const;
 	void SetCurrentTarget(APlayerCharacter* NewTarget);
 	void ClearCurrentTarget(bool bSendTargetLostEvent);
 	void SendStateTreeEvent(const FGameplayTag& EventTag) const;

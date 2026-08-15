@@ -127,6 +127,13 @@ The active player route is `BP_GameMode -> BP_Player -> APlayerCharacter -> ABas
 - The minimal team rule uses exact `Team.*` tags: invalid or equal tags reject a hit. This is not yet a full faction, attitude, party, target-selection, or multiplayer relation system.
 - `MeleeRange` is an exact Controller center-distance check. The authored Chase `FStateTreeMoveToTask` binds its acceptance radius to that value and disables both agent and goal radius additions; changing enemy dimensions or attack reach must preserve this one Profile-owned geometry rule.
 
+#### Enemy Death And Teardown
+
+- `UCharacterAttributeSet` clamps Health to `[0, MaxHealth]`. Once an ASC owns `State.Status.Dead`, any later Health write remains `0`; the AttributeSet clamps values but does not decide which character enters a terminal state.
+- After BaseCharacter initializes ActorInfo, `AEnemyCharacter` observes its Health and `State.Status.Dead`. Health at or below zero writes an exact loose Dead-tag count of one. Any legal source that grants the Dead Tag converges through the same idempotent teardown, which retains that loose count as the terminal state; this baseline has no revival semantic.
+- The terminal teardown tells `AEnemyAIController` to stop StateTree, path movement, target, and focus; then cancels the enemy ASC's active Abilities and stops/disables CharacterMovement. Ability cancellation retains each Ability's existing `EndAbility()` cleanup route for Montage, action tag, Trace Window, and task state.
+- `FMeleeHitResolver` rejects a shared melee request when either source or target ASC owns `State.Status.Dead`, in addition to its existing self, team, ASC, and invulnerability checks. The native terminal state does not reference a Death Montage or AnimBP and leaves the Actor, Capsule, and current mesh pose in place.
+
 #### ST_Enemy_Goblin_Melee Authored Runtime Contract
 
 `/Game/BP/Characters/Enemy/ST_Enemy_Goblin_Melee` uses `StateTreeAIComponentSchema`, with `AIControllerClass` set to native `/Script/PolyQuest.EnemyAIController` and Context Actor Class set to `Pawn`. `BP_EnemyAIController` inherits `AEnemyAIController`; its inherited `StateTreeComponent.StateTreeRef` is this asset and automatic start remains disabled, so native `OnPossess()` starts logic only after Profile validation. Editor readback reports the asset compiled, with no root parameters, global evaluators, or global tasks. `Root` owns the five ordered leaf states `Patrol`, `Alert`, `Chase`, `Combat`, and `Return`; all six current state nodes are enabled and use `Any` task-completion mode, while every leaf currently has one completion-relevant task.
@@ -180,7 +187,7 @@ The active player route is `BP_GameMode -> BP_Player -> APlayerCharacter -> ABas
 
 The following remain future stage contracts:
 
-- Multiple/weighted enemy attack selection, reactions, Poise, death, and special attacks.
+- Multiple/weighted enemy attack selection, reactions, Poise, authored terminal death presentation, and special attacks.
 - Player death, GameplayCues, and nonlinear or multi-weapon combo-extension contracts.
 - Tag-authored multi-faction/hostile relation semantics beyond the minimal equal-team rejection, persistence ownership, and multiplayer/PlayerState ownership.
 - Weapon equipment, Ability-grant/revocation, multi-weapon Loadout switching, additional Skeleton/animation, and Motion Warping topology.

@@ -11,6 +11,12 @@
 
 namespace
 {
+	const FGameplayTag& GetDeadTag()
+	{
+		static const FGameplayTag DeadTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Status.Dead")), false);
+		return DeadTag;
+	}
+
 	const FGameplayTag& GetInvulnerableTag()
 	{
 		static const FGameplayTag InvulnerableTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Status.Invulnerable")), false);
@@ -40,8 +46,12 @@ bool FMeleeHitResolver::TryResolveHit(const FMeleeHitRequest& Request)
 	}
 
 	UAbilitySystemComponent* TargetAbilitySystemComponent = UAbilitySystemGlobals::GetAbilitySystemComponentFromActor(TargetActor);
+	const FGameplayTag& DeadTag = GetDeadTag();
 	const FGameplayTag& InvulnerableTag = GetInvulnerableTag();
-	if (!TargetAbilitySystemComponent || !InvulnerableTag.IsValid() || TargetAbilitySystemComponent->HasMatchingGameplayTag(InvulnerableTag))
+	if (!TargetAbilitySystemComponent || !DeadTag.IsValid() || !InvulnerableTag.IsValid()
+		|| Request.SourceAbilitySystemComponent->HasMatchingGameplayTag(DeadTag)
+		|| TargetAbilitySystemComponent->HasMatchingGameplayTag(DeadTag)
+		|| TargetAbilitySystemComponent->HasMatchingGameplayTag(InvulnerableTag))
 	{
 		return false;
 	}

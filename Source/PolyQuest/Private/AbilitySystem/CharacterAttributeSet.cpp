@@ -6,6 +6,19 @@
 
 namespace
 {
+	const FGameplayTag& GetDeadTag()
+	{
+		static const FGameplayTag DeadTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Status.Dead")), false);
+		return DeadTag;
+	}
+
+	bool HasDeadStateTag(const UAbilitySystemComponent* AbilitySystemComponent)
+	{
+		const FGameplayTag& DeadTag = GetDeadTag();
+		return AbilitySystemComponent && DeadTag.IsValid()
+			&& AbilitySystemComponent->HasMatchingGameplayTag(DeadTag);
+	}
+
 	const FGameplayTag& GetExhaustedTag()
 	{
 		static const FGameplayTag ExhaustedTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Status.Exhausted")), false);
@@ -26,7 +39,13 @@ void UCharacterAttributeSet::PreAttributeChange(const FGameplayAttribute& Attrib
 {
 	Super::PreAttributeChange(Attribute, NewValue);
 
-	if (Attribute == GetStaminaAttribute())
+	if (Attribute == GetHealthAttribute())
+	{
+		NewValue = HasDeadStateTag(GetOwningAbilitySystemComponent())
+			? 0.0f
+			: FMath::Clamp(NewValue, 0.0f, FMath::Max(0.0f, GetMaxHealth()));
+	}
+	else if (Attribute == GetStaminaAttribute())
 	{
 		NewValue = FMath::Clamp(NewValue, 0.0f, FMath::Max(0.0f, GetMaxStamina()));
 	}
@@ -40,7 +59,13 @@ void UCharacterAttributeSet::PreAttributeBaseChange(const FGameplayAttribute& At
 {
 	Super::PreAttributeBaseChange(Attribute, NewValue);
 
-	if (Attribute == GetStaminaAttribute())
+	if (Attribute == GetHealthAttribute())
+	{
+		NewValue = HasDeadStateTag(GetOwningAbilitySystemComponent())
+			? 0.0f
+			: FMath::Clamp(NewValue, 0.0f, FMath::Max(0.0f, GetMaxHealth()));
+	}
+	else if (Attribute == GetStaminaAttribute())
 	{
 		NewValue = FMath::Clamp(NewValue, 0.0f, FMath::Max(0.0f, GetMaxStamina()));
 	}
@@ -54,12 +79,20 @@ void UCharacterAttributeSet::PostGameplayEffectExecute(const FGameplayEffectModC
 {
 	Super::PostGameplayEffectExecute(Data);
 
+	UAbilitySystemComponent* AbilitySystemComponent = &Data.Target;
+	if (Data.EvaluatedData.Attribute == GetHealthAttribute())
+	{
+		SetHealth(HasDeadStateTag(AbilitySystemComponent)
+			? 0.0f
+			: FMath::Clamp(GetHealth(), 0.0f, FMath::Max(0.0f, GetMaxHealth())));
+		return;
+	}
+
 	if (Data.EvaluatedData.Attribute != GetStaminaAttribute())
 	{
 		return;
 	}
 
-	UAbilitySystemComponent* AbilitySystemComponent = &Data.Target;
 	const FGameplayTag& ExhaustedTag = GetExhaustedTag();
 	if (!AbilitySystemComponent || !ExhaustedTag.IsValid())
 	{
