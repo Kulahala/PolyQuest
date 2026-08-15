@@ -10,9 +10,31 @@
 
 ---
 
-## Active Stage: TODO-02C3B - Enemy Hit Reaction And Safe Interrupt v1
+## Active Stage: TODO-01C2 - Shared Dodge/Sprint Input Arbitration v1
 
-Baseline: `6c119d3 [Feature] 敌人布娃娃死亡表现 (Enemy Ragdoll Death Presentation)`.
+Baseline: `c4328f4 [Docs] 同步战斗阶段状态与下一阶段`.
+
+### Current Stage Handoff
+
+The approved TODO-01C2 plan replaces the previous C3B closeout as the active implementation boundary. One physical keyboard action is temporally arbitrated: release before the positive 0.15 second threshold requests the existing `Ability.Dodge`; reaching the threshold establishes Sprint intent and may request the existing `Ability.Movement.Sprint` when movement, ground, Stamina, and GAS activation rules permit.
+
+Route and ownership: `ue-stage-workflow` outer, `unreal-enhanced-input` primary, `ue5-cpp-gameplay` and `unreal-mcp` support. Plan explorers `0`, implementation executors `0`, Complex Executor `none`, Main parallel work `none`. Main owns the two `PlayerCharacter` C++ files, GAS request boundary, documentation, static review, and commit scope. The user owns `IA_DodgeSprint`/`IMC_Default`/`BP_Player` authoring and readback, `PolyQuestEditor` compilation, keyboard PIE, and final commit approval. No live Editor MCP readback is claimed in this session.
+
+Native scope: add `DodgeSprintAction`, an authorable positive `DodgeSprintHoldThresholdSeconds` defaulting to `0.15f`, Started/threshold/Completed/Canceled callbacks, a one-shot `FTimerHandle`, and EndPlay cleanup. Short release requests Dodge once; threshold or later release stops Sprint without a Dodge fallback; Canceled clears state without Dodge. A long press with no movement retains Sprint intent and can start later through existing `Move()`, `OnSprintRelevantTagChanged()`, and `OnMovementModeChanged()` retry paths. Existing Dodge/Sprint abilities remain owners of Cost, Stamina, MoveSpeed, Root Motion, tags, and `EndAbility()` cleanup. No new tag, ability, enum, Build.cs dependency, or input framework is introduced.
+
+Editor gate: create Digital `IA_DodgeSprint`, assign `BP_Player.DodgeSprintAction`, set the Blueprint CDO threshold to the tuned `0.15` seconds if it has a serialized older override, map keyboard Left Shift only to it in `IMC_Default`, and remove duplicate Left Shift mappings to old `IA_Dodge`/`IA_Sprint` without deleting those assets. Do not change gamepad mappings. These are user authoring requirements, not current MCP evidence.
+
+Main static gate is direct source/CodeGraph call-path review, stale `code-review-graph` treated only as supplemental, `git diff --check`, and a C4458 inherited-member-shadowing scan; Main does not run UBT, Editor writes, or PIE. User validation covers short/edge/long releases, movement/no movement, canceled/repeated input, interruption/air/landing recovery, stamina exhaustion, and existing combat/camera/enemy regressions. Closeout records the stable arbitration contract in `ARCHITECTURE.md`, moves TODO-01C2 to Done in `ROADMAP.md`, retains keyboard-only gamepad debt, and keeps the native candidate limited to `PlayerCharacter.h/.cpp` plus exact documentation hunks. `Content/**`, input assets, BP, maps, animation, GA/GE, generated output, and unrelated WIP remain excluded.
+
+### Current Status
+
+- Native `PlayerCharacter` implementation is complete: shared Action binding, positive 0.15 second threshold timer, short/long/canceled routing, automatic Sprint retry compatibility, and EndPlay cleanup.
+- The user confirmed the `0.15` second keyboard Scene01 PIE route. This is user runtime evidence; no new live Editor MCP readback or independent compile log is claimed here.
+- Main static checks completed: direct source readback, CodeGraph call-path review, stale code-review-graph supplemental analysis, C4458-style local-name scan, and `git diff --check`.
+- Strict review is complete: Main normal review and a separate Main adversarial fallback found no P0-P2 C++/GAS/Enhanced Input lifecycle blocker. `gpt-5.6-luna / xhigh` was unavailable, so no independent review is claimed.
+- Debt handoff: keyboard Shift is the accepted route. Controller parity remains unverified and is tracked in `ROADMAP.md`; the native commit excludes all `Content/**` authoring WIP and contains only `PlayerCharacter.h/.cpp` plus the exact TODO-01C2 documentation hunks.
+
+### Previous Stage Record
 
 ### Objective
 

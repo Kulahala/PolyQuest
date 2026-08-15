@@ -16,6 +16,7 @@
 #include "InputActionValue.h"
 #include "Perception/AIPerceptionStimuliSourceComponent.h"
 #include "Perception/AISense_Sight.h"
+#include "TimerManager.h"
 
 #include "AbilitySystem/CharacterAttributeSet.h"
 #include "Combat/Input/CombatLoadoutDefinition.h"
@@ -122,6 +123,8 @@ void APlayerCharacter::EndPlay(const EEndPlayReason::Type EndPlayReason)
 		SightStimuliSource->UnregisterFromPerceptionSystem();
 	}
 
+	ClearDodgeSprintInputState();
+	CancelSprintAbility();
 	UnbindSprintStateEvents();
 	ClearSprintJumpAirSpeed();
 
@@ -186,17 +189,15 @@ void APlayerCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputCom
 			EnhancedInputComponent->BindAction(AbilitySlotActions[SlotIndex], ETriggerEvent::Canceled, this, &APlayerCharacter::HandleAbilitySlotCanceled, SlotIndex);
 		}
 
-		EnhancedInputComponent->BindAction(DodgeAction, ETriggerEvent::Started, this, &APlayerCharacter::Dodge);
-
-		if (SprintAction)
+		if (DodgeSprintAction)
 		{
-			EnhancedInputComponent->BindAction(SprintAction, ETriggerEvent::Started, this, &APlayerCharacter::HandleSprintStarted);
-			EnhancedInputComponent->BindAction(SprintAction, ETriggerEvent::Completed, this, &APlayerCharacter::HandleSprintCompleted);
-			EnhancedInputComponent->BindAction(SprintAction, ETriggerEvent::Canceled, this, &APlayerCharacter::HandleSprintCanceled);
+			EnhancedInputComponent->BindAction(DodgeSprintAction, ETriggerEvent::Started, this, &APlayerCharacter::HandleDodgeSprintStarted);
+			EnhancedInputComponent->BindAction(DodgeSprintAction, ETriggerEvent::Completed, this, &APlayerCharacter::HandleDodgeSprintCompleted);
+			EnhancedInputComponent->BindAction(DodgeSprintAction, ETriggerEvent::Canceled, this, &APlayerCharacter::HandleDodgeSprintCanceled);
 		}
 		else
 		{
-			UE_LOG(LogPolyQuest, Warning, TEXT("'%s' has no SprintAction configured."), *GetNameSafe(this));
+			UE_LOG(LogPolyQuest, Warning, TEXT("'%s' has no DodgeSprintAction configured."), *GetNameSafe(this));
 		}
 	}
 	else
@@ -345,24 +346,102 @@ void APlayerCharacter::HandleAbilitySlotCanceled(const FInputActionValue&, int32
 	HandleCombatInputEnded(GetAbilitySlotInputIntentTag(SlotIndex), true);
 }
 
-void APlayerCharacter::HandleSprintStarted(const FInputActionValue&)
+void APlayerCharacter::HandleDodgeSprintStarted(const FInputActionValue&)
 {
+	if (bDodgeSprintInputHeld)
+	{
+		return;
+	}
+
+	UWorld* World = GetWorld();
+	if (!World || IsActorBeingDestroyed())
+	{
+		return;
+	}
+
+	World->GetTimerManager().ClearTimer(DodgeSprintHoldTimerHandle);
+	bDodgeSprintInputHeld = true;
+	bDodgeSprintResolvedToSprint = false;
+	bSprintInputHeld = false;
+	DodgeSprintInputPressedTime = World->GetTimeSeconds();
+
+	const float ThresholdSeconds = FMath::Max(DodgeSprintHoldThresholdSeconds, 0.01f);
+	if (DodgeSprintHoldThresholdSeconds <= 0.0f)
+	{
+		UE_LOG(LogPolyQuest, Warning, TEXT("'%s' has an invalid DodgeSprintHoldThresholdSeconds; clamping to %.2f seconds."), *GetNameSafe(this), ThresholdSeconds);
+	}
+
+	World->GetTimerManager().SetTimer(
+		DodgeSprintHoldTimerHandle,
+		this,
+		&APlayerCharacter::HandleDodgeSprintThresholdElapsed,
+		ThresholdSeconds,
+		false);
+}
+
+void APlayerCharacter::HandleDodgeSprintCompleted(const FInputActionValue&)
+{
+	if (!bDodgeSprintInputHeld)
+	{
+		ClearDodgeSprintInputState();
+		CancelSprintAbility();
+		return;
+	}
+
+	const UWorld* World = GetWorld();
+	if (!World || IsActorBeingDestroyed())
+	{
+		ClearDodgeSprintInputState();
+		CancelSprintAbility();
+		return;
+	}
+
+	const float HeldDuration = FMath::Max(World->GetTimeSeconds() - DodgeSprintInputPressedTime, 0.0f);
+	const float ThresholdSeconds = FMath::Max(DodgeSprintHoldThresholdSeconds, 0.01f);
+	// Treat a same-frame threshold release as the long-press branch despite timer/clock float rounding.
+	const bool bResolvedToSprint = bDodgeSprintResolvedToSprint || HeldDuration + KINDA_SMALL_NUMBER >= ThresholdSeconds;
+
+	ClearDodgeSprintInputState();
+	if (bResolvedToSprint)
+	{
+		CancelSprintAbility();
+		return;
+	}
+
+	RequestDodgeAbility();
+}
+
+void APlayerCharacter::HandleDodgeSprintCanceled(const FInputActionValue&)
+{
+	ClearDodgeSprintInputState();
+	CancelSprintAbility();
+}
+
+void APlayerCharacter::HandleDodgeSprintThresholdElapsed()
+{
+	if (!bDodgeSprintInputHeld || IsActorBeingDestroyed())
+	{
+		return;
+	}
+
+	bDodgeSprintResolvedToSprint = true;
 	bSprintInputHeld = true;
 	TryStartSprint();
 }
 
-void APlayerCharacter::HandleSprintCompleted(const FInputActionValue&)
+void APlayerCharacter::ClearDodgeSprintInputState()
 {
-	bSprintInputHeld = false;
-	bSprintRequiresReleaseAfterExhaustion = false;
-	CancelSprintAbility();
-}
+	if (UWorld* World = GetWorld())
+	{
+		World->GetTimerManager().ClearTimer(DodgeSprintHoldTimerHandle);
+	}
 
-void APlayerCharacter::HandleSprintCanceled(const FInputActionValue&)
-{
+	DodgeSprintHoldTimerHandle.Invalidate();
+	DodgeSprintInputPressedTime = 0.0f;
+	bDodgeSprintInputHeld = false;
+	bDodgeSprintResolvedToSprint = false;
 	bSprintInputHeld = false;
 	bSprintRequiresReleaseAfterExhaustion = false;
-	CancelSprintAbility();
 }
 
 void APlayerCharacter::HandleCombatInputStarted(const FGameplayTag& InputIntentTag)
@@ -464,7 +543,7 @@ FGameplayTag APlayerCharacter::GetAbilitySlotInputIntentTag(int32 SlotIndex) con
 	return AbilitySlotInputTags.IsValidIndex(SlotIndex) ? AbilitySlotInputTags[SlotIndex] : FGameplayTag();
 }
 
-void APlayerCharacter::Dodge(const FInputActionValue&)
+void APlayerCharacter::RequestDodgeAbility()
 {
 	UAbilitySystemComponent* CharacterASC = GetAbilitySystemComponent();
 	if (!CharacterASC)

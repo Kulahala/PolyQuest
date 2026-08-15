@@ -6,6 +6,7 @@
 #include "ActiveGameplayEffectHandle.h"
 #include "Character/BaseCharacter.h"
 #include "GameplayTagContainer.h"
+#include "TimerManager.h"
 #include "PlayerCharacter.generated.h"
 
 class UCameraComponent;
@@ -66,12 +67,20 @@ protected:
 	UPROPERTY(EditAnywhere, Category="Input", meta=(EditFixedSize))
 	TArray<UInputAction*> AbilitySlotActions;
 
-	/** Input action used to request the Dodge ability. */
+	/** Shared physical input: release before the threshold requests Dodge; a held press resolves to Sprint. */
 	UPROPERTY(EditAnywhere, Category="Input")
+	UInputAction* DodgeSprintAction;
+
+	/** Hold duration at which the shared Dodge/Sprint input resolves to Sprint intent. */
+	UPROPERTY(EditDefaultsOnly, Category="Input", meta=(ClampMin="0.01", UIMin="0.01"))
+	float DodgeSprintHoldThresholdSeconds = 0.15f;
+
+	/** Retained authored legacy action; runtime input is routed through DodgeSprintAction. */
+	UPROPERTY(EditAnywhere, Category="Input|Legacy")
 	UInputAction* DodgeAction;
 
-	/** Physical hold input that requests ground Sprint while directional movement remains active. */
-	UPROPERTY(EditAnywhere, Category="Input")
+	/** Retained authored legacy action; runtime input is routed through DodgeSprintAction. */
+	UPROPERTY(EditAnywhere, Category="Input|Legacy")
 	UInputAction* SprintAction;
 
 	/** Continuous periodic GameplayEffect that recovers Stamina when its tag requirements allow it. */
@@ -98,9 +107,6 @@ protected:
 
 	/** Retained legacy look route; fixed-camera v1 intentionally ignores it. */
 	void Look(const FInputActionValue& Value);
-
-	/** Request the Dodge ability through the character ASC. */
-	void Dodge(const FInputActionValue& Value);
 
 	/** Clears cached directional input after movement input ends. */
 	void ClearMoveInput(const FInputActionValue& Value);
@@ -177,9 +183,12 @@ private:
 	void HandleAbilitySlotStarted(const FInputActionValue& Value, int32 SlotIndex);
 	void HandleAbilitySlotCompleted(const FInputActionValue& Value, int32 SlotIndex);
 	void HandleAbilitySlotCanceled(const FInputActionValue& Value, int32 SlotIndex);
-	void HandleSprintStarted(const FInputActionValue& Value);
-	void HandleSprintCompleted(const FInputActionValue& Value);
-	void HandleSprintCanceled(const FInputActionValue& Value);
+	void HandleDodgeSprintStarted(const FInputActionValue& Value);
+	void HandleDodgeSprintCompleted(const FInputActionValue& Value);
+	void HandleDodgeSprintCanceled(const FInputActionValue& Value);
+	void HandleDodgeSprintThresholdElapsed();
+	void RequestDodgeAbility();
+	void ClearDodgeSprintInputState();
 	void HandleCombatInputStarted(const FGameplayTag& InputIntentTag);
 	void HandleCombatInputEnded(const FGameplayTag& InputIntentTag, bool bWasCanceled);
 	void SendCombatInputEvent(const FGameplayTag& EventTag, const FGameplayTag& InputIntentTag, float HeldDuration);
@@ -219,6 +228,11 @@ private:
 	FDelegateHandle DeadStateTagChangedHandle;
 	FDelegateHandle StunnedStateTagChangedHandle;
 	TWeakObjectPtr<UAbilitySystemComponent> SprintStateBoundAbilitySystemComponent;
+	FTimerHandle DodgeSprintHoldTimerHandle;
+	float DodgeSprintInputPressedTime = 0.0f;
+	bool bDodgeSprintInputHeld = false;
+	bool bDodgeSprintResolvedToSprint = false;
+	/** Resolved long-press intent consumed by the existing Sprint ability lifecycle. */
 	bool bSprintInputHeld = false;
 	bool bSprintRequiresReleaseAfterExhaustion = false;
 	bool bStaminaRegenEffectApplied = false;
