@@ -86,6 +86,7 @@ private:
 	FGameplayTag DodgeCancelWindowBeginEventTag;
 	FGameplayTag DodgeCancelWindowEndEventTag;
 	FGameplayTag DodgeCancelableStateTag;
+	FGameplayTag DefenseCancelableStateTag;
 	bool bDodgeCancelable = false;
 	bool bRuntimeActionTagsApplied = false;
 	bool bEndAbilityRequested = false;

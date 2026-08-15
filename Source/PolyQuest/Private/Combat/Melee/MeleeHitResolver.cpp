@@ -3,11 +3,13 @@
 #include "ActiveGameplayEffectHandle.h"
 #include "AbilitySystemComponent.h"
 #include "AbilitySystemGlobals.h"
-#include "Combat/Melee/CombatTeamAgent.h"
 #include "GameFramework/Actor.h"
 #include "GameplayEffect.h"
 #include "GameplayEffectTypes.h"
 #include "GameplayTagContainer.h"
+
+#include "Character/Player/PlayerCharacter.h"
+#include "Combat/Melee/CombatTeamAgent.h"
 
 namespace
 {
@@ -54,6 +56,16 @@ bool FMeleeHitResolver::TryResolveHit(const FMeleeHitRequest& Request)
 		|| TargetAbilitySystemComponent->HasMatchingGameplayTag(InvulnerableTag))
 	{
 		return false;
+	}
+
+	if (APlayerCharacter* PlayerCharacter = Cast<APlayerCharacter>(TargetActor))
+	{
+		if (PlayerCharacter->TryGuardIncomingMeleeHit(Request.SourceActor, Request.GuardStaminaDamage))
+		{
+			// A successful Guard is terminal for this trace contact, just like a
+			// successfully applied damage spec, so the trace task records the target.
+			return true;
+		}
 	}
 
 	FGameplayEffectContextHandle EffectContext = Request.SourceAbilitySystemComponent->MakeEffectContext();

@@ -21,6 +21,7 @@ public:
 	TSubclassOf<UGameplayEffect> GetDamageGameplayEffectClass() const { return DamageGameplayEffectClass; }
 	float GetAttackRange() const { return AttackRange; }
 	float GetCooldownAfterAttack() const { return CooldownAfterAttack; }
+	float GetGuardStaminaDamage() const { return GuardStaminaDamage; }
 
 private:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Enemy Attack", meta = (AllowPrivateAccess = "true"))
@@ -34,4 +35,8 @@ private:
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Enemy Attack", meta = (AllowPrivateAccess = "true", ClampMin = "0.0", Units = "Seconds"))
 	float CooldownAfterAttack = 1.0f;
+
+	/** Stamina removed when this attack is successfully guarded. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Enemy Attack", meta = (AllowPrivateAccess = "true", ClampMin = "0.0"))
+	float GuardStaminaDamage = 25.0f;
 };

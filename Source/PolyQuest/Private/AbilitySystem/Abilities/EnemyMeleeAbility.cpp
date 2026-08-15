@@ -54,6 +54,7 @@ void UEnemyMeleeAbility::ActivateAbility(
 	ActiveMontage = nullptr;
 	ActiveDamageGameplayEffectClass = nullptr;
 	ActiveCooldownAfterAttack = 0.0f;
+	ActiveGuardStaminaDamage = 0.0f;
 	bAttackStarted = false;
 	BoundAnimInstance = nullptr;
 
@@ -77,6 +78,7 @@ void UEnemyMeleeAbility::ActivateAbility(
 	ActiveMontage = AttackProfile->GetAttackMontage();
 	ActiveDamageGameplayEffectClass = AttackProfile->GetDamageGameplayEffectClass();
 	ActiveCooldownAfterAttack = AttackProfile->GetCooldownAfterAttack();
+	ActiveGuardStaminaDamage = AttackProfile->GetGuardStaminaDamage();
 
 	MontageTask = UAbilityTask_PlayMontageAndWait::CreatePlayMontageAndWaitProxy(this, NAME_None, ActiveMontage);
 	TraceWindowBeginTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, TraceWindowBeginEventTag, nullptr, false, true);
@@ -171,6 +173,7 @@ void UEnemyMeleeAbility::EndAbility(
 	ActiveMontage = nullptr;
 	ActiveDamageGameplayEffectClass = nullptr;
 	ActiveCooldownAfterAttack = 0.0f;
+	ActiveGuardStaminaDamage = 0.0f;
 	bAttackStarted = false;
 
 	Super::EndAbility(Handle, ActorInfo, ActivationInfo, bReplicateEndAbility, bWasCancelled);
@@ -255,7 +258,7 @@ void UEnemyMeleeAbility::OpenTraceWindow()
 
 	ABaseCharacter* Character = Cast<ABaseCharacter>(GetAvatarActorFromActorInfo());
 	TraceWindowTask = Character
-		? UAbilityTask_MeleeTraceWindow::OpenMeleeTraceWindow(this, Character->GetMeleeTraceSource(), ActiveDamageGameplayEffectClass, GetAbilityLevel(), FGameplayTag(), 0.0f)
+		? UAbilityTask_MeleeTraceWindow::OpenMeleeTraceWindow(this, Character->GetMeleeTraceSource(), ActiveDamageGameplayEffectClass, GetAbilityLevel(), FGameplayTag(), 0.0f, ActiveGuardStaminaDamage)
 		: nullptr;
 	if (TraceWindowTask)
 	{

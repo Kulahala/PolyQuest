@@ -35,6 +35,7 @@ USprintAttackAbility::USprintAttackAbility()
 	DodgeCancelWindowBeginEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Action.CancelWindow.Dodge.Begin")), false);
 	DodgeCancelWindowEndEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Action.CancelWindow.Dodge.End")), false);
 	DodgeCancelableStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Action.CanCancel.Dodge")), false);
+	DefenseCancelableStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Action.CanCancel.Defense")), false);
 }
 
 bool USprintAttackAbility::CanActivateAbility(
@@ -77,7 +78,7 @@ void USprintAttackAbility::ActivateAbility(
 		|| !DamageGameplayEffectClass || !StaminaRegenDelayGameplayEffectClass || !SprintStateTag.IsValid() || !AttackingStateTag.IsValid()
 		|| !MovementInputBlockedTag.IsValid() || !JumpInputBlockedTag.IsValid() || !StaminaRegenBlockedTag.IsValid()
 		|| !TraceWindowBeginEventTag.IsValid() || !TraceWindowEndEventTag.IsValid()
-		|| !DodgeCancelWindowBeginEventTag.IsValid() || !DodgeCancelWindowEndEventTag.IsValid() || !DodgeCancelableStateTag.IsValid()
+		|| !DodgeCancelWindowBeginEventTag.IsValid() || !DodgeCancelWindowEndEventTag.IsValid() || !DodgeCancelableStateTag.IsValid() || !DefenseCancelableStateTag.IsValid()
 		|| !AbilitySystemComponent->HasMatchingGameplayTag(SprintStateTag) || !PlayerCharacter->ShouldRequestSprintAttack())
 	{
 		UE_LOG(LogPolyQuest, Warning, TEXT("Sprint attack activation aborted for '%s': active grounded Sprint, montage, cost/damage/regen effects, and required gameplay tags are required."), *GetNameSafe(PlayerCharacter));
@@ -135,6 +136,7 @@ void USprintAttackAbility::ActivateAbility(
 		return;
 	}
 
+	PlayerCharacter->CancelActiveGuardAfterConfirmedAction(true);
 	PlayerCharacter->CancelSprintAbility();
 }
 
@@ -306,9 +308,15 @@ void USprintAttackAbility::SetDodgeCancelable(bool bShouldBeCancelable)
 			return;
 		}
 
-		if (UAbilitySystemComponent* AbilitySystemComponent = GetAbilitySystemComponentFromActorInfo())
+		if (UAbilitySystemComponent* CharacterASC = GetAbilitySystemComponentFromActorInfo())
 		{
-			AbilitySystemComponent->AddLooseGameplayTag(DodgeCancelableStateTag);
+			if (!DodgeCancelableStateTag.IsValid() || !DefenseCancelableStateTag.IsValid())
+			{
+				return;
+			}
+
+			CharacterASC->AddLooseGameplayTag(DodgeCancelableStateTag);
+			CharacterASC->AddLooseGameplayTag(DefenseCancelableStateTag);
 			bDodgeCancelable = true;
 		}
 		return;
@@ -319,9 +327,16 @@ void USprintAttackAbility::SetDodgeCancelable(bool bShouldBeCancelable)
 		return;
 	}
 
-	if (UAbilitySystemComponent* AbilitySystemComponent = GetAbilitySystemComponentFromActorInfo())
+	if (UAbilitySystemComponent* CharacterASC = GetAbilitySystemComponentFromActorInfo())
 	{
-		AbilitySystemComponent->RemoveLooseGameplayTag(DodgeCancelableStateTag);
+		if (DodgeCancelableStateTag.IsValid())
+		{
+			CharacterASC->RemoveLooseGameplayTag(DodgeCancelableStateTag);
+		}
+		if (DefenseCancelableStateTag.IsValid())
+		{
+			CharacterASC->RemoveLooseGameplayTag(DefenseCancelableStateTag);
+		}
 	}
 
 	bDodgeCancelable = false;

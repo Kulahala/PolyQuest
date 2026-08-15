@@ -28,7 +28,8 @@ public:
 		TSubclassOf<UGameplayEffect> InDamageGameplayEffectClass,
 		float InAbilityLevel,
 		FGameplayTag InSetByCallerMagnitudeTag,
-		float InSetByCallerMagnitude);
+		float InSetByCallerMagnitude,
+		float InGuardStaminaDamage = 0.0f);
 
 	static UAbilityTask_MeleeTraceWindow* OpenMeleeTraceWindow(
 		UGameplayAbility* OwningAbility,
@@ -58,6 +59,7 @@ private:
 	float AbilityLevel = 1.0f;
 	float SetByCallerMagnitude = 0.0f;
 	TMap<FGameplayTag, float> SetByCallerMagnitudes;
+	float GuardStaminaDamage = 0.0f;
 	FVector PreviousBladeBase = FVector::ZeroVector;
 	FVector PreviousBladeTip = FVector::ZeroVector;
 	TSet<TWeakObjectPtr<AActor>> DeliveredTargets;

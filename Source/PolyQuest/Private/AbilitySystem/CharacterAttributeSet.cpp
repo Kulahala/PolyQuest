@@ -34,6 +34,7 @@ UCharacterAttributeSet::UCharacterAttributeSet()
 	MaxPoise = 100.0f;
 	Stamina = 100.0f;
 	MaxStamina = 100.0f;
+	StaminaRegenRateMultiplier = 1.0f;
 	MoveSpeed = 500.0f;
 }
 
@@ -54,6 +55,10 @@ void UCharacterAttributeSet::PreAttributeChange(const FGameplayAttribute& Attrib
 	else if (Attribute == GetPoiseAttribute())
 	{
 		NewValue = FMath::Clamp(NewValue, 0.0f, FMath::Max(0.0f, GetMaxPoise()));
+	}
+	else if (Attribute == GetStaminaRegenRateMultiplierAttribute())
+	{
+		NewValue = FMath::Max(NewValue, 0.0f);
 	}
 	else if (Attribute == GetMoveSpeedAttribute())
 	{
@@ -79,6 +84,10 @@ void UCharacterAttributeSet::PreAttributeBaseChange(const FGameplayAttribute& At
 	{
 		NewValue = FMath::Clamp(NewValue, 0.0f, FMath::Max(0.0f, GetMaxPoise()));
 	}
+	else if (Attribute == GetStaminaRegenRateMultiplierAttribute())
+	{
+		NewValue = FMath::Max(NewValue, 0.0f);
+	}
 	else if (Attribute == GetMoveSpeedAttribute())
 	{
 		NewValue = FMath::Max(NewValue, 0.0f);
@@ -101,6 +110,12 @@ void UCharacterAttributeSet::PostGameplayEffectExecute(const FGameplayEffectModC
 	if (Data.EvaluatedData.Attribute == GetPoiseAttribute())
 	{
 		SetPoise(FMath::Clamp(GetPoise(), 0.0f, FMath::Max(0.0f, GetMaxPoise())));
+		return;
+	}
+
+	if (Data.EvaluatedData.Attribute == GetStaminaRegenRateMultiplierAttribute())
+	{
+		SetStaminaRegenRateMultiplier(FMath::Max(GetStaminaRegenRateMultiplier(), 0.0f));
 		return;
 	}
 

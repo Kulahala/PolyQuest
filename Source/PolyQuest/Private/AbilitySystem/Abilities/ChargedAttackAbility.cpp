@@ -40,6 +40,7 @@ UChargedAttackAbility::UChargedAttackAbility()
 	DodgeCancelWindowBeginEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Action.CancelWindow.Dodge.Begin")), false);
 	DodgeCancelWindowEndEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Action.CancelWindow.Dodge.End")), false);
 	DodgeCancelableStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Action.CanCancel.Dodge")), false);
+	DefenseCancelableStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Action.CanCancel.Defense")), false);
 	ChargingStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Action.Charging")), false);
 	DamageDataTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Data.Damage.Charged")), false);
 	PoiseDataTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Data.Poise.Charged")), false);
@@ -107,7 +108,7 @@ void UChargedAttackAbility::ActivateAbility(
 		|| !CostGameplayEffectClass || !DamageGameplayEffectClass || !StaminaRegenDelayGameplayEffectClass || !PrimaryAttackInputTag.IsValid()
 		|| !InputReleasedEventTag.IsValid() || !InputCanceledEventTag.IsValid() || !ChargedReleaseHandoffEventTag.IsValid() || !HoldReadyEventTag.IsValid()
 		|| !TraceWindowBeginEventTag.IsValid() || !TraceWindowEndEventTag.IsValid()
-		|| !DodgeCancelWindowBeginEventTag.IsValid() || !DodgeCancelWindowEndEventTag.IsValid() || !DodgeCancelableStateTag.IsValid()
+		|| !DodgeCancelWindowBeginEventTag.IsValid() || !DodgeCancelWindowEndEventTag.IsValid() || !DodgeCancelableStateTag.IsValid() || !DefenseCancelableStateTag.IsValid()
 		|| !ChargingStateTag.IsValid() || !DamageDataTag.IsValid() || MinimumChargeDuration > MaximumChargeDuration
 		|| MaximumDamageMultiplier < 1.0f || MinimumPoiseDamage <= 0.0f || MaximumPoiseDamage < MinimumPoiseDamage
 		|| !PoiseDataTag.IsValid() || (!bReleasedPrimaryHandoff && !PlayerCharacter->IsCombatInputHeld(PrimaryAttackInputTag)))
@@ -169,6 +170,8 @@ void UChargedAttackAbility::ActivateAbility(
 		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
 		return;
 	}
+
+	PlayerCharacter->CancelActiveGuardAfterConfirmedAction(true);
 
 	if (bReleasedPrimaryHandoff)
 	{
@@ -505,12 +508,13 @@ void UChargedAttackAbility::SetDodgeCancelable(bool bShouldBeCancelable)
 		}
 
 		UAbilitySystemComponent* AbilitySystemComponent = GetAbilitySystemComponentFromActorInfo();
-		if (!AbilitySystemComponent || !DodgeCancelableStateTag.IsValid())
+		if (!AbilitySystemComponent || !DodgeCancelableStateTag.IsValid() || !DefenseCancelableStateTag.IsValid())
 		{
 			return;
 		}
 
 		AbilitySystemComponent->AddLooseGameplayTag(DodgeCancelableStateTag);
+		AbilitySystemComponent->AddLooseGameplayTag(DefenseCancelableStateTag);
 		bDodgeCancelable = true;
 		return;
 	}
@@ -525,6 +529,10 @@ void UChargedAttackAbility::SetDodgeCancelable(bool bShouldBeCancelable)
 		if (DodgeCancelableStateTag.IsValid())
 		{
 			AbilitySystemComponent->RemoveLooseGameplayTag(DodgeCancelableStateTag);
+		}
+		if (DefenseCancelableStateTag.IsValid())
+		{
+			AbilitySystemComponent->RemoveLooseGameplayTag(DefenseCancelableStateTag);
 		}
 	}
 

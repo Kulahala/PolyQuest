@@ -31,6 +31,7 @@ ULightAttackAbility::ULightAttackAbility()
 	DodgeCancelWindowBeginEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Action.CancelWindow.Dodge.Begin")), false);
 	DodgeCancelWindowEndEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Action.CancelWindow.Dodge.End")), false);
 	DodgeCancelableStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Action.CanCancel.Dodge")), false);
+	DefenseCancelableStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Action.CanCancel.Defense")), false);
 	TraceWindowBeginEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Attack.TraceWindow.Begin")), false);
 	TraceWindowEndEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Attack.TraceWindow.End")), false);
 	PrimaryAttackPressedEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Input.Pressed")), false);
@@ -64,7 +65,7 @@ void ULightAttackAbility::ActivateAbility(
 	UAnimInstance* AnimInstance = SkeletalMesh ? SkeletalMesh->GetAnimInstance() : nullptr;
 
 	if (!AbilitySystemComponent || !PlayerCharacter || !AnimInstance || !CostGameplayEffectClass || !DamageGameplayEffectClass || !StaminaRegenDelayGameplayEffectClass
-		|| !DodgeCancelWindowBeginEventTag.IsValid() || !DodgeCancelWindowEndEventTag.IsValid() || !DodgeCancelableStateTag.IsValid()
+		|| !DodgeCancelWindowBeginEventTag.IsValid() || !DodgeCancelWindowEndEventTag.IsValid() || !DodgeCancelableStateTag.IsValid() || !DefenseCancelableStateTag.IsValid()
 		|| !TraceWindowBeginEventTag.IsValid() || !TraceWindowEndEventTag.IsValid()
 		|| !PrimaryAttackPressedEventTag.IsValid() || !PrimaryAttackInputTag.IsValid() || !ComboInputWindowBeginEventTag.IsValid()
 		|| !ComboInputWindowEndEventTag.IsValid() || !ComboBranchWindowBeginEventTag.IsValid() || !ComboBranchWindowEndEventTag.IsValid()
@@ -410,6 +411,14 @@ bool ULightAttackAbility::StartComboEntry(int32 EntryIndex)
 		return false;
 	}
 
+	if (EntryIndex == 0)
+	{
+		if (APlayerCharacter* PlayerCharacter = Cast<APlayerCharacter>(GetAvatarActorFromActorInfo()))
+		{
+			PlayerCharacter->CancelActiveGuardAfterConfirmedAction(true);
+		}
+	}
+
 	UE_LOG(LogPolyQuest, Verbose, TEXT("LightAttack.Combo: started entry %d with montage '%s'."), EntryIndex + 1, *GetNameSafe(EntryMontage));
 	return true;
 }
@@ -479,12 +488,13 @@ void ULightAttackAbility::SetDodgeCancelable(bool bShouldBeCancelable)
 		}
 
 		UAbilitySystemComponent* AbilitySystemComponent = GetAbilitySystemComponentFromActorInfo();
-		if (!AbilitySystemComponent || !DodgeCancelableStateTag.IsValid())
+		if (!AbilitySystemComponent || !DodgeCancelableStateTag.IsValid() || !DefenseCancelableStateTag.IsValid())
 		{
 			return;
 		}
 
 		AbilitySystemComponent->AddLooseGameplayTag(DodgeCancelableStateTag);
+		AbilitySystemComponent->AddLooseGameplayTag(DefenseCancelableStateTag);
 		bDodgeCancelable = true;
 		return;
 	}
@@ -499,6 +509,10 @@ void ULightAttackAbility::SetDodgeCancelable(bool bShouldBeCancelable)
 		if (DodgeCancelableStateTag.IsValid())
 		{
 			AbilitySystemComponent->RemoveLooseGameplayTag(DodgeCancelableStateTag);
+		}
+		if (DefenseCancelableStateTag.IsValid())
+		{
+			AbilitySystemComponent->RemoveLooseGameplayTag(DefenseCancelableStateTag);
 		}
 	}
 

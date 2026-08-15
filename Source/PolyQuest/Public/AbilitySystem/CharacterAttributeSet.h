@@ -47,6 +47,11 @@ public:
 	FGameplayAttributeData MaxStamina;
 	PQ_ATTRIBUTE_ACCESSORS(UCharacterAttributeSet, MaxStamina)
 
+	/** Multiplies the authored periodic Stamina regeneration rate. */
+	UPROPERTY(BlueprintReadOnly, Category = "Attributes")
+	FGameplayAttributeData StaminaRegenRateMultiplier;
+	PQ_ATTRIBUTE_ACCESSORS(UCharacterAttributeSet, StaminaRegenRateMultiplier)
+
 	/** Final horizontal movement-speed cap consumed by CharacterMovement. */
 	UPROPERTY(BlueprintReadOnly, Category = "Attributes")
 	FGameplayAttributeData MoveSpeed;

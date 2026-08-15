@@ -19,7 +19,8 @@ UAbilityTask_MeleeTraceWindow* UAbilityTask_MeleeTraceWindow::OpenMeleeTraceWind
 	TSubclassOf<UGameplayEffect> InDamageGameplayEffectClass,
 	float InAbilityLevel,
 	FGameplayTag InSetByCallerMagnitudeTag,
-	float InSetByCallerMagnitude)
+	float InSetByCallerMagnitude,
+	float InGuardStaminaDamage)
 {
 	UAbilityTask_MeleeTraceWindow* Task = NewAbilityTask<UAbilityTask_MeleeTraceWindow>(OwningAbility);
 	Task->TraceSource = InTraceSource;
@@ -27,6 +28,7 @@ UAbilityTask_MeleeTraceWindow* UAbilityTask_MeleeTraceWindow::OpenMeleeTraceWind
 	Task->AbilityLevel = InAbilityLevel;
 	Task->SetByCallerMagnitudeTag = InSetByCallerMagnitudeTag;
 	Task->SetByCallerMagnitude = InSetByCallerMagnitude;
+	Task->GuardStaminaDamage = FMath::Max(InGuardStaminaDamage, 0.0f);
 	return Task;
 }
 
@@ -136,6 +138,7 @@ void UAbilityTask_MeleeTraceWindow::TraceCurrentSegment()
 			Request.SetByCallerMagnitudeTag = SetByCallerMagnitudeTag;
 			Request.SetByCallerMagnitude = SetByCallerMagnitude;
 			Request.SetByCallerMagnitudes = SetByCallerMagnitudes;
+			Request.GuardStaminaDamage = GuardStaminaDamage;
 			Request.SourceObject = TraceSource;
 			Request.HitResult = HitResult;
 			if (FMeleeHitResolver::TryResolveHit(Request))

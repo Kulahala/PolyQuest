@@ -142,7 +142,10 @@ void UDodgeAbility::ActivateAbility(
 	{
 		UE_LOG(LogPolyQuest, Warning, TEXT("Dodge activation aborted for '%s': montage '%s' did not start."), *GetNameSafe(PlayerCharacter), *GetNameSafe(DodgeMontage));
 		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
+		return;
 	}
+
+	PlayerCharacter->CancelActiveGuardAfterConfirmedAction(false);
 }
 
 void UDodgeAbility::EndAbility(

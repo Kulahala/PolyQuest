@@ -85,6 +85,7 @@ private:
 	FGameplayTag DodgeCancelWindowBeginEventTag;
 	FGameplayTag DodgeCancelWindowEndEventTag;
 	FGameplayTag DodgeCancelableStateTag;
+	FGameplayTag DefenseCancelableStateTag;
 	FGameplayTag TraceWindowBeginEventTag;
 	FGameplayTag TraceWindowEndEventTag;
 	FGameplayTag PrimaryAttackPressedEventTag;

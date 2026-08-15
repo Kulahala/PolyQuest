@@ -12,12 +12,14 @@
 #include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/SpringArmComponent.h"
 #include "GameplayEffect.h"
+#include "GameplayAbilitySpec.h"
 #include "GameplayTagContainer.h"
 #include "InputActionValue.h"
 #include "Perception/AIPerceptionStimuliSourceComponent.h"
 #include "Perception/AISense_Sight.h"
 #include "TimerManager.h"
 
+#include "AbilitySystem/Abilities/PlayerGuardAbility.h"
 #include "AbilitySystem/CharacterAttributeSet.h"
 #include "Combat/Input/CombatLoadoutDefinition.h"
 #include "PolyQuest.h"
@@ -28,6 +30,7 @@ APlayerCharacter::APlayerCharacter()
 	CombatTeamTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Team.Player")), false);
 	PrimaryAttackInputTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Input.PrimaryAttack")), false);
 	AimInputTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Input.Aim")), false);
+	GuardInputTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Input.Guard")), false);
 	AbilitySlotInputTags.Add(FGameplayTag::RequestGameplayTag(FName(TEXT("Input.AbilitySlot.1")), false));
 	AbilitySlotInputTags.Add(FGameplayTag::RequestGameplayTag(FName(TEXT("Input.AbilitySlot.2")), false));
 	AbilitySlotInputTags.Add(FGameplayTag::RequestGameplayTag(FName(TEXT("Input.AbilitySlot.3")), false));
@@ -40,8 +43,10 @@ APlayerCharacter::APlayerCharacter()
 	SprintStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Movement.Sprinting")), false);
 	AttackingStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Action.Attacking")), false);
 	DodgingStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Action.Dodging")), false);
+	GuardingStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Action.Guarding")), false);
 	DeadStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Status.Dead")), false);
 	StunnedStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Status.Stunned")), false);
+	GuardAbilityTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Defense.Guard")), false);
 
 	GetCapsuleComponent()->InitCapsuleSize(42.f, 96.0f);
 
@@ -124,6 +129,8 @@ void APlayerCharacter::EndPlay(const EEndPlayReason::Type EndPlayReason)
 	}
 
 	ClearDodgeSprintInputState();
+	ClearGuardResumeEligibility();
+	bGuardRequiresReleaseAfterBreak = false;
 	CancelSprintAbility();
 	UnbindSprintStateEvents();
 	ClearSprintJumpAirSpeed();
@@ -137,6 +144,7 @@ void APlayerCharacter::OnMovementModeChanged(EMovementMode PrevMovementMode, uin
 
 	if (!GetCharacterMovement()->IsMovingOnGround())
 	{
+		CancelActiveGuardAfterConfirmedAction(false);
 		CancelSprintAbility();
 		return;
 	}
@@ -175,6 +183,17 @@ void APlayerCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputCom
 		else
 		{
 			UE_LOG(LogPolyQuest, Warning, TEXT("'%s' has no AimAction configured."), *GetNameSafe(this));
+		}
+
+		if (GuardAction)
+		{
+			EnhancedInputComponent->BindAction(GuardAction, ETriggerEvent::Started, this, &APlayerCharacter::HandleGuardActionStarted);
+			EnhancedInputComponent->BindAction(GuardAction, ETriggerEvent::Completed, this, &APlayerCharacter::HandleGuardActionCompleted);
+			EnhancedInputComponent->BindAction(GuardAction, ETriggerEvent::Canceled, this, &APlayerCharacter::HandleGuardActionCanceled);
+		}
+		else
+		{
+			UE_LOG(LogPolyQuest, Warning, TEXT("'%s' has no GuardAction configured."), *GetNameSafe(this));
 		}
 
 		for (int32 SlotIndex = 0; SlotIndex < AbilitySlotActions.Num(); ++SlotIndex)
@@ -301,6 +320,100 @@ float APlayerCharacter::GetCombatInputHeldDuration(FGameplayTag InputIntentTag) 
 	return StartTime && World ? FMath::Max(World->GetTimeSeconds() - *StartTime, 0.0f) : 0.0f;
 }
 
+bool APlayerCharacter::CanAttemptGuard() const
+{
+	const UAbilitySystemComponent* CharacterASC = GetAbilitySystemComponent();
+	const UCharacterMovementComponent* MovementComponent = GetCharacterMovement();
+	return GuardInputTag.IsValid() && IsCombatInputHeld(GuardInputTag) && !bGuardRequiresReleaseAfterBreak
+		&& CharacterASC && MovementComponent && MovementComponent->IsMovingOnGround()
+		&& !(GuardingStateTag.IsValid() && CharacterASC->HasMatchingGameplayTag(GuardingStateTag))
+		&& !(DodgingStateTag.IsValid() && CharacterASC->HasMatchingGameplayTag(DodgingStateTag))
+		&& !(DeadStateTag.IsValid() && CharacterASC->HasMatchingGameplayTag(DeadStateTag))
+		&& !(StunnedStateTag.IsValid() && CharacterASC->HasMatchingGameplayTag(StunnedStateTag))
+		&& CharacterASC->GetNumericAttribute(UCharacterAttributeSet::GetStaminaAttribute()) > 0.0f;
+}
+
+bool APlayerCharacter::TryGuardIncomingMeleeHit(AActor* AttackingActor, float GuardStaminaDamage)
+{
+	if (!AttackingActor)
+	{
+		return false;
+	}
+
+	if (UPlayerGuardAbility* GuardAbility = FindActiveGuardAbility())
+	{
+		return GuardAbility->TryGuardMeleeHit(AttackingActor, GuardStaminaDamage);
+	}
+
+	return false;
+}
+
+UPlayerGuardAbility* APlayerCharacter::FindActiveGuardAbility() const
+{
+	const UAbilitySystemComponent* CharacterASC = GetAbilitySystemComponent();
+	if (!CharacterASC || !GuardAbilityTag.IsValid() || !GuardingStateTag.IsValid()
+		|| !CharacterASC->HasMatchingGameplayTag(GuardingStateTag))
+	{
+		return nullptr;
+	}
+
+	FGameplayTagContainer GuardAbilityTags;
+	GuardAbilityTags.AddTag(GuardAbilityTag);
+	TArray<FGameplayAbilitySpec*> GuardAbilitySpecs;
+	CharacterASC->GetActivatableGameplayAbilitySpecsByAllMatchingTags(GuardAbilityTags, GuardAbilitySpecs, false);
+	for (FGameplayAbilitySpec* GuardAbilitySpec : GuardAbilitySpecs)
+	{
+		UPlayerGuardAbility* GuardAbility = GuardAbilitySpec ? Cast<UPlayerGuardAbility>(GuardAbilitySpec->GetPrimaryInstance()) : nullptr;
+		if (GuardAbility && GuardAbility->IsGuardActive())
+		{
+			return GuardAbility;
+		}
+	}
+
+	return nullptr;
+}
+
+void APlayerCharacter::CancelActiveGuardAfterConfirmedAction(bool bResumeAfterAttack)
+{
+	UAbilitySystemComponent* CharacterASC = GetAbilitySystemComponent();
+	const bool bWasGuarding = CharacterASC && GuardingStateTag.IsValid() && CharacterASC->HasMatchingGameplayTag(GuardingStateTag);
+	const bool bShouldResumeGuard = bResumeAfterAttack && FindActiveGuardAbility() && GuardInputTag.IsValid() && IsCombatInputHeld(GuardInputTag);
+	if (bShouldResumeGuard)
+	{
+		bGuardResumeEligibleAfterAttack = true;
+	}
+	else
+	{
+		ClearGuardResumeEligibility();
+	}
+
+	if (!CharacterASC || !bWasGuarding || !GuardAbilityTag.IsValid())
+	{
+		return;
+	}
+
+	FGameplayTagContainer GuardAbilityTags;
+	GuardAbilityTags.AddTag(GuardAbilityTag);
+	CharacterASC->CancelAbilities(&GuardAbilityTags, nullptr);
+}
+
+void APlayerCharacter::ClearGuardResumeEligibility()
+{
+	if (UWorld* World = GetWorld())
+	{
+		World->GetTimerManager().ClearTimer(GuardResumeTimerHandle);
+	}
+
+	GuardResumeTimerHandle.Invalidate();
+	bGuardResumeEligibleAfterAttack = false;
+}
+
+void APlayerCharacter::MarkGuardRequiresReleaseAfterGuardBreak()
+{
+	ClearGuardResumeEligibility();
+	bGuardRequiresReleaseAfterBreak = true;
+}
+
 void APlayerCharacter::HandlePrimaryAttackStarted(const FInputActionValue&)
 {
 	HandleCombatInputStarted(PrimaryAttackInputTag);
@@ -329,6 +442,25 @@ void APlayerCharacter::HandleAimActionCompleted(const FInputActionValue&)
 void APlayerCharacter::HandleAimActionCanceled(const FInputActionValue&)
 {
 	HandleCombatInputEnded(AimInputTag, true);
+}
+
+void APlayerCharacter::HandleGuardActionStarted(const FInputActionValue&)
+{
+	HandleCombatInputStarted(GuardInputTag);
+}
+
+void APlayerCharacter::HandleGuardActionCompleted(const FInputActionValue&)
+{
+	bGuardRequiresReleaseAfterBreak = false;
+	ClearGuardResumeEligibility();
+	HandleCombatInputEnded(GuardInputTag, false);
+}
+
+void APlayerCharacter::HandleGuardActionCanceled(const FInputActionValue&)
+{
+	bGuardRequiresReleaseAfterBreak = false;
+	ClearGuardResumeEligibility();
+	HandleCombatInputEnded(GuardInputTag, true);
 }
 
 void APlayerCharacter::HandleAbilitySlotStarted(const FInputActionValue&, int32 SlotIndex)
@@ -564,6 +696,25 @@ void APlayerCharacter::RequestDodgeAbility()
 	CharacterASC->TryActivateAbilitiesByTag(AbilityTags);
 }
 
+void APlayerCharacter::ResumeGuardAfterAttack()
+{
+	GuardResumeTimerHandle.Invalidate();
+	if (!bGuardResumeEligibleAfterAttack || IsActorBeingDestroyed())
+	{
+		ClearGuardResumeEligibility();
+		return;
+	}
+
+	bGuardResumeEligibleAfterAttack = false;
+	if (!CanAttemptGuard())
+	{
+		TryStartSprint();
+		return;
+	}
+
+	RequestAbilityForInputIntent(GuardInputTag);
+}
+
 FVector APlayerCharacter::GetActionWorldDirection() const
 {
 	FVector ForwardDirection;
@@ -626,6 +777,7 @@ bool APlayerCharacter::CanAttemptSprint() const
 		&& !IsMovementInputBlocked()
 		&& !(AttackingStateTag.IsValid() && CharacterASC->HasMatchingGameplayTag(AttackingStateTag))
 		&& !(DodgingStateTag.IsValid() && CharacterASC->HasMatchingGameplayTag(DodgingStateTag))
+		&& !(GuardingStateTag.IsValid() && CharacterASC->HasMatchingGameplayTag(GuardingStateTag))
 		&& !(DeadStateTag.IsValid() && CharacterASC->HasMatchingGameplayTag(DeadStateTag))
 		&& !(StunnedStateTag.IsValid() && CharacterASC->HasMatchingGameplayTag(StunnedStateTag));
 }
@@ -713,6 +865,11 @@ void APlayerCharacter::BindSprintStateEvents()
 		DodgingStateTagChangedHandle = CharacterASC->RegisterGameplayTagEvent(DodgingStateTag)
 			.AddUObject(this, &APlayerCharacter::OnSprintRelevantTagChanged);
 	}
+	if (GuardingStateTag.IsValid())
+	{
+		GuardingStateTagChangedHandle = CharacterASC->RegisterGameplayTagEvent(GuardingStateTag)
+			.AddUObject(this, &APlayerCharacter::OnSprintRelevantTagChanged);
+	}
 	if (DeadStateTag.IsValid())
 	{
 		DeadStateTagChangedHandle = CharacterASC->RegisterGameplayTagEvent(DeadStateTag)
@@ -744,6 +901,10 @@ void APlayerCharacter::UnbindSprintStateEvents()
 		{
 			CharacterASC->UnregisterGameplayTagEvent(DodgingStateTagChangedHandle, DodgingStateTag);
 		}
+		if (GuardingStateTagChangedHandle.IsValid())
+		{
+			CharacterASC->UnregisterGameplayTagEvent(GuardingStateTagChangedHandle, GuardingStateTag);
+		}
 		if (DeadStateTagChangedHandle.IsValid())
 		{
 			CharacterASC->UnregisterGameplayTagEvent(DeadStateTagChangedHandle, DeadStateTag);
@@ -757,18 +918,43 @@ void APlayerCharacter::UnbindSprintStateEvents()
 	MovementInputBlockedTagChangedHandle.Reset();
 	AttackingStateTagChangedHandle.Reset();
 	DodgingStateTagChangedHandle.Reset();
+	GuardingStateTagChangedHandle.Reset();
 	DeadStateTagChangedHandle.Reset();
 	StunnedStateTagChangedHandle.Reset();
 	SprintStateBoundAbilitySystemComponent.Reset();
 }
 
-void APlayerCharacter::OnSprintRelevantTagChanged(const FGameplayTag, int32 NewCount)
+void APlayerCharacter::OnSprintRelevantTagChanged(const FGameplayTag Tag, int32 NewCount)
 {
 	UpdateActionFacingRotationMode();
 
 	if (NewCount > 0)
 	{
+		if (Tag == DeadStateTag || Tag == StunnedStateTag)
+		{
+			ClearGuardResumeEligibility();
+		}
+
+		// Guard owns its Sprint cancellation after the Guard Montage has actually started.
+		if (Tag == GuardingStateTag)
+		{
+			return;
+		}
+
 		CancelSprintAbility();
+		return;
+	}
+
+	if (Tag == AttackingStateTag && bGuardResumeEligibleAfterAttack)
+	{
+		if (UWorld* World = GetWorld())
+		{
+			World->GetTimerManager().SetTimerForNextTick(this, &APlayerCharacter::ResumeGuardAfterAttack);
+		}
+		else
+		{
+			ClearGuardResumeEligibility();
+		}
 		return;
 	}
 

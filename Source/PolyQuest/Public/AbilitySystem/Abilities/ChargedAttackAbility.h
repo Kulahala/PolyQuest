@@ -117,6 +117,7 @@ private:
 	FGameplayTag DodgeCancelWindowBeginEventTag;
 	FGameplayTag DodgeCancelWindowEndEventTag;
 	FGameplayTag DodgeCancelableStateTag;
+	FGameplayTag DefenseCancelableStateTag;
 	FGameplayTag ChargingStateTag;
 	FGameplayTag DamageDataTag;
 	FGameplayTag PoiseDataTag;

@@ -14,6 +14,8 @@ class UCombatLoadoutDefinition;
 class UGameplayEffect;
 class UInputAction;
 class UInputComponent;
+class UPlayerGuardAbility;
+class AActor;
 class UAIPerceptionStimuliSourceComponent;
 class USpringArmComponent;
 struct FInputActionValue;
@@ -62,6 +64,10 @@ protected:
 	/** Shared physical input that expresses aim intent and may route to a future Aim ability. */
 	UPROPERTY(EditAnywhere, Category="Input")
 	UInputAction* AimAction;
+
+	/** Shared physical input that expresses held Guard intent through the active Combat Loadout. */
+	UPROPERTY(EditAnywhere, Category="Input")
+	UInputAction* GuardAction;
 
 	/** Direct ability-slot inputs; index zero is Input.AbilitySlot.1. */
 	UPROPERTY(EditAnywhere, Category="Input", meta=(EditFixedSize))
@@ -140,6 +146,21 @@ public:
 	UFUNCTION(BlueprintPure, Category="Combat|Input")
 	float GetCombatInputHeldDuration(FGameplayTag InputIntentTag) const;
 
+	/** True when held Guard input and current character state permit a new Guard Ability request. */
+	bool CanAttemptGuard() const;
+
+	/** Resolves one valid incoming melee contact through the active Guard Ability. */
+	bool TryGuardIncomingMeleeHit(AActor* AttackingActor, float GuardStaminaDamage);
+
+	/** Cancels a live Guard only after the caller has confirmed its own action Montage started. */
+	void CancelActiveGuardAfterConfirmedAction(bool bResumeAfterAttack);
+
+	/** Clears the one-shot pre-held-Guard resume qualification and its pending retry. */
+	void ClearGuardResumeEligibility();
+
+	/** Makes Guard require physical RMB release after a successfully started Guard Break. */
+	void MarkGuardRequiresReleaseAfterGuardBreak();
+
 	/** Resolves the current action-facing direction from camera-relative movement or actor forward. */
 	FVector GetActionWorldDirection() const;
 
@@ -180,6 +201,9 @@ private:
 	void HandleAimActionStarted(const FInputActionValue& Value);
 	void HandleAimActionCompleted(const FInputActionValue& Value);
 	void HandleAimActionCanceled(const FInputActionValue& Value);
+	void HandleGuardActionStarted(const FInputActionValue& Value);
+	void HandleGuardActionCompleted(const FInputActionValue& Value);
+	void HandleGuardActionCanceled(const FInputActionValue& Value);
 	void HandleAbilitySlotStarted(const FInputActionValue& Value, int32 SlotIndex);
 	void HandleAbilitySlotCompleted(const FInputActionValue& Value, int32 SlotIndex);
 	void HandleAbilitySlotCanceled(const FInputActionValue& Value, int32 SlotIndex);
@@ -188,12 +212,14 @@ private:
 	void HandleDodgeSprintCanceled(const FInputActionValue& Value);
 	void HandleDodgeSprintThresholdElapsed();
 	void RequestDodgeAbility();
+	void ResumeGuardAfterAttack();
 	void ClearDodgeSprintInputState();
 	void HandleCombatInputStarted(const FGameplayTag& InputIntentTag);
 	void HandleCombatInputEnded(const FGameplayTag& InputIntentTag, bool bWasCanceled);
 	void SendCombatInputEvent(const FGameplayTag& EventTag, const FGameplayTag& InputIntentTag, float HeldDuration);
 	void RequestAbilityForInputIntent(const FGameplayTag& InputIntentTag);
 	FGameplayTag GetAbilitySlotInputIntentTag(int32 SlotIndex) const;
+	UPlayerGuardAbility* FindActiveGuardAbility() const;
 	void TryStartSprint();
 	void BindSprintStateEvents();
 	void UnbindSprintStateEvents();
@@ -210,6 +236,7 @@ private:
 	TMap<FGameplayTag, float> HeldCombatInputStartTimes;
 	FGameplayTag PrimaryAttackInputTag;
 	FGameplayTag AimInputTag;
+	FGameplayTag GuardInputTag;
 	TArray<FGameplayTag> AbilitySlotInputTags;
 	FGameplayTag InputPressedEventTag;
 	FGameplayTag InputReleasedEventTag;
@@ -219,21 +246,27 @@ private:
 	FGameplayTag SprintStateTag;
 	FGameplayTag AttackingStateTag;
 	FGameplayTag DodgingStateTag;
+	FGameplayTag GuardingStateTag;
 	FGameplayTag DeadStateTag;
 	FGameplayTag StunnedStateTag;
+	FGameplayTag GuardAbilityTag;
 	FActiveGameplayEffectHandle SprintJumpAirSpeedEffectHandle;
 	FDelegateHandle MovementInputBlockedTagChangedHandle;
 	FDelegateHandle AttackingStateTagChangedHandle;
 	FDelegateHandle DodgingStateTagChangedHandle;
+	FDelegateHandle GuardingStateTagChangedHandle;
 	FDelegateHandle DeadStateTagChangedHandle;
 	FDelegateHandle StunnedStateTagChangedHandle;
 	TWeakObjectPtr<UAbilitySystemComponent> SprintStateBoundAbilitySystemComponent;
 	FTimerHandle DodgeSprintHoldTimerHandle;
+	FTimerHandle GuardResumeTimerHandle;
 	float DodgeSprintInputPressedTime = 0.0f;
 	bool bDodgeSprintInputHeld = false;
 	bool bDodgeSprintResolvedToSprint = false;
 	/** Resolved long-press intent consumed by the existing Sprint ability lifecycle. */
 	bool bSprintInputHeld = false;
 	bool bSprintRequiresReleaseAfterExhaustion = false;
+	bool bGuardResumeEligibleAfterAttack = false;
+	bool bGuardRequiresReleaseAfterBreak = false;
 	bool bStaminaRegenEffectApplied = false;
 };
