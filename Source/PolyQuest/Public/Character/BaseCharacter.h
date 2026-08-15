@@ -39,6 +39,8 @@ protected:
 	void BindMoveSpeedAttribute();
 	void UnbindMoveSpeedAttribute();
 	void OnMoveSpeedAttributeChanged(const FOnAttributeChangeData& ChangeData);
+	/** Keeps the fixed v1 WeaponMesh display fixture out of camera and physics collision. */
+	void DisableFixedWeaponDisplayCollision();
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "GAS")
 	TArray<TSubclassOf<UGameplayAbility>> StartupAbilities;

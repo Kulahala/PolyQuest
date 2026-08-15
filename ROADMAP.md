@@ -134,14 +134,24 @@ The old `Test` project is evidence for player-facing behavior, not a source tree
   - Established the first enemy-only terminal path: terminal Health is clamped to zero, `AEnemyCharacter` promotes zero Health or another legal Dead source to an exact loose `State.Status.Dead` tag, then one idempotent teardown stops the Controller, StateTree, movement, and active GAS work.
   - The shared melee resolver now rejects a dead source or target, so a same-frame residual Trace cannot damage after the terminal Tag is in place. Native C2 leaves the Actor/Capsule and current pose intact; it does not reference authored death-animation assets.
   - The user confirmed `PolyQuestEditor` compilation and Scene01 PIE: after Health reaches zero the enemy no longer acts, and later attacks leave Health at zero rather than below zero. Main normal review and Main adversarial fallback found no unresolved P0-P2 C++/GAS/Tag/StateTree blocker. `gpt-5.6-luna / xhigh` remained unavailable, so no independent review is claimed.
-  - All authored Blueprints, AnimBPs, GameplayEffects, Montages, StateTree assets, maps, and imported resources remain excluded mutable WIP. `TODO-02C3` owns enemy reactions, Poise, stance break, and Tag-driven terminal presentation; `TODO-03D` owns player death, reload, and revival.
+  - All authored Blueprints, AnimBPs, GameplayEffects, Montages, StateTree assets, maps, and imported resources remain excluded mutable WIP. `TODO-02C3A` and `TODO-02C3D` complete the terminal-presentation slice; enemy reactions, Poise, and stance break remain future work; `TODO-03D` owns player death, reload, and revival.
+
+- [x] `TODO-02C3A: Enemy Death Presentation v1`
+  - `ABP_Enemy_Goblin` now reads the native ASC-backed `AEnemyCharacter::IsDead()` query into a presentation-only `bIsDead` cache and enters a one-way `Dead` state. It does not mutate Health, Gameplay Tags, StateTree, Controller, movement, collision, or Ability state.
+  - `To Land` is the authored alias for `Fall Loop` and `Jump`; `To Falling` is the authored alias for `Land` and `Locomotion`. Their `bIsDead == true` transitions cover those source states without duplicate direct death routes, and `Dead` has no exit transition.
+  - The user confirmed the AnimBP compiled and the Scene01 PIE death presentation: the enemy reaches the terminal pose and does not revive or resume action. The compatible AnimBP, sequences, Blueprints, map, and imported assets remain excluded mutable WIP; C3A has no native source/config candidate.
+
+- [x] `TODO-02C3D: Enemy Ragdoll Death Presentation v1`
+  - After the existing C2 terminal teardown, `AEnemyCharacter` validates the Mesh Physics Asset, disables the inherited Capsule collision/overlaps, applies the engine `Ragdoll` profile, begins skeletal simulation, and wakes bodies. The ASC-owned Dead Tag remains the only gameplay survival state; disabled ragdoll or a missing Physics Asset retains the existing C3A terminal AnimBP fallback.
+  - The fixed-v1 `WeaponMesh` display fixture is now visual-only at runtime: `ABaseCharacter` disables its collision and overlap generation at `BeginPlay()`, and the death path repeats that idempotent rule before Mesh physics starts. This removes the fixture from SpringArm and ragdoll physical interaction without changing the marker-driven Trace Window or shared resolver.
+  - The user confirmed recompilation and the focused C3D test route passed. Main normal review and a separately performed Main adversarial fallback found no P0-P2 native/GAS blocker. `gpt-5.6-luna / xhigh` remained unavailable, so no independent review is claimed. All Physics Asset, Blueprint, AnimBP, map, animation, and imported Content remain excluded mutable WIP.
 
 ## Milestones
 
 ### First Enemy, Camera, And Combat Presentation
 
 - [ ] `TODO-02C3: Enemy Reactions, Poise, And Stance Break v1`
-  - Add enemy-specific damage reception, Poise depletion, hit reaction, stance break, safe GAS interruption, recovery, and the `State.Status.Dead`-driven terminal death presentation around the proven first enemy death lifecycle. The AnimBP reads the terminal Tag but never writes Health, Tags, StateTree, or Controller state.
+  - Add enemy-specific damage reception, Poise depletion, hit reaction, stance break, safe GAS interruption, and recovery around the proven C2/C3A/C3D terminal lifecycle. The AnimBP may read the terminal Tag but never writes Health, Tags, StateTree, or Controller state.
   - GameplayEffects and the target ASC remain the mutation path; animation only provides timing and presentation. Keep reaction/Poise data separate from StateTree intent and from mutable runtime state.
   - Do not force a player hit-reaction or player-Poise framework merely for symmetry; plan that player-facing response only when an accepted defensive-combat slice requires it.
 
@@ -160,6 +170,7 @@ The old `Test` project is evidence for player-facing behavior, not a source tree
   - Establish the first product equipment boundary after the fixed straight-sword trace has proven itself: item definition/instance ownership, equip and unequip transaction, display/socket attachment, Loadout selection, and the Ability grant/revocation policy for a changed weapon.
   - Do not add world pickup, checkpoint, SaveGame, inventory grids, or a generic backpack. A loadout change affects future input routing and grants only; it never becomes a second combat-state machine or a replacement for GAS.
   - Replace the v1 fixed `WeaponMesh` / `BladeTraceBase` / `BladeTraceTip` name lookup with an equipped-weapon trace-sample provider or authored weapon data. Weapon changes may replace that provider, but must reuse `UAbilityTask_MeleeTraceWindow` and `FMeleeHitResolver` rather than creating a second melee delivery path.
+  - Make the weapon component or equipment data the single source of truth for equipped-weapon collision policy, replacing C3D's fixed-name `WeaponMesh` runtime guard. It must distinguish display, physical interaction, and gameplay trace needs so visual weapons cannot accidentally block the SpringArm or corpse physics, while melee remains marker-driven through the existing Trace Window and resolver.
 
 - [ ] `TODO-03B: Player Bow And Projectile v1`
   - Rebuild Bow aiming, prepared-arrow presentation, socket-authoritative projectile delivery, and projectile-specific GAS damage delivery after equipment/loadout ownership is proven.

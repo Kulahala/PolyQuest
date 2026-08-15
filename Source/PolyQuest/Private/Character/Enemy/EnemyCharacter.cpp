@@ -3,9 +3,12 @@
 #include "AI/EnemyAIController.h"
 #include "AbilitySystem/CharacterAttributeSet.h"
 #include "AbilitySystemComponent.h"
+#include "Components/CapsuleComponent.h"
+#include "Components/SkeletalMeshComponent.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "GameplayEffectTypes.h"
 #include "GameplayTagContainer.h"
+#include "PolyQuest.h"
 
 AEnemyCharacter::AEnemyCharacter()
 {
@@ -139,4 +142,35 @@ void AEnemyCharacter::HandleDeath()
 		MovementComponent->StopMovementImmediately();
 		MovementComponent->DisableMovement();
 	}
+
+	StartDeathRagdoll();
+}
+
+void AEnemyCharacter::StartDeathRagdoll()
+{
+	if (!bUseRagdollOnDeath || bDeathRagdollStarted)
+	{
+		return;
+	}
+
+	USkeletalMeshComponent* SkeletalMesh = GetMesh();
+	if (!SkeletalMesh || !SkeletalMesh->GetPhysicsAsset())
+	{
+		UE_LOG(LogPolyQuest, Warning, TEXT("Enemy '%s' cannot enter death ragdoll: SkeletalMesh and Physics Asset are required."), *GetNameSafe(this));
+		return;
+	}
+
+	DisableFixedWeaponDisplayCollision();
+
+	UCapsuleComponent* CharacterCapsule = GetCapsuleComponent();
+	if (CharacterCapsule)
+	{
+		CharacterCapsule->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+		CharacterCapsule->SetGenerateOverlapEvents(false);
+	}
+
+	SkeletalMesh->SetCollisionProfileName(FName(TEXT("Ragdoll")));
+	SkeletalMesh->SetSimulatePhysics(true);
+	SkeletalMesh->WakeAllRigidBodies();
+	bDeathRagdollStarted = true;
 }

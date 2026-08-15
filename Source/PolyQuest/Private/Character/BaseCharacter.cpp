@@ -5,6 +5,7 @@
 #include "Abilities/GameplayAbility.h"
 #include "Combat/Melee/MeleeTraceSourceComponent.h"
 #include "Components/CapsuleComponent.h"
+#include "Components/PrimitiveComponent.h"
 #include "GameplayAbilitySpec.h"
 #include "GameplayEffectTypes.h"
 #include "GameFramework/Controller.h"
@@ -22,6 +23,7 @@ ABaseCharacter::ABaseCharacter()
 void ABaseCharacter::BeginPlay()
 {
 	Super::BeginPlay();
+	DisableFixedWeaponDisplayCollision();
 	InitializeAbilityActorInfo();
 }
 
@@ -90,6 +92,23 @@ FGameplayTag ABaseCharacter::GetCombatTeamTag_Implementation() const
 UMeleeTraceSourceComponent* ABaseCharacter::GetMeleeTraceSource() const
 {
 	return MeleeTraceSource.Get();
+}
+
+void ABaseCharacter::DisableFixedWeaponDisplayCollision()
+{
+	static const FName WeaponDisplayComponentName(TEXT("WeaponMesh"));
+	TInlineComponentArray<UPrimitiveComponent*> PrimitiveComponents(this);
+	for (UPrimitiveComponent* PrimitiveComponent : PrimitiveComponents)
+	{
+		if (!PrimitiveComponent || PrimitiveComponent->GetFName() != WeaponDisplayComponentName)
+		{
+			continue;
+		}
+
+		PrimitiveComponent->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+		PrimitiveComponent->SetGenerateOverlapEvents(false);
+		return;
+	}
 }
 
 void ABaseCharacter::BindMoveSpeedAttribute()

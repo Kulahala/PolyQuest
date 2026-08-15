@@ -39,13 +39,18 @@ private:
 	void OnDeadStateTagChanged(const FGameplayTag Tag, int32 NewCount);
 	void SetDeadState();
 	void HandleDeath();
+	void StartDeathRagdoll();
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Enemy", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<UEnemyAttackProfile> AttackProfile;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Enemy|Death", meta = (AllowPrivateAccess = "true"))
+	bool bUseRagdollOnDeath = true;
 
 	FGameplayTag DeadStateTag;
 	FDelegateHandle HealthAttributeChangedHandle;
 	FDelegateHandle DeadStateTagChangedHandle;
 	TWeakObjectPtr<UAbilitySystemComponent> DeathBoundAbilitySystemComponent;
 	bool bDeathTeardownStarted = false;
+	bool bDeathRagdollStarted = false;
 };

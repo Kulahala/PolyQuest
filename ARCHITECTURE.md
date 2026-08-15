@@ -132,7 +132,10 @@ The active player route is `BP_GameMode -> BP_Player -> APlayerCharacter -> ABas
 - `UCharacterAttributeSet` clamps Health to `[0, MaxHealth]`. Once an ASC owns `State.Status.Dead`, any later Health write remains `0`; the AttributeSet clamps values but does not decide which character enters a terminal state.
 - After BaseCharacter initializes ActorInfo, `AEnemyCharacter` observes its Health and `State.Status.Dead`. Health at or below zero writes an exact loose Dead-tag count of one. Any legal source that grants the Dead Tag converges through the same idempotent teardown, which retains that loose count as the terminal state; this baseline has no revival semantic.
 - The terminal teardown tells `AEnemyAIController` to stop StateTree, path movement, target, and focus; then cancels the enemy ASC's active Abilities and stops/disables CharacterMovement. Ability cancellation retains each Ability's existing `EndAbility()` cleanup route for Montage, action tag, Trace Window, and task state.
-- `FMeleeHitResolver` rejects a shared melee request when either source or target ASC owns `State.Status.Dead`, in addition to its existing self, team, ASC, and invulnerability checks. The native terminal state does not reference a Death Montage or AnimBP and leaves the Actor, Capsule, and current mesh pose in place.
+- `FMeleeHitResolver` rejects a shared melee request when either source or target ASC owns `State.Status.Dead`, in addition to its existing self, team, ASC, and invulnerability checks. Native C2 teardown does not select a death asset or write AnimBP state.
+- `ABP_Enemy_Goblin` is presentation-only: it caches `AEnemyCharacter::IsDead()` in `bIsDead` and uses a one-way `Dead` state. Its `To Land` state alias covers `Fall Loop` and `Jump`; its `To Falling` alias covers `Land` and `Locomotion`; each alias enters `Dead` when `bIsDead == true`. `Dead` has no exit transition. The AnimBP does not write Health, Gameplay Tags, Ability, AI, Controller, movement, or collision state.
+- After the terminal teardown, `AEnemyCharacter` can hand presentation to a compatible SkeletalMesh ragdoll when `bUseRagdollOnDeath` is enabled and a Physics Asset exists: it disables the inherited Capsule collision/overlaps, applies the engine `Ragdoll` profile, enables simulation, and wakes bodies. This is presentation only; the ASC Dead Tag and C2 teardown remain authoritative. Disabled ragdoll or a missing Physics Asset intentionally leaves the C3A AnimBP terminal state as the fallback.
+- The fixed-v1 component named `WeaponMesh` is visual-only at runtime: `ABaseCharacter` disables its collision and overlap generation so it cannot block the SpringArm or participate in corpse physics. This name-based guard is temporary; `TODO-03A` owns replacing it with equipment-owned weapon collision policy while preserving marker-driven melee delivery.
 
 #### ST_Enemy_Goblin_Melee Authored Runtime Contract
 
@@ -187,7 +190,7 @@ The active player route is `BP_GameMode -> BP_Player -> APlayerCharacter -> ABas
 
 The following remain future stage contracts:
 
-- Multiple/weighted enemy attack selection, reactions, Poise, authored terminal death presentation, and special attacks.
+- Multiple/weighted enemy attack selection, reactions, Poise, directional ragdoll impulse, ragdoll recovery/corpse-lifetime policy, and special attacks.
 - Player death, GameplayCues, and nonlinear or multi-weapon combo-extension contracts.
 - Tag-authored multi-faction/hostile relation semantics beyond the minimal equal-team rejection, persistence ownership, and multiplayer/PlayerState ownership.
 - Weapon equipment, Ability-grant/revocation, multi-weapon Loadout switching, additional Skeleton/animation, and Motion Warping topology.
