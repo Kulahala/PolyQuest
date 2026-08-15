@@ -4,23 +4,24 @@
 #include "Abilities/GameplayAbility.h"
 #include "Abilities/GameplayAbilityTypes.h"
 #include "GameplayTagContainer.h"
-#include "EnemyHitReactionAbility.generated.h"
+#include "EnemyStanceBreakAbility.generated.h"
 
 class UAbilityTask_PlayMontageAndWait;
 class UAnimInstance;
 class UAnimMontage;
 
 /**
- * Server-authoritative, non-lethal enemy hit reaction. Damage delivery stays
- * in the shared resolver; this ability only owns the accepted interruption.
+ * Server-authoritative enemy stance break. Poise delivery and event routing
+ * stay outside the ability; this ability owns only the authored presentation,
+ * interruption, and recovery teardown.
  */
 UCLASS()
-class POLYQUEST_API UEnemyHitReactionAbility : public UGameplayAbility
+class POLYQUEST_API UEnemyStanceBreakAbility : public UGameplayAbility
 {
 	GENERATED_BODY()
 
 public:
-	UEnemyHitReactionAbility();
+	UEnemyStanceBreakAbility();
 
 	virtual bool CanActivateAbility(
 		const FGameplayAbilitySpecHandle Handle,
@@ -43,8 +44,8 @@ public:
 		bool bWasCancelled) override;
 
 private:
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Enemy|Reaction", meta = (AllowPrivateAccess = "true"))
-	TObjectPtr<UAnimMontage> HitReactionMontage;
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Enemy|Stance Break", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<UAnimMontage> StanceBreakMontage;
 
 	UPROPERTY(Transient)
 	TObjectPtr<UAbilityTask_PlayMontageAndWait> MontageTask;
@@ -55,13 +56,14 @@ private:
 	UPROPERTY(Transient)
 	TObjectPtr<UAnimMontage> ActiveMontage;
 
-	FGameplayTag HitReactionAbilityTag;
-	FGameplayTag HitReactionEventTag;
-	FGameplayTag HitReactingStateTag;
+	FGameplayTag StanceBreakAbilityTag;
+	FGameplayTag StanceBreakEventTag;
 	FGameplayTag StunnedStateTag;
+	FGameplayTag HitReactingStateTag;
 	FGameplayTag EnemyMeleeAbilityTag;
-	FGameplayTagContainer EnemyMeleeAbilityTags;
-	bool bMovementLockedByReaction = false;
+	FGameplayTag EnemyHitReactionAbilityTag;
+	FGameplayTagContainer AbilitiesToCancel;
+	bool bMovementLockedByStanceBreak = false;
 	bool bEndAbilityRequested = false;
 
 	UFUNCTION()

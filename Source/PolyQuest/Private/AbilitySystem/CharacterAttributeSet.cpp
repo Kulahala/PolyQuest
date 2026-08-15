@@ -12,11 +12,11 @@ namespace
 		return DeadTag;
 	}
 
-	bool HasDeadStateTag(const UAbilitySystemComponent* AbilitySystemComponent)
+	bool HasDeadStateTag(const UAbilitySystemComponent* TargetASC)
 	{
 		const FGameplayTag& DeadTag = GetDeadTag();
-		return AbilitySystemComponent && DeadTag.IsValid()
-			&& AbilitySystemComponent->HasMatchingGameplayTag(DeadTag);
+		return TargetASC && DeadTag.IsValid()
+			&& TargetASC->HasMatchingGameplayTag(DeadTag);
 	}
 
 	const FGameplayTag& GetExhaustedTag()
@@ -30,6 +30,8 @@ UCharacterAttributeSet::UCharacterAttributeSet()
 {
 	Health = 100.0f;
 	MaxHealth = 100.0f;
+	Poise = 100.0f;
+	MaxPoise = 100.0f;
 	Stamina = 100.0f;
 	MaxStamina = 100.0f;
 	MoveSpeed = 500.0f;
@@ -48,6 +50,10 @@ void UCharacterAttributeSet::PreAttributeChange(const FGameplayAttribute& Attrib
 	else if (Attribute == GetStaminaAttribute())
 	{
 		NewValue = FMath::Clamp(NewValue, 0.0f, FMath::Max(0.0f, GetMaxStamina()));
+	}
+	else if (Attribute == GetPoiseAttribute())
+	{
+		NewValue = FMath::Clamp(NewValue, 0.0f, FMath::Max(0.0f, GetMaxPoise()));
 	}
 	else if (Attribute == GetMoveSpeedAttribute())
 	{
@@ -69,6 +75,10 @@ void UCharacterAttributeSet::PreAttributeBaseChange(const FGameplayAttribute& At
 	{
 		NewValue = FMath::Clamp(NewValue, 0.0f, FMath::Max(0.0f, GetMaxStamina()));
 	}
+	else if (Attribute == GetPoiseAttribute())
+	{
+		NewValue = FMath::Clamp(NewValue, 0.0f, FMath::Max(0.0f, GetMaxPoise()));
+	}
 	else if (Attribute == GetMoveSpeedAttribute())
 	{
 		NewValue = FMath::Max(NewValue, 0.0f);
@@ -79,12 +89,18 @@ void UCharacterAttributeSet::PostGameplayEffectExecute(const FGameplayEffectModC
 {
 	Super::PostGameplayEffectExecute(Data);
 
-	UAbilitySystemComponent* AbilitySystemComponent = &Data.Target;
+	UAbilitySystemComponent* TargetASC = &Data.Target;
 	if (Data.EvaluatedData.Attribute == GetHealthAttribute())
 	{
-		SetHealth(HasDeadStateTag(AbilitySystemComponent)
+		SetHealth(HasDeadStateTag(TargetASC)
 			? 0.0f
 			: FMath::Clamp(GetHealth(), 0.0f, FMath::Max(0.0f, GetMaxHealth())));
+		return;
+	}
+
+	if (Data.EvaluatedData.Attribute == GetPoiseAttribute())
+	{
+		SetPoise(FMath::Clamp(GetPoise(), 0.0f, FMath::Max(0.0f, GetMaxPoise())));
 		return;
 	}
 
@@ -94,12 +110,12 @@ void UCharacterAttributeSet::PostGameplayEffectExecute(const FGameplayEffectModC
 	}
 
 	const FGameplayTag& ExhaustedTag = GetExhaustedTag();
-	if (!AbilitySystemComponent || !ExhaustedTag.IsValid())
+	if (!TargetASC || !ExhaustedTag.IsValid())
 	{
 		return;
 	}
 
 	// Stamina may execute multiple effects while clamped at zero. Set an exact
 	// loose-tag count so repeated drains cannot leave Exhausted latched after recovery.
-	AbilitySystemComponent->SetLooseGameplayTagCount(ExhaustedTag, GetStamina() <= 0.0f ? 1 : 0);
+	TargetASC->SetLooseGameplayTagCount(ExhaustedTag, GetStamina() <= 0.0f ? 1 : 0);
 }

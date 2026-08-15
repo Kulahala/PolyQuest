@@ -65,6 +65,9 @@ public:
 	/** Reaction state is ASC-owned. StateTree waits rather than issuing another attack request. */
 	bool IsEnemyHitReactionActive() const;
 
+	/** Stance-break state is ASC-owned. StateTree waits rather than issuing another attack request. */
+	bool IsEnemyStunned() const;
+
 	/** Stops StateTree, movement, target, and focus once the currently possessed enemy owns State.Status.Dead. */
 	void HandleControlledEnemyDeath();
 
@@ -116,9 +119,11 @@ private:
 	FGameplayTag EnemyMeleeAbilityTag;
 	FGameplayTag AttackingStateTag;
 	FGameplayTag HitReactingStateTag;
+	FGameplayTag StunnedStateTag;
 	FGameplayTag TargetAcquiredEventTag;
 	FGameplayTag TargetLostEventTag;
 	float MeleeAttackCooldownEndTime = 0.0f;
 	bool bHasValidAttackProfile = false;
 	bool bHasLoggedInvalidAttackProfile = false;
+	bool bHasLoggedInvalidPoiseRecoverySetup = false;
 };

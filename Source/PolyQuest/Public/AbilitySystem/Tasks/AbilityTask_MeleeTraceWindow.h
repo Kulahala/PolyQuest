@@ -30,6 +30,13 @@ public:
 		FGameplayTag InSetByCallerMagnitudeTag,
 		float InSetByCallerMagnitude);
 
+	static UAbilityTask_MeleeTraceWindow* OpenMeleeTraceWindow(
+		UGameplayAbility* OwningAbility,
+		UMeleeTraceSourceComponent* InTraceSource,
+		TSubclassOf<UGameplayEffect> InDamageGameplayEffectClass,
+		float InAbilityLevel,
+		const TMap<FGameplayTag, float>& InSetByCallerMagnitudes);
+
 	virtual void Activate() override;
 	virtual void TickTask(float DeltaTime) override;
 	virtual void OnDestroy(bool AbilityIsEnding) override;
@@ -50,6 +57,7 @@ private:
 	FGameplayTag SetByCallerMagnitudeTag;
 	float AbilityLevel = 1.0f;
 	float SetByCallerMagnitude = 0.0f;
+	TMap<FGameplayTag, float> SetByCallerMagnitudes;
 	FVector PreviousBladeBase = FVector::ZeroVector;
 	FVector PreviousBladeTip = FVector::ZeroVector;
 	TSet<TWeakObjectPtr<AActor>> DeliveredTargets;

@@ -32,6 +32,14 @@ public:
 	PQ_ATTRIBUTE_ACCESSORS(UCharacterAttributeSet, MaxHealth)
 
 	UPROPERTY(BlueprintReadOnly, Category = "Attributes")
+	FGameplayAttributeData Poise;
+	PQ_ATTRIBUTE_ACCESSORS(UCharacterAttributeSet, Poise)
+
+	UPROPERTY(BlueprintReadOnly, Category = "Attributes")
+	FGameplayAttributeData MaxPoise;
+	PQ_ATTRIBUTE_ACCESSORS(UCharacterAttributeSet, MaxPoise)
+
+	UPROPERTY(BlueprintReadOnly, Category = "Attributes")
 	FGameplayAttributeData Stamina;
 	PQ_ATTRIBUTE_ACCESSORS(UCharacterAttributeSet, Stamina)
 

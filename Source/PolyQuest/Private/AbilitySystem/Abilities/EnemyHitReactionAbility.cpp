@@ -17,6 +17,7 @@ UEnemyHitReactionAbility::UEnemyHitReactionAbility()
 	HitReactionAbilityTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Reaction.Enemy.Hit")), false);
 	HitReactionEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Reaction.Enemy.Hit")), false);
 	HitReactingStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Action.HitReacting")), false);
+	StunnedStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Status.Stunned")), false);
 	EnemyMeleeAbilityTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Attack.Enemy.Melee")), false);
 
 	AbilityTags.AddTag(HitReactionAbilityTag);
@@ -143,7 +144,11 @@ void UEnemyHitReactionAbility::EndAbility(
 
 	ActiveMontage = nullptr;
 
-	if (bMovementLockedByReaction && EnemyCharacter && !EnemyCharacter->IsDead() && !EnemyCharacter->IsActorBeingDestroyed())
+	const UAbilitySystemComponent* CharacterASC = GetAbilitySystemComponentFromActorInfo();
+	const bool bStanceBreakOwnsStunned = CharacterASC && StunnedStateTag.IsValid()
+		&& CharacterASC->HasMatchingGameplayTag(StunnedStateTag);
+	if (bMovementLockedByReaction && EnemyCharacter && !EnemyCharacter->IsDead() && !EnemyCharacter->IsActorBeingDestroyed()
+		&& !bStanceBreakOwnsStunned)
 	{
 		if (UCharacterMovementComponent* MovementComponent = EnemyCharacter->GetCharacterMovement())
 		{
@@ -173,7 +178,7 @@ bool UEnemyHitReactionAbility::ValidateActivationSetup(const FGameplayAbilityAct
 	const UAnimInstance* AnimInstance = SkeletalMesh ? SkeletalMesh->GetAnimInstance() : nullptr;
 
 	return CharacterASC && EnemyCharacter && !EnemyCharacter->IsDead() && AnimInstance && HitReactionMontage
-		&& HitReactionAbilityTag.IsValid() && HitReactionEventTag.IsValid() && HitReactingStateTag.IsValid()
+		&& HitReactionAbilityTag.IsValid() && HitReactionEventTag.IsValid() && HitReactingStateTag.IsValid() && StunnedStateTag.IsValid()
 		&& EnemyMeleeAbilityTag.IsValid();
 }
 

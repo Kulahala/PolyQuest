@@ -30,6 +30,21 @@ UAbilityTask_MeleeTraceWindow* UAbilityTask_MeleeTraceWindow::OpenMeleeTraceWind
 	return Task;
 }
 
+UAbilityTask_MeleeTraceWindow* UAbilityTask_MeleeTraceWindow::OpenMeleeTraceWindow(
+	UGameplayAbility* OwningAbility,
+	UMeleeTraceSourceComponent* InTraceSource,
+	TSubclassOf<UGameplayEffect> InDamageGameplayEffectClass,
+	float InAbilityLevel,
+	const TMap<FGameplayTag, float>& InSetByCallerMagnitudes)
+{
+	UAbilityTask_MeleeTraceWindow* Task = NewAbilityTask<UAbilityTask_MeleeTraceWindow>(OwningAbility);
+	Task->TraceSource = InTraceSource;
+	Task->DamageGameplayEffectClass = InDamageGameplayEffectClass;
+	Task->AbilityLevel = InAbilityLevel;
+	Task->SetByCallerMagnitudes = InSetByCallerMagnitudes;
+	return Task;
+}
+
 void UAbilityTask_MeleeTraceWindow::Activate()
 {
 	if (!TraceSource || !DamageGameplayEffectClass || !GetAvatarActor() || !AbilitySystemComponent.IsValid())
@@ -120,6 +135,7 @@ void UAbilityTask_MeleeTraceWindow::TraceCurrentSegment()
 			Request.AbilityLevel = AbilityLevel;
 			Request.SetByCallerMagnitudeTag = SetByCallerMagnitudeTag;
 			Request.SetByCallerMagnitude = SetByCallerMagnitude;
+			Request.SetByCallerMagnitudes = SetByCallerMagnitudes;
 			Request.SourceObject = TraceSource;
 			Request.HitResult = HitResult;
 			if (FMeleeHitResolver::TryResolveHit(Request))

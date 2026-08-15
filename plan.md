@@ -10,61 +10,30 @@
 
 ---
 
-## Active Stage: TODO-01C2 - Shared Dodge/Sprint Input Arbitration v1
+## Active Stage: TODO-02C3C - Enemy Poise And Stance Break v1
 
-Baseline: `c4328f4 [Docs] 同步战斗阶段状态与下一阶段`.
-
-### Current Stage Handoff
-
-The approved TODO-01C2 plan replaces the previous C3B closeout as the active implementation boundary. One physical keyboard action is temporally arbitrated: release before the positive 0.15 second threshold requests the existing `Ability.Dodge`; reaching the threshold establishes Sprint intent and may request the existing `Ability.Movement.Sprint` when movement, ground, Stamina, and GAS activation rules permit.
-
-Route and ownership: `ue-stage-workflow` outer, `unreal-enhanced-input` primary, `ue5-cpp-gameplay` and `unreal-mcp` support. Plan explorers `0`, implementation executors `0`, Complex Executor `none`, Main parallel work `none`. Main owns the two `PlayerCharacter` C++ files, GAS request boundary, documentation, static review, and commit scope. The user owns `IA_DodgeSprint`/`IMC_Default`/`BP_Player` authoring and readback, `PolyQuestEditor` compilation, keyboard PIE, and final commit approval. No live Editor MCP readback is claimed in this session.
-
-Native scope: add `DodgeSprintAction`, an authorable positive `DodgeSprintHoldThresholdSeconds` defaulting to `0.15f`, Started/threshold/Completed/Canceled callbacks, a one-shot `FTimerHandle`, and EndPlay cleanup. Short release requests Dodge once; threshold or later release stops Sprint without a Dodge fallback; Canceled clears state without Dodge. A long press with no movement retains Sprint intent and can start later through existing `Move()`, `OnSprintRelevantTagChanged()`, and `OnMovementModeChanged()` retry paths. Existing Dodge/Sprint abilities remain owners of Cost, Stamina, MoveSpeed, Root Motion, tags, and `EndAbility()` cleanup. No new tag, ability, enum, Build.cs dependency, or input framework is introduced.
-
-Editor gate: create Digital `IA_DodgeSprint`, assign `BP_Player.DodgeSprintAction`, set the Blueprint CDO threshold to the tuned `0.15` seconds if it has a serialized older override, map keyboard Left Shift only to it in `IMC_Default`, and remove duplicate Left Shift mappings to old `IA_Dodge`/`IA_Sprint` without deleting those assets. Do not change gamepad mappings. These are user authoring requirements, not current MCP evidence.
-
-Main static gate is direct source/CodeGraph call-path review, stale `code-review-graph` treated only as supplemental, `git diff --check`, and a C4458 inherited-member-shadowing scan; Main does not run UBT, Editor writes, or PIE. User validation covers short/edge/long releases, movement/no movement, canceled/repeated input, interruption/air/landing recovery, stamina exhaustion, and existing combat/camera/enemy regressions. Closeout records the stable arbitration contract in `ARCHITECTURE.md`, moves TODO-01C2 to Done in `ROADMAP.md`, retains keyboard-only gamepad debt, and keeps the native candidate limited to `PlayerCharacter.h/.cpp` plus exact documentation hunks. `Content/**`, input assets, BP, maps, animation, GA/GE, generated output, and unrelated WIP remain excluded.
-
-### Current Status
-
-- Native `PlayerCharacter` implementation is complete: shared Action binding, positive 0.15 second threshold timer, short/long/canceled routing, automatic Sprint retry compatibility, and EndPlay cleanup.
-- The user confirmed the `0.15` second keyboard Scene01 PIE route. This is user runtime evidence; no new live Editor MCP readback or independent compile log is claimed here.
-- Main static checks completed: direct source readback, CodeGraph call-path review, stale code-review-graph supplemental analysis, C4458-style local-name scan, and `git diff --check`.
-- Strict review is complete: Main normal review and a separate Main adversarial fallback found no P0-P2 C++/GAS/Enhanced Input lifecycle blocker. `gpt-5.6-luna / xhigh` was unavailable, so no independent review is claimed.
-- Debt handoff: keyboard Shift is the accepted route. Controller parity remains unverified and is tracked in `ROADMAP.md`; the native commit excludes all `Content/**` authoring WIP and contains only `PlayerCharacter.h/.cpp` plus the exact TODO-01C2 documentation hunks.
-
-### Previous Stage Record
+Baseline: `24c1114 [Feature] 共享闪避与奔跑输入仲裁 (Shared Dodge/Sprint Input Arbitration)`.
 
 ### Objective
 
-Establish the first non-lethal, damage-semantic hard-interrupt path for the Goblin:
+Give the first Goblin an ASC-owned `Poise` / `MaxPoise` contract. Player Light, Sprint Attack, and Charged damage GameplayEffects deplete Poise through the existing shared melee delivery path. Crossing from positive Poise to zero starts one server-authoritative Stance Break Ability that uses the existing `State.Status.Stunned` tag, safely interrupts enemy melee/C3B reaction only after its authored Montage starts, and restores Poise after the break completes.
 
-- Only `GE_ChargedAttack_Damage` carries `Data.Reaction.Interrupt`, so only it can request an enemy Hit Reaction.
-- Light and Sprint Attack continue to deal damage without interrupting an active enemy attack. Any small additive flinch remains owned by `TODO-07B`.
-- `State.Status.Dead` remains terminal and wins before a reaction can be requested or recover movement.
+Locked values:
 
-The route is target-side and event driven:
-
-```text
-Charged Damage GE Asset Tag
-  -> AEnemyCharacter Health change callback
-  -> Event.Reaction.Enemy.Hit on the target ASC
-  -> UEnemyHitReactionAbility
-  -> verified reaction Montage start
-  -> explicit cancellation of Ability.Attack.Enemy.Melee
-  -> existing enemy melee EndAbility cleanup
-```
-
-There is no second damage, melee trace, AI state machine, Poise, hit-direction, reaction queue, Root Motion, or Reaction DataAsset path in this stage.
+- `MaxPoise = 100`, `Poise = 100` defaults in `UCharacterAttributeSet`.
+- `GE_LightAttack_Damage` authors fixed `Poise -15`.
+- `GE_SprintAttack_Damage` authors fixed `Poise -25`.
+- Charged attack uses existing charge alpha to linearly send `Data.Poise.Charged` from `-25` through `-50` with its existing `Data.Damage.Charged` value.
+- Partial Poise damage waits `2.0s`, then restores `10/s` in `0.1s` steps through an authored Instant recovery GameplayEffect.
+- The first Stance Break is full-body and functionally in-place. Its current authored source may contain root translation, but `DisableMovement()` deliberately suppresses actor displacement; this is not functional Root Motion stance-break behavior. Directional reactions, root-motion break behavior, player Poise/reaction, Poise UI, block, parry, hyper armor, and StateTree topology changes are out of scope.
 
 ### Route And Ownership
 
 ```text
 Outer: ue-stage-workflow
 Primary: ue5-cpp-gameplay
-Support: ue5-blueprint-workflow, ue5-state-tree-ai, ue5-debug-validation
-Route reason: target-side GameplayEffect reception, GAS Ability lifecycle, safe attack interruption, and StateTree waiting share one enemy lifecycle boundary.
+Support: ue5-state-tree-ai, ue5-blueprint-workflow, ue5-debug-validation, unreal-mcp
+Route reason: AttributeSet mutation, shared GameplayEffect delivery, target-side event routing, Ability teardown, and Controller/StateTree action gates share one enemy lifecycle boundary.
 ```
 
 ```text
@@ -72,131 +41,103 @@ Plan explorers: 0
 Implementation executors: 0
 Complex Executor: none
 Main parallel work: none
-Reason: Attribute/ASC, Gameplay Tag, Ability cancellation, Controller, and StateTree behavior are shared Main-only lifecycle contracts. Splitting them would increase integration risk, and the configured Luna reviewer/runtime is unavailable.
+Reason: ASC, AttributeSet, shared resolver, Gameplay Tags, and enemy lifecycle contracts are Main-only integration territory. Splitting them would create concurrent writers over the same state.
 ```
 
-- Main owns C++, Gameplay Tag configuration, plan maintenance, static checks, review, document closeout, staging, and commit boundary.
-- The user owns mutable Editor authoring, manual `PolyQuestEditor` compilation, Scene01 PIE/visual validation, and final commit approval.
-- No live Editor write is authorized in this stage. The Editor endpoint may listen, but no callable Unreal MCP toolset is injected in this session; asset conditions below are user gates, not Editor readback evidence.
+Main owns C++, tags, source/static checks, strict review, documentation, staging, and commit boundary. The user owns all mutable Content authoring, Editor readback, manual `PolyQuestEditor` compilation, Scene01 PIE/visual validation, and final commit approval. No current live Unreal MCP readback is claimed.
 
-### Approved Native Changes
+### Approved Native Contract
 
-#### Gameplay Tags
+#### Attribute And Shared Delivery
 
-Add these project tags in `Config/Tags/PolyQuestGameplayTags.ini`:
+- `UCharacterAttributeSet` gains `Poise` and `MaxPoise`; every final/base/GameplayEffect mutation clamps Poise to `[0, MaxPoise]`. AttributeSet only clamps values and never selects death or stance behavior.
+- `FMeleeHitRequest`, `UAbilityTask_MeleeTraceWindow`, and `FMeleeHitResolver` accept a narrow multi-SetByCaller collection. Existing single-value callers retain their current behavior through a compatibility overload; Charged supplies both damage and Poise values through one authored Damage GE Spec.
+- `UChargedAttackAbility` stores `MinimumPoiseDamage`, `MaximumPoiseDamage`, `PoiseDataTag`, and its released Poise magnitude. It validates the new values/tags, computes them from the existing charge alpha, and resets them through existing `EndAbility()` cleanup.
 
-- `Ability.Reaction.Enemy.Hit`
-- `Event.Reaction.Enemy.Hit`
-- `State.Action.HitReacting`
-- `Data.Reaction.Interrupt`
+#### Enemy Poise Lifecycle
 
-#### Target-Side Reaction Gate
+- `AEnemyCharacter` binds and unbinds a Poise delegate with its existing Health/Dead bindings. A positive-to-zero crossing clears pending recovery and schedules a next-tick Stance Break dispatch so all modifiers from the same GE settle before Dead is checked.
+- The deferred dispatch requires authority, a live non-destroying enemy, Health above zero, a valid Stance Break event, and a valid Poise recovery configuration. It sends `Event.Reaction.Enemy.StanceBreak` once; a missing/ungiven Ability logs and restores Poise instead of leaving an unrepeatable zero state.
+- Nonlethal partial Poise damage restarts one timer. The timer creates an outgoing Spec from `PoiseRecoveryGameplayEffectClass`, sets positive `Data.Poise.Recovery`, and applies it to the same ASC. It stops when full, dead, stunned, tearing down, invalid, or unable to advance Poise.
+- `AEnemyCharacter` exposes only the narrow native helpers required by the new Ability: `IsPoiseBroken`, `HasValidPoiseRecoveryConfiguration`, and `RestorePoiseToMax`. They never directly write the Attribute; the authored Instant GE remains the mutation path.
+- Death clears both timer paths before `CancelAllAbilities()`. Dead remains terminal and suppresses both recovery and Stance Break completion.
 
-`AEnemyCharacter::OnHealthAttributeChanged()` keeps the existing `Health <= 0 -> State.Status.Dead` path first. It sends `Event.Reaction.Enemy.Hit` to its own ASC only when all of these are true:
+#### Stance Break, C3B, And AI
 
-1. This is authoritative execution.
-2. Health actually decreased and remains above zero.
-3. The enemy is not dead.
-4. `FOnAttributeChangeData::GEModData` is valid.
-5. The applied `FGameplayEffectSpec` Asset Tags contain exactly `Data.Reaction.Interrupt`.
+- Add `UEnemyStanceBreakAbility`: `InstancedPerActor`, `ServerOnly`, triggered by `Event.Reaction.Enemy.StanceBreak`, tagged `Ability.Reaction.Enemy.StanceBreak`, and owning the existing `State.Status.Stunned` for its active lifetime.
+- It blocks Dead and re-entry but may preempt active `State.Action.HitReacting`. It verifies ASC, living broken enemy, valid recovery configuration, AnimInstance, required tags, and an authored `StanceBreakMontage` before starting.
+- Only after `Montage_IsActive()` succeeds does it stop/disable CharacterMovement and explicitly cancel `Ability.Attack.Enemy.Melee` and `Ability.Reaction.Enemy.Hit`. Its guarded `EndAbility()` removes delegates/tasks, restores walking and full Poise only for a live non-destroying enemy, and never undoes death teardown.
+- C3B `UEnemyHitReactionAbility::EndAbility()` must not restore Walking while `State.Status.Stunned` is active. Health reaction dispatch skips `Data.Reaction.Interrupt` when current Poise is already zero; the Stance Break route wins regardless of GE modifier order.
+- `AEnemyAIController::IsEnemyStunned()` is ASC-tag based. Controller attack requests reject Dead, Stunned, HitReacting, invalid Profile/target/range, and cooldown. The existing StateTree melee task returns `Running` during Stunned; no StateTree asset layout, task base, instance data, transition, or navigation contract changes.
 
-Healing, unchanged Health, direct/non-GE changes, rejected same-team or invulnerable hits, missed traces, and lethal damage do not request a reaction. `FMeleeHitResolver` stays unchanged: it owns GE delivery and target-side code decides whether the accepted effect has reaction semantics.
+#### Tags
 
-#### UEnemyHitReactionAbility
+Add only:
 
-Add `UEnemyHitReactionAbility` as an `InstancedPerActor`, `ServerOnly`, Gameplay-Event-triggered ability:
+- `Ability.Reaction.Enemy.StanceBreak`
+- `Event.Reaction.Enemy.StanceBreak`
+- `Data.Poise.Charged`
+- `Data.Poise.Recovery`
 
-- Ability Tag: `Ability.Reaction.Enemy.Hit`.
-- Trigger: `Event.Reaction.Enemy.Hit` with `GameplayEvent` source.
-- Owned active Tag: `State.Action.HitReacting`.
-- Blocked Tags: `State.Status.Dead`, `State.Status.Stunned`, and `State.Action.HitReacting`.
-- One authored `EditDefaultsOnly` field: `HitReactionMontage`.
-- No Cost, Cooldown, trace, damage, queue, random selection, direction, Root Motion policy, or Reaction DataAsset.
-
-It validates ASC, `AEnemyCharacter`, non-dead state, required tags, AnimInstance, and authored Montage. It reuses the enemy melee Montage identity filter and one guarded `EndAbility()` cleanup path. Only after `Montage_IsActive()` confirms the reaction actually started does it stop/disable CharacterMovement and explicitly call `CancelAbilities()` for `Ability.Attack.Enemy.Melee`.
-
-Do not use the `CancelAbilitiesWithTag` property. UE 5.8 performs that cancellation during `PreActivate()`, before authored Montage startup is verified. Explicit post-start cancellation preserves an active enemy attack when the reaction Montage is invalid and still lets `UEnemyMeleeAbility::EndAbility()` clean its Trace Window, Montage, State Tag, task, and existing cooldown.
-
-`EndAbility()` is idempotent. It unregisters the animation delegate, stops only its active Montage, ends its task, and restores `MOVE_Walking` only if this ability actually locked movement and the enemy is still alive and not tearing down. Death and teardown never restore movement.
-
-#### Enemy Melee, Controller, And StateTree Contract
-
-- `UEnemyMeleeAbility` adds `State.Action.HitReacting` to its activation blockers and validates that tag.
-- `AEnemyAIController` exposes `IsEnemyHitReactionActive()` from the controlled enemy ASC. `TryRequestMeleeAttack()` rejects while it is active.
-- `FEnemyStateTreeTask_RequestMeleeAttack` checks the reaction state at the start of Enter and Tick, returning `Running` rather than retrying an attack. After reaction ends, it retains its current semantics: an already observed attack completes after its tag clears; otherwise cooldown still waits; range failure still lets StateTree return to Chase.
-- Do not change the authored `Patrol -> Alert -> Chase -> Combat -> Return` topology, Controller navigation ownership, Attack Profile, WeaponMesh, collision, Physics Asset, AnimBP, or StateTree serialized task layout.
-
-### Native File Boundary
-
-Add:
-
-- `Source/PolyQuest/Public/AbilitySystem/Abilities/EnemyHitReactionAbility.h`
-- `Source/PolyQuest/Private/AbilitySystem/Abilities/EnemyHitReactionAbility.cpp`
-
-Modify only:
-
-- `Source/PolyQuest/Public/Character/Enemy/EnemyCharacter.h`
-- `Source/PolyQuest/Private/Character/Enemy/EnemyCharacter.cpp`
-- `Source/PolyQuest/Public/AI/EnemyAIController.h`
-- `Source/PolyQuest/Private/AI/EnemyAIController.cpp`
-- `Source/PolyQuest/Public/AbilitySystem/Abilities/EnemyMeleeAbility.h`
-- `Source/PolyQuest/Private/AbilitySystem/Abilities/EnemyMeleeAbility.cpp`
-- `Source/PolyQuest/Private/AI/StateTree/EnemyStateTreeTasks.cpp`
-- `Config/Tags/PolyQuestGameplayTags.ini`
-- `plan.md`
-
-Do not modify `FMeleeHitResolver`, `CharacterAttributeSet`, Build.cs, project settings, `ARCHITECTURE.md`, or `ROADMAP.md` until user validation and review support closeout.
+Reuse `State.Status.Stunned`; do not add another break state/tag hierarchy.
 
 ### User-Owned Editor Gate
 
-1. In `GE_ChargedAttack_Damage`, add UE 5.8's **Asset Tags (on Gameplay Effect)** component and set `Data.Reaction.Interrupt`. Do not place it in Granted Tags.
-2. Do not add this tag to Light or Sprint damage GameplayEffects.
-3. Create `GA_EnemyHitReaction`, parent class `UEnemyHitReactionAbility`, and add it to `BP_Enemy_Goblin` `StartupAbilities`.
-4. Assign a verified `SKEL_Character_Dungeon`-compatible, full-body, in-place, non-Root-Motion reaction Montage using `DefaultGroup.DefaultSlot`.
-5. The reaction Montage must not contain `AttackTraceWindow`, damage, Health, Gameplay Tag, StateTree, movement, or collision behavior.
-6. Do not edit the StateTree asset, Attack Profile, collision, WeaponMesh, Physics Asset, or AnimBP for this stage.
+1. Add `Poise -15` to `GE_LightAttack_Damage` and `Poise -25` to `GE_SprintAttack_Damage`.
+2. Add a `Poise` SetByCaller Modifier using `Data.Poise.Charged` to `GE_ChargedAttack_Damage`; retain its existing damage modifier and `Data.Reaction.Interrupt` Asset Tag.
+3. Create Instant `GE_EnemyPoise_Recovery`: one `Poise` Modifier using `Data.Poise.Recovery`; it grants no state tags.
+4. Set `BP_Enemy_Goblin.PoiseRecoveryGameplayEffectClass` to that GE. Create `GA_EnemyStanceBreak`, parent it to `UEnemyStanceBreakAbility`, add it to StartupAbilities, and assign one `SKEL_Character_Dungeon`-compatible full-body, functionally in-place Montage in `DefaultGroup.DefaultSlot`. The source may contain authored root translation, but this stage does not adopt functional Root Motion movement.
+5. Do not edit `ST_Enemy_Goblin_Melee` topology/bindings, AnimBP state machines, WeaponMesh, collision, Physics Asset, map, or current authoring WIP for this stage.
 
 ### Validation Matrix
 
-#### Main Static Gate
+Main static gate: final source/caller reads, CodeGraph, stale code-review-graph only as supplemental coverage, Tag cross-check, C4458 inherited-member-shadow scan, and `git diff --check`. Main does not run UBT, Editor writes, or PIE.
 
-- Re-read the final Health callback, reaction Ability, melee Ability, Controller, StateTree task, resolver call boundary, and Tag configuration.
-- Use CodeGraph for source call paths. Use code-review-graph only as a supplemental impact check; its `6df6dde` index is older than the `6c119d3` baseline, so direct source/diff review remains primary.
-- Inspect for inherited-member-shadowing locals before asking for a build, specifically the previously observed C4458 pattern.
-- Run `git diff --check`.
-- Do not run UBT, Visual Studio, Live Coding, Editor write operations, or PIE.
+User compile/PIE gate:
 
-#### User Compile And PIE Gate
+- Verify Light `-15`, Sprint `-25`, Charged `-25..-50` Poise delivery and two-second delayed `10/s` partial recovery.
+- Verify one Stance Break at zero Poise, no requeue while Stunned, safe attack/Trace/C3B cleanup, full recovery at break end, and StateTree navigation recovery.
+- Verify a same-hit lethal outcome goes directly to Dead/ragdoll or AnimBP fallback with no Stance Break recovery.
+- Verify interruption, invalid presentation configuration, repeated hits, target loss, teardown, same-team rejection, invulnerability, misses, player actions, enemy combat, death, and ragdoll regressions.
 
-By explicit user acceptance, C3B closes on focused Scene01 reaction-animation playback rather than the broader original matrix below. The accepted authored reaction clip currently carries Root Motion, while C3B intentionally calls `DisableMovement()` after playback starts, so it is accepted only as an in-place presentation fixture. This is not compile evidence, root-motion displacement evidence, or a replacement for the C3C root-motion adoption gate.
+### Documentation And Commit Boundary
 
-The retained checks below are regression reference for a later reaction-policy change; they are not blockers for this accepted C3B closeout.
+After user compile/PIE and strict review: update only stable C3C contracts in `ARCHITECTURE.md`, move `TODO-02C3C` to Done in the exact `ROADMAP.md` hunk, preserve its conditional root-motion debt, and retain this plan as the current-most-recent handoff until a later stage replaces it.
 
-- Compile `PolyQuestEditor` manually.
-- Light/Sprint non-lethal hits only reduce Health; they do not trigger reaction.
-- Charged non-lethal hits during Idle and Chase play one reaction, freeze movement, then restore navigation.
-- Charged hits during enemy attack, including an open Trace Window, stop the old attack Montage and clear `State.Action.Attacking`, Trace Window, and task without residual damage.
-- Repeated Charged hits during reaction do not replay, queue, or stack it. Afterward the enemy still obeys the existing attack cooldown.
-- Lethal Charged damage goes directly to C2/C3D Dead presentation; it does not first play reaction or restore movement.
-- Same-team, invulnerable, and missed hits do not trigger reaction. Sight loss, Return, PIE stop, and Actor teardown leave no `State.Action.HitReacting` or reaction Montage.
-- Re-run regression checks for player attack, enemy attack, same-team rejection, invulnerability rejection, and C3D ragdoll/AnimBP fallback.
+Native candidate paths are `CharacterAttributeSet.*`, `ChargedAttackAbility.*`, new `EnemyStanceBreakAbility.*`, `EnemyCharacter.*`, `EnemyAIController.*`, `EnemyHitReactionAbility.*`, `AbilityTask_MeleeTraceWindow.*`, `MeleeHitResolver.*`, `EnemyStateTreeTasks.cpp`, `Config/Tags/PolyQuestGameplayTags.ini`, and exact documentation hunks. Exclude every `Content/**` item, project/editor config WIP, StateTree/GA/GE/Montage/Blueprint assets, maps, imports, generated directories, and unrelated `ROADMAP.md` changes. No commit occurs without explicit approval.
 
-### Closeout And Commit Boundary
+### Review And Closeout Record (2026-08-16)
 
-After the user-accepted focused playback gate and strict review:
+#### Validation Evidence
 
-- `ARCHITECTURE.md` records the stable GE Asset Tag -> target event -> reaction Ability -> post-start attack-cancel contract, plus StateTree Combat waiting during reaction.
-- `ROADMAP.md` moves `TODO-02C3B` to Done. `TODO-02C3C` remains the sole owner of Poise/stance break; `TODO-07B` owns non-interrupting light flinch presentation.
-- This plan remains as the most-recent-stage record until the next accepted plan replaces it.
+- User-confirmed: manual `PolyQuestEditor` compilation passed again after the later `OnPossess()` logging repair. Earlier user confirmation also covers a focused Scene01 PIE route for Poise/Stance Break. Individual validation-matrix subcase results were not separately recorded here.
 
-Native commit candidates are the new reaction Ability pair, the exact Enemy Character/Controller/Melee/StateTree C++ hunks, Gameplay Tag config, and exact documentation hunks. Explicitly exclude all `Content/**`, including GA, GE, Montage, Blueprint, AnimBP, StateTree, map, imported assets, External Actors, generated directories, and unrelated existing `ROADMAP.md` WIP. A native commit must not claim a clean checkout recreates the authored reaction fixture.
+#### Main Strict Review (normal pass plus Main adversarial fallback)
 
-### Current Status
+Scope: the full native/config diff against baseline `24c1114` plus direct callers/callees (`BaseCharacter`, `EnemyMeleeAbility`, StateTree tasks), read in full.
 
-- C3D compile and PIE evidence were user-confirmed before this stage.
-- C3B native implementation is complete: target-side GE Asset Tag reception, `UEnemyHitReactionAbility`, enemy melee blocking, Controller reaction query, and StateTree Combat waiting are in the approved native boundary.
-- Main static preflight completed: final source/caller reads through CodeGraph where indexed, direct readback for the new untracked Ability pair, Gameplay Tag cross-check, C4458-style local-name scan, memory MCP query, and `git diff --check`. The memory query found no matching reusable entry.
-- `code-review-graph` reported a high generic impact surface but its graph was built at `6df6dde`, behind `6c119d3`; it did not cover the untracked reaction Ability pair. It is recorded only as a stale-coverage supplement, not as correctness or runtime proof.
-- The user explicitly accepted focused Scene01 reaction-animation playback as the C3B runtime gate. The currently authored Root Motion clip remains visually in place because this Ability deliberately locks CharacterMovement after the Montage starts; no root-motion displacement, direction tier, Poise, or broad reaction regression is claimed by that acceptance.
-- C3B strict review is complete: Main normal review plus a separately performed Main adversarial fallback found no P0-P2 C++/GAS/Tag/StateTree blocker. `gpt-5.6-luna / xhigh` remained unavailable, so no independent review is claimed.
-- Debt handoff: `TODO-02C3C` owns a root-motion Big Reaction only after it defines a deliberate movement policy, navigation/collision behavior, interruption/death teardown, and focused PIE coverage. `TODO-07B` owns non-interrupting Small Reaction presentation.
+Result: no P0/P1 source defect. All nine targeted attack surfaces closed with file/line and engine-source evidence:
+
+- GE Modifier order: per-modifier execution (`GameplayEffect.cpp` `InternalExecuteMod`) makes both authored orders converge on the Stance Break route; `OnHealthAttributeChanged` gates `Data.Reaction.Interrupt` dispatch on `IsPoiseBroken()`.
+- Same-hit lethal: lethal Health promotion runs before the reaction block (`EnemyCharacter.cpp` lethal block first), and `HandleDeath()` clears the pending Stance Break timer, so death always wins regardless of modifier order.
+- Stance/C3B Montage preemption: `ActivationOwnedTags` are applied in `PreActivate` before `ActivateAbility` (engine `GameplayAbility.cpp`), so a same-frame interrupted C3B already sees `State.Status.Stunned`; both abilities query the tag dynamically at their `EndAbility()`, so exactly one side restores walking in every completion order.
+- Deferred timer: one pending flag, cleared on death, EndPlay, and dispatch; zero-Poise re-damage is clamped to a no-change event and cannot requeue.
+- Invalid Montage: movement lock and `CancelAbilities` run only after `Montage_IsActive()` confirmation; the failed-start and no-ability-accepted paths restore Poise through the authored Instant GE (engine `HandleGameplayEvent` counts successful activations only).
+- Duplicate events: `Event.Reaction.Enemy.Hit`'s only sender skips while Poise is zero; the Stance Break event fires once per positive-to-zero crossing.
+- StateTree reentry: `FEnemyStateTreeTask_RequestMeleeAttack` returns `Running` while Stunned and `AEnemyAIController::TryRequestMeleeAttack()` rejects Stunned.
+- SetByCaller overwrite: the single-value field applies before the multi-tag map; Charged is the only map user (`Data.Damage.Charged` + `Data.Poise.Charged`), while Light/Sprint/EnemyMelee keep the single-value overload, so no tag overlaps.
+- EndAbility reentry: `bEndAbilityRequested` guard plus reset in `ActivateAbility`; Poise restoration runs before `Super::EndAbility()` removes Stunned, and the resulting increase event is ignored by the decrease-only reaction handler.
+
+Findings and repair:
+
+- P2 (repaired): `AEnemyAIController::OnPossess()` returned silently when `HasValidPoiseRecoveryConfiguration()` failed, unlike the adjacent AttackProfile gate which logs. Repair: one-time `UE_LOG Warning` plus `bHasLoggedInvalidPoiseRecoverySetup` flag (`EnemyAIController.cpp`, `EnemyAIController.h`); behavior unchanged (fail-closed StateTree start denial).
+- P3 (accepted, no change): a looping authored Stance/reaction Montage has no timeout; death cancellation is the only exit. Same accepted exposure as C3B; the Editor gate already requires a non-looping full-body in-place Montage.
+- P3 (accepted, no change): with an invalid Poise recovery configuration the deferred dispatch returns without restoration; restoration is technically impossible without the authored recovery GameplayEffect, the condition is the plan-stated dispatch prerequisite, and the Controller gate plus logged warnings make the misconfiguration fail closed rather than silently wrong.
+
+Static evidence only: baseline diff reads, full-file reads, four engine-source semantic verifications (`HandleGameplayEvent` counting, `CancelAbilities(With, Without, Ignore)`, `ActivationOwnedTags` timing, per-modifier execution), tag cross-check, C4458-style shadow scan, `git diff --check`, CodeGraph caller closure, and an empty error-memory query. The requested fresh independent reviewer channel remained unavailable, so the second pass is a labeled Main adversarial fallback, not an independent review; the user additionally scheduled a separate codex confirmation of this review and repair.
+
+#### Documentation Synchronization
+
+- `ARCHITECTURE.md`: added the stable Enemy Poise And Stance Break contract, updated the AttributeSet field list, Charged dual SetByCaller delivery, and the Gameplay Tag inventory; moved remaining Poise-adjacent future work (player Poise/reaction, directional tiers, root-motion break adoption) to the not-yet-established list.
+- `ROADMAP.md`: moved `TODO-02C3C` to Done Milestones with the conditional root-motion Big Reaction debt preserved, updated Current State, and removed the open milestone entry.
+- `plan.md`: retained this record as the current most-recent stage handoff until the next accepted stage replaces it.

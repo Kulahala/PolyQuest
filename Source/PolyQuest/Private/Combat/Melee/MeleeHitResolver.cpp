@@ -74,5 +74,13 @@ bool FMeleeHitResolver::TryResolveHit(const FMeleeHitRequest& Request)
 		DamageSpecHandle.Data->SetSetByCallerMagnitude(Request.SetByCallerMagnitudeTag, Request.SetByCallerMagnitude);
 	}
 
+	for (const TPair<FGameplayTag, float>& SetByCallerMagnitude : Request.SetByCallerMagnitudes)
+	{
+		if (SetByCallerMagnitude.Key.IsValid())
+		{
+			DamageSpecHandle.Data->SetSetByCallerMagnitude(SetByCallerMagnitude.Key, SetByCallerMagnitude.Value);
+		}
+	}
+
 	return TargetAbilitySystemComponent->ApplyGameplayEffectSpecToSelf(*DamageSpecHandle.Data.Get()).WasSuccessfullyApplied();
 }

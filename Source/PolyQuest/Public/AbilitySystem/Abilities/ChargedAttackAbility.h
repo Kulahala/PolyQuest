@@ -67,6 +67,12 @@ protected:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Charged Attack|Charge", meta = (ClampMin = "1.0"))
 	float MaximumDamageMultiplier = 1.8f;
 
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Charged Attack|Poise", meta = (ClampMin = "0.01"))
+	float MinimumPoiseDamage = 25.0f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Charged Attack|Poise", meta = (ClampMin = "0.01"))
+	float MaximumPoiseDamage = 50.0f;
+
 private:
 	UPROPERTY(Transient)
 	TObjectPtr<UAbilityTask_PlayMontageAndWait> MontageTask;
@@ -113,7 +119,9 @@ private:
 	FGameplayTag DodgeCancelableStateTag;
 	FGameplayTag ChargingStateTag;
 	FGameplayTag DamageDataTag;
+	FGameplayTag PoiseDataTag;
 	float DamageMultiplier = 1.0f;
+	float PoiseDamageMagnitude = 0.0f;
 	bool bDodgeCancelable = false;
 	bool bChargingStateApplied = false;
 	bool bMontagePausedAtHoldReady = false;

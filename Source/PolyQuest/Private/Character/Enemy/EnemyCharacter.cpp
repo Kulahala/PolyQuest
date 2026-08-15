@@ -6,12 +6,14 @@
 #include "AbilitySystemComponent.h"
 #include "Components/CapsuleComponent.h"
 #include "Components/SkeletalMeshComponent.h"
+#include "Engine/World.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "GameplayEffect.h"
 #include "GameplayEffectExtension.h"
 #include "GameplayEffectTypes.h"
 #include "GameplayTagContainer.h"
 #include "PolyQuest.h"
+#include "TimerManager.h"
 
 AEnemyCharacter::AEnemyCharacter()
 {
@@ -19,6 +21,9 @@ AEnemyCharacter::AEnemyCharacter()
 	DeadStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Status.Dead")), false);
 	HitReactionEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Reaction.Enemy.Hit")), false);
 	InterruptReactionDataTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Data.Reaction.Interrupt")), false);
+	StanceBreakEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Reaction.Enemy.StanceBreak")), false);
+	PoiseRecoveryDataTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Data.Poise.Recovery")), false);
+	StunnedStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Status.Stunned")), false);
 	AIControllerClass = AEnemyAIController::StaticClass();
 	AutoPossessAI = EAutoPossessAI::PlacedInWorldOrSpawned;
 	bUseControllerRotationYaw = true;
@@ -30,10 +35,27 @@ void AEnemyCharacter::BeginPlay()
 {
 	Super::BeginPlay();
 	BindDeathEvents();
+
+	if (!HasValidPoiseRecoveryConfiguration() && !bHasLoggedInvalidPoiseRecoveryConfiguration)
+	{
+		UE_LOG(LogPolyQuest, Warning, TEXT("Enemy '%s' has invalid Poise recovery configuration: a recovery GameplayEffect, valid Data.Poise.Recovery tag, positive MaxPoise/rate, and a positive tick interval are required."), *GetNameSafe(this));
+		bHasLoggedInvalidPoiseRecoveryConfiguration = true;
+	}
 }
 
 void AEnemyCharacter::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
+	bDeathTeardownStarted = true;
+	ClearPoiseRecovery();
+	if (UWorld* World = GetWorld())
+	{
+		if (PendingStanceBreakTimerHandle.IsValid())
+		{
+			World->GetTimerManager().ClearTimer(PendingStanceBreakTimerHandle);
+		}
+	}
+	PendingStanceBreakTimerHandle.Invalidate();
+	bStanceBreakDispatchPending = false;
 	UnbindDeathEvents();
 	Super::EndPlay(EndPlayReason);
 }
@@ -43,6 +65,27 @@ bool AEnemyCharacter::IsDead() const
 	const UAbilitySystemComponent* CharacterASC = GetAbilitySystemComponent();
 	return CharacterASC && DeadStateTag.IsValid()
 		&& CharacterASC->HasMatchingGameplayTag(DeadStateTag);
+}
+
+bool AEnemyCharacter::IsPoiseBroken() const
+{
+	const UAbilitySystemComponent* CharacterASC = GetAbilitySystemComponent();
+	return CharacterASC && CharacterASC->GetNumericAttribute(UCharacterAttributeSet::GetPoiseAttribute()) <= 0.0f;
+}
+
+bool AEnemyCharacter::HasValidPoiseRecoveryConfiguration() const
+{
+	const UAbilitySystemComponent* CharacterASC = GetAbilitySystemComponent();
+	const float CurrentMaxPoise = CharacterASC
+		? CharacterASC->GetNumericAttribute(UCharacterAttributeSet::GetMaxPoiseAttribute())
+		: 0.0f;
+
+	return PoiseRecoveryGameplayEffectClass != nullptr
+		&& PoiseRecoveryDataTag.IsValid()
+		&& CurrentMaxPoise > 0.0f
+		&& PoiseRecoveryRate > 0.0f
+		&& PoiseRecoveryTickIntervalSeconds > 0.0f
+		&& PoiseRecoveryDelaySeconds >= 0.0f;
 }
 
 void AEnemyCharacter::BindDeathEvents()
@@ -57,6 +100,8 @@ void AEnemyCharacter::BindDeathEvents()
 	DeathBoundAbilitySystemComponent = CharacterASC;
 	HealthAttributeChangedHandle = CharacterASC->GetGameplayAttributeValueChangeDelegate(UCharacterAttributeSet::GetHealthAttribute())
 		.AddUObject(this, &AEnemyCharacter::OnHealthAttributeChanged);
+	PoiseAttributeChangedHandle = CharacterASC->GetGameplayAttributeValueChangeDelegate(UCharacterAttributeSet::GetPoiseAttribute())
+		.AddUObject(this, &AEnemyCharacter::OnPoiseAttributeChanged);
 
 	if (DeadStateTag.IsValid())
 	{
@@ -84,6 +129,11 @@ void AEnemyCharacter::UnbindDeathEvents()
 			BoundASC->GetGameplayAttributeValueChangeDelegate(UCharacterAttributeSet::GetHealthAttribute())
 				.Remove(HealthAttributeChangedHandle);
 		}
+		if (PoiseAttributeChangedHandle.IsValid())
+		{
+			BoundASC->GetGameplayAttributeValueChangeDelegate(UCharacterAttributeSet::GetPoiseAttribute())
+				.Remove(PoiseAttributeChangedHandle);
+		}
 		if (DeadStateTagChangedHandle.IsValid() && DeadStateTag.IsValid())
 		{
 			BoundASC->UnregisterGameplayTagEvent(DeadStateTagChangedHandle, DeadStateTag);
@@ -91,6 +141,7 @@ void AEnemyCharacter::UnbindDeathEvents()
 	}
 
 	HealthAttributeChangedHandle.Reset();
+	PoiseAttributeChangedHandle.Reset();
 	DeadStateTagChangedHandle.Reset();
 	DeathBoundAbilitySystemComponent.Reset();
 }
@@ -106,7 +157,7 @@ void AEnemyCharacter::OnHealthAttributeChanged(const FOnAttributeChangeData& Cha
 		return;
 	}
 
-	if (!HasAuthority() || ChangeData.NewValue >= ChangeData.OldValue || IsDead() || !ChangeData.GEModData
+	if (!HasAuthority() || ChangeData.NewValue >= ChangeData.OldValue || IsDead() || IsPoiseBroken() || !ChangeData.GEModData
 		|| !HitReactionEventTag.IsValid() || !InterruptReactionDataTag.IsValid())
 	{
 		return;
@@ -131,6 +182,183 @@ void AEnemyCharacter::OnHealthAttributeChanged(const FOnAttributeChangeData& Cha
 	ReactionEventData.Target = this;
 	ReactionEventData.EventMagnitude = ChangeData.OldValue - ChangeData.NewValue;
 	CharacterASC->HandleGameplayEvent(HitReactionEventTag, &ReactionEventData);
+}
+
+void AEnemyCharacter::OnPoiseAttributeChanged(const FOnAttributeChangeData& ChangeData)
+{
+	if (!HasAuthority() || bDeathTeardownStarted || IsDead() || ChangeData.NewValue >= ChangeData.OldValue)
+	{
+		return;
+	}
+
+	ClearPoiseRecovery();
+	if (ChangeData.NewValue > 0.0f)
+	{
+		StartPoiseRecovery();
+		return;
+	}
+
+	UAbilitySystemComponent* CharacterASC = GetAbilitySystemComponent();
+	if (!CharacterASC || CharacterASC->GetNumericAttribute(UCharacterAttributeSet::GetHealthAttribute()) <= 0.0f
+		|| !StanceBreakEventTag.IsValid() || bStanceBreakDispatchPending)
+	{
+		return;
+	}
+
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return;
+	}
+
+	bStanceBreakDispatchPending = true;
+	PendingStanceBreakTimerHandle = World->GetTimerManager().SetTimerForNextTick(this, &AEnemyCharacter::DispatchPendingStanceBreak);
+}
+
+void AEnemyCharacter::DispatchPendingStanceBreak()
+{
+	bStanceBreakDispatchPending = false;
+	PendingStanceBreakTimerHandle.Invalidate();
+
+	UAbilitySystemComponent* CharacterASC = GetAbilitySystemComponent();
+	if (!HasAuthority() || bDeathTeardownStarted || IsDead() || IsActorBeingDestroyed() || !CharacterASC
+		|| CharacterASC->GetNumericAttribute(UCharacterAttributeSet::GetHealthAttribute()) <= 0.0f || !IsPoiseBroken())
+	{
+		return;
+	}
+
+	if (!HasValidPoiseRecoveryConfiguration())
+	{
+		if (!bHasLoggedInvalidPoiseRecoveryConfiguration)
+		{
+			UE_LOG(LogPolyQuest, Warning, TEXT("Enemy '%s' cannot dispatch Stance Break: Poise recovery configuration is invalid."), *GetNameSafe(this));
+			bHasLoggedInvalidPoiseRecoveryConfiguration = true;
+		}
+		return;
+	}
+
+	FGameplayEventData StanceBreakEventData;
+	StanceBreakEventData.EventTag = StanceBreakEventTag;
+	StanceBreakEventData.Target = this;
+	StanceBreakEventData.EventMagnitude = 0.0f;
+
+	const int32 TriggeredAbilityCount = CharacterASC->HandleGameplayEvent(StanceBreakEventTag, &StanceBreakEventData);
+	if (TriggeredAbilityCount <= 0)
+	{
+		UE_LOG(LogPolyQuest, Warning, TEXT("Enemy '%s' reached zero Poise but no Stance Break Ability accepted the event; restoring Poise to avoid a permanent broken state."), *GetNameSafe(this));
+		if (!RestorePoiseToMax())
+		{
+			UE_LOG(LogPolyQuest, Warning, TEXT("Enemy '%s' could not restore Poise after a rejected Stance Break event; verify the recovery GameplayEffect modifies Poise with Data.Poise.Recovery."), *GetNameSafe(this));
+		}
+	}
+}
+
+void AEnemyCharacter::StartPoiseRecovery()
+{
+	if (!HasAuthority() || bDeathTeardownStarted || IsDead() || IsPoiseBroken() || !HasValidPoiseRecoveryConfiguration())
+	{
+		return;
+	}
+
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return;
+	}
+
+	World->GetTimerManager().SetTimer(
+		PoiseRecoveryTimerHandle,
+		this,
+		&AEnemyCharacter::OnPoiseRecoveryTick,
+		PoiseRecoveryTickIntervalSeconds,
+		true,
+		PoiseRecoveryDelaySeconds);
+}
+
+void AEnemyCharacter::ClearPoiseRecovery()
+{
+	if (UWorld* World = GetWorld())
+	{
+		World->GetTimerManager().ClearTimer(PoiseRecoveryTimerHandle);
+	}
+	PoiseRecoveryTimerHandle.Invalidate();
+}
+
+void AEnemyCharacter::OnPoiseRecoveryTick()
+{
+	UAbilitySystemComponent* CharacterASC = GetAbilitySystemComponent();
+	if (!HasAuthority() || bDeathTeardownStarted || IsDead() || IsActorBeingDestroyed() || !CharacterASC
+		|| !HasValidPoiseRecoveryConfiguration() || (StunnedStateTag.IsValid() && CharacterASC->HasMatchingGameplayTag(StunnedStateTag)))
+	{
+		ClearPoiseRecovery();
+		return;
+	}
+
+	const float CurrentPoise = CharacterASC->GetNumericAttribute(UCharacterAttributeSet::GetPoiseAttribute());
+	const float MaxPoise = CharacterASC->GetNumericAttribute(UCharacterAttributeSet::GetMaxPoiseAttribute());
+	if (CurrentPoise <= 0.0f || CurrentPoise >= MaxPoise)
+	{
+		ClearPoiseRecovery();
+		return;
+	}
+
+	if (!ApplyPoiseRecoveryMagnitude(PoiseRecoveryRate * PoiseRecoveryTickIntervalSeconds))
+	{
+		UE_LOG(LogPolyQuest, Warning, TEXT("Enemy '%s' Poise recovery stopped because the configured GameplayEffect did not advance Poise."), *GetNameSafe(this));
+		ClearPoiseRecovery();
+		return;
+	}
+
+	if (CharacterASC->GetNumericAttribute(UCharacterAttributeSet::GetPoiseAttribute()) >= MaxPoise)
+	{
+		ClearPoiseRecovery();
+	}
+}
+
+bool AEnemyCharacter::ApplyPoiseRecoveryMagnitude(float Magnitude)
+{
+	UAbilitySystemComponent* CharacterASC = GetAbilitySystemComponent();
+	if (!HasAuthority() || !CharacterASC || Magnitude <= 0.0f || !PoiseRecoveryGameplayEffectClass || !PoiseRecoveryDataTag.IsValid())
+	{
+		return false;
+	}
+
+	const FGameplayEffectSpecHandle RecoverySpecHandle = CharacterASC->MakeOutgoingSpec(
+		PoiseRecoveryGameplayEffectClass,
+		1.0f,
+		CharacterASC->MakeEffectContext());
+	if (!RecoverySpecHandle.IsValid() || !RecoverySpecHandle.Data.IsValid())
+	{
+		return false;
+	}
+
+	RecoverySpecHandle.Data->SetSetByCallerMagnitude(PoiseRecoveryDataTag, Magnitude);
+	const float PreviousPoise = CharacterASC->GetNumericAttribute(UCharacterAttributeSet::GetPoiseAttribute());
+	CharacterASC->ApplyGameplayEffectSpecToSelf(*RecoverySpecHandle.Data.Get());
+	const float CurrentPoise = CharacterASC->GetNumericAttribute(UCharacterAttributeSet::GetPoiseAttribute());
+	const float MaxPoise = CharacterASC->GetNumericAttribute(UCharacterAttributeSet::GetMaxPoiseAttribute());
+	return CurrentPoise > PreviousPoise + KINDA_SMALL_NUMBER || CurrentPoise >= MaxPoise;
+}
+
+bool AEnemyCharacter::RestorePoiseToMax()
+{
+	ClearPoiseRecovery();
+
+	UAbilitySystemComponent* CharacterASC = GetAbilitySystemComponent();
+	if (!HasAuthority() || bDeathTeardownStarted || IsDead() || IsActorBeingDestroyed() || !CharacterASC)
+	{
+		return false;
+	}
+
+	const float CurrentPoise = CharacterASC->GetNumericAttribute(UCharacterAttributeSet::GetPoiseAttribute());
+	const float MaxPoise = CharacterASC->GetNumericAttribute(UCharacterAttributeSet::GetMaxPoiseAttribute());
+	if (MaxPoise <= 0.0f)
+	{
+		return false;
+	}
+
+	return CurrentPoise >= MaxPoise - KINDA_SMALL_NUMBER
+		|| ApplyPoiseRecoveryMagnitude(MaxPoise - FMath::Max(CurrentPoise, 0.0f));
 }
 
 void AEnemyCharacter::OnDeadStateTagChanged(const FGameplayTag, int32 NewCount)
@@ -161,6 +389,16 @@ void AEnemyCharacter::HandleDeath()
 	}
 
 	bDeathTeardownStarted = true;
+	ClearPoiseRecovery();
+	if (UWorld* World = GetWorld())
+	{
+		if (PendingStanceBreakTimerHandle.IsValid())
+		{
+			World->GetTimerManager().ClearTimer(PendingStanceBreakTimerHandle);
+		}
+	}
+	PendingStanceBreakTimerHandle.Invalidate();
+	bStanceBreakDispatchPending = false;
 	// A Dead Tag granted by any legal source becomes terminal in C2; revival is out of scope.
 	CharacterASC->SetLooseGameplayTagCount(DeadStateTag, 1);
 	CharacterASC->SetNumericAttributeBase(UCharacterAttributeSet::GetHealthAttribute(), 0.0f);

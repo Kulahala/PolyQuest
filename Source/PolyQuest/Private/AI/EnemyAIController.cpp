@@ -24,6 +24,7 @@ AEnemyAIController::AEnemyAIController()
 	EnemyMeleeAbilityTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Attack.Enemy.Melee")), false);
 	AttackingStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Action.Attacking")), false);
 	HitReactingStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Action.HitReacting")), false);
+	StunnedStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Status.Stunned")), false);
 	TargetAcquiredEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.AI.Target.Acquired")), false);
 	TargetLostEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.AI.Target.Lost")), false);
 
@@ -55,6 +56,16 @@ void AEnemyAIController::OnPossess(APawn* InPawn)
 		{
 			UE_LOG(LogPolyQuest, Warning, TEXT("Enemy AI for '%s' did not start: AttackProfile requires an AttackMontage, DamageGameplayEffectClass, positive AttackRange, and non-negative CooldownAfterAttack."), *GetNameSafe(InPawn));
 			bHasLoggedInvalidAttackProfile = true;
+		}
+		return;
+	}
+
+	if (!EnemyCharacter || !EnemyCharacter->HasValidPoiseRecoveryConfiguration())
+	{
+		if (!bHasLoggedInvalidPoiseRecoverySetup)
+		{
+			UE_LOG(LogPolyQuest, Warning, TEXT("Enemy AI for '%s' did not start: Poise recovery requires a recovery GameplayEffect, valid Data.Poise.Recovery tag, positive MaxPoise/rate, and a positive tick interval."), *GetNameSafe(InPawn));
+			bHasLoggedInvalidPoiseRecoverySetup = true;
 		}
 		return;
 	}
@@ -151,8 +162,8 @@ void AEnemyAIController::BeginAlert()
 bool AEnemyAIController::TryRequestMeleeAttack()
 {
 	AEnemyCharacter* EnemyCharacter = Cast<AEnemyCharacter>(GetPawn());
-	UAbilitySystemComponent* AbilitySystemComponent = EnemyCharacter ? EnemyCharacter->GetAbilitySystemComponent() : nullptr;
-	if (IsControlledEnemyDead() || IsEnemyHitReactionActive() || !AbilitySystemComponent || !EnemyMeleeAbilityTag.IsValid() || !HasValidAttackProfile() || IsMeleeAttackOnCooldown()
+	UAbilitySystemComponent* CharacterASC = EnemyCharacter ? EnemyCharacter->GetAbilitySystemComponent() : nullptr;
+	if (IsControlledEnemyDead() || IsEnemyStunned() || IsEnemyHitReactionActive() || !CharacterASC || !EnemyMeleeAbilityTag.IsValid() || !HasValidAttackProfile() || IsMeleeAttackOnCooldown()
 		|| !HasValidCombatTarget() || !IsCombatTargetInMeleeRange())
 	{
 		return false;
@@ -160,15 +171,15 @@ bool AEnemyAIController::TryRequestMeleeAttack()
 
 	FGameplayTagContainer AbilityTags;
 	AbilityTags.AddTag(EnemyMeleeAbilityTag);
-	return AbilitySystemComponent->TryActivateAbilitiesByTag(AbilityTags, false);
+	return CharacterASC->TryActivateAbilitiesByTag(AbilityTags, false);
 }
 
 bool AEnemyAIController::IsEnemyMeleeAttackActive() const
 {
 	const AEnemyCharacter* EnemyCharacter = Cast<AEnemyCharacter>(GetPawn());
-	const UAbilitySystemComponent* AbilitySystemComponent = EnemyCharacter ? EnemyCharacter->GetAbilitySystemComponent() : nullptr;
-	return !IsControlledEnemyDead() && AbilitySystemComponent && AttackingStateTag.IsValid()
-		&& AbilitySystemComponent->HasMatchingGameplayTag(AttackingStateTag);
+	const UAbilitySystemComponent* CharacterASC = EnemyCharacter ? EnemyCharacter->GetAbilitySystemComponent() : nullptr;
+	return !IsControlledEnemyDead() && CharacterASC && AttackingStateTag.IsValid()
+		&& CharacterASC->HasMatchingGameplayTag(AttackingStateTag);
 }
 
 bool AEnemyAIController::IsEnemyHitReactionActive() const
@@ -177,6 +188,14 @@ bool AEnemyAIController::IsEnemyHitReactionActive() const
 	const UAbilitySystemComponent* CharacterASC = EnemyCharacter ? EnemyCharacter->GetAbilitySystemComponent() : nullptr;
 	return !IsControlledEnemyDead() && CharacterASC && HitReactingStateTag.IsValid()
 		&& CharacterASC->HasMatchingGameplayTag(HitReactingStateTag);
+}
+
+bool AEnemyAIController::IsEnemyStunned() const
+{
+	const AEnemyCharacter* EnemyCharacter = Cast<AEnemyCharacter>(GetPawn());
+	const UAbilitySystemComponent* CharacterASC = EnemyCharacter ? EnemyCharacter->GetAbilitySystemComponent() : nullptr;
+	return !IsControlledEnemyDead() && CharacterASC && StunnedStateTag.IsValid()
+		&& CharacterASC->HasMatchingGameplayTag(StunnedStateTag);
 }
 
 void AEnemyAIController::HandleControlledEnemyDeath()

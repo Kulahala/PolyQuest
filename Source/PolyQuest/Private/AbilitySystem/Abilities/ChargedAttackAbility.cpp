@@ -42,6 +42,7 @@ UChargedAttackAbility::UChargedAttackAbility()
 	DodgeCancelableStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Action.CanCancel.Dodge")), false);
 	ChargingStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Action.Charging")), false);
 	DamageDataTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Data.Damage.Charged")), false);
+	PoiseDataTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Data.Poise.Charged")), false);
 
 	FAbilityTriggerData ChargedReleaseHandoffTrigger;
 	ChargedReleaseHandoffTrigger.TriggerTag = ChargedReleaseHandoffEventTag;
@@ -92,6 +93,7 @@ void UChargedAttackAbility::ActivateAbility(
 	bMontagePausedAtHoldReady = false;
 	bReleaseStarted = false;
 	DamageMultiplier = 1.0f;
+	PoiseDamageMagnitude = 0.0f;
 	ActiveMontage = nullptr;
 	BoundAnimInstance = nullptr;
 
@@ -107,7 +109,8 @@ void UChargedAttackAbility::ActivateAbility(
 		|| !TraceWindowBeginEventTag.IsValid() || !TraceWindowEndEventTag.IsValid()
 		|| !DodgeCancelWindowBeginEventTag.IsValid() || !DodgeCancelWindowEndEventTag.IsValid() || !DodgeCancelableStateTag.IsValid()
 		|| !ChargingStateTag.IsValid() || !DamageDataTag.IsValid() || MinimumChargeDuration > MaximumChargeDuration
-		|| MaximumDamageMultiplier < 1.0f || (!bReleasedPrimaryHandoff && !PlayerCharacter->IsCombatInputHeld(PrimaryAttackInputTag)))
+		|| MaximumDamageMultiplier < 1.0f || MinimumPoiseDamage <= 0.0f || MaximumPoiseDamage < MinimumPoiseDamage
+		|| !PoiseDataTag.IsValid() || (!bReleasedPrimaryHandoff && !PlayerCharacter->IsCombatInputHeld(PrimaryAttackInputTag)))
 	{
 		UE_LOG(LogPolyQuest, Warning, TEXT("Charged attack activation aborted for '%s': held input, montage, cost/damage/regen effects, valid timing values, and required gameplay tags are required."), *GetNameSafe(PlayerCharacter));
 		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
@@ -255,6 +258,7 @@ void UChargedAttackAbility::EndAbility(
 	bMontagePausedAtHoldReady = false;
 	bReleaseStarted = false;
 	DamageMultiplier = 1.0f;
+	PoiseDamageMagnitude = 0.0f;
 	ActiveMontage = nullptr;
 
 	Super::EndAbility(Handle, ActorInfo, ActivationInfo, bReplicateEndAbility, bWasCancelled);
@@ -370,6 +374,7 @@ void UChargedAttackAbility::BeginRelease(float HeldDuration)
 		? FMath::Clamp((HeldDuration - MinimumChargeDuration) / ChargeRange, 0.0f, 1.0f)
 		: 1.0f;
 	DamageMultiplier = FMath::Lerp(1.0f, MaximumDamageMultiplier, ChargeAlpha);
+	PoiseDamageMagnitude = -FMath::Lerp(MinimumPoiseDamage, MaximumPoiseDamage, ChargeAlpha);
 	bReleaseStarted = true;
 
 	if (bMontagePausedAtHoldReady)
@@ -427,9 +432,20 @@ void UChargedAttackAbility::OpenTraceWindow()
 	}
 
 	ABaseCharacter* Character = Cast<ABaseCharacter>(GetAvatarActorFromActorInfo());
-	TraceWindowTask = Character
-		? UAbilityTask_MeleeTraceWindow::OpenMeleeTraceWindow(this, Character->GetMeleeTraceSource(), DamageGameplayEffectClass, GetAbilityLevel(), DamageDataTag, -BaseDamage * DamageMultiplier)
-		: nullptr;
+	if (!Character)
+	{
+		return;
+	}
+
+	TMap<FGameplayTag, float> SetByCallerMagnitudes;
+	SetByCallerMagnitudes.Add(DamageDataTag, -BaseDamage * DamageMultiplier);
+	SetByCallerMagnitudes.Add(PoiseDataTag, PoiseDamageMagnitude);
+	TraceWindowTask = UAbilityTask_MeleeTraceWindow::OpenMeleeTraceWindow(
+		this,
+		Character->GetMeleeTraceSource(),
+		DamageGameplayEffectClass,
+		GetAbilityLevel(),
+		SetByCallerMagnitudes);
 	if (TraceWindowTask)
 	{
 		TraceWindowTask->ReadyForActivation();

@@ -18,6 +18,7 @@ struct POLYQUEST_API FMeleeHitRequest
 	float AbilityLevel = 1.0f;
 	FGameplayTag SetByCallerMagnitudeTag;
 	float SetByCallerMagnitude = 0.0f;
+	TMap<FGameplayTag, float> SetByCallerMagnitudes;
 	const UObject* SourceObject = nullptr;
 	FHitResult HitResult;
 };
