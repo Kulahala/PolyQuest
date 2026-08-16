@@ -6,11 +6,13 @@
 #include "MeleeTraceSourceComponent.generated.h"
 
 class USceneComponent;
+class UWeaponEquipmentComponent;
 
 /**
- * Resolves Blueprint-authored blade markers for the fixed v1 weapon fixture.
- * It deliberately has no transform of its own: the fixed fixture's Blueprint
- * component names resolve the marker transforms used by an active AbilityTask.
+ * Resolves blade markers and sweep shape for melee tracing. Owners with an
+ * equipped weapon resolve them from UWeaponEquipmentComponent; every other
+ * owner (the enemy fixture) falls back to the authored fixed component-name
+ * lookup with this component's own trace defaults.
  */
 UCLASS(ClassGroup = (Combat), meta = (BlueprintSpawnableComponent))
 class POLYQUEST_API UMeleeTraceSourceComponent : public UActorComponent
@@ -20,18 +22,23 @@ class POLYQUEST_API UMeleeTraceSourceComponent : public UActorComponent
 public:
 	UMeleeTraceSourceComponent();
 
-	/** Returns false, with one focused warning, until all authored component names resolve valid markers. */
+	virtual void BeginPlay() override;
+
+	/** Returns false, with one focused warning, until the equipped markers or authored fixture names resolve valid samples. */
 	bool TryGetBladeEndpoints(FVector& OutBladeBase, FVector& OutBladeTip);
 
 	ECollisionChannel GetTraceChannel() const { return TraceChannel; }
-	float GetTraceRadius() const { return TraceRadius; }
-	int32 GetBladeSubdivisions() const { return BladeSubdivisions; }
+	float GetTraceRadius() const;
+	int32 GetBladeSubdivisions() const;
 
 private:
 	bool ResolveConfiguredComponents(USceneComponent*& OutWeaponDisplay, USceneComponent*& OutBladeBase, USceneComponent*& OutBladeTip);
 	void WarnInvalidConfiguration(const FString& Reason);
 
-	/** The actual weapon display component. This v1 name is shared by the player and first enemy fixture. */
+	/** The optional equipped-weapon owner; cached once in BeginPlay, null on the enemy fixture path. */
+	TWeakObjectPtr<UWeaponEquipmentComponent> CachedEquipmentComponent;
+
+	/** The actual weapon display component. This v1 name is shared by player and first-enemy fixed fixtures without equipment. */
 	UPROPERTY(VisibleDefaultsOnly, BlueprintReadOnly, Category = "Melee Trace|Source", meta = (AllowPrivateAccess = "true"))
 	FName WeaponDisplayComponentName = TEXT("WeaponMesh");
 
@@ -43,6 +50,7 @@ private:
 	UPROPERTY(VisibleDefaultsOnly, BlueprintReadOnly, Category = "Melee Trace|Source", meta = (AllowPrivateAccess = "true"))
 	FName BladeTraceTipComponentName = TEXT("BladeTraceTip");
 
+	/** Fixed-fixture sweep radius; equipped players read the weapon definition instead. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Melee Trace|Trace", meta = (AllowPrivateAccess = "true", ClampMin = "0.0"))
 	float TraceRadius = 12.0f;
 
@@ -50,7 +58,7 @@ private:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Melee Trace|Trace", meta = (AllowPrivateAccess = "true"))
 	TEnumAsByte<ECollisionChannel> TraceChannel = ECC_GameTraceChannel1;
 
-	/** Sphere-sweep samples along the blade. This is intentionally bounded for the fixed straight-sword fixture. */
+	/** Fixed-fixture sphere-sweep samples; equipped players read the weapon definition instead. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Melee Trace|Trace", meta = (AllowPrivateAccess = "true", ClampMin = "1", ClampMax = "8"))
 	int32 BladeSubdivisions = 4;
 

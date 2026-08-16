@@ -22,6 +22,8 @@
 #include "AbilitySystem/Abilities/PlayerGuardAbility.h"
 #include "AbilitySystem/Abilities/PlayerParryAbility.h"
 #include "AbilitySystem/CharacterAttributeSet.h"
+#include "Combat/Equipment/MeleeWeaponDefinition.h"
+#include "Combat/Equipment/WeaponEquipmentComponent.h"
 #include "Combat/Input/CombatLoadoutDefinition.h"
 #include "PolyQuest.h"
 
@@ -86,6 +88,7 @@ APlayerCharacter::APlayerCharacter()
 	FollowCamera->FieldOfView = 60.0f;
 
 	SightStimuliSource = CreateDefaultSubobject<UAIPerceptionStimuliSourceComponent>(TEXT("SightStimuliSource"));
+	WeaponEquipment = CreateDefaultSubobject<UWeaponEquipmentComponent>(TEXT("WeaponEquipment"));
 }
 
 void APlayerCharacter::BeginPlay()
@@ -93,6 +96,19 @@ void APlayerCharacter::BeginPlay()
 	Super::BeginPlay();
 	SetActiveCombatLoadout(InitialCombatLoadout);
 	BindSprintStateEvents();
+
+	if (WeaponEquipment)
+	{
+		if (DefaultEquippedWeapon)
+		{
+			WeaponEquipment->EquipWeapon(DefaultEquippedWeapon);
+		}
+		else
+		{
+			UE_LOG(LogPolyQuest, Warning, TEXT("'%s' has no DefaultEquippedWeapon configured; the player starts without melee capability."), *GetNameSafe(this));
+		}
+	}
+
 	if (SightStimuliSource)
 	{
 		SightStimuliSource->RegisterForSense(UAISense_Sight::StaticClass());
@@ -496,6 +512,24 @@ void APlayerCharacter::MarkGuardRequiresReleaseAfterGuardBreak()
 {
 	ClearGuardResumeEligibility();
 	bGuardRequiresReleaseAfterBreak = true;
+}
+
+bool APlayerCharacter::IsStartupAbilityClass(TSubclassOf<UGameplayAbility> AbilityClass) const
+{
+	if (!AbilityClass)
+	{
+		return false;
+	}
+
+	for (const TSubclassOf<UGameplayAbility>& StartupAbilityClass : StartupAbilities)
+	{
+		if (StartupAbilityClass == AbilityClass)
+		{
+			return true;
+		}
+	}
+
+	return false;
 }
 
 void APlayerCharacter::HandlePrimaryAttackStarted(const FInputActionValue&)

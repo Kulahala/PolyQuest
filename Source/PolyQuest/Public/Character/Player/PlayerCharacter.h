@@ -17,6 +17,9 @@ class UInputComponent;
 class UPlayerGuardAbility;
 class UPlayerParryAbility;
 class AActor;
+class UGameplayAbility;
+class UMeleeWeaponDefinition;
+class UWeaponEquipmentComponent;
 class UAIPerceptionStimuliSourceComponent;
 class USpringArmComponent;
 struct FInputActionValue;
@@ -91,8 +94,12 @@ protected:
 	TSubclassOf<UGameplayEffect> StaminaRegenGameplayEffectClass;
 
 	/** The authored combat routes applied to this player at BeginPlay. */
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Combat|Loadout", meta=(AllowPrivateAccess="true"))
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Loadout", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<UCombatLoadoutDefinition> InitialCombatLoadout;
+
+	/** Required default weapon equipped once at BeginPlay; missing is a fail-visible configuration error. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Equipment", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<UMeleeWeaponDefinition> DefaultEquippedWeapon;
 
 public:
 	APlayerCharacter();
@@ -132,8 +139,14 @@ public:
 	virtual void DoJumpEnd();
 
 	/** Sets the authored routes used by future combat input starts without interrupting active abilities. */
-	UFUNCTION(BlueprintCallable, Category="Combat|Loadout")
+	UFUNCTION(BlueprintCallable, Category = "Combat|Loadout")
 	bool SetActiveCombatLoadout(UCombatLoadoutDefinition* NewCombatLoadout);
+
+	/** Returns the loadout currently routing combat input; C++-only narrow read for the equipment snapshot. */
+	UCombatLoadoutDefinition* GetActiveCombatLoadout() const { return ActiveCombatLoadout; }
+
+	/** True when the ability class is granted by this character's StartupAbilities; C++-only equipment preflight query. */
+	bool IsStartupAbilityClass(TSubclassOf<UGameplayAbility> AbilityClass) const;
 
 	/** Returns whether this physical combat input is currently held. */
 	UFUNCTION(BlueprintPure, Category="Combat|Input")
@@ -238,6 +251,9 @@ private:
 
 	UPROPERTY(Transient)
 	TObjectPtr<UCombatLoadoutDefinition> ActiveCombatLoadout;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Combat|Equipment", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<UWeaponEquipmentComponent> WeaponEquipment;
 
 	FVector2D CurrentMoveInput = FVector2D::ZeroVector;
 	TMap<FGameplayTag, float> HeldCombatInputStartTimes;

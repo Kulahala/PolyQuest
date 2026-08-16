@@ -1,5 +1,7 @@
 #include "Combat/Melee/MeleeTraceSourceComponent.h"
 
+#include "Combat/Equipment/MeleeWeaponDefinition.h"
+#include "Combat/Equipment/WeaponEquipmentComponent.h"
 #include "Components/SceneComponent.h"
 #include "GameFramework/Actor.h"
 #include "PolyQuest.h"
@@ -26,8 +28,60 @@ UMeleeTraceSourceComponent::UMeleeTraceSourceComponent()
 	SetIsReplicatedByDefault(false);
 }
 
+void UMeleeTraceSourceComponent::BeginPlay()
+{
+	Super::BeginPlay();
+
+	CachedEquipmentComponent = GetOwner() ? GetOwner()->FindComponentByClass<UWeaponEquipmentComponent>() : nullptr;
+}
+
+float UMeleeTraceSourceComponent::GetTraceRadius() const
+{
+	if (const UWeaponEquipmentComponent* EquipmentComponent = CachedEquipmentComponent.Get())
+	{
+		if (const UMeleeWeaponDefinition* EquippedWeapon = EquipmentComponent->GetCurrentWeapon())
+		{
+			return EquippedWeapon->TraceRadius;
+		}
+	}
+
+	return TraceRadius;
+}
+
+int32 UMeleeTraceSourceComponent::GetBladeSubdivisions() const
+{
+	if (const UWeaponEquipmentComponent* EquipmentComponent = CachedEquipmentComponent.Get())
+	{
+		if (const UMeleeWeaponDefinition* EquippedWeapon = EquipmentComponent->GetCurrentWeapon())
+		{
+			return EquippedWeapon->BladeSubdivisions;
+		}
+	}
+
+	return BladeSubdivisions;
+}
+
 bool UMeleeTraceSourceComponent::TryGetBladeEndpoints(FVector& OutBladeBase, FVector& OutBladeTip)
 {
+	if (const UWeaponEquipmentComponent* EquipmentComponent = CachedEquipmentComponent.Get())
+	{
+		USceneComponent* EquippedBladeBase = nullptr;
+		USceneComponent* EquippedBladeTip = nullptr;
+		if (EquipmentComponent->TryGetBladeMarkers(EquippedBladeBase, EquippedBladeTip))
+		{
+			OutBladeBase = EquippedBladeBase->GetComponentLocation();
+			OutBladeTip = EquippedBladeTip->GetComponentLocation();
+			if (OutBladeBase.Equals(OutBladeTip, KINDA_SMALL_NUMBER))
+			{
+				WarnInvalidConfiguration(TEXT("the equipped weapon's blade markers resolve to the same world position."));
+				return false;
+			}
+
+			bConfigurationWarningIssued = false;
+			return true;
+		}
+	}
+
 	USceneComponent* WeaponDisplay = nullptr;
 	USceneComponent* BladeBase = nullptr;
 	USceneComponent* BladeTip = nullptr;
