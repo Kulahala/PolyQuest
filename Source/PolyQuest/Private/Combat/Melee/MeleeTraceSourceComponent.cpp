@@ -39,7 +39,7 @@ float UMeleeTraceSourceComponent::GetTraceRadius() const
 {
 	if (const UWeaponEquipmentComponent* EquipmentComponent = CachedEquipmentComponent.Get())
 	{
-		if (const UMeleeWeaponDefinition* EquippedWeapon = EquipmentComponent->GetCurrentWeapon())
+		if (const UMeleeWeaponDefinition* EquippedWeapon = EquipmentComponent->GetEquippedMainHandMelee())
 		{
 			return EquippedWeapon->TraceRadius;
 		}
@@ -52,7 +52,7 @@ int32 UMeleeTraceSourceComponent::GetBladeSubdivisions() const
 {
 	if (const UWeaponEquipmentComponent* EquipmentComponent = CachedEquipmentComponent.Get())
 	{
-		if (const UMeleeWeaponDefinition* EquippedWeapon = EquipmentComponent->GetCurrentWeapon())
+		if (const UMeleeWeaponDefinition* EquippedWeapon = EquipmentComponent->GetEquippedMainHandMelee())
 		{
 			return EquippedWeapon->BladeSubdivisions;
 		}

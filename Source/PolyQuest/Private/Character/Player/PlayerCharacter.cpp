@@ -761,15 +761,25 @@ void APlayerCharacter::SendCombatInputEvent(const FGameplayTag& EventTag, const 
 
 void APlayerCharacter::RequestAbilityForInputIntent(const FGameplayTag& InputIntentTag)
 {
-	if (!ActiveCombatLoadout)
+	// Ability slots activate prepared equipment actions through their exact granted handles.
+	for (int32 SlotIndex = 0; SlotIndex < AbilitySlotInputTags.Num(); ++SlotIndex)
 	{
-		return;
+		if (InputIntentTag == AbilitySlotInputTags[SlotIndex])
+		{
+			if (WeaponEquipment)
+			{
+				WeaponEquipment->TryActivatePreparedSlot(SlotIndex);
+			}
+			return;
+		}
 	}
 
-	if (InputIntentTag == PrimaryAttackInputTag && ShouldRequestSprintAttack())
+	// The Sprint Attack shortcut keeps only the physical-state predicate here; the
+	// ability tag resolves from the equipped main hand's Base Input Profile.
+	if (InputIntentTag == PrimaryAttackInputTag && ShouldRequestSprintAttack() && WeaponEquipment)
 	{
 		FGameplayTag SprintAttackAbilityTag;
-		if (ActiveCombatLoadout->TryGetSprintAttackAbilityTag(SprintAttackAbilityTag) && SprintAttackAbilityTag.IsValid())
+		if (WeaponEquipment->TryGetSprintAttackAbilityTag(SprintAttackAbilityTag) && SprintAttackAbilityTag.IsValid())
 		{
 			UAbilitySystemComponent* CharacterASC = GetAbilitySystemComponent();
 			if (CharacterASC)
@@ -785,8 +795,9 @@ void APlayerCharacter::RequestAbilityForInputIntent(const FGameplayTag& InputInt
 		}
 	}
 
+	// The equipment component is the single resolver for Primary and the Effective Defense Profile.
 	FGameplayTag AbilityTag;
-	if (!ActiveCombatLoadout->TryGetAbilityTagForInputIntent(InputIntentTag, AbilityTag) || !AbilityTag.IsValid())
+	if (!WeaponEquipment || !WeaponEquipment->TryResolveInputIntent(InputIntentTag, AbilityTag) || !AbilityTag.IsValid())
 	{
 		return;
 	}

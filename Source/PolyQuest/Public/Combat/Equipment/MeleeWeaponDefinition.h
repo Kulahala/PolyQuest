@@ -2,39 +2,26 @@
 
 #include "CoreMinimal.h"
 #include "Abilities/GameplayAbility.h"
-#include "Engine/DataAsset.h"
-#include "GameplayTagContainer.h"
+#include "Combat/Equipment/WeaponDefinition.h"
 #include "Combat/Input/CombatLoadoutDefinition.h"
 #include "MeleeWeaponDefinition.generated.h"
 
-class UStaticMesh;
+class UGameplayAbility;
 
 /**
- * One authored melee weapon: display attachment, blade trace markers in
- * weapon-mesh local space, sweep shape, granted abilities, and the optional
- * loadout activated while equipped. Authored data only; all runtime state is
- * owned by UWeaponEquipmentComponent.
+ * The compatible melee subclass of UWeaponDefinition: blade trace markers in
+ * weapon-mesh local space, sweep shape, and the BaseGrantedAbilities source
+ * the current LMB/Sprint base chain relies on. Display, slot, action, Defense
+ * Profile, and Base Input Profile fields are owned by the base class; the
+ * promoted field names keep the serialized values of the existing DataAssets.
  */
 UCLASS(BlueprintType)
-class POLYQUEST_API UMeleeWeaponDefinition : public UDataAsset
+class POLYQUEST_API UMeleeWeaponDefinition : public UWeaponDefinition
 {
 	GENERATED_BODY()
 
 public:
-	/** Validates every authored field; returns false with a focused reason the equipment transaction refuses to mutate past. */
-	bool IsValidDefinition(FString& OutReason) const;
-
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Display")
-	TObjectPtr<UStaticMesh> WeaponMesh;
-
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Display")
-	FName AttachSocketName = TEXT("Weapon_R");
-
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Display")
-	FVector DisplayLocationOffset = FVector::ZeroVector;
-
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Display")
-	FRotator DisplayRotationOffset = FRotator::ZeroRotator;
+	virtual bool IsValidWeaponDefinition(FString& OutReason) const override;
 
 	/** Blade-root marker spawned relative to the display mesh. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Trace Markers")
@@ -52,26 +39,27 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Trace", meta = (ClampMin = "1", ClampMax = "8"))
 	int32 BladeSubdivisions = 4;
 
-	/** Ability classes granted while this weapon is equipped; duplicates against StartupAbilities are rejected by the equipment preflight. */
+	/**
+	 * BaseGrantedAbilities source: granted while equipped alongside prepared
+	 * action grants, with duplicate classes rejected. The TODO-03A authoring
+	 * relies on it for Light/Charged/Sprint Attack; removal requires the
+	 * TODO-03A2 migration plus a zero-referencer scan and Editor readback.
+	 */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Abilities")
 	TArray<TSubclassOf<UGameplayAbility>> GrantedWeaponAbilities;
-
-	/** Optional loadout activated on equip; null keeps the currently active loadout. */
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Loadout")
-	TObjectPtr<UCombatLoadoutDefinition> AssociatedLoadout;
 };
 
-inline bool UMeleeWeaponDefinition::IsValidDefinition(FString& OutReason) const
+inline bool UMeleeWeaponDefinition::IsValidWeaponDefinition(FString& OutReason) const
 {
-	if (!WeaponMesh)
+	OutReason.Empty();
+	if (!Super::IsValidWeaponDefinition(OutReason))
 	{
-		OutReason = TEXT("WeaponMesh is not assigned.");
 		return false;
 	}
 
-	if (AttachSocketName.IsNone())
+	if (!WeaponMesh)
 	{
-		OutReason = TEXT("AttachSocketName is not set.");
+		OutReason = TEXT("WeaponMesh is not assigned.");
 		return false;
 	}
 
@@ -117,6 +105,5 @@ inline bool UMeleeWeaponDefinition::IsValidDefinition(FString& OutReason) const
 		return false;
 	}
 
-	OutReason.Empty();
 	return true;
 }
