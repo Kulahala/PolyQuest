@@ -95,3 +95,19 @@ public:
 	virtual void NotifyEnd(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, const FAnimNotifyEventReference& EventReference) override;
 	virtual FString GetNotifyName_Implementation() const override;
 };
+
+/** Sends the authored playback-rate override window for the active attack Montage. */
+UCLASS()
+class POLYQUEST_API UAnimNotifyState_MontageRateWindow : public UAnimNotifyState
+{
+	GENERATED_BODY()
+
+public:
+	virtual void NotifyBegin(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, float TotalDuration, const FAnimNotifyEventReference& EventReference) override;
+	virtual void NotifyEnd(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, const FAnimNotifyEventReference& EventReference) override;
+	virtual FString GetNotifyName_Implementation() const override;
+
+	/** Playback-rate multiplier the identity-matched active Montage applies while this window is open. */
+	UPROPERTY(EditInstanceOnly, BlueprintReadWrite, Category = "Rate", meta = (ClampMin = "0.01"))
+	float RateMultiplier = 1.0f;
+};

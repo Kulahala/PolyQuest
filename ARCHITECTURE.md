@@ -134,6 +134,13 @@ The active player route is `BP_GameMode -> BP_Player -> APlayerCharacter -> ABas
 - `UCombatLoadoutDefinition` can supply one optional Sprint Attack Ability tag. Primary input sends its existing semantic event first, then Player requests that tag only while a real Sprint tag, grounded state, and movement input are all present; unavailable or rejected Sprint Attack falls back to `Ability.Attack.Primary`.
 - `USprintAttackAbility` validates and commits its authored cost before it ends Sprint and plays its Root Motion Montage. It owns action movement/jump/regen-block tags only during its active lifetime, accepts matching active-Montage Trace Window timing, reuses the common melee task, and exposes Dodge cancellation only through the authored recovery window. Its Montage, tasks, loose tags, and delegate converge through `EndAbility()`.
 
+### Montage Rate Window And Action Timing
+
+- `UAnimNotifyState_MontageRateWindow` is a timing-only authored NotifyState for the active player attack Montage. Its per-placement `RateMultiplier` is clamped to a positive value and is sent through `Event.Action.RateWindow.Begin` in `FGameplayEventData::EventMagnitude`; the matching End event carries the same source Montage in `OptionalObject`.
+- `ULightAttackAbility`, `UChargedAttackAbility`, and `USprintAttackAbility` each own persistent Begin/End Gameplay Event tasks and accept an event only from their current active Montage and owning actor. A positive matching Begin changes only that Montage instance's play rate; a matching End restores the fixed `1.0` baseline.
+- Each Ability restores the baseline before stopping its Montage in `EndAbility()`. Light also restores before its next Combo entry replaces the active Montage, so a rate from one entry cannot leak into its successor. The Notify timeline therefore drives Trace, Combo, cancel, and HoldReady timing at the rated playback speed without a parallel AnimBP action state or a global tick writer.
+- Rate windows must not overlap. The event payload identifies the Montage rather than an individual NotifyState placement, so overlap is an authored-data error and has no supported stacking or priority behavior. Dodge, Guard, Parry, Guard Break, and enemy abilities do not consume the rate-window events in v1.
+
 ### Stylized Player Presentation
 
 - The local player fixture keeps `SK_Character_Hero_Knight_Male` on `SKEL_Character_Dungeon`. `Weapon_R` is a socket below `hand_r`; `BP_Player` attaches the display-only `WeaponMesh` there with `SM_Wep_Ornate_Sword_02`.

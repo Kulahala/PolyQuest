@@ -77,6 +77,12 @@ private:
 	TObjectPtr<UAbilityTask_WaitGameplayEvent> ComboBranchWindowEndTask;
 
 	UPROPERTY(Transient)
+	TObjectPtr<UAbilityTask_WaitGameplayEvent> RateWindowBeginTask;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UAbilityTask_WaitGameplayEvent> RateWindowEndTask;
+
+	UPROPERTY(Transient)
 	TObjectPtr<UAnimInstance> BoundAnimInstance;
 
 	UPROPERTY(Transient)
@@ -94,6 +100,8 @@ private:
 	FGameplayTag ComboInputWindowEndEventTag;
 	FGameplayTag ComboBranchWindowBeginEventTag;
 	FGameplayTag ComboBranchWindowEndEventTag;
+	FGameplayTag RateWindowBeginEventTag;
+	FGameplayTag RateWindowEndEventTag;
 
 	int32 ActiveEntryIndex = INDEX_NONE;
 	bool bDodgeCancelable = false;
@@ -101,6 +109,7 @@ private:
 	bool bComboBranchWindowOpen = false;
 	bool bContinuationBuffered = false;
 	bool bComboTransitionInProgress = false;
+	bool bRateWindowApplied = false;
 	bool bEndAbilityRequested = false;
 
 	UFUNCTION()
@@ -133,6 +142,12 @@ private:
 	UFUNCTION()
 	void OnComboBranchWindowEnd(FGameplayEventData Payload);
 
+	UFUNCTION()
+	void OnRateWindowBegin(FGameplayEventData Payload);
+
+	UFUNCTION()
+	void OnRateWindowEnd(FGameplayEventData Payload);
+
 	void EndFromMontage(bool bWasCancelled);
 	bool ValidateComboDefinition() const;
 	bool StartComboEntry(int32 EntryIndex);
@@ -142,4 +157,5 @@ private:
 	void OpenTraceWindow();
 	void CloseTraceWindow();
 	void SetDodgeCancelable(bool bShouldBeCancelable);
+	void RestoreBaselineMontageRate();
 };

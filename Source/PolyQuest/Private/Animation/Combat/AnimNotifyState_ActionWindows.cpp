@@ -34,6 +34,32 @@ namespace
 		EventData.OptionalObject = Animation;
 		UAbilitySystemBlueprintLibrary::SendGameplayEventToActor(Owner, EventTag, EventData);
 	}
+
+	void SendGameplayEventWithMagnitude(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, const FName EventTagName, float EventMagnitude, const TCHAR* NotifyName)
+	{
+		AActor* Owner = MeshComp ? MeshComp->GetOwner() : nullptr;
+		IAbilitySystemInterface* AbilitySystemInterface = Cast<IAbilitySystemInterface>(Owner);
+		if (!Owner || !AbilitySystemInterface || !AbilitySystemInterface->GetAbilitySystemComponent())
+		{
+			UE_LOG(LogPolyQuest, Warning, TEXT("%s could not find an ASC owner."), NotifyName);
+			return;
+		}
+
+		const FGameplayTag EventTag = FGameplayTag::RequestGameplayTag(EventTagName, false);
+		if (!EventTag.IsValid())
+		{
+			UE_LOG(LogPolyQuest, Warning, TEXT("%s could not send invalid event '%s'."), NotifyName, *EventTagName.ToString());
+			return;
+		}
+
+		FGameplayEventData EventData;
+		EventData.EventTag = EventTag;
+		EventData.Instigator = Owner;
+		EventData.Target = Owner;
+		EventData.OptionalObject = Animation;
+		EventData.EventMagnitude = EventMagnitude;
+		UAbilitySystemBlueprintLibrary::SendGameplayEventToActor(Owner, EventTag, EventData);
+	}
 }
 
 void UAnimNotifyState_ActionDodgeCancelWindow::NotifyBegin(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, float, const FAnimNotifyEventReference&)
@@ -149,4 +175,19 @@ void UAnimNotifyState_EnemyHyperArmor::NotifyEnd(USkeletalMeshComponent* MeshCom
 FString UAnimNotifyState_EnemyHyperArmor::GetNotifyName_Implementation() const
 {
 	return FString("Enemy Hyper Armor");
+}
+
+void UAnimNotifyState_MontageRateWindow::NotifyBegin(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, float, const FAnimNotifyEventReference&)
+{
+	SendGameplayEventWithMagnitude(MeshComp, Animation, TEXT("Event.Action.RateWindow.Begin"), FMath::Max(RateMultiplier, 0.01f), TEXT("Montage rate window"));
+}
+
+void UAnimNotifyState_MontageRateWindow::NotifyEnd(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, const FAnimNotifyEventReference&)
+{
+	SendGameplayEvent(MeshComp, Animation, TEXT("Event.Action.RateWindow.End"), TEXT("Montage rate window"));
+}
+
+FString UAnimNotifyState_MontageRateWindow::GetNotifyName_Implementation() const
+{
+	return FString("Montage Rate Window");
 }

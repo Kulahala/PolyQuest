@@ -40,6 +40,8 @@ UChargedAttackAbility::UChargedAttackAbility()
 	TraceWindowEndEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Attack.TraceWindow.End")), false);
 	DodgeCancelWindowBeginEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Action.CancelWindow.Dodge.Begin")), false);
 	DodgeCancelWindowEndEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Action.CancelWindow.Dodge.End")), false);
+	RateWindowBeginEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Action.RateWindow.Begin")), false);
+	RateWindowEndEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Action.RateWindow.End")), false);
 	DodgeCancelableStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Action.CanCancel.Dodge")), false);
 	DefenseCancelableStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Action.CanCancel.Defense")), false);
 	ChargingStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Action.Charging")), false);
@@ -94,6 +96,7 @@ void UChargedAttackAbility::ActivateAbility(
 	bChargingStateApplied = false;
 	bMontagePausedAtHoldReady = false;
 	bReleaseStarted = false;
+	bRateWindowApplied = false;
 	DamageMultiplier = 1.0f;
 	PoiseDamageMagnitude = 0.0f;
 	ActiveMontage = nullptr;
@@ -110,6 +113,7 @@ void UChargedAttackAbility::ActivateAbility(
 		|| !InputReleasedEventTag.IsValid() || !InputCanceledEventTag.IsValid() || !ChargedReleaseHandoffEventTag.IsValid() || !HoldReadyEventTag.IsValid()
 		|| !TraceWindowBeginEventTag.IsValid() || !TraceWindowEndEventTag.IsValid()
 		|| !DodgeCancelWindowBeginEventTag.IsValid() || !DodgeCancelWindowEndEventTag.IsValid() || !DodgeCancelableStateTag.IsValid() || !DefenseCancelableStateTag.IsValid()
+		|| !RateWindowBeginEventTag.IsValid() || !RateWindowEndEventTag.IsValid()
 		|| !ChargingStateTag.IsValid() || !DamageDataTag.IsValid() || MinimumChargeDuration > MaximumChargeDuration
 		|| MaximumDamageMultiplier < 1.0f || MinimumPoiseDamage <= 0.0f || MaximumPoiseDamage < MinimumPoiseDamage
 		|| !PoiseDataTag.IsValid() || (!bReleasedPrimaryHandoff && !PlayerCharacter->IsCombatInputHeld(PrimaryAttackInputTag)))
@@ -127,8 +131,11 @@ void UChargedAttackAbility::ActivateAbility(
 	InputCanceledTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, InputCanceledEventTag, nullptr, false, true);
 	DodgeCancelWindowBeginTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, DodgeCancelWindowBeginEventTag, nullptr, false, true);
 	DodgeCancelWindowEndTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, DodgeCancelWindowEndEventTag, nullptr, false, true);
+	RateWindowBeginTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, RateWindowBeginEventTag, nullptr, false, true);
+	RateWindowEndTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, RateWindowEndEventTag, nullptr, false, true);
 
-	if (!MontageTask || !HoldReadyTask || !TraceWindowBeginTask || !TraceWindowEndTask || !InputReleasedTask || !InputCanceledTask || !DodgeCancelWindowBeginTask || !DodgeCancelWindowEndTask)
+	if (!MontageTask || !HoldReadyTask || !TraceWindowBeginTask || !TraceWindowEndTask || !InputReleasedTask || !InputCanceledTask || !DodgeCancelWindowBeginTask || !DodgeCancelWindowEndTask
+		|| !RateWindowBeginTask || !RateWindowEndTask)
 	{
 		UE_LOG(LogPolyQuest, Warning, TEXT("Charged attack activation aborted for '%s': failed to create an AbilityTask."), *GetNameSafe(PlayerCharacter));
 		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
@@ -147,6 +154,8 @@ void UChargedAttackAbility::ActivateAbility(
 	InputCanceledTask->EventReceived.AddDynamic(this, &UChargedAttackAbility::OnInputCanceled);
 	DodgeCancelWindowBeginTask->EventReceived.AddDynamic(this, &UChargedAttackAbility::OnDodgeCancelWindowBegin);
 	DodgeCancelWindowEndTask->EventReceived.AddDynamic(this, &UChargedAttackAbility::OnDodgeCancelWindowEnd);
+	RateWindowBeginTask->EventReceived.AddDynamic(this, &UChargedAttackAbility::OnRateWindowBegin);
+	RateWindowEndTask->EventReceived.AddDynamic(this, &UChargedAttackAbility::OnRateWindowEnd);
 
 	PlayerCharacter->ApplyActionFacing();
 
@@ -157,6 +166,8 @@ void UChargedAttackAbility::ActivateAbility(
 	InputCanceledTask->ReadyForActivation();
 	DodgeCancelWindowBeginTask->ReadyForActivation();
 	DodgeCancelWindowEndTask->ReadyForActivation();
+	RateWindowBeginTask->ReadyForActivation();
+	RateWindowEndTask->ReadyForActivation();
 	MontageTask->ReadyForActivation();
 
 	// A zero-length or otherwise immediately completed Montage can synchronously run EndAbility.
@@ -200,6 +211,7 @@ void UChargedAttackAbility::EndAbility(
 	SetCharging(false);
 	SetDodgeCancelable(false);
 	CloseTraceWindow();
+	RestoreBaselineMontageRate();
 
 	if (BoundAnimInstance)
 	{
@@ -259,8 +271,21 @@ void UChargedAttackAbility::EndAbility(
 		DodgeCancelWindowEndTask = nullptr;
 	}
 
+	if (RateWindowBeginTask)
+	{
+		RateWindowBeginTask->EndTask();
+		RateWindowBeginTask = nullptr;
+	}
+
+	if (RateWindowEndTask)
+	{
+		RateWindowEndTask->EndTask();
+		RateWindowEndTask = nullptr;
+	}
+
 	bMontagePausedAtHoldReady = false;
 	bReleaseStarted = false;
+	bRateWindowApplied = false;
 	DamageMultiplier = 1.0f;
 	PoiseDamageMagnitude = 0.0f;
 	ActiveMontage = nullptr;
@@ -497,6 +522,45 @@ void UChargedAttackAbility::SetCharging(bool bShouldCharge)
 	}
 
 	bChargingStateApplied = false;
+}
+
+void UChargedAttackAbility::OnRateWindowBegin(FGameplayEventData Payload)
+{
+	// Ignore duplicate Begin events; authored rate windows must not overlap.
+	if (bRateWindowApplied || !IsGameplayEventFromActiveMontage(Payload) || Payload.EventMagnitude <= 0.0f)
+	{
+		return;
+	}
+
+	if (BoundAnimInstance && ActiveMontage && BoundAnimInstance->Montage_IsActive(ActiveMontage.Get()))
+	{
+		BoundAnimInstance->Montage_SetPlayRate(ActiveMontage.Get(), Payload.EventMagnitude);
+		bRateWindowApplied = true;
+	}
+}
+
+void UChargedAttackAbility::OnRateWindowEnd(FGameplayEventData Payload)
+{
+	if (!IsGameplayEventFromActiveMontage(Payload))
+	{
+		return;
+	}
+
+	RestoreBaselineMontageRate();
+}
+
+void UChargedAttackAbility::RestoreBaselineMontageRate()
+{
+	if (!bRateWindowApplied)
+	{
+		return;
+	}
+
+	bRateWindowApplied = false;
+	if (BoundAnimInstance && ActiveMontage && BoundAnimInstance->Montage_IsActive(ActiveMontage.Get()))
+	{
+		BoundAnimInstance->Montage_SetPlayRate(ActiveMontage.Get(), 1.0f);
+	}
 }
 
 void UChargedAttackAbility::SetDodgeCancelable(bool bShouldBeCancelable)

@@ -102,6 +102,12 @@ private:
 	TObjectPtr<UAbilityTask_WaitGameplayEvent> DodgeCancelWindowEndTask;
 
 	UPROPERTY(Transient)
+	TObjectPtr<UAbilityTask_WaitGameplayEvent> RateWindowBeginTask;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UAbilityTask_WaitGameplayEvent> RateWindowEndTask;
+
+	UPROPERTY(Transient)
 	TObjectPtr<UAnimInstance> BoundAnimInstance;
 
 	UPROPERTY(Transient)
@@ -116,6 +122,8 @@ private:
 	FGameplayTag TraceWindowEndEventTag;
 	FGameplayTag DodgeCancelWindowBeginEventTag;
 	FGameplayTag DodgeCancelWindowEndEventTag;
+	FGameplayTag RateWindowBeginEventTag;
+	FGameplayTag RateWindowEndEventTag;
 	FGameplayTag DodgeCancelableStateTag;
 	FGameplayTag DefenseCancelableStateTag;
 	FGameplayTag ChargingStateTag;
@@ -127,6 +135,7 @@ private:
 	bool bChargingStateApplied = false;
 	bool bMontagePausedAtHoldReady = false;
 	bool bReleaseStarted = false;
+	bool bRateWindowApplied = false;
 	bool bEndAbilityRequested = false;
 
 	UFUNCTION()
@@ -153,6 +162,12 @@ private:
 	UFUNCTION()
 	void OnDodgeCancelWindowEnd(FGameplayEventData Payload);
 
+	UFUNCTION()
+	void OnRateWindowBegin(FGameplayEventData Payload);
+
+	UFUNCTION()
+	void OnRateWindowEnd(FGameplayEventData Payload);
+
 	void BeginRelease(float HeldDuration);
 	void EndFromMontage(bool bWasCancelled);
 	bool IsGameplayEventFromActiveMontage(const FGameplayEventData& Payload) const;
@@ -162,4 +177,5 @@ private:
 	void CloseTraceWindow();
 	void SetCharging(bool bShouldCharge);
 	void SetDodgeCancelable(bool bShouldBeCancelable);
+	void RestoreBaselineMontageRate();
 };

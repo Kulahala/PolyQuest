@@ -10,53 +10,60 @@
 
 ---
 
-## Active Stage: TODO-02E - Bidirectional Melee Combat Health And Lean Review v1
+## Active Stage: TODO-02F - Montage Rate Window And Action Timing v1
 
-Baseline: `1f91b42 [Feature] 战斗动画通知归属审计 (Combat Notify Ownership Audit)`.
+Baseline: `f5130c3 [Docs] 修正健康审查提交记录 (Correct Health Review Commit Record)`.
 
 ### Objective
 
-Before `TODO-03A` equipment work, audit the completed bidirectional melee combat loop, perform the evidence-led lean pass, and synchronize the lagging project documentation. This stage adds no combat feature, changes no GAS contract, and performs no architectural refactor.
+Establish the one player-combat Montage playback-rate contract before weapon/loadout expansion: a dedicated `UAnimNotifyState` authors each window's interval and target rate on the attack Montages, the identity-matched active Montage/Ability applies and owns the override, and the baseline rate restores on every completion path with no stale rate surviving teardown. This stage also revisits the committed-cost atomicity debt ROADMAP assigned to it and retains it open (see the disposition section). No duplicate/cropped Sequence, no Section-based speed control, no parallel AnimBP action state, and no global per-tick rate controller.
 
-### Audit Matrix
+Locked values:
 
-Evidence sources: the C3B/C3C/D1/D2 stage reviews, this stage's three read-only Explore reports (enemy HyperArmor lifecycle, lean inventory, documentation drift), and Main's final re-reads.
+- New `UAnimNotifyState_MontageRateWindow` in the existing action-window group: an authored `RateMultiplier` (`EditInstanceOnly`, `ClampMin = "0.01"`, default `1.0`) sent through `Event.Action.RateWindow.Begin` with the rate in `FGameplayEventData::EventMagnitude` and the source animation in `OptionalObject`; `Event.Action.RateWindow.End` carries no rate. Both tags are new.
+- Baseline rate is exactly `1.0`. The project has zero other rate writers (exploration-verified), so restore never remembers a previous value; `Montage_SetPlayRate(ActiveMontage, 1.0f)` is an engine-silent no-op for a non-active Montage.
+- Overlapping rate windows are not supported and authoring must keep them non-overlapping: the window End event identifies only its Montage, not which of two overlapping Rate Windows ended, so overlapping behavior is undefined and rejected as an authoring error. The implementation additionally ignores later Begin events while `bRateWindowApplied` is set; that ignore is defensive, not a supported overlap semantic.
+- Root Motion scales with the rate (engine-verified substep semantics); continuity, not displacement preservation, is the contract. Charged HoldReady compatibility is engine-verified (`Montage_Pause`/`Resume` never touch `PlayRate`).
+- Integration scope: Light Attack (per combo entry), Charged Attack, and Sprint Attack. Dodge, Guard, Parry, Guard Break, and every enemy ability stay un-listened in v1; later adoption is an additive listener hunk, not a mechanism change.
 
-| Audit surface | Existing evidence | 02E action |
-| --- | --- | --- |
-| Player-to-enemy damage chain (Trace Window -> Resolver -> GE -> C3B/C3C) | C3B/C3C/D1 reviews | Final re-read; record as audited |
-| Enemy-to-player defense dispatch (Trace -> Resolver -> Parry/Guard/Health) | D2 first review, all surfaces closed | Final re-read; record as audited |
-| Team filtering / Invulnerable / Dead rejection matrix | D1/D2 reviews | Spot-check; record as audited |
-| Cancellation/death/EndPlay teardown across both sides' abilities | D1-D4 stage reviews | Consolidate into one teardown-matrix record |
-| StateTree-to-GAS intent boundary | 02A/C-series validation | Spot-check; record as audited |
-| Camera/facing interaction | Unchanged since 02B | Covered by the PIE regression smoke |
-| HyperArmor lifecycle | Explore deep-read: all five teardown paths converge, no tag residual risk, identity-filtered events | Two notes dispositioned below |
-| ROADMAP validation-debt review | Explore confirmed all 5 Known Risks plus the Sprint Loop deferral remain open, none silently resolved | No action; ownership verified |
+### Committed-Cost Atomicity Disposition (revised after independent review)
 
-Findings policy: P0/P1 blockers are repaired surgically in this stage; non-blocking findings are attached to their owning `ROADMAP.md` milestone or Known Risks entry with evidence and a closure trigger; documentation drift is repaired here as stage work.
+- The ROADMAP debt is **retained and is not closed by this stage**. The original debt covers Light entry and continuation, Dodge, Sprint Attack, and the Charged release path; closing it would require controlled post-commit playback-failure injection and verification across all of those paths, which cannot be produced reliably in this stage.
+- The failure-injection definition is now precise: a meaningful injection must be a controlled playback failure occurring **after** `CommitAbility()`/`CommitAbilityCost()` succeeded - for example a non-null Montage asset that fails `Montage_IsActive` confirmation (zero-length or otherwise unplayable). An empty/null Montage reference only exercises the pre-commit validation abort and does not reach the committed-cost path at all.
+- The no-refund semantics remains the working v1 direction (a refund path would couple reverse GameplayEffects to the Exhausted loose-tag contract and add double-bookkeeping disproportionate to the rare loss), recorded here as direction only. The debt's actual closure requires the full-path injection matrix and stays under ROADMAP ownership with its existing trigger.
 
-Dispositions already decided from the audit evidence:
+### Rate Window Lifecycle Contract
 
-- HyperArmor `OnHyperArmorEnd` does not check `bHyperArmorActive` before its unconditional `SetLooseGameplayTagCount(HyperArmor, 0)`; the unconditional clear is the correct safety-net semantics, so the asymmetry is accepted without a code change.
-- The Explore-reported "EndPlay implicitly relies on GAS actor-destruction cancellation" is a false positive: `ABaseCharacter::EndPlay()` already calls `CancelAllAbilities()`; the audit record states this explicitly.
+- Each integrated ability adds two persistent `UAbilityTask_WaitGameplayEvent` listeners for the Begin/End events, accepted only when the payload identity-matches the active Montage (the established `OptionalObject` filter).
+- On an identity-matched Begin while no window is applied and the ability is not ending: `Montage_SetPlayRate(ActiveMontage, Payload.EventMagnitude)` (defensively ignored when the magnitude is not positive) and set `bRateWindowApplied`.
+- One guarded helper per ability (`RestoreBaselineMontageRate()`: when applied, restore `1.0` - engine-no-op for a stopped Montage - then clear the flag) is invoked from: the identity-matched window End, every `EndAbility()` path (before the Montage stop), and Light's `StartComboEntry()` before swapping to the next entry Montage, so each combo entry starts a fresh default-rate instance.
+- Downstream timing follows the new animation timeline automatically: Trace Window, Combo Input/Branch, Dodge/Defense cancel, HoldReady, and Parry window NotifyStates all fire on rate-advanced Montage position. No downstream consumer is modified.
 
-### Lean Pass
+### User-Owned Editor Gate
 
-Verified clean (recorded as audit conclusions, no action): zero engine redirect remnants; 34 source files with zero orphan files and zero orphan classes; a clean `.uproject` plugin list; zero Gameplay Tag inventory drift between `ARCHITECTURE.md` and the ini.
+1. Author Rate windows on the existing attack Montages only where the design needs them (for example a slow `Entry` and a faster `Recovery` on the light chain, a `Release` rate on Charged); use non-overlapping `UAnimNotifyState_MontageRateWindow` tracks with authored `RateMultiplier` values.
+2. Do not crop/duplicate Sequences, add speed Sections, touch AnimBP locomotion/state machines, enemy assets, StateTree, input, maps, or collision for this stage.
+3. Optional failure-injection pass (pre-commit abort only, within this stage's scope): temporarily author an empty/null Montage reference on one integrated ability, confirm the pre-commit validation abort exits cleanly, then restore. Post-commit playback-failure injection is out of scope for this stage per the disposition above.
 
-Executed items:
+### Validation Matrix
 
-1. `APlayerCharacter` removes the legacy `DodgeAction` and `SprintAction` UPROPERTYs and their comments (user decision; runtime input routes through `DodgeSprintAction` since `TODO-01C2`); a full-tree grep confirms zero remaining references. The user re-saves `BP_Player` once in Editor; stale assignments failing there is expected and stays outside version control.
-2. `Config/DefaultGame.ini` sets `ProjectName` from the template `Third Person Game Template` to `PolyQuest`.
-3. `Input.Dodge` (zero Source references) is scanned against `Content/` package strings with the D4-style inspection; if no asset references it, the tag is removed from the ini, otherwise it is retained with the evidence recorded. `Cooldown.Parry` is confirmed in asset-side Granted Tags use and is retained.
-4. `LookAction`, `MouseLookAction`, `Look()`, and `DoLook()` are retained unchanged (the 02B contract keeps them for future UI ownership; they are not unowned residue).
-5. The empty `Config/Layouts/` directory is untracked by git; the user may delete it locally and it is excluded from the commit.
+Main static gate: final source and direct caller/callee reads, CodeGraph, Gameplay Tag cross-check, C4458 scan, `git diff --check`, and verification that no rate call site exists outside the guarded helper pattern. Main does not run UBT, Editor writes, or PIE.
 
-### Documentation Synchronization
+User compile and Scene01 PIE gate:
 
-1. `README.md` status advances through C3C, D1, D2, D3, and D4 (it currently lags five milestones and still names C3C as next); the next stage becomes `TODO-02F`; both the English and Chinese sections are updated with the project's evidence-conscious wording.
-2. `ARCHITECTURE.md` drift repairs: the Light Attack blocked-tag list gains `State.Action.Parrying`, and the Light Attack lifecycle section records the `State.Action.CanCancel.Defense` owned tag introduced by D1.
-3. `ROADMAP.md` moves `TODO-02E` to Done with the audit conclusions and lean record after the user gate passes; any non-blocking audit finding is attached to its owning entry; the existing debt entries remain unchanged.
+- Compile `PolyQuestEditor` after authoring the Rate windows.
+- Verify an authored window visibly changes playback speed and restores exactly `1.0` at window end; two sequential windows on one action apply and restore independently.
+- Verify Light combo handoff: an entry with a window hands off at default rate with no inherited value; window events from a replaced Montage cannot affect the successor.
+- Verify Charged: a window spanning the HoldReady pause applies on release-resume; a release-section window behaves normally.
+- Verify teardown: Dodge cancel, Defense cancel, interruption, death, PIE stop, and (if performed) the pre-commit validation-abort injection leave no stale rate, no stuck window flag, and no leaked listener.
+- Verify downstream timing follows the rated timeline and Root Motion continuity at non-`1.0` rates.
+- Re-run the D1/D2 defense matrix and C3B/C3C/HyperArmor regressions as a combat-loop smoke.
+
+### Documentation And Commit Boundary
+
+After user compile/PIE and review: `ARCHITECTURE.md` records the rate-window contract, `ROADMAP.md` marks only `TODO-02F` done while the committed-cost debt stays open unchanged (this stage records its no-refund direction in the plan, not in the debt's closure), and this file receives the closeout.
+
+Native candidate paths: `Animation/Combat/AnimNotifyState_ActionWindows.h`, `Animation/Combat/AnimNotifyState_ActionWindows.cpp`, `LightAttackAbility.h`, `LightAttackAbility.cpp`, `ChargedAttackAbility.h`, `ChargedAttackAbility.cpp`, `SprintAttackAbility.h`, `SprintAttackAbility.cpp`, `Config/Tags/PolyQuestGameplayTags.ini`, and exact `README.md`/`ARCHITECTURE.md`/`ROADMAP.md`/`plan.md` hunks. Exclude every `Content/**` item and unrelated WIP. No commit occurs without explicit user approval.
 
 ### Route And Ownership
 
@@ -64,38 +71,33 @@ Executed items:
 Outer: ue-stage-workflow
 Primary: ue5-cpp-gameplay
 Support: ue5-blueprint-workflow, ue5-debug-validation
-Route reason: The stage is an audit/lean/documentation slice whose touched surfaces (retired input properties, config identity, tag config, and project documents) are Main-owned and evidence-gated.
+Route reason: The slice spans an AnimNotifyState contract, three attack-ability lifecycles sharing one teardown pattern, engine montage-instance semantics, and a standing validation-debt ruling; all are Main-only integration territory.
 ```
 
 ```text
-Plan explorers: 3 (read-only: HyperArmor lifecycle, lean inventory, documentation drift)
+Plan explorers: 1 (read-only general-purpose: montage call-site inventory, Charged HoldReady mechanism, engine rate API semantics, payload conventions, enemy-side rate absence)
 Implementation executors: 0
 Complex Executor: none
 Main parallel work: none
-Reason: All edits are small, evidence-gated, and cross-document; a second writer would risk divergent documentation claims.
+Reason: One rate flag and one restore helper per ability share a single lifecycle boundary; concurrent writers would risk divergent restore semantics.
 ```
 
-Main owns the source/config/documentation edits, static review, staging, and the commit boundary. The user owns the `PolyQuestEditor` compilation, the `BP_Player` re-save, Editor readback, Scene01 PIE regression, and commit approval.
-
-### Validation Matrix
-
-- Main static gate: final source re-reads, CodeGraph, `git diff --check`, zero-reference grep after the legacy deletion, tag cross-check, and the `Input.Dodge` package-string scan.
-- User gate: compile `PolyQuestEditor`; re-save `BP_Player` and confirm no Missing-property warnings; Scene01 PIE bidirectional combat regression smoke (player attack chain to enemy death, enemy attack through Parry/Guard/Health dispatch, Guard Break, HyperArmor window, interruption/death teardown, movement/camera unchanged).
-- Documentation check: README, ARCHITECTURE, and ROADMAP match the final source state.
-
-### Documentation And Commit Boundary
-
-Candidate paths: `PlayerCharacter.h`, `Config/DefaultGame.ini`, `Config/Tags/PolyQuestGameplayTags.ini` (only if the `Input.Dodge` scan passes), `README.md`, `ARCHITECTURE.md`, `ROADMAP.md`, `plan.md`, plus any blocker-repair hunks the audit produces. Exclude every `Content/**` item, generated directories, and unrelated WIP. No commit occurs without explicit user approval.
+Main owns native source, tags, static checks, review, documentation, staging, and commit boundaries. The user owns all `Content/**` authoring, Editor readback, manual `PolyQuestEditor` compilation, Scene01 PIE validation, and commit approval.
 
 ### Non-Goals
 
-No combat feature, no GAS contract change, no Content asset deletion (lean is Source/Config/documentation-only and evidence-led), no architectural refactor.
+No duplicate/cropped Sequence or Section-based speed control, no parallel AnimBP action state, no global per-tick rate controller, no enemy-side or defense-ability integration in v1, no refund implementation for committed costs.
 
 ### Closeout Record (2026-08-16)
 
-- Audit: all eight surfaces closed with no P0-P2 blocker and no new non-blocking finding requiring reassignment; the HyperArmor dispositions and the EndPlay false-positive clarification are recorded in the Audit Matrix above.
-- Lean execution: legacy `DodgeAction`/`SprintAction` removed with zero word-boundary residuals; `ProjectName=PolyQuest`; `Input.Dodge` removed after a zero-match Source grep and a zero-match `Content/` package-string scan; the Look surface, `Cooldown.Parry`, and all Content assets were retained.
-- Documentation: README advanced through C3C/D1/D2/D3/D4 with `TODO-02F` next in both languages; ARCHITECTURE repaired the Light Attack, tag inventory, and D4 Player Parry Notify class-name drift; ROADMAP moved `TODO-02E` to Done.
-- User validation: the user confirmed the post-lean `PolyQuestEditor` compilation, the `BP_Player` re-save without missing properties, and the Scene01 PIE bidirectional regression smoke. Main ran no UBT, Editor, or PIE.
-- Review: GLM's first Main review reported no source finding. A separate fresh review found P2 next-stage documentation drift (`TODO-02F` was incorrectly skipped for `TODO-03A`) and P3 stale `UAnimNotifyState_ParryWindow` documentation; both are repaired above. No source-level health defect was found. Per user instruction, this documentation-only repair does not receive a delta review. Static evidence includes the full diff re-read, dual-side tag-count cross-check (72 = 54+7+8+3), word-boundary residual greps, and `git diff --check`.
-- Commit: `97a53a7 [Chore] 双向战斗健康审查与精简清理 (Bidirectional Combat Health Review)` contains `Source/PolyQuest/Public/Character/Player/PlayerCharacter.h`, `Config/DefaultGame.ini`, `Config/Tags/PolyQuestGameplayTags.ini`, `README.md`, `ARCHITECTURE.md`, `ROADMAP.md`, and this plan record. All `Content/**`, `PolyQuest.uproject` changes, generated directories, and unrelated user WIP remain excluded.
+- Implementation: `UAnimNotifyState_MontageRateWindow` sends Begin/End semantic events with an authored positive rate magnitude and active-Montage identity. Light, Charged, and Sprint Attack own their rate listeners, change only their matched active Montage instance, and restore `1.0` on matching End and every teardown; Light restores before a Combo handoff.
+- User validation: the user confirmed the authored `PolyQuestEditor` compile and Scene01 PIE rate-window route, including normal restoration and the planned combat-loop regression coverage. Main did not run UBT, Editor, or PIE.
+- Review: GLM self-review reported only a harmless `bRateWindowApplied` tail-reset style asymmetry, accepted without code churn. Main's direct review found no P0/P1 source lifecycle defect, required the atomicity disposition and unsupported-overlap wording above, then confirmed the revised plan and implementation. CodeGraph and direct source reads were the primary static evidence; `code-review-graph` was stale at `be3fdfd` and was not treated as coverage.
+- Debt handoff: committed-cost playback atomicity remains open in `ROADMAP.md`. The normal no-refund direction is not closure evidence; a later controlled post-commit failure matrix across every affected action remains required before networking, prediction, or frame-exact Cost accounting.
+- Commit scope: the focused native/config/documentation commit contains the two Rate Window Tags, the NotifyState, the Light/Charged/Sprint Ability lifecycle changes, and exact `README.md`/`ARCHITECTURE.md`/`ROADMAP.md`/`plan.md` updates. All `Content/**`, `.uproject`, generated files, and unrelated user WIP remain excluded.
+
+---
+
+## Previous Stage Record: TODO-02E (durable record lives in ROADMAP Done Milestones)
+
+- 02E audited the bidirectional melee loop (no blocker), executed the evidence-led lean pass (legacy Dodge/Sprint properties, `Input.Dodge` tag, `ProjectName`), and synchronized README/ARCHITECTURE; the user confirmed the compile, `BP_Player` re-save, and PIE smoke. A post-review documentation repair fixed next-stage and Notify-name drift. Committed as `97a53a7` plus the `f5130c3` record correction.

@@ -35,6 +35,8 @@ USprintAttackAbility::USprintAttackAbility()
 	TraceWindowEndEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Attack.TraceWindow.End")), false);
 	DodgeCancelWindowBeginEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Action.CancelWindow.Dodge.Begin")), false);
 	DodgeCancelWindowEndEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Action.CancelWindow.Dodge.End")), false);
+	RateWindowBeginEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Action.RateWindow.Begin")), false);
+	RateWindowEndEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Action.RateWindow.End")), false);
 	DodgeCancelableStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Action.CanCancel.Dodge")), false);
 	DefenseCancelableStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Action.CanCancel.Defense")), false);
 }
@@ -68,6 +70,7 @@ void USprintAttackAbility::ActivateAbility(
 	bEndAbilityRequested = false;
 	bDodgeCancelable = false;
 	bRuntimeActionTagsApplied = false;
+	bRateWindowApplied = false;
 	ActiveMontage = nullptr;
 	BoundAnimInstance = nullptr;
 
@@ -80,6 +83,7 @@ void USprintAttackAbility::ActivateAbility(
 		|| !MovementInputBlockedTag.IsValid() || !JumpInputBlockedTag.IsValid() || !StaminaRegenBlockedTag.IsValid()
 		|| !TraceWindowBeginEventTag.IsValid() || !TraceWindowEndEventTag.IsValid()
 		|| !DodgeCancelWindowBeginEventTag.IsValid() || !DodgeCancelWindowEndEventTag.IsValid() || !DodgeCancelableStateTag.IsValid() || !DefenseCancelableStateTag.IsValid()
+		|| !RateWindowBeginEventTag.IsValid() || !RateWindowEndEventTag.IsValid()
 		|| !AbilitySystemComponent->HasMatchingGameplayTag(SprintStateTag) || !PlayerCharacter->ShouldRequestSprintAttack())
 	{
 		UE_LOG(LogPolyQuest, Warning, TEXT("Sprint attack activation aborted for '%s': active grounded Sprint, montage, cost/damage/regen effects, and required gameplay tags are required."), *GetNameSafe(PlayerCharacter));
@@ -92,7 +96,9 @@ void USprintAttackAbility::ActivateAbility(
 	TraceWindowEndTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, TraceWindowEndEventTag, nullptr, false, true);
 	DodgeCancelWindowBeginTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, DodgeCancelWindowBeginEventTag, nullptr, false, true);
 	DodgeCancelWindowEndTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, DodgeCancelWindowEndEventTag, nullptr, false, true);
-	if (!MontageTask || !TraceWindowBeginTask || !TraceWindowEndTask || !DodgeCancelWindowBeginTask || !DodgeCancelWindowEndTask)
+	RateWindowBeginTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, RateWindowBeginEventTag, nullptr, false, true);
+	RateWindowEndTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, RateWindowEndEventTag, nullptr, false, true);
+	if (!MontageTask || !TraceWindowBeginTask || !TraceWindowEndTask || !DodgeCancelWindowBeginTask || !DodgeCancelWindowEndTask || !RateWindowBeginTask || !RateWindowEndTask)
 	{
 		UE_LOG(LogPolyQuest, Warning, TEXT("Sprint attack activation aborted for '%s': failed to create an AbilityTask."), *GetNameSafe(PlayerCharacter));
 		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
@@ -117,11 +123,15 @@ void USprintAttackAbility::ActivateAbility(
 	TraceWindowEndTask->EventReceived.AddDynamic(this, &USprintAttackAbility::OnTraceWindowEnd);
 	DodgeCancelWindowBeginTask->EventReceived.AddDynamic(this, &USprintAttackAbility::OnDodgeCancelWindowBegin);
 	DodgeCancelWindowEndTask->EventReceived.AddDynamic(this, &USprintAttackAbility::OnDodgeCancelWindowEnd);
+	RateWindowBeginTask->EventReceived.AddDynamic(this, &USprintAttackAbility::OnRateWindowBegin);
+	RateWindowEndTask->EventReceived.AddDynamic(this, &USprintAttackAbility::OnRateWindowEnd);
 
 	TraceWindowBeginTask->ReadyForActivation();
 	TraceWindowEndTask->ReadyForActivation();
 	DodgeCancelWindowBeginTask->ReadyForActivation();
 	DodgeCancelWindowEndTask->ReadyForActivation();
+	RateWindowBeginTask->ReadyForActivation();
+	RateWindowEndTask->ReadyForActivation();
 	MontageTask->ReadyForActivation();
 
 	// Montage startup can synchronously invoke the bound end delegate. That path has already cleaned every task and pointer.
@@ -157,6 +167,7 @@ void USprintAttackAbility::EndAbility(
 	SetDodgeCancelable(false);
 	SetRuntimeActionTags(false);
 	CloseTraceWindow();
+	RestoreBaselineMontageRate();
 
 	if (BoundAnimInstance)
 	{
@@ -196,6 +207,18 @@ void USprintAttackAbility::EndAbility(
 	{
 		DodgeCancelWindowEndTask->EndTask();
 		DodgeCancelWindowEndTask = nullptr;
+	}
+
+	if (RateWindowBeginTask)
+	{
+		RateWindowBeginTask->EndTask();
+		RateWindowBeginTask = nullptr;
+	}
+
+	if (RateWindowEndTask)
+	{
+		RateWindowEndTask->EndTask();
+		RateWindowEndTask = nullptr;
 	}
 
 	ActiveMontage = nullptr;
@@ -297,6 +320,45 @@ void USprintAttackAbility::CloseTraceWindow()
 	{
 		TraceWindowTask->EndTask();
 		TraceWindowTask = nullptr;
+	}
+}
+
+void USprintAttackAbility::OnRateWindowBegin(FGameplayEventData Payload)
+{
+	// Ignore duplicate Begin events; authored rate windows must not overlap.
+	if (bRateWindowApplied || !IsGameplayEventFromActiveMontage(Payload) || Payload.EventMagnitude <= 0.0f)
+	{
+		return;
+	}
+
+	if (BoundAnimInstance && ActiveMontage && BoundAnimInstance->Montage_IsActive(ActiveMontage.Get()))
+	{
+		BoundAnimInstance->Montage_SetPlayRate(ActiveMontage.Get(), Payload.EventMagnitude);
+		bRateWindowApplied = true;
+	}
+}
+
+void USprintAttackAbility::OnRateWindowEnd(FGameplayEventData Payload)
+{
+	if (!IsGameplayEventFromActiveMontage(Payload))
+	{
+		return;
+	}
+
+	RestoreBaselineMontageRate();
+}
+
+void USprintAttackAbility::RestoreBaselineMontageRate()
+{
+	if (!bRateWindowApplied)
+	{
+		return;
+	}
+
+	bRateWindowApplied = false;
+	if (BoundAnimInstance && ActiveMontage && BoundAnimInstance->Montage_IsActive(ActiveMontage.Get()))
+	{
+		BoundAnimInstance->Montage_SetPlayRate(ActiveMontage.Get(), 1.0f);
 	}
 }
 
