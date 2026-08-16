@@ -178,13 +178,15 @@ The old `Test` project is evidence for player-facing behavior, not a source tree
   - The user confirmed post-repair `PolyQuestEditor` compilation and Scene01 PIE. Main's repair delta review found no P0-P2 issue after the configured Ability validation and external-Falling/Guard-recovery repairs. This record does not claim a fresh independent Reviewer result.
   - The focused native/config/documentation commit excludes all `Content/**` authoring WIP, including GA/GE, Montage, AnimBP, Blueprint, input assets, maps, and imported resources. It is not a clean-checkout recreation of the local Parry fixture.
 
+- [x] `TODO-02D3: Enemy Notify-Timed Hyper Armor v1`
+  - Added one timing-only `UAnimNotifyState_EnemyHyperArmor` and the three tags `Event.Attack.HyperArmor.Begin`, `Event.Attack.HyperArmor.End`, and `State.Status.HyperArmor`. The active `UEnemyMeleeAbility` alone owns the exact loose-tag count during a matching authored attack-Montage window and clears it through every natural, interrupted, Stance Break, death, and teardown path.
+  - Hyper Armor blocks only C3B `UEnemyHitReactionAbility`; it leaves Health, Poise, the shared Trace/Resolver delivery path, C3C Stance Break, Dead teardown, Controller cooldown, and StateTree topology unchanged. v1 permits one continuous non-overlapping window per attack Montage, authored to cover the existing Trace Window.
+  - The user confirmed `PolyQuestEditor` compilation and Scene01 PIE. Main normal review and Main adversarial fallback found no P0-P2 C++/GAS lifecycle issue; `gpt-5.6-luna / xhigh` was unavailable, so no independent review is claimed.
+  - The focused native/config/documentation commit excludes all `Content/**` authoring WIP, including the Montage NotifyState placement, GA/GE, Blueprint, AnimBP, StateTree, maps, and imported resources. It is not a clean-checkout Hyper Armor fixture.
+
 ## Milestones
 
 ### First Enemy, Camera, And Combat Presentation
-
-- [ ] `TODO-02D3: Enemy Notify-Timed Hyper Armor v1`
-  - After D1 and D2 are proven, add only enemy attack-Montage NotifyState windows that suppress C3B Charged Interrupt. Damage and Poise continue to resolve, and existing Stance Break remains higher priority than Hyper Armor.
-  - Keep StateTree topology, attack Profile selection, Controller cooldown, player reaction, and the shared Trace/Resolver path unchanged.
 
 - [ ] `TODO-02E: Bidirectional Melee Combat Health And Lean Review v1`
   - After the first enemy, oblique camera/combat-facing, `TODO-02C1` through `TODO-02C3C`, and defensive actions are proven, audit player/enemy melee damage delivery, any adopted target-assist behavior, team filtering, cancellation/death teardown, StateTree-to-GAS intent boundaries, and camera/facing interactions.

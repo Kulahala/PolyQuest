@@ -56,6 +56,12 @@ private:
 	TObjectPtr<UAbilityTask_WaitGameplayEvent> TraceWindowEndTask;
 
 	UPROPERTY(Transient)
+	TObjectPtr<UAbilityTask_WaitGameplayEvent> HyperArmorBeginTask;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UAbilityTask_WaitGameplayEvent> HyperArmorEndTask;
+
+	UPROPERTY(Transient)
 	TObjectPtr<UAbilityTask_MeleeTraceWindow> TraceWindowTask;
 
 	UPROPERTY(Transient)
@@ -72,9 +78,13 @@ private:
 	FGameplayTag HitReactingStateTag;
 	FGameplayTag TraceWindowBeginEventTag;
 	FGameplayTag TraceWindowEndEventTag;
+	FGameplayTag HyperArmorStateTag;
+	FGameplayTag HyperArmorBeginEventTag;
+	FGameplayTag HyperArmorEndEventTag;
 	float ActiveCooldownAfterAttack = 0.0f;
 	float ActiveGuardStaminaDamage = 0.0f;
 	bool bAttackStarted = false;
+	bool bHyperArmorActive = false;
 	bool bEndAbilityRequested = false;
 
 	UFUNCTION()
@@ -85,6 +95,12 @@ private:
 
 	UFUNCTION()
 	void OnTraceWindowEnd(FGameplayEventData Payload);
+
+	UFUNCTION()
+	void OnHyperArmorBegin(FGameplayEventData Payload);
+
+	UFUNCTION()
+	void OnHyperArmorEnd(FGameplayEventData Payload);
 
 	bool ValidateActivationSetup(const FGameplayAbilityActorInfo* ActorInfo) const;
 	bool IsGameplayEventFromActiveMontage(const FGameplayEventData& Payload) const;

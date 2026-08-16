@@ -10,7 +10,76 @@
 
 ---
 
-## Active Stage: TODO-02D2 - Timed Parry And Enemy Poise Counter v1
+## Active Stage: TODO-02D3 - Enemy Notify-Timed Hyper Armor v1
+
+Baseline: `ed7b9e0 [Feature] 定时弹反与敌人韧性反制 (Timed Parry And Enemy Poise Counter)`.
+
+### Objective
+
+为首个 Goblin 的现有 `UEnemyMeleeAbility` 增加由攻击 Montage NotifyState 驱动的单一、连续、非重叠 Hyper Armor 窗口。窗口只覆盖作者化的 `AttackTraceWindow`，不覆盖前摇或收招。窗口内 `Data.Reaction.Interrupt` 仍正常结算 Health/Poise，但 C3B `EnemyHitReaction` 被 GAS 阻止；C3C Stance Break、死亡 teardown、攻击中断和 Actor teardown 仍拥有更高优先级并清理窗口。
+
+### Locked Runtime Contract
+
+- 在 `Config/Tags/PolyQuestGameplayTags.ini` 新增且只新增 `State.Status.HyperArmor`、`Event.Attack.HyperArmor.Begin`、`Event.Attack.HyperArmor.End`。
+- 在现有 `Animation/Combat/AnimNotifyState_ActionWindows.*` 增加 `UAnimNotifyState_EnemyHyperArmor`。`NotifyBegin`/`NotifyEnd` 只通过既有 `SendGameplayEvent` helper 发送对应事件，并把当前 Animation 放入 `OptionalObject`；不直接写 Health、Poise、Ability、Movement、Collision 或 AI。
+- `UEnemyMeleeAbility` 监听两个事件；事件必须在 Ability 未结束、`bAttackStarted` 为真，且 `Instigator`、`Target`、`OptionalObject` 分别精确匹配当前敌人和 `ActiveMontage` 时才接受。Begin 只接受一次并用 `SetLooseGameplayTagCount(State.Status.HyperArmor, 1)` 写入 loose tag；End 设为 `0`。统一 `EndAbility()` 先清理 Hyper Armor，再停止 Montage、Trace Task 和事件 Task，任何中断、死亡、Stance Break、无效 Montage 或拆除都不能残留 Tag。
+- Hyper Armor 不进入 `ActivationOwnedTags`，不延长攻击生命周期、不改攻击冷却、不改 Trace 语义；没有 Notify 时攻击保持现有 C3B 行为。
+- `UEnemyHitReactionAbility` 将 `State.Status.HyperArmor` 加入 `ActivationBlockedTags`，并在 `ValidateActivationSetup()` 要求该 Tag 有效。霸体期间事件不排队、不延迟补播。
+- 不修改 `EnemyStanceBreakAbility`、`EnemyCharacter`、`AEnemyAIController`、StateTree、Resolver、Attack Profile、Damage GE、Build.cs 或任何资产路径。
+
+### Route And Ownership
+
+```text
+Outer: ue-stage-workflow
+Primary: ue5-cpp-gameplay
+Support: ue5-blueprint-workflow, ue5-debug-validation
+Route reason: Hyper Armor loose-tag ownership, Montage event identity, EnemyMeleeAbility teardown, and C3B/C3C/death priority share one GAS lifecycle boundary.
+```
+
+```text
+Plan explorers: 0
+Implementation executors: 0
+Complex Executor: none
+Main parallel work: none
+Reason: EnemyMeleeAbility, HitReaction, StanceBreak, and death cleanup share one lifecycle; concurrent writers would race the same tag ownership.
+```
+
+Main owns native source/config, static checks, review, documentation, staging and commit boundaries. The user owns Content authoring, Editor readback, manual `PolyQuestEditor` compilation, Scene01 PIE and final commit approval.
+
+### User-Owned Editor Gate
+
+在当前 `BP_Enemy_Goblin` 实际使用的攻击 Montage 中放置一个 `Enemy Hyper Armor` NotifyState，并让 Begin/End 与现有 `AttackTraceWindow` 完全重合。每个 Montage 只保留一个连续窗口；不新增 GA/GE，不替换 Montage、Skeleton、WeaponMesh、BladeTrace 或现有 Trace Notify，不修改 StateTree、AnimBP、Physics Asset、碰撞、地图或 Root Motion 设置。
+
+### Validation And Commit Boundary
+
+Main 只做最终源码/调用方审读、CodeGraph、Tag 交叉核对、C4458 遮蔽扫描和 `git diff --check`，不运行 UBT、Visual Studio、Editor 或 PIE。用户编译并验证窗口内外 Charged Interrupt、Health/Poise、C3C/Dead 优先级和所有 teardown 无残留。通过用户验证和 review 后，才同步 `ARCHITECTURE.md`、`ROADMAP.md`、本文件的 D3 closeout；候选提交仅包含 D3 白名单源码、Tag 配置和精确文档 hunk，排除全部 `Content/**` 与其他 WIP。
+
+### Implementation And Closeout Record (2026-08-16)
+
+#### Native Implementation
+
+- Added the three D3 tags and `UAnimNotifyState_EnemyHyperArmor` to the existing combat action-window source group. The NotifyState only emits Begin/End Gameplay Events with the current Animation in `OptionalObject`.
+- `UEnemyMeleeAbility` owns two persistent event tasks, exact current-Montage/actor identity filtering, one `bHyperArmorActive` duplicate guard, and the precise loose-tag count. It clears Hyper Armor before every Montage, Trace Window, event-task, and cooldown teardown continuation.
+- `UEnemyHitReactionAbility` blocks only while `State.Status.HyperArmor` exists. C3C Stance Break, Death, Controller, StateTree, Attack Profile, and the shared Resolver were intentionally left unchanged.
+
+#### User Validation Evidence
+
+- The user confirmed `PolyQuestEditor` compilation and the authored Scene01 PIE route after placing one continuous `Enemy Hyper Armor` NotifyState over the existing Attack Trace Window. Main did not run UBT, Editor, or PIE.
+
+#### Review Record
+
+- Main normal review found no P0-P2 defect after direct source/caller review, CodeGraph, tag cross-check, C4458 scan, and `git diff --check`.
+- `gpt-5.6-luna / xhigh` was unavailable. Main therefore completed a separate adversarial fallback over Notify/Trace same-frame ordering, duplicate events, identity filtering, C3B blocking, C3C/Dead priority, and every EnemyMelee teardown route; no P0-P2 defect was found. This is not an independent review.
+- `code-review-graph` was consulted only as stale supplemental evidence: its graph is built on `be3fdfd`, behind the `ed7b9e0` D3 baseline. Direct source and user PIE evidence are the coverage basis.
+
+#### Documentation And Commit Boundary
+
+- `ARCHITECTURE.md` records the stable NotifyState -> EnemyMelee loose tag -> C3B block contract, including C3C/Dead precedence and the v1 one-window limit. `ROADMAP.md` moves D3 into Done Milestones with no new debt entry.
+- The approved commit set is exactly the D3 Tag config, EnemyMelee, EnemyHitReaction, action-window NotifyState, and these documentation hunks. All `Content/**`, `.uproject`, generated files, and unrelated user WIP remain excluded; this source/config commit does not recreate the authored Hyper Armor fixture from a clean checkout.
+
+---
+
+## Previous Stage Record: TODO-02D2 - Timed Parry And Enemy Poise Counter v1
 
 Baseline: `be3fdfd [Feature] 定向防御与玩家破防 (Directional Guard And Player Guard Break)`.
 

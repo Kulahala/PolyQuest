@@ -18,6 +18,7 @@ UEnemyHitReactionAbility::UEnemyHitReactionAbility()
 	HitReactionEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Reaction.Enemy.Hit")), false);
 	HitReactingStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Action.HitReacting")), false);
 	StunnedStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Status.Stunned")), false);
+	HyperArmorStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Status.HyperArmor")), false);
 	EnemyMeleeAbilityTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Attack.Enemy.Melee")), false);
 
 	AbilityTags.AddTag(HitReactionAbilityTag);
@@ -25,6 +26,7 @@ UEnemyHitReactionAbility::UEnemyHitReactionAbility()
 	ActivationBlockedTags.AddTag(FGameplayTag::RequestGameplayTag(FName(TEXT("State.Status.Dead")), false));
 	ActivationBlockedTags.AddTag(FGameplayTag::RequestGameplayTag(FName(TEXT("State.Status.Stunned")), false));
 	ActivationBlockedTags.AddTag(HitReactingStateTag);
+	ActivationBlockedTags.AddTag(HyperArmorStateTag);
 
 	FAbilityTriggerData HitReactionTrigger;
 	HitReactionTrigger.TriggerTag = HitReactionEventTag;
@@ -178,7 +180,7 @@ bool UEnemyHitReactionAbility::ValidateActivationSetup(const FGameplayAbilityAct
 	const UAnimInstance* AnimInstance = SkeletalMesh ? SkeletalMesh->GetAnimInstance() : nullptr;
 
 	return CharacterASC && EnemyCharacter && !EnemyCharacter->IsDead() && AnimInstance && HitReactionMontage
-		&& HitReactionAbilityTag.IsValid() && HitReactionEventTag.IsValid() && HitReactingStateTag.IsValid() && StunnedStateTag.IsValid()
+		&& HitReactionAbilityTag.IsValid() && HitReactionEventTag.IsValid() && HitReactingStateTag.IsValid() && StunnedStateTag.IsValid() && HyperArmorStateTag.IsValid()
 		&& EnemyMeleeAbilityTag.IsValid();
 }
 

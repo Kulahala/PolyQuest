@@ -135,3 +135,18 @@ FString UAnimNotifyState_ParryWindow::GetNotifyName_Implementation() const
 {
 	return FString("Parry Window");
 }
+
+void UAnimNotifyState_EnemyHyperArmor::NotifyBegin(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, float, const FAnimNotifyEventReference&)
+{
+	SendGameplayEvent(MeshComp, Animation, TEXT("Event.Attack.HyperArmor.Begin"), TEXT("Enemy Hyper Armor window"));
+}
+
+void UAnimNotifyState_EnemyHyperArmor::NotifyEnd(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, const FAnimNotifyEventReference&)
+{
+	SendGameplayEvent(MeshComp, Animation, TEXT("Event.Attack.HyperArmor.End"), TEXT("Enemy Hyper Armor window"));
+}
+
+FString UAnimNotifyState_EnemyHyperArmor::GetNotifyName_Implementation() const
+{
+	return FString("Enemy Hyper Armor");
+}

@@ -24,6 +24,9 @@ UEnemyMeleeAbility::UEnemyMeleeAbility()
 	HitReactingStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Action.HitReacting")), false);
 	TraceWindowBeginEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Attack.TraceWindow.Begin")), false);
 	TraceWindowEndEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Attack.TraceWindow.End")), false);
+	HyperArmorStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Status.HyperArmor")), false);
+	HyperArmorBeginEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Attack.HyperArmor.Begin")), false);
+	HyperArmorEndEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Attack.HyperArmor.End")), false);
 
 	AbilityTags.AddTag(EnemyMeleeAbilityTag);
 	ActivationOwnedTags.AddTag(AttackingStateTag);
@@ -56,6 +59,7 @@ void UEnemyMeleeAbility::ActivateAbility(
 	ActiveCooldownAfterAttack = 0.0f;
 	ActiveGuardStaminaDamage = 0.0f;
 	bAttackStarted = false;
+	bHyperArmorActive = false;
 	BoundAnimInstance = nullptr;
 
 	if (!ValidateActivationSetup(ActorInfo))
@@ -83,7 +87,9 @@ void UEnemyMeleeAbility::ActivateAbility(
 	MontageTask = UAbilityTask_PlayMontageAndWait::CreatePlayMontageAndWaitProxy(this, NAME_None, ActiveMontage);
 	TraceWindowBeginTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, TraceWindowBeginEventTag, nullptr, false, true);
 	TraceWindowEndTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, TraceWindowEndEventTag, nullptr, false, true);
-	if (!MontageTask || !TraceWindowBeginTask || !TraceWindowEndTask)
+	HyperArmorBeginTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, HyperArmorBeginEventTag, nullptr, false, true);
+	HyperArmorEndTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, HyperArmorEndEventTag, nullptr, false, true);
+	if (!MontageTask || !TraceWindowBeginTask || !TraceWindowEndTask || !HyperArmorBeginTask || !HyperArmorEndTask)
 	{
 		UE_LOG(LogPolyQuest, Warning, TEXT("Enemy melee activation aborted for '%s': failed to create an AbilityTask."), *GetNameSafe(EnemyCharacter));
 		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
@@ -102,9 +108,13 @@ void UEnemyMeleeAbility::ActivateAbility(
 	BoundAnimInstance->OnMontageEnded.AddDynamic(this, &UEnemyMeleeAbility::OnActiveMontageEnded);
 	TraceWindowBeginTask->EventReceived.AddDynamic(this, &UEnemyMeleeAbility::OnTraceWindowBegin);
 	TraceWindowEndTask->EventReceived.AddDynamic(this, &UEnemyMeleeAbility::OnTraceWindowEnd);
+	HyperArmorBeginTask->EventReceived.AddDynamic(this, &UEnemyMeleeAbility::OnHyperArmorBegin);
+	HyperArmorEndTask->EventReceived.AddDynamic(this, &UEnemyMeleeAbility::OnHyperArmorEnd);
 
 	TraceWindowBeginTask->ReadyForActivation();
 	TraceWindowEndTask->ReadyForActivation();
+	HyperArmorBeginTask->ReadyForActivation();
+	HyperArmorEndTask->ReadyForActivation();
 	MontageTask->ReadyForActivation();
 
 	// Zero-length or invalid authored montages can synchronously complete and run the unified teardown.
@@ -140,6 +150,14 @@ void UEnemyMeleeAbility::EndAbility(
 	const float CooldownAfterAttack = ActiveCooldownAfterAttack;
 	AEnemyCharacter* EnemyCharacter = Cast<AEnemyCharacter>(GetAvatarActorFromActorInfo());
 	AEnemyAIController* EnemyAIController = EnemyCharacter ? Cast<AEnemyAIController>(EnemyCharacter->GetController()) : nullptr;
+	if (UAbilitySystemComponent* CharacterASC = GetAbilitySystemComponentFromActorInfo())
+	{
+		if (HyperArmorStateTag.IsValid())
+		{
+			CharacterASC->SetLooseGameplayTagCount(HyperArmorStateTag, 0);
+		}
+	}
+	bHyperArmorActive = false;
 	CloseTraceWindow();
 
 	if (BoundAnimInstance)
@@ -168,6 +186,18 @@ void UEnemyMeleeAbility::EndAbility(
 	{
 		TraceWindowEndTask->EndTask();
 		TraceWindowEndTask = nullptr;
+	}
+
+	if (HyperArmorBeginTask)
+	{
+		HyperArmorBeginTask->EndTask();
+		HyperArmorBeginTask = nullptr;
+	}
+
+	if (HyperArmorEndTask)
+	{
+		HyperArmorEndTask->EndTask();
+		HyperArmorEndTask = nullptr;
 	}
 
 	ActiveMontage = nullptr;
@@ -210,6 +240,40 @@ void UEnemyMeleeAbility::OnTraceWindowEnd(FGameplayEventData Payload)
 	}
 }
 
+void UEnemyMeleeAbility::OnHyperArmorBegin(FGameplayEventData Payload)
+{
+	if (bHyperArmorActive || !bAttackStarted || !IsGameplayEventFromActiveMontage(Payload))
+	{
+		return;
+	}
+
+	if (UAbilitySystemComponent* CharacterASC = GetAbilitySystemComponentFromActorInfo())
+	{
+		if (HyperArmorStateTag.IsValid())
+		{
+			CharacterASC->SetLooseGameplayTagCount(HyperArmorStateTag, 1);
+			bHyperArmorActive = true;
+		}
+	}
+}
+
+void UEnemyMeleeAbility::OnHyperArmorEnd(FGameplayEventData Payload)
+{
+	if (!bAttackStarted || !IsGameplayEventFromActiveMontage(Payload))
+	{
+		return;
+	}
+
+	if (UAbilitySystemComponent* CharacterASC = GetAbilitySystemComponentFromActorInfo())
+	{
+		if (HyperArmorStateTag.IsValid())
+		{
+			CharacterASC->SetLooseGameplayTagCount(HyperArmorStateTag, 0);
+		}
+	}
+	bHyperArmorActive = false;
+}
+
 bool UEnemyMeleeAbility::ValidateActivationSetup(const FGameplayAbilityActorInfo* ActorInfo) const
 {
 	const UAbilitySystemComponent* AbilitySystemComponent = ActorInfo ? ActorInfo->AbilitySystemComponent.Get() : nullptr;
@@ -221,6 +285,7 @@ bool UEnemyMeleeAbility::ValidateActivationSetup(const FGameplayAbilityActorInfo
 
 	return AbilitySystemComponent && EnemyCharacter && EnemyAIController && AttackProfile && AttackProfile->IsValidAttackProfile() && EnemyAIController->HasValidAttackProfile() && AnimInstance
 		&& EnemyMeleeAbilityTag.IsValid() && AttackingStateTag.IsValid() && HitReactingStateTag.IsValid() && TraceWindowBeginEventTag.IsValid() && TraceWindowEndEventTag.IsValid()
+		&& HyperArmorStateTag.IsValid() && HyperArmorBeginEventTag.IsValid() && HyperArmorEndEventTag.IsValid()
 		&& EnemyAIController->HasValidCombatTarget() && EnemyAIController->IsCombatTargetInMeleeRange();
 }
 

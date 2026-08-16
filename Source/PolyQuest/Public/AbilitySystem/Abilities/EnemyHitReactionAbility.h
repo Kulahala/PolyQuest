@@ -59,6 +59,7 @@ private:
 	FGameplayTag HitReactionEventTag;
 	FGameplayTag HitReactingStateTag;
 	FGameplayTag StunnedStateTag;
+	FGameplayTag HyperArmorStateTag;
 	FGameplayTag EnemyMeleeAbilityTag;
 	FGameplayTagContainer EnemyMeleeAbilityTags;
 	bool bMovementLockedByReaction = false;
