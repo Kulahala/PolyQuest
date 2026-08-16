@@ -120,3 +120,18 @@ FString UAnimNotifyState_ComboBranchWindow::GetNotifyName_Implementation() const
 {
 	return FString("Combo Branch Window");
 }
+
+void UAnimNotifyState_ParryWindow::NotifyBegin(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, float, const FAnimNotifyEventReference&)
+{
+	SendGameplayEvent(MeshComp, Animation, TEXT("Event.Defense.Parry.Window.Begin"), TEXT("Parry window"));
+}
+
+void UAnimNotifyState_ParryWindow::NotifyEnd(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, const FAnimNotifyEventReference&)
+{
+	SendGameplayEvent(MeshComp, Animation, TEXT("Event.Defense.Parry.Window.End"), TEXT("Parry window"));
+}
+
+FString UAnimNotifyState_ParryWindow::GetNotifyName_Implementation() const
+{
+	return FString("Parry Window");
+}

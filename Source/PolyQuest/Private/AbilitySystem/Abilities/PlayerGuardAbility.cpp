@@ -42,6 +42,7 @@ UPlayerGuardAbility::UPlayerGuardAbility()
 	ActivationBlockedTags.AddTag(DeadStateTag);
 	ActivationBlockedTags.AddTag(FGameplayTag::RequestGameplayTag(FName(TEXT("State.Status.Exhausted")), false));
 	ActivationBlockedTags.AddTag(StunnedStateTag);
+	ActivationBlockedTags.AddTag(FGameplayTag::RequestGameplayTag(FName(TEXT("State.Action.Parrying")), false));
 
 	AttackAbilityTags.AddTag(FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Attack.Primary")), false));
 	AttackAbilityTags.AddTag(FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Attack.Light")), false));

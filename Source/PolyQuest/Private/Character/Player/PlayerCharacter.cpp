@@ -20,6 +20,7 @@
 #include "TimerManager.h"
 
 #include "AbilitySystem/Abilities/PlayerGuardAbility.h"
+#include "AbilitySystem/Abilities/PlayerParryAbility.h"
 #include "AbilitySystem/CharacterAttributeSet.h"
 #include "Combat/Input/CombatLoadoutDefinition.h"
 #include "PolyQuest.h"
@@ -31,6 +32,7 @@ APlayerCharacter::APlayerCharacter()
 	PrimaryAttackInputTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Input.PrimaryAttack")), false);
 	AimInputTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Input.Aim")), false);
 	GuardInputTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Input.Guard")), false);
+	ParryInputTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Input.Parry")), false);
 	AbilitySlotInputTags.Add(FGameplayTag::RequestGameplayTag(FName(TEXT("Input.AbilitySlot.1")), false));
 	AbilitySlotInputTags.Add(FGameplayTag::RequestGameplayTag(FName(TEXT("Input.AbilitySlot.2")), false));
 	AbilitySlotInputTags.Add(FGameplayTag::RequestGameplayTag(FName(TEXT("Input.AbilitySlot.3")), false));
@@ -44,9 +46,11 @@ APlayerCharacter::APlayerCharacter()
 	AttackingStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Action.Attacking")), false);
 	DodgingStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Action.Dodging")), false);
 	GuardingStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Action.Guarding")), false);
+	ParryingStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Action.Parrying")), false);
 	DeadStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Status.Dead")), false);
 	StunnedStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Status.Stunned")), false);
 	GuardAbilityTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Defense.Guard")), false);
+	ParryAbilityTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Defense.Parry")), false);
 
 	GetCapsuleComponent()->InitCapsuleSize(42.f, 96.0f);
 
@@ -142,9 +146,24 @@ void APlayerCharacter::OnMovementModeChanged(EMovementMode PrevMovementMode, uin
 {
 	Super::OnMovementModeChanged(PrevMovementMode, PreviousCustomMode);
 
-	if (!GetCharacterMovement()->IsMovingOnGround())
+	UCharacterMovementComponent* MovementComponent = GetCharacterMovement();
+	if (!MovementComponent || !MovementComponent->IsMovingOnGround())
 	{
-		CancelActiveGuardAfterConfirmedAction(false);
+		const UAbilitySystemComponent* CharacterASC = GetAbilitySystemComponent();
+		const bool bParryStateActive = CharacterASC && ParryingStateTag.IsValid()
+			&& CharacterASC->HasMatchingGameplayTag(ParryingStateTag);
+
+		// Parry owns its confirmed MOVE_None lock. An actual fall remains an
+		// external interruption and must clear the held-Guard recovery path.
+		if (MovementComponent && MovementComponent->IsFalling())
+		{
+			CancelActiveParry();
+			CancelActiveGuardAfterConfirmedAction(false);
+		}
+		else if (!bParryStateActive)
+		{
+			CancelActiveGuardAfterConfirmedAction(false);
+		}
 		CancelSprintAbility();
 		return;
 	}
@@ -194,6 +213,17 @@ void APlayerCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputCom
 		else
 		{
 			UE_LOG(LogPolyQuest, Warning, TEXT("'%s' has no GuardAction configured."), *GetNameSafe(this));
+		}
+
+		if (ParryAction)
+		{
+			EnhancedInputComponent->BindAction(ParryAction, ETriggerEvent::Started, this, &APlayerCharacter::HandleParryActionStarted);
+			EnhancedInputComponent->BindAction(ParryAction, ETriggerEvent::Completed, this, &APlayerCharacter::HandleParryActionCompleted);
+			EnhancedInputComponent->BindAction(ParryAction, ETriggerEvent::Canceled, this, &APlayerCharacter::HandleParryActionCanceled);
+		}
+		else
+		{
+			UE_LOG(LogPolyQuest, Warning, TEXT("'%s' has no ParryAction configured."), *GetNameSafe(this));
 		}
 
 		for (int32 SlotIndex = 0; SlotIndex < AbilitySlotActions.Num(); ++SlotIndex)
@@ -373,6 +403,60 @@ UPlayerGuardAbility* APlayerCharacter::FindActiveGuardAbility() const
 	return nullptr;
 }
 
+bool APlayerCharacter::TryResolveIncomingDefense(AActor* AttackingActor, float GuardStaminaDamage)
+{
+	if (!AttackingActor)
+	{
+		return false;
+	}
+
+	if (UPlayerParryAbility* ParryAbility = FindActiveParryAbility())
+	{
+		return ParryAbility->TryParryMeleeHit(AttackingActor);
+	}
+
+	return TryGuardIncomingMeleeHit(AttackingActor, GuardStaminaDamage);
+}
+
+UPlayerParryAbility* APlayerCharacter::FindActiveParryAbility() const
+{
+	const UAbilitySystemComponent* CharacterASC = GetAbilitySystemComponent();
+	if (!CharacterASC || !ParryAbilityTag.IsValid() || !ParryingStateTag.IsValid()
+		|| !CharacterASC->HasMatchingGameplayTag(ParryingStateTag))
+	{
+		return nullptr;
+	}
+
+	FGameplayTagContainer ParryAbilityTags;
+	ParryAbilityTags.AddTag(ParryAbilityTag);
+	TArray<FGameplayAbilitySpec*> ParryAbilitySpecs;
+	CharacterASC->GetActivatableGameplayAbilitySpecsByAllMatchingTags(ParryAbilityTags, ParryAbilitySpecs, false);
+	for (FGameplayAbilitySpec* ParryAbilitySpec : ParryAbilitySpecs)
+	{
+		UPlayerParryAbility* ParryAbility = ParryAbilitySpec ? Cast<UPlayerParryAbility>(ParryAbilitySpec->GetPrimaryInstance()) : nullptr;
+		if (ParryAbility && ParryAbility->IsParryActive())
+		{
+			return ParryAbility;
+		}
+	}
+
+	return nullptr;
+}
+
+void APlayerCharacter::CancelActiveParry()
+{
+	UAbilitySystemComponent* CharacterASC = GetAbilitySystemComponent();
+	if (!CharacterASC || !ParryAbilityTag.IsValid() || !ParryingStateTag.IsValid()
+		|| !CharacterASC->HasMatchingGameplayTag(ParryingStateTag))
+	{
+		return;
+	}
+
+	FGameplayTagContainer ParryAbilityTags;
+	ParryAbilityTags.AddTag(ParryAbilityTag);
+	CharacterASC->CancelAbilities(&ParryAbilityTags, nullptr);
+}
+
 void APlayerCharacter::CancelActiveGuardAfterConfirmedAction(bool bResumeAfterAttack)
 {
 	UAbilitySystemComponent* CharacterASC = GetAbilitySystemComponent();
@@ -461,6 +545,22 @@ void APlayerCharacter::HandleGuardActionCanceled(const FInputActionValue&)
 	bGuardRequiresReleaseAfterBreak = false;
 	ClearGuardResumeEligibility();
 	HandleCombatInputEnded(GuardInputTag, true);
+}
+
+void APlayerCharacter::HandleParryActionStarted(const FInputActionValue&)
+{
+	HandleCombatInputStarted(ParryInputTag);
+}
+
+void APlayerCharacter::HandleParryActionCompleted(const FInputActionValue&)
+{
+	// Releasing Q only clears the held input record; it never interrupts a started Parry.
+	HandleCombatInputEnded(ParryInputTag, false);
+}
+
+void APlayerCharacter::HandleParryActionCanceled(const FInputActionValue&)
+{
+	HandleCombatInputEnded(ParryInputTag, true);
 }
 
 void APlayerCharacter::HandleAbilitySlotStarted(const FInputActionValue&, int32 SlotIndex)
@@ -705,6 +805,15 @@ void APlayerCharacter::ResumeGuardAfterAttack()
 		return;
 	}
 
+	// A still-active Parry owns this retry; its own tag removal re-triggers this
+	// function, so the qualification must survive instead of being consumed as a
+	// failed retry when an attack the Parry cancelled clears its tag first.
+	if (const UAbilitySystemComponent* CharacterASC = GetAbilitySystemComponent();
+		CharacterASC && ParryingStateTag.IsValid() && CharacterASC->HasMatchingGameplayTag(ParryingStateTag))
+	{
+		return;
+	}
+
 	bGuardResumeEligibleAfterAttack = false;
 	if (!CanAttemptGuard())
 	{
@@ -778,6 +887,7 @@ bool APlayerCharacter::CanAttemptSprint() const
 		&& !(AttackingStateTag.IsValid() && CharacterASC->HasMatchingGameplayTag(AttackingStateTag))
 		&& !(DodgingStateTag.IsValid() && CharacterASC->HasMatchingGameplayTag(DodgingStateTag))
 		&& !(GuardingStateTag.IsValid() && CharacterASC->HasMatchingGameplayTag(GuardingStateTag))
+		&& !(ParryingStateTag.IsValid() && CharacterASC->HasMatchingGameplayTag(ParryingStateTag))
 		&& !(DeadStateTag.IsValid() && CharacterASC->HasMatchingGameplayTag(DeadStateTag))
 		&& !(StunnedStateTag.IsValid() && CharacterASC->HasMatchingGameplayTag(StunnedStateTag));
 }
@@ -870,6 +980,11 @@ void APlayerCharacter::BindSprintStateEvents()
 		GuardingStateTagChangedHandle = CharacterASC->RegisterGameplayTagEvent(GuardingStateTag)
 			.AddUObject(this, &APlayerCharacter::OnSprintRelevantTagChanged);
 	}
+	if (ParryingStateTag.IsValid())
+	{
+		ParryingStateTagChangedHandle = CharacterASC->RegisterGameplayTagEvent(ParryingStateTag)
+			.AddUObject(this, &APlayerCharacter::OnSprintRelevantTagChanged);
+	}
 	if (DeadStateTag.IsValid())
 	{
 		DeadStateTagChangedHandle = CharacterASC->RegisterGameplayTagEvent(DeadStateTag)
@@ -905,6 +1020,10 @@ void APlayerCharacter::UnbindSprintStateEvents()
 		{
 			CharacterASC->UnregisterGameplayTagEvent(GuardingStateTagChangedHandle, GuardingStateTag);
 		}
+		if (ParryingStateTagChangedHandle.IsValid())
+		{
+			CharacterASC->UnregisterGameplayTagEvent(ParryingStateTagChangedHandle, ParryingStateTag);
+		}
 		if (DeadStateTagChangedHandle.IsValid())
 		{
 			CharacterASC->UnregisterGameplayTagEvent(DeadStateTagChangedHandle, DeadStateTag);
@@ -919,6 +1038,7 @@ void APlayerCharacter::UnbindSprintStateEvents()
 	AttackingStateTagChangedHandle.Reset();
 	DodgingStateTagChangedHandle.Reset();
 	GuardingStateTagChangedHandle.Reset();
+	ParryingStateTagChangedHandle.Reset();
 	DeadStateTagChangedHandle.Reset();
 	StunnedStateTagChangedHandle.Reset();
 	SprintStateBoundAbilitySystemComponent.Reset();
@@ -935,8 +1055,8 @@ void APlayerCharacter::OnSprintRelevantTagChanged(const FGameplayTag Tag, int32 
 			ClearGuardResumeEligibility();
 		}
 
-		// Guard owns its Sprint cancellation after the Guard Montage has actually started.
-		if (Tag == GuardingStateTag)
+		// Guard and Parry own their Sprint cancellation after their own Montages have actually started.
+		if (Tag == GuardingStateTag || Tag == ParryingStateTag)
 		{
 			return;
 		}
@@ -945,7 +1065,7 @@ void APlayerCharacter::OnSprintRelevantTagChanged(const FGameplayTag Tag, int32 
 		return;
 	}
 
-	if (Tag == AttackingStateTag && bGuardResumeEligibleAfterAttack)
+	if ((Tag == AttackingStateTag || Tag == ParryingStateTag) && bGuardResumeEligibleAfterAttack)
 	{
 		if (UWorld* World = GetWorld())
 		{

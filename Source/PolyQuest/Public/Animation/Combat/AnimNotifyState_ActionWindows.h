@@ -71,3 +71,15 @@ public:
 	virtual void NotifyEnd(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, const FAnimNotifyEventReference& EventReference) override;
 	virtual FString GetNotifyName_Implementation() const override;
 };
+
+/** Sends only the start/end timing for the parry-ability's active defense window. */
+UCLASS()
+class POLYQUEST_API UAnimNotifyState_ParryWindow : public UAnimNotifyState
+{
+	GENERATED_BODY()
+
+public:
+	virtual void NotifyBegin(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, float TotalDuration, const FAnimNotifyEventReference& EventReference) override;
+	virtual void NotifyEnd(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, const FAnimNotifyEventReference& EventReference) override;
+	virtual FString GetNotifyName_Implementation() const override;
+};

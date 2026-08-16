@@ -15,6 +15,7 @@ class UGameplayEffect;
 class UInputAction;
 class UInputComponent;
 class UPlayerGuardAbility;
+class UPlayerParryAbility;
 class AActor;
 class UAIPerceptionStimuliSourceComponent;
 class USpringArmComponent;
@@ -68,6 +69,10 @@ protected:
 	/** Shared physical input that expresses held Guard intent through the active Combat Loadout. */
 	UPROPERTY(EditAnywhere, Category="Input")
 	UInputAction* GuardAction;
+
+	/** Shared physical input that expresses Parry intent through the active Combat Loadout. */
+	UPROPERTY(EditAnywhere, Category="Input")
+	UInputAction* ParryAction;
 
 	/** Direct ability-slot inputs; index zero is Input.AbilitySlot.1. */
 	UPROPERTY(EditAnywhere, Category="Input", meta=(EditFixedSize))
@@ -152,6 +157,12 @@ public:
 	/** Resolves one valid incoming melee contact through the active Guard Ability. */
 	bool TryGuardIncomingMeleeHit(AActor* AttackingActor, float GuardStaminaDamage);
 
+	/** Resolves one valid incoming melee contact through the active Parry first, then the active Guard. */
+	bool TryResolveIncomingDefense(AActor* AttackingActor, float GuardStaminaDamage);
+
+	/** Cancels a live Parry after an external airborne transition; it never clears Guard resume eligibility. */
+	void CancelActiveParry();
+
 	/** Cancels a live Guard only after the caller has confirmed its own action Montage started. */
 	void CancelActiveGuardAfterConfirmedAction(bool bResumeAfterAttack);
 
@@ -204,6 +215,9 @@ private:
 	void HandleGuardActionStarted(const FInputActionValue& Value);
 	void HandleGuardActionCompleted(const FInputActionValue& Value);
 	void HandleGuardActionCanceled(const FInputActionValue& Value);
+	void HandleParryActionStarted(const FInputActionValue& Value);
+	void HandleParryActionCompleted(const FInputActionValue& Value);
+	void HandleParryActionCanceled(const FInputActionValue& Value);
 	void HandleAbilitySlotStarted(const FInputActionValue& Value, int32 SlotIndex);
 	void HandleAbilitySlotCompleted(const FInputActionValue& Value, int32 SlotIndex);
 	void HandleAbilitySlotCanceled(const FInputActionValue& Value, int32 SlotIndex);
@@ -220,6 +234,7 @@ private:
 	void RequestAbilityForInputIntent(const FGameplayTag& InputIntentTag);
 	FGameplayTag GetAbilitySlotInputIntentTag(int32 SlotIndex) const;
 	UPlayerGuardAbility* FindActiveGuardAbility() const;
+	UPlayerParryAbility* FindActiveParryAbility() const;
 	void TryStartSprint();
 	void BindSprintStateEvents();
 	void UnbindSprintStateEvents();
@@ -237,6 +252,7 @@ private:
 	FGameplayTag PrimaryAttackInputTag;
 	FGameplayTag AimInputTag;
 	FGameplayTag GuardInputTag;
+	FGameplayTag ParryInputTag;
 	TArray<FGameplayTag> AbilitySlotInputTags;
 	FGameplayTag InputPressedEventTag;
 	FGameplayTag InputReleasedEventTag;
@@ -247,14 +263,17 @@ private:
 	FGameplayTag AttackingStateTag;
 	FGameplayTag DodgingStateTag;
 	FGameplayTag GuardingStateTag;
+	FGameplayTag ParryingStateTag;
 	FGameplayTag DeadStateTag;
 	FGameplayTag StunnedStateTag;
 	FGameplayTag GuardAbilityTag;
+	FGameplayTag ParryAbilityTag;
 	FActiveGameplayEffectHandle SprintJumpAirSpeedEffectHandle;
 	FDelegateHandle MovementInputBlockedTagChangedHandle;
 	FDelegateHandle AttackingStateTagChangedHandle;
 	FDelegateHandle DodgingStateTagChangedHandle;
 	FDelegateHandle GuardingStateTagChangedHandle;
+	FDelegateHandle ParryingStateTagChangedHandle;
 	FDelegateHandle DeadStateTagChangedHandle;
 	FDelegateHandle StunnedStateTagChangedHandle;
 	TWeakObjectPtr<UAbilitySystemComponent> SprintStateBoundAbilitySystemComponent;

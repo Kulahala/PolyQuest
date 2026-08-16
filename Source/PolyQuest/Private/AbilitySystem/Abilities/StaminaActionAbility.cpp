@@ -34,6 +34,29 @@ bool UStaminaActionAbility::CheckCost(
 	return false;
 }
 
+bool UStaminaActionAbility::CommitStaminaCostOnly(
+	const FGameplayAbilitySpecHandle Handle,
+	const FGameplayAbilityActorInfo* ActorInfo,
+	const FGameplayAbilityActivationInfo ActivationInfo,
+	FGameplayTagContainer* OptionalRelevantTags)
+{
+	bCostCommitted = false;
+
+	if (!StaminaRegenDelayGameplayEffectClass)
+	{
+		UE_LOG(LogPolyQuest, Warning, TEXT("Stamina action '%s' cannot commit without a Stamina regeneration delay GameplayEffect."), *GetNameSafe(this));
+		return false;
+	}
+
+	if (!CommitAbilityCost(Handle, ActorInfo, ActivationInfo, OptionalRelevantTags))
+	{
+		return false;
+	}
+
+	bCostCommitted = true;
+	return true;
+}
+
 bool UStaminaActionAbility::CommitAbility(
 	const FGameplayAbilitySpecHandle Handle,
 	const FGameplayAbilityActorInfo* ActorInfo,
