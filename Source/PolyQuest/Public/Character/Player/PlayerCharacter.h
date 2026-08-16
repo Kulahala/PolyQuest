@@ -86,14 +86,6 @@ protected:
 	UPROPERTY(EditDefaultsOnly, Category="Input", meta=(ClampMin="0.01", UIMin="0.01"))
 	float DodgeSprintHoldThresholdSeconds = 0.15f;
 
-	/** Retained authored legacy action; runtime input is routed through DodgeSprintAction. */
-	UPROPERTY(EditAnywhere, Category="Input|Legacy")
-	UInputAction* DodgeAction;
-
-	/** Retained authored legacy action; runtime input is routed through DodgeSprintAction. */
-	UPROPERTY(EditAnywhere, Category="Input|Legacy")
-	UInputAction* SprintAction;
-
 	/** Continuous periodic GameplayEffect that recovers Stamina when its tag requirements allow it. */
 	UPROPERTY(EditDefaultsOnly, Category="GAS|Stamina")
 	TSubclassOf<UGameplayEffect> StaminaRegenGameplayEffectClass;

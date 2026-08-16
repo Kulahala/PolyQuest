@@ -24,6 +24,7 @@ The previous `Test` project remains the FSM behavior reference and validation ba
 - `TODO-02C2` through `TODO-02C3C` have completed the enemy terminal, death-presentation, ragdoll, first charged-damage hard-interrupt, and first Poise/Stance Break slices. The C3B and C3C runtime acceptance is focused in-place reaction/stance playback with authored Root Motion held in place; root-motion Big Reaction adoption remains conditional future work, while the related authored Content remains local WIP.
 - `TODO-02D1` has completed the first player directional Guard and Guard Break slice. The user confirmed `PolyQuestEditor` compilation and Scene01 PIE; Guard/Guard Break authored fixtures remain local `Content/**` WIP rather than a clean-checkout asset closure.
 - `TODO-02D2` has completed the first Q-triggered timed Parry and enemy Poise counter slice. The user confirmed the post-repair `PolyQuestEditor` compile and Scene01 PIE route; authored Parry input, Gameplay Ability/Effects, Montage, Blueprint, and map assets remain local `Content/**` WIP rather than a clean-checkout asset closure.
+- `TODO-02E` has audited the completed bidirectional melee loop with no blocker found, removed the retired legacy Dodge/Sprint input properties and the unreferenced `Input.Dodge` tag, renamed the project identity in `DefaultGame.ini`, and synchronized the lagging README/ARCHITECTURE documentation. The user confirmed the post-lean `PolyQuestEditor` compile, `BP_Player` re-save, and Scene01 PIE regression smoke.
 - External source packages remain under `Content/Assets/`. Imported content is not a production integration merely because it is present locally; skeleton, weapon, socket, animation, and presentation decisions still require their named stage validation.
 
 ## Test-To-PolyQuest Migration Contract Inventory
@@ -190,14 +191,15 @@ The old `Test` project is evidence for player-facing behavior, not a source tree
   - The user confirmed the post-migration test route, including the focused Charged HoldReady smoke. This closes the `TODO-01H` Notify-relocation validation debt. Main normal review and Main adversarial fallback found no P0-P2 issue; `gpt-5.6-luna / xhigh` remained unavailable, so no independent review is claimed.
   - The focused source/documentation commit excludes all `Content/**` migration WIP, Montage, Blueprint, AnimBP, map, input, `.uproject`, and unrelated user changes. It is not a clean-checkout authored-asset fixture.
 
+- [x] `TODO-02E: Bidirectional Melee Combat Health And Lean Review v1`
+  - Audited the completed bidirectional melee loop across eight surfaces (damage chains both ways, defense dispatch, team/invulnerability/dead rejection, teardown matrices, StateTree-to-GAS boundaries, camera/facing, HyperArmor lifecycle, and the validation-debt register) using the prior stage reviews plus three read-only explorations; no P0-P2 blocker was found and no new non-blocking finding needed reassignment.
+  - Lean pass results: the retired legacy `DodgeAction`/`SprintAction` input properties and the unreferenced `Input.Dodge` tag were removed after Source and Content package-string scans proved zero referencers; `ProjectName` now reads `PolyQuest`; zero redirects, orphan source files, orphan classes, and plugin residue were verified and recorded. The Look input surface stays retained per the 02B future-ownership contract.
+  - Documentation synchronization advanced the README through C3C/D1/D2/D3/D4 with `TODO-02F` as the next stage and repaired the Light Attack Parrying/Defense-cancel/tag-inventory drift plus the D4 Player Parry Notify class name.
+  - The user confirmed the post-lean `PolyQuestEditor` compile, the `BP_Player` re-save without missing properties, and the Scene01 PIE bidirectional regression smoke. A fresh review found and repaired only the next-stage and stale-Notify documentation drift; no source-level health defect was found. All `Content/**` and unrelated user WIP remain excluded from the focused commit.
+
 ## Milestones
 
 ### First Enemy, Camera, And Combat Presentation
-
-- [ ] `TODO-02E: Bidirectional Melee Combat Health And Lean Review v1`
-  - After the first enemy, oblique camera/combat-facing, `TODO-02C1` through `TODO-02C3C`, and defensive actions are proven, audit player/enemy melee damage delivery, any adopted target-assist behavior, team filtering, cancellation/death teardown, StateTree-to-GAS intent boundaries, and camera/facing interactions.
-  - Add no combat feature. Repair blockers here; assign non-blocking findings to the owning combat or player-loop milestone with evidence and a concrete closure trigger.
-  - A lean pass is limited to redundant input paths, expired debug fixtures, redirects, and assets/configuration proven to have zero referencers or an explicit replacement. It is not authority to remove Marketplace or authored Content by directory.
 
 - [ ] `TODO-02F: Montage Rate Window And Action Timing v1`
    - Before weapon/loadout expansion, establish one player-combat Montage playback-rate contract for authored entry, release, and recovery timing. A dedicated `UAnimNotifyState` authors each window's interval and target rate; the identity-matched active Montage/Ability applies and owns the override.
