@@ -184,6 +184,12 @@ The old `Test` project is evidence for player-facing behavior, not a source tree
   - The user confirmed `PolyQuestEditor` compilation and Scene01 PIE. Main normal review and Main adversarial fallback found no P0-P2 C++/GAS lifecycle issue; `gpt-5.6-luna / xhigh` was unavailable, so no independent review is claimed.
   - The focused native/config/documentation commit excludes all `Content/**` authoring WIP, including the Montage NotifyState placement, GA/GE, Blueprint, AnimBP, StateTree, maps, and imported resources. It is not a clean-checkout Hyper Armor fixture.
 
+- [x] `TODO-02D4: Combat Animation Notify Ownership And Naming Audit v1`
+  - Audited the native combat timing Notify group and made reflected ownership explicit: Shared `ActionDodgeCancelWindow`, `DodgeInvulnerability`, and `AttackTraceWindow`; Player `PlayerChargedAttackHoldReady`, `PlayerComboInputWindow`, `PlayerComboBranchWindow`, and `PlayerParryWindow`; Enemy `EnemyHyperArmor`.
+  - Renamed only the four Player reflected classes and their Editor display names. Existing Gameplay Event Tags, `SendGameplayEvent` payload identity, Ability listeners, damage, AI, and Montage timing remain unchanged. No `CoreRedirects` or legacy aliases exist; old serialized Player Notify references are intentionally migrated by the user in Editor.
+  - The user confirmed the post-migration test route, including the focused Charged HoldReady smoke. This closes the `TODO-01H` Notify-relocation validation debt. Main normal review and Main adversarial fallback found no P0-P2 issue; `gpt-5.6-luna / xhigh` remained unavailable, so no independent review is claimed.
+  - The focused source/documentation commit excludes all `Content/**` migration WIP, Montage, Blueprint, AnimBP, map, input, `.uproject`, and unrelated user changes. It is not a clean-checkout authored-asset fixture.
+
 ## Milestones
 
 ### First Enemy, Camera, And Combat Presentation
@@ -297,8 +303,6 @@ The old `Test` project is evidence for player-facing behavior, not a source tree
 - **Shared Dodge/Sprint key:** `TODO-01C2` establishes one temporal physical-input route: a short release requests Dodge and a `0.15s` hold resolves to Sprint intent. Do not rebind independent legacy `IA_Dodge` and `IA_Sprint` actions to the same key, because their independent Started callbacks would race rather than share the arbiter's release/cancel semantics.
 
 ## Known Risks And Validation Debt
-
-- `TODO-01H` user compile/PIE evidence covers the shared trace behavior before the source-only relocation of `UAnimNotify_ChargedAttackHoldReady` into `AnimNotifyState_ActionWindows.*`, which removes the retired `AnimNotify_Attack.*` pair. Before treating that relocation as runtime-validated, compile `PolyQuestEditor` and run a focused Scene01 Charged HoldReady smoke; record that result here. This remains accepted validation debt, not a new feature stage.
 - `UAbilityTask_PlayMontageAndWait::ExternalCancel()` can end a task without an explicit guarantee that the Montage stops. Static inspection found no current PolyQuest caller. When `TODO-01C` or a later Stun/explicit-interrupt path needs task-level cancellation, it must define montage-stop behavior, converge through `EndAbility()`, and add focused PIE coverage before relying on that path.
 - `TODO-01A` deliberately withholds its mutable authoring assets from this commit. A curated stable asset baseline is required before the local fixture can be reproduced from a clean checkout; this is a versioning boundary, not a failure of the local compile/PIE validation.
 - `TODO-01B` intentionally skips the sword/sequence Reference Viewer dependency-closure audit by user decision. Its direct stable-asset commit may therefore omit material or Skeleton dependencies and must not be treated as a clean-checkout asset baseline; rerun the closure audit before promoting it as one.

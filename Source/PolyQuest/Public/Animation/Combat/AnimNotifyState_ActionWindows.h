@@ -29,7 +29,7 @@ public:
 
 /** Sends the charged attack's semantic hold-ready timing event. */
 UCLASS()
-class POLYQUEST_API UAnimNotify_ChargedAttackHoldReady : public UAnimNotify
+class POLYQUEST_API UAnimNotify_PlayerChargedAttackHoldReady : public UAnimNotify
 {
 	GENERATED_BODY()
 
@@ -51,7 +51,7 @@ public:
 };
 
 UCLASS()
-class POLYQUEST_API UAnimNotifyState_ComboInputWindow : public UAnimNotifyState
+class POLYQUEST_API UAnimNotifyState_PlayerComboInputWindow : public UAnimNotifyState
 {
 	GENERATED_BODY()
 
@@ -62,7 +62,7 @@ public:
 };
 
 UCLASS()
-class POLYQUEST_API UAnimNotifyState_ComboBranchWindow : public UAnimNotifyState
+class POLYQUEST_API UAnimNotifyState_PlayerComboBranchWindow : public UAnimNotifyState
 {
 	GENERATED_BODY()
 
@@ -74,7 +74,7 @@ public:
 
 /** Sends only the start/end timing for the parry-ability's active defense window. */
 UCLASS()
-class POLYQUEST_API UAnimNotifyState_ParryWindow : public UAnimNotifyState
+class POLYQUEST_API UAnimNotifyState_PlayerParryWindow : public UAnimNotifyState
 {
 	GENERATED_BODY()
 

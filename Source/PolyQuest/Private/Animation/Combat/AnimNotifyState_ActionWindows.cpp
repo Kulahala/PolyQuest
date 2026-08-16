@@ -66,14 +66,14 @@ FString UAnimNotifyState_DodgeInvulnerability::GetNotifyName_Implementation() co
 	return FString("Dodge Invulnerability");
 }
 
-void UAnimNotify_ChargedAttackHoldReady::Notify(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, const FAnimNotifyEventReference&)
+void UAnimNotify_PlayerChargedAttackHoldReady::Notify(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, const FAnimNotifyEventReference&)
 {
 	SendGameplayEvent(MeshComp, Animation, TEXT("Event.Attack.Charged.HoldReady"), TEXT("Charged attack hold-ready notify"));
 }
 
-FString UAnimNotify_ChargedAttackHoldReady::GetNotifyName_Implementation() const
+FString UAnimNotify_PlayerChargedAttackHoldReady::GetNotifyName_Implementation() const
 {
-	return FString("Charged Attack Hold Ready");
+	return FString("Player Charged Attack Hold Ready");
 }
 
 void UAnimNotifyState_AttackTraceWindow::NotifyBegin(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, float, const FAnimNotifyEventReference&)
@@ -91,49 +91,49 @@ FString UAnimNotifyState_AttackTraceWindow::GetNotifyName_Implementation() const
 	return FString("Attack Trace Window");
 }
 
-void UAnimNotifyState_ComboInputWindow::NotifyBegin(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, float, const FAnimNotifyEventReference&)
+void UAnimNotifyState_PlayerComboInputWindow::NotifyBegin(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, float, const FAnimNotifyEventReference&)
 {
 	SendGameplayEvent(MeshComp, Animation, TEXT("Event.Attack.Light.Combo.InputWindow.Begin"), TEXT("Combo input window"));
 }
 
-void UAnimNotifyState_ComboInputWindow::NotifyEnd(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, const FAnimNotifyEventReference&)
+void UAnimNotifyState_PlayerComboInputWindow::NotifyEnd(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, const FAnimNotifyEventReference&)
 {
 	SendGameplayEvent(MeshComp, Animation, TEXT("Event.Attack.Light.Combo.InputWindow.End"), TEXT("Combo input window"));
 }
 
-FString UAnimNotifyState_ComboInputWindow::GetNotifyName_Implementation() const
+FString UAnimNotifyState_PlayerComboInputWindow::GetNotifyName_Implementation() const
 {
-	return FString("Combo Input Window");
+	return FString("Player Combo Input Window");
 }
 
-void UAnimNotifyState_ComboBranchWindow::NotifyBegin(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, float, const FAnimNotifyEventReference&)
+void UAnimNotifyState_PlayerComboBranchWindow::NotifyBegin(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, float, const FAnimNotifyEventReference&)
 {
 	SendGameplayEvent(MeshComp, Animation, TEXT("Event.Attack.Light.Combo.BranchWindow.Begin"), TEXT("Combo branch window"));
 }
 
-void UAnimNotifyState_ComboBranchWindow::NotifyEnd(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, const FAnimNotifyEventReference&)
+void UAnimNotifyState_PlayerComboBranchWindow::NotifyEnd(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, const FAnimNotifyEventReference&)
 {
 	SendGameplayEvent(MeshComp, Animation, TEXT("Event.Attack.Light.Combo.BranchWindow.End"), TEXT("Combo branch window"));
 }
 
-FString UAnimNotifyState_ComboBranchWindow::GetNotifyName_Implementation() const
+FString UAnimNotifyState_PlayerComboBranchWindow::GetNotifyName_Implementation() const
 {
-	return FString("Combo Branch Window");
+	return FString("Player Combo Branch Window");
 }
 
-void UAnimNotifyState_ParryWindow::NotifyBegin(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, float, const FAnimNotifyEventReference&)
+void UAnimNotifyState_PlayerParryWindow::NotifyBegin(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, float, const FAnimNotifyEventReference&)
 {
 	SendGameplayEvent(MeshComp, Animation, TEXT("Event.Defense.Parry.Window.Begin"), TEXT("Parry window"));
 }
 
-void UAnimNotifyState_ParryWindow::NotifyEnd(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, const FAnimNotifyEventReference&)
+void UAnimNotifyState_PlayerParryWindow::NotifyEnd(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, const FAnimNotifyEventReference&)
 {
 	SendGameplayEvent(MeshComp, Animation, TEXT("Event.Defense.Parry.Window.End"), TEXT("Parry window"));
 }
 
-FString UAnimNotifyState_ParryWindow::GetNotifyName_Implementation() const
+FString UAnimNotifyState_PlayerParryWindow::GetNotifyName_Implementation() const
 {
-	return FString("Parry Window");
+	return FString("Player Parry Window");
 }
 
 void UAnimNotifyState_EnemyHyperArmor::NotifyBegin(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, float, const FAnimNotifyEventReference&)
