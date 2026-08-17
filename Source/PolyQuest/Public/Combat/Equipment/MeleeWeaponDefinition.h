@@ -37,6 +37,17 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Trace Markers")
 	FVector BladeTipMarkerRelativeLocation = FVector::ZeroVector;
 
+	/** Named Static Mesh socket for the blade root/base marker. If set, BladeTipSocketName must also be set and resolve to a valid socket on WeaponMesh. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Trace Sockets")
+	FName BladeBaseSocketName = NAME_None;
+
+	/** Named Static Mesh socket for the blade tip marker. If set, BladeBaseSocketName must also be set and resolve to a valid socket on WeaponMesh. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Trace Sockets")
+	FName BladeTipSocketName = NAME_None;
+
+	/** Returns true if this displayed melee weapon opts into Static Mesh trace socket attachment. */
+	bool UsesDisplayMeshTraceSockets() const;
+
 	/** Sweep sphere radius for this weapon's melee trace. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Trace", meta = (ClampMin = "0.01"))
 	float TraceRadius = 12.0f;
@@ -44,52 +55,4 @@ public:
 	/** Sphere-sweep samples along this weapon's blade. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Trace", meta = (ClampMin = "1", ClampMax = "8"))
 	int32 BladeSubdivisions = 4;
-
 };
-
-inline bool UMeleeWeaponDefinition::IsValidWeaponDefinition(FString& OutReason) const
-{
-	OutReason.Empty();
-	if (!Super::IsValidWeaponDefinition(OutReason))
-	{
-		return false;
-	}
-
-	if (bUseOwnerMeshSocketForTrace && WeaponMesh)
-	{
-		OutReason = TEXT("bUseOwnerMeshSocketForTrace cannot be combined with a WeaponMesh; the trace source would be ambiguous.");
-		return false;
-	}
-
-	if (!bUseOwnerMeshSocketForTrace && !WeaponMesh)
-	{
-		OutReason = TEXT("WeaponMesh is not assigned.");
-		return false;
-	}
-
-	if (BladeBaseMarkerRelativeLocation.Equals(BladeTipMarkerRelativeLocation, KINDA_SMALL_NUMBER))
-	{
-		OutReason = TEXT("BladeBaseMarkerRelativeLocation and BladeTipMarkerRelativeLocation must be distinct positions.");
-		return false;
-	}
-
-	if (TraceRadius <= 0.0f)
-	{
-		OutReason = TEXT("TraceRadius must be positive.");
-		return false;
-	}
-
-	if (BladeSubdivisions < 1 || BladeSubdivisions > 8)
-	{
-		OutReason = TEXT("BladeSubdivisions must be between 1 and 8.");
-		return false;
-	}
-
-	if (AssociatedLoadout && !AssociatedLoadout->IsRouteTableValid())
-	{
-		OutReason = TEXT("AssociatedLoadout has an invalid route table.");
-		return false;
-	}
-
-	return true;
-}

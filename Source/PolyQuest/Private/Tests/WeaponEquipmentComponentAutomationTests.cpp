@@ -20,6 +20,7 @@
 #include "Engine/SkeletalMesh.h"
 #include "Engine/StaticMesh.h"
 #include "Engine/StaticMeshActor.h"
+#include "Engine/StaticMeshSocket.h"
 #include "Engine/World.h"
 #include "EngineUtils.h"
 
@@ -62,12 +63,17 @@ bool FWeaponEquipmentComponentTransactionMatrixTest::RunTest(const FString& Para
 
 	// Load real project fixtures
 	USkeletalMesh* HeroMesh = Cast<USkeletalMesh>(StaticLoadObject(USkeletalMesh::StaticClass(), nullptr, TEXT("/Game/PolygonDungeons/Meshes/Characters/SK_Character_Hero_Knight_Male")));
-	UStaticMesh* SwordMesh = Cast<UStaticMesh>(StaticLoadObject(UStaticMesh::StaticClass(), nullptr, TEXT("/Game/PolygonDungeons/Meshes/Weapons/SM_Wep_Straightsword_01")));
+	UStaticMesh* SwordMesh = Cast<UStaticMesh>(StaticLoadObject(UStaticMesh::StaticClass(), nullptr, TEXT("/Game/PolygonDungeons/Meshes/Weapons/SM_Wep_Ornate_Sword_02")));
 	UStaticMesh* ShieldMesh = Cast<UStaticMesh>(StaticLoadObject(UStaticMesh::StaticClass(), nullptr, TEXT("/Game/PolygonDungeons/Meshes/Weapons/SM_Wep_Shield_Round_01")));
 
 	TestNotNull(TEXT("Hero skeletal mesh loaded"), HeroMesh);
 	TestNotNull(TEXT("Sword static mesh loaded"), SwordMesh);
 	TestNotNull(TEXT("Shield static mesh loaded"), ShieldMesh);
+
+	const FName SocketNameTraceBase(TEXT("Trace_Base"));
+	const FName SocketNameTraceTip(TEXT("Trace_Tip"));
+	TestNotNull(TEXT("SwordMesh contains socket Trace_Base"), SwordMesh ? SwordMesh->FindSocket(SocketNameTraceBase) : nullptr);
+	TestNotNull(TEXT("SwordMesh contains socket Trace_Tip"), SwordMesh ? SwordMesh->FindSocket(SocketNameTraceTip) : nullptr);
 
 	// Create test loadouts
 	UCombatLoadoutDefinition* SwordLoadout = NewObject<UCombatLoadoutDefinition>(GetTransientPackage(), TEXT("Test_SwordLoadout"));
@@ -78,6 +84,8 @@ bool FWeaponEquipmentComponentTransactionMatrixTest::RunTest(const FString& Para
 	SwordDef->HandSlot = EWeaponHandSlot::MainHandOneHanded;
 	SwordDef->AttachSocketName = TEXT("Weapon_R");
 	SwordDef->WeaponMesh = SwordMesh;
+	SwordDef->BladeBaseSocketName = SocketNameTraceBase;
+	SwordDef->BladeTipSocketName = SocketNameTraceTip;
 	SwordDef->AssociatedLoadout = SwordLoadout;
 	SwordDef->BaseGrantedActions.Add(UPrimaryAttackAbility::StaticClass());
 	SwordDef->ExclusiveCombatActions.Add(UPlayerGuardAbility::StaticClass());
@@ -92,6 +100,8 @@ bool FWeaponEquipmentComponentTransactionMatrixTest::RunTest(const FString& Para
 	TwoHandedDef->HandSlot = EWeaponHandSlot::MainHandTwoHanded;
 	TwoHandedDef->AttachSocketName = TEXT("Weapon_R");
 	TwoHandedDef->WeaponMesh = SwordMesh;
+	TwoHandedDef->BladeBaseSocketName = SocketNameTraceBase;
+	TwoHandedDef->BladeTipSocketName = SocketNameTraceTip;
 	TwoHandedDef->AssociatedLoadout = TwoHandedLoadout;
 	TwoHandedDef->BaseGrantedActions.Add(UPrimaryAttackAbility::StaticClass());
 	TwoHandedDef->ExclusiveCombatActions.Add(UPlayerGuardBreakAbility::StaticClass());
@@ -219,6 +229,19 @@ bool FWeaponEquipmentComponentTransactionMatrixTest::RunTest(const FString& Para
 		TestEqual(TEXT("Equipped off hand is Shield"), EquipmentComp->GetCurrentOffHandWeapon(), Cast<UWeaponDefinition>(ShieldDef));
 		TestEqual(TEXT("Equipped active loadout is SwordLoadout"), Player->GetActiveCombatLoadout(), SwordLoadout);
 
+		// Assert blade markers are attached to the authored Static Mesh sockets and resolve to distinct locations
+		USceneComponent* BladeBaseComp = nullptr;
+		USceneComponent* BladeTipComp = nullptr;
+		TestTrue(TEXT("TryGetBladeMarkers succeeds for equipped Sword"), EquipmentComp->TryGetBladeMarkers(BladeBaseComp, BladeTipComp));
+		TestNotNull(TEXT("BladeBaseComp is valid"), BladeBaseComp);
+		TestNotNull(TEXT("BladeTipComp is valid"), BladeTipComp);
+		if (BladeBaseComp && BladeTipComp)
+		{
+			TestEqual(TEXT("BladeBaseComp attached to Trace_Base socket"), BladeBaseComp->GetAttachSocketName(), SocketNameTraceBase);
+			TestEqual(TEXT("BladeTipComp attached to Trace_Tip socket"), BladeTipComp->GetAttachSocketName(), SocketNameTraceTip);
+			TestNotEqual(TEXT("Blade markers have distinct world locations"), BladeBaseComp->GetComponentLocation(), BladeTipComp->GetComponentLocation());
+		}
+
 		FString PreflightReason1;
 		const bool bPreflight1 = EquipmentComp->TestDirectPreflight(TwoHandedDef, ShieldDef, PreflightReason1);
 		TestFalse(TEXT("Direct preflight rejects {TwoHanded, Shield}"), bPreflight1);
@@ -257,6 +280,76 @@ bool FWeaponEquipmentComponentTransactionMatrixTest::RunTest(const FString& Para
 		TestEqual(TEXT("Main hand remains TwoHanded on conflict rejection"), EquipmentComp->GetCurrentMainHandWeapon(), Cast<UWeaponDefinition>(TwoHandedDef));
 		TestNull(TEXT("Off hand remains null on conflict rejection"), EquipmentComp->GetCurrentOffHandWeapon());
 		TestEqual(TEXT("Active loadout remains TwoHandedLoadout on conflict rejection"), Player->GetActiveCombatLoadout(), TwoHandedLoadout);
+
+		// Direction 3: Preflight failure on invalid socket authoring
+		// 3.1 Incomplete socket pair (Base set, Tip None)
+		UMeleeWeaponDefinition* IncompleteSocketDef = NewObject<UMeleeWeaponDefinition>(GetTransientPackage(), TEXT("Test_IncompleteSocketDef"));
+		IncompleteSocketDef->HandSlot = EWeaponHandSlot::MainHandOneHanded;
+		IncompleteSocketDef->AttachSocketName = TEXT("Weapon_R");
+		IncompleteSocketDef->WeaponMesh = SwordMesh;
+		IncompleteSocketDef->BladeBaseSocketName = SocketNameTraceBase;
+		IncompleteSocketDef->BladeTipSocketName = NAME_None;
+		IncompleteSocketDef->AssociatedLoadout = SwordLoadout;
+		IncompleteSocketDef->BaseGrantedActions.Add(UPrimaryAttackAbility::StaticClass());
+		IncompleteSocketDef->ExclusiveCombatActions.Add(UPlayerGuardAbility::StaticClass());
+		IncompleteSocketDef->DefaultPreparedActions.Add(UPlayerGuardAbility::StaticClass());
+
+		FString IncompleteReason;
+		TestFalse(TEXT("Preflight rejects incomplete socket pair"), EquipmentComp->TestDirectPreflight(IncompleteSocketDef, nullptr, IncompleteReason));
+
+		// 3.2 Non-existent socket on mesh
+		UMeleeWeaponDefinition* MissingSocketDef = NewObject<UMeleeWeaponDefinition>(GetTransientPackage(), TEXT("Test_MissingSocketDef"));
+		MissingSocketDef->HandSlot = EWeaponHandSlot::MainHandOneHanded;
+		MissingSocketDef->AttachSocketName = TEXT("Weapon_R");
+		MissingSocketDef->WeaponMesh = SwordMesh;
+		MissingSocketDef->BladeBaseSocketName = SocketNameTraceBase;
+		MissingSocketDef->BladeTipSocketName = FName(TEXT("NonExistent_Tip_Socket"));
+		MissingSocketDef->AssociatedLoadout = SwordLoadout;
+		MissingSocketDef->BaseGrantedActions.Add(UPrimaryAttackAbility::StaticClass());
+		MissingSocketDef->ExclusiveCombatActions.Add(UPlayerGuardAbility::StaticClass());
+		MissingSocketDef->DefaultPreparedActions.Add(UPlayerGuardAbility::StaticClass());
+
+		FString MissingReason;
+		TestFalse(TEXT("Preflight rejects non-existent socket name on mesh"), EquipmentComp->TestDirectPreflight(MissingSocketDef, nullptr, MissingReason));
+
+		// 3.3 Distinct socket names with identical RelativeLocations on mesh
+		const FName SocketCoincidentBase(TEXT("Test_Socket_Coincident_Base"));
+		const FName SocketCoincidentTip(TEXT("Test_Socket_Coincident_Tip"));
+
+		UStaticMeshSocket* CoincidentBaseSocket = NewObject<UStaticMeshSocket>(SwordMesh);
+		CoincidentBaseSocket->SocketName = SocketCoincidentBase;
+		CoincidentBaseSocket->RelativeLocation = FVector(0.0f, 0.0f, 50.0f);
+		SwordMesh->AddSocket(CoincidentBaseSocket);
+
+		UStaticMeshSocket* CoincidentTipSocket = NewObject<UStaticMeshSocket>(SwordMesh);
+		CoincidentTipSocket->SocketName = SocketCoincidentTip;
+		CoincidentTipSocket->RelativeLocation = FVector(0.0f, 0.0f, 50.0f);
+		SwordMesh->AddSocket(CoincidentTipSocket);
+
+		UMeleeWeaponDefinition* CoincidentSocketDef = NewObject<UMeleeWeaponDefinition>(GetTransientPackage(), TEXT("Test_CoincidentSocketDef"));
+		CoincidentSocketDef->HandSlot = EWeaponHandSlot::MainHandOneHanded;
+		CoincidentSocketDef->AttachSocketName = TEXT("Weapon_R");
+		CoincidentSocketDef->WeaponMesh = SwordMesh;
+		CoincidentSocketDef->BladeBaseSocketName = SocketCoincidentBase;
+		CoincidentSocketDef->BladeTipSocketName = SocketCoincidentTip;
+		CoincidentSocketDef->AssociatedLoadout = SwordLoadout;
+		CoincidentSocketDef->BaseGrantedActions.Add(UPrimaryAttackAbility::StaticClass());
+		CoincidentSocketDef->ExclusiveCombatActions.Add(UPlayerGuardAbility::StaticClass());
+		CoincidentSocketDef->DefaultPreparedActions.Add(UPlayerGuardAbility::StaticClass());
+
+		FString CoincidentReason;
+		const bool bCoincidentPreflight = EquipmentComp->TestDirectPreflight(CoincidentSocketDef, nullptr, CoincidentReason);
+		TestFalse(TEXT("Preflight rejects distinct socket names with identical RelativeLocations"), bCoincidentPreflight);
+		TestTrue(TEXT("Preflight reason explains coincident socket locations"), CoincidentReason.Contains(TEXT("identical RelativeLocations")));
+
+		const bool bEquipCoincidentResult = EquipmentComp->EquipWeapon(CoincidentSocketDef);
+		TestFalse(TEXT("Direct EquipWeapon with coincident socket definition fails"), bEquipCoincidentResult);
+		TestEqual(TEXT("Main hand remains TwoHanded after coincident equip rejection"), EquipmentComp->GetCurrentMainHandWeapon(), Cast<UWeaponDefinition>(TwoHandedDef));
+		TestNull(TEXT("Off hand remains null after coincident equip rejection"), EquipmentComp->GetCurrentOffHandWeapon());
+
+		// Clean up transient test sockets from SwordMesh
+		SwordMesh->RemoveSocket(CoincidentBaseSocket);
+		SwordMesh->RemoveSocket(CoincidentTipSocket);
 	}
 
 	// 5. Test World Pickup Full Success Transactions (Normalizations and Drop Spawns)

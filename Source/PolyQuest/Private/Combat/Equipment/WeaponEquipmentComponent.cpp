@@ -767,13 +767,23 @@ bool UWeaponEquipmentComponent::ApplyComposition(APlayerCharacter* PlayerCharact
 	{
 		NewBladeBaseMarker = NewObject<USceneComponent>(PlayerCharacter, NAME_None, RF_Transient);
 		NewBladeBaseMarker->RegisterComponent();
-		NewBladeBaseMarker->AttachToComponent(NewMainHandDisplay, FAttachmentTransformRules::KeepRelativeTransform);
-		NewBladeBaseMarker->SetRelativeLocation(MainHandMelee->BladeBaseMarkerRelativeLocation);
 
 		NewBladeTipMarker = NewObject<USceneComponent>(PlayerCharacter, NAME_None, RF_Transient);
 		NewBladeTipMarker->RegisterComponent();
-		NewBladeTipMarker->AttachToComponent(NewMainHandDisplay, FAttachmentTransformRules::KeepRelativeTransform);
-		NewBladeTipMarker->SetRelativeLocation(MainHandMelee->BladeTipMarkerRelativeLocation);
+
+		if (MainHandMelee->UsesDisplayMeshTraceSockets())
+		{
+			NewBladeBaseMarker->AttachToComponent(NewMainHandDisplay, FAttachmentTransformRules::SnapToTargetNotIncludingScale, MainHandMelee->BladeBaseSocketName);
+			NewBladeTipMarker->AttachToComponent(NewMainHandDisplay, FAttachmentTransformRules::SnapToTargetNotIncludingScale, MainHandMelee->BladeTipSocketName);
+		}
+		else
+		{
+			NewBladeBaseMarker->AttachToComponent(NewMainHandDisplay, FAttachmentTransformRules::KeepRelativeTransform);
+			NewBladeBaseMarker->SetRelativeLocation(MainHandMelee->BladeBaseMarkerRelativeLocation);
+
+			NewBladeTipMarker->AttachToComponent(NewMainHandDisplay, FAttachmentTransformRules::KeepRelativeTransform);
+			NewBladeTipMarker->SetRelativeLocation(MainHandMelee->BladeTipMarkerRelativeLocation);
+		}
 	}
 
 	auto BaseGrants = [&GrantClass](const UWeaponDefinition* SlotDefinition) -> bool
