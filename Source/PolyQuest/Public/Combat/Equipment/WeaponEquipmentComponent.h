@@ -88,6 +88,9 @@ public:
 	/** Read-only test validation helper: verifies that a prepared slot has a valid, current ASC binding. */
 	bool VerifyPreparedSlotBinding(int32 SlotIndex, TSubclassOf<UGameplayAbility> ExpectedClass, FString& OutDiagnostic) const;
 
+	/** Read-only test validation helper: verifies that a component-owned base grant is currently bound on the ASC. */
+	bool VerifyGrantedAbilityBinding(TSubclassOf<UGameplayAbility> ExpectedClass, FString& OutDiagnostic) const;
+
 private:
 	bool bInjectApplyFailureOnce = false;
 	bool bInjectDropFailureOnce = false;

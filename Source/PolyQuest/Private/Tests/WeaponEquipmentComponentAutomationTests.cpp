@@ -7,8 +7,10 @@
 #include "AbilitySystem/Abilities/PrimaryAttackAbility.h"
 #include "AbilitySystem/Abilities/PlayerGuardAbility.h"
 #include "AbilitySystem/Abilities/PlayerGuardBreakAbility.h"
+#include "AbilitySystem/Abilities/PlayerParryAbility.h"
 #include "Character/Player/PlayerCharacter.h"
 #include "Combat/Input/CombatLoadoutDefinition.h"
+#include "Combat/Equipment/DefenseProfileDefinition.h"
 #include "Combat/Equipment/MeleeWeaponDefinition.h"
 #include "Combat/Equipment/OffHandWeaponDefinition.h"
 #include "Combat/Equipment/WeaponEquipmentComponent.h"
@@ -76,8 +78,14 @@ bool FWeaponEquipmentComponentTransactionMatrixTest::RunTest(const FString& Para
 	TestNotNull(TEXT("SwordMesh contains socket Trace_Tip"), SwordMesh ? SwordMesh->FindSocket(SocketNameTraceTip) : nullptr);
 
 	// Create test loadouts
+	const FGameplayTag TagInputPrimaryAttack = FGameplayTag::RequestGameplayTag(TEXT("Input.PrimaryAttack"));
+	const FGameplayTag TagAbilityPrimaryAttack = FGameplayTag::RequestGameplayTag(TEXT("Ability.Attack.Primary"));
+
 	UCombatLoadoutDefinition* SwordLoadout = NewObject<UCombatLoadoutDefinition>(GetTransientPackage(), TEXT("Test_SwordLoadout"));
+	SwordLoadout->AddTestInputAbilityRoute(TagInputPrimaryAttack, TagAbilityPrimaryAttack);
+
 	UCombatLoadoutDefinition* TwoHandedLoadout = NewObject<UCombatLoadoutDefinition>(GetTransientPackage(), TEXT("Test_TwoHandedLoadout"));
+	TwoHandedLoadout->AddTestInputAbilityRoute(TagInputPrimaryAttack, TagAbilityPrimaryAttack);
 
 	// Create test definitions
 	UMeleeWeaponDefinition* SwordDef = NewObject<UMeleeWeaponDefinition>(GetTransientPackage(), TEXT("Test_Sword"));
@@ -544,6 +552,185 @@ bool FWeaponEquipmentComponentTransactionMatrixTest::RunTest(const FString& Para
 		TArray<TSubclassOf<UGameplayAbility>> PreparedLayout;
 		EquipmentComp->ComputeKeepIfCompatibleLayout(SwordDef, ShieldDef, PreparedLayout);
 		TestEqual(TEXT("Prepared layout has 4 slots"), PreparedLayout.Num(), 4);
+	}
+
+	// 12. Test Composite Defense Profile Resolution & Preflight Validation (TODO-03A4)
+	{
+		const FGameplayTag TagShieldGuard = FGameplayTag::RequestGameplayTag(TEXT("Ability.Defense.Guard.Shield"));
+		const FGameplayTag TagShieldParry = FGameplayTag::RequestGameplayTag(TEXT("Ability.Defense.Parry.Shield"));
+		const FGameplayTag TagGenericGuard = FGameplayTag::RequestGameplayTag(TEXT("Ability.Defense.Guard"));
+		const FGameplayTag TagGenericParry = FGameplayTag::RequestGameplayTag(TEXT("Ability.Defense.Parry"));
+		const FGameplayTag TagInputGuard = FGameplayTag::RequestGameplayTag(TEXT("Input.Guard"));
+		const FGameplayTag TagInputParry = FGameplayTag::RequestGameplayTag(TEXT("Input.Parry"));
+		const FGameplayTag TagInputPrimary = FGameplayTag::RequestGameplayTag(TEXT("Input.PrimaryAttack"));
+
+		// 12.1 Valid Shield DefenseProfile with dual-tagged actions
+		UDefenseProfileDefinition* ValidShieldProfile = NewObject<UDefenseProfileDefinition>(GetTransientPackage(), TEXT("Test_ValidShieldProfile"));
+		ValidShieldProfile->GuardAbilityTag = TagShieldGuard;
+		ValidShieldProfile->ParryAbilityTag = TagShieldParry;
+		TestTrue(TEXT("ValidShieldProfile passes IsProfileValid"), ValidShieldProfile->IsProfileValid());
+
+		// In Section 12, use a sword definition whose prepared actions do not conflict with shield base grants
+		UMeleeWeaponDefinition* SwordForShieldDef = NewObject<UMeleeWeaponDefinition>(GetTransientPackage(), TEXT("Test_SwordForShield"));
+		SwordForShieldDef->HandSlot = EWeaponHandSlot::MainHandOneHanded;
+		SwordForShieldDef->AttachSocketName = TEXT("Weapon_R");
+		SwordForShieldDef->WeaponMesh = SwordMesh;
+		SwordForShieldDef->BladeBaseSocketName = SocketNameTraceBase;
+		SwordForShieldDef->BladeTipSocketName = SocketNameTraceTip;
+		SwordForShieldDef->AssociatedLoadout = SwordLoadout;
+		SwordForShieldDef->BaseGrantedActions.Add(UPrimaryAttackAbility::StaticClass());
+		SwordForShieldDef->ExclusiveCombatActions.Add(UPlayerGuardBreakAbility::StaticClass());
+		SwordForShieldDef->DefaultPreparedActions.Add(UPlayerGuardBreakAbility::StaticClass());
+
+		UOffHandWeaponDefinition* ShieldWithProfileDef = NewObject<UOffHandWeaponDefinition>(GetTransientPackage(), TEXT("Test_ShieldWithProfile"));
+		ShieldWithProfileDef->HandSlot = EWeaponHandSlot::OffHand;
+		ShieldWithProfileDef->AttachSocketName = TEXT("Weapon_L");
+		ShieldWithProfileDef->WeaponMesh = ShieldMesh;
+		ShieldWithProfileDef->DefenseProfile = ValidShieldProfile;
+		ShieldWithProfileDef->BaseGrantedActions.Add(UPlayerGuardAbility::StaticClass());
+		ShieldWithProfileDef->BaseGrantedActions.Add(UPlayerParryAbility::StaticClass());
+
+		// Without specific tags on CDO, Preflight must reject
+		FString MissingTagsReason;
+		TestFalse(TEXT("Preflight rejects Shield profile when CDOs lack specific shield tags"), EquipmentComp->TestDirectPreflight(SwordForShieldDef, ShieldWithProfileDef, MissingTagsReason));
+		TestTrue(TEXT("Missing tags reason names unmatching action"), MissingTagsReason.Contains(TEXT("no BaseGrantedAction matching both")));
+
+		// With specific tag but missing generic parent tag, Preflight must reject (HasTagExact requirement)
+		UPlayerGuardAbility* GuardCDO = GetMutableDefault<UPlayerGuardAbility>(UPlayerGuardAbility::StaticClass());
+		GuardCDO->AbilityTags.RemoveTag(TagGenericGuard);
+		GuardCDO->AbilityTags.AddTag(TagShieldGuard);
+		FString MissingGenericTagReason;
+		TestFalse(TEXT("Preflight rejects Shield profile when CDO has specific shield tag but lacks exact generic parent tag"), EquipmentComp->TestDirectPreflight(SwordForShieldDef, ShieldWithProfileDef, MissingGenericTagReason));
+		TestTrue(TEXT("Missing generic tag reason names unmatching action"), MissingGenericTagReason.Contains(TEXT("no BaseGrantedAction matching both")));
+		GuardCDO->AbilityTags.AddTag(TagGenericGuard);
+
+		// Add specific tags to CDO for testing valid execution
+		UPlayerParryAbility* ParryCDO = GetMutableDefault<UPlayerParryAbility>(UPlayerParryAbility::StaticClass());
+		ParryCDO->AbilityTags.AddTag(TagShieldParry);
+
+		FString ValidPreflightReason;
+		TestTrue(TEXT("Preflight accepts valid Shield profile with dual-tagged CDOs"), EquipmentComp->TestDirectPreflight(SwordForShieldDef, ShieldWithProfileDef, ValidPreflightReason));
+
+		// Equip Sword + ShieldWithProfile
+		const bool bEquipShieldSuccess = EquipmentComp->EquipWeapon(SwordForShieldDef) && EquipmentComp->EquipWeapon(ShieldWithProfileDef);
+		TestTrue(TEXT("Equip Sword and ShieldWithProfile succeeds"), bEquipShieldSuccess);
+		FString ShieldGuardBindingDiagnostic;
+		TestTrue(TEXT("Shield Guard is a current component-owned grant"), EquipmentComp->VerifyGrantedAbilityBinding(UPlayerGuardAbility::StaticClass(), ShieldGuardBindingDiagnostic));
+		FString ShieldParryBindingDiagnostic;
+		TestTrue(TEXT("Shield Parry is a current component-owned grant"), EquipmentComp->VerifyGrantedAbilityBinding(UPlayerParryAbility::StaticClass(), ShieldParryBindingDiagnostic));
+
+		// Verify Defense Tag resolution overrides to Shield tags
+		FGameplayTag ResolvedGuardTag;
+		TestTrue(TEXT("TryResolveInputIntent resolves Guard to Shield tag"), EquipmentComp->TryResolveInputIntent(TagInputGuard, ResolvedGuardTag));
+		TestEqual(TEXT("Resolved Guard tag is Ability.Defense.Guard.Shield"), ResolvedGuardTag, TagShieldGuard);
+
+		FGameplayTag ResolvedParryTag;
+		TestTrue(TEXT("TryResolveInputIntent resolves Parry to Shield tag"), EquipmentComp->TryResolveInputIntent(TagInputParry, ResolvedParryTag));
+		TestEqual(TEXT("Resolved Parry tag is Ability.Defense.Parry.Shield"), ResolvedParryTag, TagShieldParry);
+
+		// MainHand attack tag resolution remains intact
+		FGameplayTag ResolvedPrimaryTag;
+		TestTrue(TEXT("MainHand primary attack tag resolution intact with Shield"), EquipmentComp->TryResolveInputIntent(TagInputPrimary, ResolvedPrimaryTag));
+		TestEqual(TEXT("Resolved Primary attack tag is Ability.Attack.Primary"), ResolvedPrimaryTag, FGameplayTag::RequestGameplayTag(TEXT("Ability.Attack.Primary")));
+
+		// 12.2 Malformed Profile Rejection Tests
+		// 12.2.1 Empty / Invalid tag
+		UDefenseProfileDefinition* InvalidTagProfile = NewObject<UDefenseProfileDefinition>(GetTransientPackage(), TEXT("Test_InvalidTagProfile"));
+		InvalidTagProfile->GuardAbilityTag = FGameplayTag();
+		InvalidTagProfile->ParryAbilityTag = TagShieldParry;
+		TestFalse(TEXT("InvalidTagProfile fails IsProfileValid"), InvalidTagProfile->IsProfileValid());
+
+		UOffHandWeaponDefinition* InvalidProfileShield = NewObject<UOffHandWeaponDefinition>(GetTransientPackage(), TEXT("Test_InvalidProfileShield"));
+		InvalidProfileShield->HandSlot = EWeaponHandSlot::OffHand;
+		InvalidProfileShield->AttachSocketName = TEXT("Weapon_L");
+		InvalidProfileShield->WeaponMesh = ShieldMesh;
+		InvalidProfileShield->DefenseProfile = InvalidTagProfile;
+		InvalidProfileShield->BaseGrantedActions.Add(UPlayerGuardAbility::StaticClass());
+		InvalidProfileShield->BaseGrantedActions.Add(UPlayerParryAbility::StaticClass());
+
+		FString InvalidProfileReason;
+		TestFalse(TEXT("Preflight rejects invalid DefenseProfile"), EquipmentComp->TestDirectPreflight(SwordForShieldDef, InvalidProfileShield, InvalidProfileReason));
+
+		// 12.2.2 Identical Guard and Parry tag
+		UDefenseProfileDefinition* DuplicateTagProfile = NewObject<UDefenseProfileDefinition>(GetTransientPackage(), TEXT("Test_DuplicateTagProfile"));
+		DuplicateTagProfile->GuardAbilityTag = TagShieldGuard;
+		DuplicateTagProfile->ParryAbilityTag = TagShieldGuard;
+		TestFalse(TEXT("DuplicateTagProfile fails IsProfileValid"), DuplicateTagProfile->IsProfileValid());
+
+		// 12.2.3 Same ability class satisfying both Guard and Parry
+		GuardCDO->AbilityTags.AddTag(TagShieldParry);
+		GuardCDO->AbilityTags.AddTag(TagGenericParry);
+
+		UOffHandWeaponDefinition* SameActionShield = NewObject<UOffHandWeaponDefinition>(GetTransientPackage(), TEXT("Test_SameActionShield"));
+		SameActionShield->HandSlot = EWeaponHandSlot::OffHand;
+		SameActionShield->AttachSocketName = TEXT("Weapon_L");
+		SameActionShield->WeaponMesh = ShieldMesh;
+		SameActionShield->DefenseProfile = ValidShieldProfile;
+		SameActionShield->BaseGrantedActions.Add(UPlayerGuardAbility::StaticClass()); // single action class matching both
+
+		FString SameActionReason;
+		TestFalse(TEXT("Preflight rejects single ability class for both Guard and Parry"), EquipmentComp->TestDirectPreflight(SwordForShieldDef, SameActionShield, SameActionReason));
+		TestTrue(TEXT("Same action reason names duplicate class"), SameActionReason.Contains(TEXT("must not be the same ability class")));
+
+		GuardCDO->AbilityTags.RemoveTag(TagShieldParry);
+		GuardCDO->AbilityTags.RemoveTag(TagGenericParry);
+
+		// 12.3 World pickup swap to TwoHanded clears Shield and restores generic default defense resolution
+		AWorldWeaponPickup* TwoHandedPickup12 = World->SpawnActor<AWorldWeaponPickup>();
+		TwoHandedPickup12->SetActorLocation(FVector(50.0f, 0.0f, 0.0f));
+		TwoHandedPickup12->SetWeaponDefinition(TwoHandedDef);
+
+		const bool bWorldEquip2HSuccess = EquipmentComp->TryEquipWorldPickup(TwoHandedPickup12);
+		TestTrue(TEXT("TryEquipWorldPickup(TwoHanded) replaces Sword + Shield"), bWorldEquip2HSuccess);
+		TestNull(TEXT("OffHand is cleared after TwoHanded pickup swap"), EquipmentComp->GetCurrentOffHandWeapon());
+		FString RemovedGuardBindingDiagnostic;
+		TestFalse(TEXT("Shield Guard component grant is cleared after TwoHanded swap"), EquipmentComp->VerifyGrantedAbilityBinding(UPlayerGuardAbility::StaticClass(), RemovedGuardBindingDiagnostic));
+		FString RemovedParryBindingDiagnostic;
+		TestFalse(TEXT("Shield Parry component grant is cleared after TwoHanded swap"), EquipmentComp->VerifyGrantedAbilityBinding(UPlayerParryAbility::StaticClass(), RemovedParryBindingDiagnostic));
+		UAbilitySystemComponent* TestASC = Player->GetAbilitySystemComponent();
+		TestNotNull(TEXT("Player ASC remains available after TwoHanded swap"), TestASC);
+		TestNull(TEXT("No stale Shield Guard spec remains on ASC after TwoHanded swap"), TestASC ? TestASC->FindAbilitySpecFromClass(UPlayerGuardAbility::StaticClass()) : nullptr);
+		TestNull(TEXT("No stale Shield Parry spec remains on ASC after TwoHanded swap"), TestASC ? TestASC->FindAbilitySpecFromClass(UPlayerParryAbility::StaticClass()) : nullptr);
+
+		FGameplayTag TwoHandedResolvedGuard;
+		TestTrue(TEXT("TwoHanded resolves Guard to generic default"), EquipmentComp->TryResolveInputIntent(TagInputGuard, TwoHandedResolvedGuard));
+		TestEqual(TEXT("Resolved Guard tag is generic Ability.Defense.Guard"), TwoHandedResolvedGuard, TagGenericGuard);
+
+		FGameplayTag TwoHandedResolvedParry;
+		TestTrue(TEXT("TwoHanded resolves Parry to generic default"), EquipmentComp->TryResolveInputIntent(TagInputParry, TwoHandedResolvedParry));
+		TestEqual(TEXT("Resolved Parry tag is generic Ability.Defense.Parry"), TwoHandedResolvedParry, TagGenericParry);
+
+		// 12.4 TwoHanded -> Shield normalization with the actual profiled Shield definition
+		AWorldWeaponPickup* ProfileShieldPickup = World->SpawnActor<AWorldWeaponPickup>();
+		ProfileShieldPickup->SetActorLocation(FVector(50.0f, 0.0f, 0.0f));
+		ProfileShieldPickup->SetWeaponDefinition(ShieldWithProfileDef);
+
+		const bool bWorldEquipProfileShieldSuccess = EquipmentComp->TryEquipWorldPickup(ProfileShieldPickup);
+		TestTrue(TEXT("TryEquipWorldPickup(profiled Shield) converts TwoHanded to Unarmed + Shield"), bWorldEquipProfileShieldSuccess);
+		TestEqual(TEXT("Profiled Shield normalization uses Unarmed fallback as main hand"), EquipmentComp->GetCurrentMainHandWeapon(), Cast<UWeaponDefinition>(UnarmedDef));
+		TestEqual(TEXT("Profiled Shield normalization equips the profiled Shield off hand"), EquipmentComp->GetCurrentOffHandWeapon(), Cast<UWeaponDefinition>(ShieldWithProfileDef));
+		TestTrue(TEXT("Profiled Shield pickup source was consumed"), ProfileShieldPickup->IsActorBeingDestroyed());
+		FString ReequippedGuardBindingDiagnostic;
+		TestTrue(TEXT("Shield Guard is re-granted after TwoHanded -> Shield normalization"), EquipmentComp->VerifyGrantedAbilityBinding(UPlayerGuardAbility::StaticClass(), ReequippedGuardBindingDiagnostic));
+		FString ReequippedParryBindingDiagnostic;
+		TestTrue(TEXT("Shield Parry is re-granted after TwoHanded -> Shield normalization"), EquipmentComp->VerifyGrantedAbilityBinding(UPlayerParryAbility::StaticClass(), ReequippedParryBindingDiagnostic));
+		FGameplayTag ReequippedGuardTag;
+		TestTrue(TEXT("Normalized profiled Shield resolves Guard to Shield tag"), EquipmentComp->TryResolveInputIntent(TagInputGuard, ReequippedGuardTag));
+		TestEqual(TEXT("Normalized profiled Shield Guard tag is Ability.Defense.Guard.Shield"), ReequippedGuardTag, TagShieldGuard);
+		FGameplayTag ReequippedParryTag;
+		TestTrue(TEXT("Normalized profiled Shield resolves Parry to Shield tag"), EquipmentComp->TryResolveInputIntent(TagInputParry, ReequippedParryTag));
+		TestEqual(TEXT("Normalized profiled Shield Parry tag is Ability.Defense.Parry.Shield"), ReequippedParryTag, TagShieldParry);
+
+		// Clean up dropped pickups and CDO test modifications
+		TArray<AWorldWeaponPickup*> Drops12;
+		GetWorldDroppedPickups(Drops12);
+		for (AWorldWeaponPickup* Drop : Drops12)
+		{
+			Drop->Destroy();
+		}
+
+		GuardCDO->AbilityTags.RemoveTag(TagShieldGuard);
+		ParryCDO->AbilityTags.RemoveTag(TagShieldParry);
 	}
 
 	Player->Destroy();

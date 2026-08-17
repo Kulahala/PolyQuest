@@ -70,6 +70,16 @@ public:
 		return OutAbilityTag.IsValid();
 	}
 
+#if WITH_DEV_AUTOMATION_TESTS
+	void AddTestInputAbilityRoute(const FGameplayTag& InputIntentTag, const FGameplayTag& AbilityTag)
+	{
+		FCombatInputAbilityRoute Route;
+		Route.InputIntentTag = InputIntentTag;
+		Route.AbilityTag = AbilityTag;
+		InputAbilityRoutes.Add(Route);
+	}
+#endif
+
 protected:
 	/** Optional direct Ability routes for this loadout; invalid Ability tags are intentional no-op routes. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat Input", meta = (AllowPrivateAccess = "true"))

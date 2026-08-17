@@ -395,6 +395,37 @@ bool UWeaponEquipmentComponent::VerifyPreparedSlotBinding(int32 SlotIndex, TSubc
 
 	return true;
 }
+
+bool UWeaponEquipmentComponent::VerifyGrantedAbilityBinding(TSubclassOf<UGameplayAbility> ExpectedClass, FString& OutDiagnostic) const
+{
+	OutDiagnostic.Empty();
+
+	if (!ExpectedClass)
+	{
+		OutDiagnostic = TEXT("Expected ability class is null.");
+		return false;
+	}
+
+	const AActor* Owner = GetOwner();
+	const UAbilitySystemComponent* ASC = Owner ? Owner->FindComponentByClass<UAbilitySystemComponent>() : nullptr;
+	if (!ASC)
+	{
+		OutDiagnostic = TEXT("Owner ASC is not found.");
+		return false;
+	}
+
+	for (const FGameplayAbilitySpecHandle& GrantedHandle : GrantedAbilitySpecHandles)
+	{
+		const FGameplayAbilitySpec* Spec = ASC->FindAbilitySpecFromHandle(GrantedHandle);
+		if (Spec && Spec->Ability && Spec->Ability->GetClass() == ExpectedClass)
+		{
+			return true;
+		}
+	}
+
+	OutDiagnostic = FString::Printf(TEXT("No current component-owned grant matches ability class '%s'."), *GetNameSafe(ExpectedClass));
+	return false;
+}
 #endif
 
 UMeleeWeaponDefinition* UWeaponEquipmentComponent::GetEquippedMainHandMelee() const
@@ -586,6 +617,87 @@ bool UWeaponEquipmentComponent::RunPreflight(APlayerCharacter* PlayerCharacter, 
 		return false;
 	}
 
+	// Prospective Defense Profile validation:
+	// Profile provider priority: NewOffHand (if has DefenseProfile) else NewMainHand (if has DefenseProfile) else none.
+	const UWeaponDefinition* ProfileProvider = nullptr;
+	if (NewOffHand && NewOffHand->DefenseProfile)
+	{
+		ProfileProvider = NewOffHand;
+	}
+	else if (NewMainHand && NewMainHand->DefenseProfile)
+	{
+		ProfileProvider = NewMainHand;
+	}
+
+	if (ProfileProvider)
+	{
+		const UDefenseProfileDefinition* DefenseProfile = ProfileProvider->DefenseProfile;
+		if (!DefenseProfile || !DefenseProfile->IsProfileValid())
+		{
+			OutReason = FString::Printf(TEXT("DefenseProfile on '%s' has invalid or identical Guard/Parry tags."), *GetNameSafe(ProfileProvider));
+			return false;
+		}
+
+		TSubclassOf<UGameplayAbility> GuardActionClass = nullptr;
+		TSubclassOf<UGameplayAbility> ParryActionClass = nullptr;
+
+		for (const TSubclassOf<UGameplayAbility>& ActionClass : ProfileProvider->BaseGrantedActions)
+		{
+			if (!ActionClass)
+			{
+				continue;
+			}
+
+			const UGameplayAbility* AbilityCDO = ActionClass.GetDefaultObject();
+			if (!AbilityCDO)
+			{
+				continue;
+			}
+
+			const bool bHasProfileGuardTag = AbilityCDO->AbilityTags.HasTagExact(DefenseProfile->GuardAbilityTag);
+			const bool bHasGenericGuardTag = AbilityCDO->AbilityTags.HasTagExact(DefaultGuardAbilityTag);
+			if (bHasProfileGuardTag && bHasGenericGuardTag)
+			{
+				if (GuardActionClass)
+				{
+					OutReason = FString::Printf(TEXT("DefenseProfile provider '%s' has multiple Guard actions matching tag '%s'."), *GetNameSafe(ProfileProvider), *DefenseProfile->GuardAbilityTag.ToString());
+					return false;
+				}
+				GuardActionClass = ActionClass;
+			}
+
+			const bool bHasProfileParryTag = AbilityCDO->AbilityTags.HasTagExact(DefenseProfile->ParryAbilityTag);
+			const bool bHasGenericParryTag = AbilityCDO->AbilityTags.HasTagExact(DefaultParryAbilityTag);
+			if (bHasProfileParryTag && bHasGenericParryTag)
+			{
+				if (ParryActionClass)
+				{
+					OutReason = FString::Printf(TEXT("DefenseProfile provider '%s' has multiple Parry actions matching tag '%s'."), *GetNameSafe(ProfileProvider), *DefenseProfile->ParryAbilityTag.ToString());
+					return false;
+				}
+				ParryActionClass = ActionClass;
+			}
+		}
+
+		if (!GuardActionClass)
+		{
+			OutReason = FString::Printf(TEXT("DefenseProfile provider '%s' has no BaseGrantedAction matching both '%s' and '%s'."), *GetNameSafe(ProfileProvider), *DefenseProfile->GuardAbilityTag.ToString(), *DefaultGuardAbilityTag.ToString());
+			return false;
+		}
+
+		if (!ParryActionClass)
+		{
+			OutReason = FString::Printf(TEXT("DefenseProfile provider '%s' has no BaseGrantedAction matching both '%s' and '%s'."), *GetNameSafe(ProfileProvider), *DefenseProfile->ParryAbilityTag.ToString(), *DefaultParryAbilityTag.ToString());
+			return false;
+		}
+
+		if (GuardActionClass == ParryActionClass)
+		{
+			OutReason = FString::Printf(TEXT("DefenseProfile provider '%s' Guard and Parry actions must not be the same ability class ('%s')."), *GetNameSafe(ProfileProvider), *GetNameSafe(GuardActionClass));
+			return false;
+		}
+	}
+
 	// Collect every ability class the new composition would grant: both slots'
 	// base grants plus the computed prepared layout, rejecting duplicates.
 	TArray<TSubclassOf<UGameplayAbility>> GrantClasses;
@@ -721,6 +833,8 @@ bool UWeaponEquipmentComponent::ApplyComposition(APlayerCharacter* PlayerCharact
 		UStaticMeshComponent* DisplayComponent = NewObject<UStaticMeshComponent>(PlayerCharacter, NAME_None, RF_Transient);
 		DisplayComponent->SetStaticMesh(Definition->WeaponMesh);
 		DisplayComponent->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+		DisplayComponent->SetCollisionResponseToAllChannels(ECR_Ignore);
+		DisplayComponent->SetCollisionResponseToChannel(ECC_Camera, ECR_Ignore);
 		DisplayComponent->SetGenerateOverlapEvents(false);
 		DisplayComponent->RegisterComponent();
 		DisplayComponent->AttachToComponent(OwnerMesh, FAttachmentTransformRules::KeepRelativeTransform, Definition->AttachSocketName);

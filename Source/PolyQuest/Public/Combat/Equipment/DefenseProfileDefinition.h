@@ -27,6 +27,6 @@ public:
 
 	bool IsProfileValid() const
 	{
-		return GuardAbilityTag.IsValid() && ParryAbilityTag.IsValid();
+		return GuardAbilityTag.IsValid() && ParryAbilityTag.IsValid() && (GuardAbilityTag != ParryAbilityTag);
 	}
 };

@@ -1,30 +1,34 @@
-# TODO-03A3B: Melee Weapon Sweep Socket Authoring And Calibration v1
+# TODO-03A4: Off-Hand Shield And Composite Defense Loadout v1
 
 ## Status
 
-- **Plan state:** CLOSED - implementation, documentation, user validation, repair, and review gates are complete; user approved the focused commit.
-- **Baseline:** `451cc73 [Feature] 世界武器拾取与原子掉落交换 (World Weapon Pickup And Atomic Drop-Swap)`.
-- **Prerequisite evidence:** `TODO-03A3` is closed. The user confirmed `PolyQuest.Equipment.TransactionMatrix` Success and the Scene01 direct world-pickup/drop-swap route. The current player melee path already owns exactly one runtime Base/Tip marker pair through `UWeaponEquipmentComponent`; `UMeleeTraceSourceComponent`, `UAbilityTask_MeleeTraceWindow`, and `FMeleeHitResolver` consume that pair without knowing how it was authored.
-- **Completed evidence in 03A3B:**
-  - C++ implemented: `UMeleeWeaponDefinition` trace socket properties and fail-closed all-or-nothing validation against `WeaponMesh->FindSocket`, including distinct Socket names with non-coincident `RelativeLocation` values; `UWeaponEquipmentComponent::ApplyComposition` `SnapToTargetNotIncludingScale` socket attachment; `WeaponEquipmentComponentAutomationTests` socket assertions.
-  - Editor authoring verified via live MCP readback: `SM_Wep_Ornate_Sword_02` has `Trace_Base` and `Trace_Tip`; `DA_Weapon_Sword` has `BladeBaseSocketName = Trace_Base`, `BladeTipSocketName = Trace_Tip`.
-  - Automation verified: After the coincident-location repair, the user executed `PolyQuest.Equipment.TransactionMatrix` reporting `Success`, including the socket-mode assertions and preserved prior composition on rejection.
-  - Review: Gemini completed the requested strict review. Codex's initial fresh review found the coincident-location Socket P2; after repair and the user Automation rerun, Codex delta fresh review found no P0/P1/P2. `code-review-graph` was built at `7093c30`, behind this stage baseline `451cc73`, so direct source/diff inspection was the authoritative coverage fallback.
-- **Problem:** displayed `UMeleeWeaponDefinition` assets currently author `BladeBaseMarkerRelativeLocation` and `BladeTipMarkerRelativeLocation` as raw vectors. Those values are hard to calibrate because the author cannot position them in the weapon mesh viewport.
+- **Plan state:** CLOSED - implementation, repaired automation coverage, reviews, and documentation closeout are recorded; explicit commit approval remains pending.
+- **Baseline:** `62cab5d [Feature] 武器扫掠 Socket 作者化与校准 (Melee Sweep Socket Authoring And Calibration)`.
+- **Prerequisites:** `TODO-03A1`, `TODO-03A2`, `TODO-03A3`, and `TODO-03A3B` are closed. The current player equipment transaction, concrete `UOffHandWeaponDefinition`, `UDefenseProfileDefinition`, equipment-owned ability grants, world pickup/drop-swap path, and socket-authored main-hand sweep path are the required foundation.
+- **Primary runtime question:** can an equipped OffHand Shield override only the current Guard/Parry ability selection through the existing equipment component, while the MainHand continues to own Primary/Charged/Sprint attacks and all existing GAS cancellation, Guard Break, held-input, rollback, and cleanup contracts remain intact?
 
-## Objective
+## Summary
 
-For a displayed StaticMesh melee weapon that opts into Socket authoring, make its existing runtime Blade Base/Tip marker pair attach to two named Static Mesh sockets. The current Sword fixture becomes the first migrated asset, so the blade-root and blade-tip sweep endpoints can be visually adjusted in the Static Mesh Editor while all damage delivery remains on the existing Trace Window -> `UMeleeTraceSourceComponent` -> `UAbilityTask_MeleeTraceWindow` -> `FMeleeHitResolver` path.
+`TODO-03A4` adds the first usable OffHand Shield to the established MainHand + OffHand composition. The shield is an authored `UOffHandWeaponDefinition` carrying a pure `UDefenseProfileDefinition`; it does not become a second combat component, a trace source, a damage actor, or a new generic ability framework.
 
-The primary runtime question is not whether a weapon can own combat collision. It is whether the existing component-owned marker pair can resolve from an authored Static Mesh socket pair, fail before a swap when the authored pair is invalid, and remain correct after the current legal equipment transaction rebuilds the display.
+The runtime path remains:
 
-## Route And Delegation
+```text
+Input.Guard / Input.Parry
+    -> APlayerCharacter existing combat-input delivery
+    -> UWeaponEquipmentComponent effective defense tag resolution
+       OffHand DefenseProfile -> MainHand DefenseProfile -> current generic default
+    -> ASC activates exactly one matching granted/default Guard or Parry Ability
+    -> existing UPlayerGuardAbility / UPlayerParryAbility lifecycle and cleanup
+```
+
+The Shield-specific Blueprint GAs inherit the existing native Guard/Parry lifecycle. They differ only in authored Montage/presentation and their exact Shield identity tags. Existing generic tags remain explicitly present so old cancellation and input-resume contracts continue to see them.
 
 ```text
 Outer: ue-stage-workflow
 Primary: ue5-cpp-gameplay
 Support: ue5-blueprint-workflow, ue5-debug-validation
-Route reason: UMeleeWeaponDefinition owns the authored data contract; UWeaponEquipmentComponent creates the transient display/marker pair; the user-owned Static Mesh and DataAsset edits need exact Editor readback and the existing automation/PIE paths need focused proof.
+Route reason: Defense Profile validation, component-owned grants, input routing, and Guard/Parry teardown are one GAS/equipment lifecycle boundary.
 ```
 
 ```text
@@ -32,165 +36,221 @@ Plan explorers: 0
 Implementation executors: 0
 Complex Executor: none
 Main parallel work: none
-Reason: Socket data validation, equipment preflight, transient marker attachment, the local asset fixture, and transaction regression all meet at one composition lifecycle. Splitting writers would duplicate ownership or make the test fixture drift.
+Reason: the preflight, grant set, profile resolver, rollback, and existing Defense Ability cancellation contracts share one transaction boundary. Splitting writers would create duplicate ownership of the same live AbilitySpecs and tags.
 ```
 
-After this plan is accepted, Gemini may implement the bounded native/test slice. The user remains the sole owner of Static Mesh/DataAsset authoring, manual `PolyQuestEditor` compilation, Automation execution, Scene01 PIE, and final commit approval. Gemini performs the requested strict review after user validation; Codex performs a separate fresh review before documentation closeout.
+The user may have Gemini review this draft and later implement the accepted C++ slice, but the route record remains zero child agents for this plan. Main retains plan acceptance, integration, validation interpretation, documentation, staging, and commit ownership.
 
-## Fixed Decisions
+## Locked Decisions
 
-| ID | Decision | Consequence |
-| --- | --- | --- |
-| D1 | Add `BladeBaseSocketName` and `BladeTipSocketName` to `UMeleeWeaponDefinition`; their values, not a hard-coded C++ convention, select a displayed weapon's Static Mesh trace sockets. | Future Sword/Katana/Axe assets can use different socket names if needed. The current Sword fixture uses the authoring convention `Trace_Base` and `Trace_Tip`; test constants verify that fixture only. |
-| D2 | Socket mode is an all-or-nothing pair: both names are `None` for existing relative-marker mode, or both are non-`None`, distinct, resolvable through `WeaponMesh->FindSocket`, and non-coincident in local `RelativeLocation`. | A half-configured pair, duplicate names, missing mesh socket, or spatially coincident endpoint pair fails `IsValidWeaponDefinition()` and therefore the shared equipment preflight before handles, displays, markers, or world pickups mutate. |
-| D3 | Socket mode is only for displayed StaticMesh melee definitions. `bUseOwnerMeshSocketForTrace` remains the explicit Unarmed branch and requires both new mesh-socket names to be `None`. | `DA_Weapon_Unarmed` continues to use its owner SkeletalMesh `AttachSocketName` plus the current relative Base/Tip values. No second hand-contact or Trace path is introduced. |
-| D4 | In socket mode, the component attaches the existing transient marker components directly below the already-positioned `UStaticMeshComponent` at the authored socket names, using the socket transform and no DataAsset marker offset. | `DisplayLocationOffset` and `DisplayRotationOffset` still position the entire weapon. The old marker vectors are ignored in socket mode, so a visual socket adjustment is the sole endpoint adjustment. |
-| D5 | Preserve the current raw-vector marker mode for non-adopted displayed melee assets during the staged migration; do not add a new boolean, asset redirect, or automatic conversion. | Sword is the only required migration in 03A3B. `DA_Weapon_Axe`, `DA_Weapon_TwoHandedFixture`, debug fixtures, and future meshes remain valid in legacy mode until their own adoption is approved. The eventual removal condition is documented below rather than silently changing their behavior. |
-| D6 | Extend the existing local-asset-dependent `PolyQuest.Equipment.TransactionMatrix` instead of creating a parallel combat test world or a mock Trace/Resolver test. | The suite already loads the real Hero and Sword meshes, exercises `RunPreflight`, direct equip, world pickup, rollback, and `TryGetBladeMarkers`. It will gain the specific socket assertions while retaining its existing transaction coverage. |
-| D7 | `BP_Weapon` is not introduced. Static Mesh sockets are an authoring aid, not combat authority. | No weapon Actor-owned hit collision, overlap damage, physics interaction, alternate trace task, alternate resolver, new Gameplay Tag, or Blueprint EventGraph combat logic is permitted. |
+1. **Shield definition type:** retain the existing narrow `UOffHandWeaponDefinition`. It validates only `HandSlot == OffHand`; there is no second `UShieldWeaponDefinition`, trace payload, damage data, runtime state, or additional equipment component. `UWeaponDefinition` stays abstract.
+2. **Profile data boundary:** retain `UDefenseProfileDefinition` as a pure Guard/Parry input-to-Ability-Tag DataAsset. This stage introduces no second reflected profile type. A profile stores no Montage, GE, Stamina, collision, damage, active state, or AbilitySpec handle.
+3. **Shield identity tags:** add exactly these two Gameplay Tags:
+   - `Ability.Defense.Guard.Shield`
+   - `Ability.Defense.Parry.Shield`
+4. **Shield Ability form:** create no new native Shield Ability. `GA_PlayerShieldGuard` is a Blueprint child of `UPlayerGuardAbility`; `GA_PlayerShieldParry` is a Blueprint child of `UPlayerParryAbility`.
+5. **Required Ability tags:** each Shield GA explicitly carries both its legacy parent category and its exact Shield identity:
+   - Shield Guard: `Ability.Defense.Guard` and `Ability.Defense.Guard.Shield`.
+   - Shield Parry: `Ability.Defense.Parry` and `Ability.Defense.Parry.Shield`.
+   The parent tags preserve generic Guard lookup, `UPlayerGuardBreakAbility` cancellation, Guard/Parry cancellation from other combat actions, and the existing held-RMB resume route. The specific tags make the active profile unambiguous.
+6. **Existing defaults stay startup-owned:** `GA_Guard_Sowrd`, `GA_PlayerParry`, and Guard Break remain in `BP_Player.StartupAbilities`. Do not migrate them into weapon grants and do not change `APlayerCharacter` or `UPlayerGuardBreakAbility` for Shield routing.
+7. **MainHand combat stays MainHand-owned:** Shield grants only its Guard/Parry GAs. It does not replace the active MainHand Primary/Charged/Sprint chain, MainHand trace sources, current Combat Loadout, or base attack Montage selection.
+8. **Shield slots are deferred:** `DA_Weapon_Shield` has an empty candidate list and empty prepared `1-4` layout in v1. Shield skill selection at a rest site remains exclusively `TODO-03D1`; this stage does not create permanent Shield `1-4` grants.
+9. **Mechanical reuse:** Shield Guard/Parry reuse the existing native ability contracts and current Guard/Parry GameplayEffect configuration. The only v1 presentation change is authorship of Shield-compatible Montages: Guard needs a held loop, and Parry uses the existing `Player Parry Window` NotifyState.
+10. **No unrelated presentation or combat expansion:** no weapon-aware locomotion, shield collision/hit trace/damage, bash, block-angle rewrite, new GE, new input asset, `BP_Weapon`, Bow behavior, inventory, Rest-site UI, AnimBP topology, physics asset, map, or enemy change belongs to this stage.
 
-## Existing Call Path And Ownership
+## Current Source Contract And Gap
+
+Static source inspection at the baseline establishes these facts:
+
+- `UWeaponEquipmentComponent::ResolveDefenseAbilityTag()` already resolves the current OffHand `DefenseProfile` first, then the current MainHand profile, then `Ability.Defense.Guard` / `Ability.Defense.Parry` defaults.
+- `RunPreflight()` runs before any equipment teardown and already composes both hand definitions' `BaseGrantedActions`, rejects duplicate Ability classes, and validates the prospective transaction before existing handles, display components, markers, loadout, or current definitions change.
+- `UPlayerGuardAbility` and `UPlayerParryAbility` are reusable native lifecycle bases. `UPlayerGuardBreakAbility` continues to cancel the generic Guard category, which is why the Shield children must retain the generic parent tag explicitly.
+
+The missing contract is not a second profile resolver. It is preflight proof that a non-default authored Defense Profile actually corresponds to exactly one correctly tagged Guard class and one correctly tagged Parry class in the prospective profile provider's own base grant set.
+
+## Runtime Implementation
+
+### 1. Gameplay Tag Registration
+
+In `Config/Tags/PolyQuestGameplayTags.ini`, add only:
 
 ```text
-DA_Weapon_Sword
-  BladeBaseSocketName / BladeTipSocketName
-          |
-          v
-UMeleeWeaponDefinition::IsValidWeaponDefinition
-          |
-          v
-UWeaponEquipmentComponent::RunPreflight
-          |
-          v
-UWeaponEquipmentComponent::ApplyComposition
-  transient UStaticMeshComponent -> transient Base/Tip USceneComponents
-          |
-          v
-UMeleeTraceSourceComponent::TryGetBladeEndpoints
-          |
-          v
-UAbilityTask_MeleeTraceWindow -> FMeleeHitResolver
+Ability.Defense.Guard.Shield
+Ability.Defense.Parry.Shield
 ```
 
-| Owner | Responsibilities in 03A3B | Explicitly not responsible for |
-| --- | --- | --- |
-| `UMeleeWeaponDefinition` | Stores the two optional Static Mesh socket names, declares whether the displayed definition uses a complete socket pair, and validates the pair against its `WeaponMesh`. | Equipped state, marker components, damage, collision, hit delivery, sockets on the character Skeleton, or a generic weapon framework. |
-| `UWeaponEquipmentComponent` | After shared preflight has accepted the definition, creates the same transient Base/Tip marker objects and attaches them to the display mesh at the named sockets. It retains the existing Unarmed owner-SkeletalMesh branch and legacy displayed-vector branch. | Reading raw mesh geometry, editing Static Mesh assets, changing Trace Window behavior, or supplying fallback endpoints after an invalid socket pair. |
-| `UMeleeTraceSourceComponent`, `UAbilityTask_MeleeTraceWindow`, `FMeleeHitResolver` | Continue consuming the component's live marker locations, sampling movement, and resolving the current hit contract. | Knowing socket names, reading DataAssets, spawning display components, or adding a second melee delivery path. |
-| User-authored `SM_Wep_Ornate_Sword_02` and `DA_Weapon_Sword` | Own the visual socket locations and their DataAsset references. | Native equipment transaction logic, GAS grants, damage, animation timing, or commit ownership. |
+Do not rename `Input.Guard`, `Input.Parry`, `Ability.Defense.Guard`, `Ability.Defense.Parry`, Guard Break tags, or existing event/state tags. The new tags identify the selected Shield behavior; they do not create a new physical input intent.
 
-## Native Implementation
+### 2. `UDefenseProfileDefinition` Validity
 
-### 1. `UMeleeWeaponDefinition` Data And Validation
+Keep `UDefenseProfileDefinition` data-only. Tighten its existing `IsProfileValid()` predicate so a present profile requires two valid, distinct tags. It remains a small local validity check only; it must not reference Blueprint GAs, Montages, GEs, an ASC, an equipped actor, or mutable equipment state.
 
-Modify `Source/PolyQuest/Public/Combat/Equipment/MeleeWeaponDefinition.h` and add `Source/PolyQuest/Private/Combat/Equipment/MeleeWeaponDefinition.cpp`.
+An absent `DefenseProfile` remains legal and continues to select the existing generic default tags. A non-null but invalid profile is an authored error and must fail preflight rather than being silently ignored or falling back.
 
-- Add `FName BladeBaseSocketName` and `FName BladeTipSocketName` under a dedicated `Weapon|Trace Sockets` category. Their default is `NAME_None`; C++ must not default them to `Trace_Base`/`Trace_Tip`, because that would silently force every existing displayed DataAsset into socket mode before it has authored sockets.
-- Add one narrow non-UFUNCTION query, `UsesDisplayMeshTraceSockets() const`, which is true only when the definition is not an Unarmed owner-mesh source and both names are non-`None`. This is a data-mode helper, not runtime state.
-- Move the current inline `IsValidWeaponDefinition()` implementation into the new `.cpp` so it can include `Engine/StaticMesh.h` and use the UE 5.8 `UStaticMesh::FindSocket(FName)` API without widening public includes.
-- Preserve existing base validation, WeaponMesh/Unarmed exclusivity, trace radius/subdivision rules, and `AssociatedLoadout` validation. Extend the validation in this order:
-  1. If `bUseOwnerMeshSocketForTrace` is true, reject a non-null `WeaponMesh` as today and reject either Static Mesh socket name being set. Continue requiring distinct relative Base/Tip positions for this Unarmed path.
-  2. For a displayed melee definition, continue requiring a non-null `WeaponMesh`.
-  3. If exactly one socket name is set, reject the incomplete pair.
-  4. If both names are set, reject equal names, either `WeaponMesh->FindSocket(...) == nullptr`, or socket `RelativeLocation` values equal within `KINDA_SMALL_NUMBER`. In this valid socket mode, do not require the legacy relative vectors to differ because they are intentionally unused.
-  5. If both names are `None`, preserve the existing distinct-relative-vector validation for non-adopted displayed definitions.
-- Validation must remain pure and fail closed. It must not create components, mutate the mesh, repair missing sockets, substitute `AttachSocketName`, or fall back from a requested socket pair to raw vector offsets.
+### 3. Prospective Defense-Profile Preflight
 
-### 2. Existing Marker Creation Path
+Extend `UWeaponEquipmentComponent::RunPreflight()` before teardown or handle mutation. Determine the prospective profile provider from the proposed composition:
 
-Modify only `Source/PolyQuest/Private/Combat/Equipment/WeaponEquipmentComponent.cpp`.
+```text
+NewOffHand->DefenseProfile when present
+    else NewMainHand->DefenseProfile when present
+    else no profile provider (existing generic-default path)
+```
 
-- Keep `RunPreflight()` as the common failure boundary used by `EquipWeapon`, `TryEquipWorldPickup`, and the existing automation helper. The new definition validation must run there before `TeardownEquippedWeapons()`.
-- Keep `SpawnDisplay()` and all display placement behavior unchanged: the weapon still attaches to the character `AttachSocketName`, then uses its existing display location/rotation offsets.
-- In `ApplyComposition()`, retain the current Unarmed `bUseOwnerMeshSocketForTrace` branch unchanged.
-- In the displayed-melee branch, select one of two modes after `NewMainHandDisplay` exists:
-  - **Socket mode:** create the same transient Base/Tip `USceneComponent`s, attach each to `NewMainHandDisplay` with `FAttachmentTransformRules::SnapToTargetNotIncludingScale` and its corresponding authored socket name, and do not call `SetRelativeLocation` from the legacy marker vectors.
-  - **Legacy vector mode:** keep the existing attachment below `NewMainHandDisplay` plus `BladeBaseMarkerRelativeLocation`/`BladeTipMarkerRelativeLocation` exactly as it behaves today.
-- Do not modify component teardown, ability grants, prepared slots, active Loadout selection, world-pickup staging, rollback, input routing, or `TryGetBladeMarkers()`. Both valid displayed modes expose the same two marker components to the existing trace source.
-- Do not touch `UMeleeTraceSourceComponent`, `UAbilityTask_MeleeTraceWindow`, `FMeleeHitResolver`, Gameplay Tags, Character code, World Pickup code, Ability code, collision channels, or Build.cs.
+For an explicit provider, fail closed unless all of the following hold:
 
-### 3. Automation Coverage
+1. The `UDefenseProfileDefinition` is valid, including distinct Guard and Parry profile tags.
+2. The provider's `BaseGrantedActions` contains exactly one Guard candidate whose Ability CDO has both the exact profile Guard tag and the exact generic `Ability.Defense.Guard` tag.
+3. The same provider's `BaseGrantedActions` contains exactly one Parry candidate whose Ability CDO has both the exact profile Parry tag and the exact generic `Ability.Defense.Parry` tag.
+4. Guard and Parry resolve to two different Ability classes.
+5. Missing classes, null CDOs, a class missing either required tag, more than one class for either mapping, one class satisfying both mappings, invalid profile tags, and duplicated profile tags all reject the prospective composition.
 
-Modify `Source/PolyQuest/Private/Tests/WeaponEquipmentComponentAutomationTests.cpp`; retain the existing `PolyQuest.Equipment.TransactionMatrix` test name and all 11 current transaction sections.
+Use exact Gameplay Tag checks for this validation. Parent hierarchy alone is insufficient: the Shield profile must select `Ability.Defense.Guard.Shield` or `Ability.Defense.Parry.Shield` deliberately, while the generic tags remain compatibility categories on the same CDOs.
 
-- Define test-only fixture constants for `Trace_Base` and `Trace_Tip`, then assert that the already loaded real `/Game/PolygonDungeons/Meshes/Weapons/SM_Wep_Ornate_Sword_02` resolves both through `FindSocket`.
-- Configure the existing transient `SwordDef` and `TwoHandedDef` with that complete socket pair instead of raw vector endpoints. They continue using the same Sword mesh and all existing direct-equipment/world-pickup/rollback matrix paths exercise the socket mode.
-- After a successful Sword equip, use the existing public `TryGetBladeMarkers()` API to assert that both markers exist, resolve to distinct world locations, and report the expected `GetAttachSocketName()` values. Do not inspect private component fields or introduce test-only runtime behavior.
-- Add focused fail-closed preflight cases with an otherwise valid transient melee definition:
-  - exactly one socket name set;
-  - both names set but one name absent from `SwordMesh`.
-  - two distinct Socket names whose `RelativeLocation` values coincide.
-  Each must fail through `TestDirectPreflight()` before changing the currently equipped Sword/OffHand/Loadout or component-owned Spec handles; the coincident-location case must also prove direct `EquipWeapon()` preserves the currently equipped TwoHanded composition.
-- Retain the existing Unarmed fixture with both new names unset and preserve the established TwoHanded -> Shield -> Unarmed transaction assertions. This is the narrow regression proof that socket mode did not reinterpret the owner-SkeletalMesh contact source.
-- This test remains local-asset-dependent because its real Sword mesh must contain the two user-authored sockets. It is not evidence that a clean checkout without the user-owned Static Mesh/DataAsset WIP can run the same fixture.
+Keep the existing broad composition validation and duplicate-class rejection. The new rule validates only the effective profile provider's own `BaseGrantedActions`; a Sword MainHand may not accidentally satisfy a malformed Shield profile, and an OffHand profile must not borrow a default Startup Ability to pass preflight.
+
+No profile means no new validation or grant requirement: the existing default Guard/Parry fallback stays behaviorally unchanged. A valid explicit profile continues through the existing grant/apply path; no separate Shield grant, resolver, or post-apply repair path is added.
+
+### 4. Existing Input And Ability Lifecycle Remain Intact
+
+Do not modify `APlayerCharacter`, `UPlayerGuardAbility`, `UPlayerParryAbility`, or `UPlayerGuardBreakAbility` for tag routing. After a successful Shield composition, existing input delivery asks the equipment component for the effective tag and activates the existing component-granted Shield GA. The Shield GAs then execute the inherited lifecycle unchanged.
+
+In particular, preserve all of these current contracts:
+
+- `State.Action.Guarding`, `State.Action.Parrying`, Stamina, movement, damage absorption, parry timing, collision/trace, and `EndAbility()` cleanup retain their existing owners.
+- Guard Break continues to cancel the generic Guard category; therefore a Shield Guard cannot survive a Guard Break merely because it has a more specific identity tag.
+- Held RMB resumes through the established path using the **current** effective profile after Guard Break, interruption, release/cancel, drop-swap, or a successful TwoHanded/OffHand composition change.
+- Existing attack/Dodge/Defense cancellation tags continue to see the Shield GAs through their explicit generic parent tags.
+- A valid Shield Profile must not cause both a default startup Guard/Parry and a Shield Guard/Parry to activate for one input.
+
+### 5. Native Scope And Expected Paths
+
+Expected native/config changes are limited to:
+
+```text
+Config/Tags/PolyQuestGameplayTags.ini
+Source/PolyQuest/Public/Combat/Equipment/DefenseProfileDefinition.h
+Source/PolyQuest/Public/Combat/Equipment/WeaponEquipmentComponent.h
+Source/PolyQuest/Private/Combat/Equipment/WeaponEquipmentComponent.cpp
+Source/PolyQuest/Private/Tests/WeaponEquipmentComponentAutomationTests.cpp
+```
+
+`WeaponEquipmentComponent.h` may expose only a narrow private/helper or test-only seam needed by the existing local automation fixture. Do not broaden it into public profile editing, weapon inventories, generic interaction, or an alternate combat authority. `UOffHandWeaponDefinition` already exists and is not expected to change unless implementation discovers a concrete defect in its current `HandSlot == OffHand` validation.
 
 ## User-Owned Editor Authoring Gate
 
-Do this only after the native source compiles and the new DataAsset fields appear in the Editor. These asset edits are local WIP and are explicitly excluded from the native/documentation commit.
+Do these asset steps only after the native source compiles and the new tags are visible in the Editor. All `Content/**` work remains local authoring WIP and is excluded from the native/documentation commit.
 
-1. Create a restore point for the two target assets. Do not bulk-edit `Content/Assets/`, imported animation packages, enemy meshes, or unrelated weapons.
-2. Open `/Game/PolygonDungeons/Meshes/Weapons/SM_Wep_Ornate_Sword_02` in the Static Mesh Editor. Add exactly two Static Mesh sockets:
-   - `Trace_Base`: place it at the cutting blade root immediately above the hilt, not at the hand/character attachment socket.
-   - `Trace_Tip`: place it at the actual blade tip.
-   Socket rotation and scale are not consumed by v1 sweep spheres; author their locations carefully and leave any cosmetic orientation conventional.
-3. Save `SM_Wep_Ornate_Sword_02`, then open `Content/_DataAssets/Weapon/DA_Weapon_Sword`.
-4. Keep `WeaponMesh` pointing at the same Sword mesh and `bUseOwnerMeshSocketForTrace = false`. Set `BladeBaseSocketName = Trace_Base` and `BladeTipSocketName = Trace_Tip`.
-5. Do not tune the legacy Base/Tip FVector fields for this Sword afterward. They are ignored once the complete socket pair is configured. Leave `TraceRadius`, `BladeSubdivisions`, display offsets, action classes, Defense Profile, and Loadout unchanged unless a separate approved tuning issue appears.
-6. Read back and save both assets. Confirm no Missing/Unknown Socket warning, the two Socket locations are visibly at blade root/tip, and `DA_Weapon_Sword` shows both names exactly.
-7. Do not edit `DA_Weapon_Unarmed`; do not create/migrate `DA_Weapon_Axe`, Katana, Bow, Staff, Shield, enemy definitions, or a `BP_Weapon` in this stage. `DA_Weapon_TwoHandedFixture` may remain legacy-vector mode even though the test uses the same mesh in a transient socket-mode definition.
+1. Create `DA_Defense_Shield` as `UDefenseProfileDefinition`.
+   - `GuardAbilityTag = Ability.Defense.Guard.Shield`.
+   - `ParryAbilityTag = Ability.Defense.Parry.Shield`.
+   - Confirm the two values are valid and distinct.
+2. Complete the existing `Content/_DataAssets/Weapon/DA_Weapon_Shield` as `UOffHandWeaponDefinition`.
+   - Keep `HandSlot = OffHand`.
+   - Set `DefenseProfile = DA_Defense_Shield`.
+   - Set `BaseGrantedActions` to exactly `GA_PlayerShieldGuard` and `GA_PlayerShieldParry`.
+   - Keep candidate/reusable/exclusive and prepared-slot arrays empty for v1.
+   - Preserve its existing display mesh/socket/offset authoring unless a concrete Shield presentation defect is found. Do not add trace markers or damage data.
+3. Create `GA_PlayerShieldGuard` as a Blueprint child of `UPlayerGuardAbility`.
+   - In `AbilityTags`, explicitly retain `Ability.Defense.Guard` and add `Ability.Defense.Guard.Shield`.
+   - Assign a Shield-compatible Guard Montage with an authored held loop.
+   - Reuse the current Guard cost/move-speed/regen/delay configuration required by the inherited ability. Do not create a new Shield-only GE in this stage.
+4. Create `GA_PlayerShieldParry` as a Blueprint child of `UPlayerParryAbility`.
+   - In `AbilityTags`, explicitly retain `Ability.Defense.Parry` and add `Ability.Defense.Parry.Shield`.
+   - Assign a Shield-compatible Parry Montage and place the existing `Player Parry Window` NotifyState only over the intended parry frames.
+   - Reuse the inherited/current Parry configuration; no Shield-only cost, cooldown, damage, or reaction contract is introduced.
+5. Configure one local `BP_WorldWeaponPickup` fixture to reference `DA_Weapon_Shield`. This is map/presentation authoring only; `AWorldWeaponPickup` and its C++ transaction remain the sole pickup authority.
+6. Read the assets back before PIE. Confirm Blueprint parent classes, both exact tag pairs, profile linkage, only two Shield base grants, empty Shield `1-4` arrays, Montages, and no Missing/Unknown Notify or class references.
+
+Do not change `BP_Player.StartupAbilities`, default `GA_Guard_Sowrd`, `GA_PlayerParry`, Guard Break, `GA_PrimaryAttack`, input mappings, `DA_Weapon_Sword`, `DA_Weapon_Unarmed`, `DA_Weapon_TwoHandedFixture`, `DA_CombatLoadout_*`, AnimBP topology, maps, physics, or collision settings as routine Shield setup.
 
 ## Validation Matrix
 
 ### Main Static Gate
 
-- Re-read final `UMeleeWeaponDefinition`, `UWeaponEquipmentComponent`, `WeaponEquipmentComponentAutomationTests`, and their direct callers/callees. Confirm the source uses the actual UE 5.8 `UStaticMesh::FindSocket` API and does not accidentally use character SkeletalMesh sockets for displayed weapons.
-- Use CodeGraph for `IsValidWeaponDefinition` -> `RunPreflight` -> `ApplyComposition` -> `TryGetBladeMarkers` -> `UMeleeTraceSourceComponent` -> Trace Window, then use `code-review-graph` only as supplemental diff/impact evidence. If its built revision is not the review baseline, record stale-coverage fallback and rely on direct source/diff inspection.
-- Search for `BladeBaseMarkerRelativeLocation`, `BladeTipMarkerRelativeLocation`, `BladeBaseSocketName`, and `BladeTipSocketName` to confirm exactly the intended dual-mode branches, no C4458 shadowing, and no unwanted Trace/Resolver edits.
-- Run `git diff --check`. Main does not invoke UBT, Visual Studio, Unreal Editor, Automation, or PIE.
+Before requesting user validation:
 
-### User Compile, Editor, And Automation Gate
+1. Re-read the final `UDefenseProfileDefinition`, `UWeaponEquipmentComponent`, current input resolver path, Guard/Parry/Guard Break direct cancellation callers, and the automation fixture.
+2. Use CodeGraph for the component/profile/direct-caller graph. Use `code-review-graph` as supplemental diff/impact evidence when its index covers the baseline; if stale, record the stale-coverage fallback and review the direct source/diff instead.
+3. Cross-check both new tags in configuration, preflight, test fixture, and the two authored-asset requirements. Confirm no code path treats the new specific tags as a replacement for their generic parent categories.
+4. Scan added locals and helpers for inherited-member shadowing/C4458 exposure, null CDO handling, and profile/provider confusion.
+5. Run `git diff --check` on the approved source/config/documentation paths.
+6. Do not run UBT, Visual Studio, Unreal Editor, PIE, or mutate assets. Those gates remain user-owned.
 
-- Compile `PolyQuestEditor` after the native source change. Report the first compile error verbatim if it fails.
-- Complete the Editor readback above. Confirm the actual Sword mesh has `Trace_Base` and `Trace_Tip`, and the actual Sword DataAsset uses that complete pair; this is Editor evidence, not a source-only claim.
-- Run `PolyQuest.Equipment.TransactionMatrix`. It must report `Success`, including the new real-Sword socket existence, marker attachment, incomplete-pair rejection, missing-socket rejection, coincident-location rejection with prior-composition preservation, and existing 03A3 transaction/rollback assertions.
+### Native Automation Gate
+
+Extend `PolyQuest.Equipment.TransactionMatrix` using the real local Shield fixture and the existing real Player skeleton/socket fixture. The test must cover, at minimum:
+
+| Case | Required assertion |
+| --- | --- |
+| Valid Sword + Shield composition | Preflight/application succeeds; Shield Guard and Parry are component-owned base grants; effective Guard/Parry resolution returns the exact Shield tags; MainHand attack grants and current MainHand remain intact. |
+| Malformed explicit profile | Null/invalid/duplicate profile tags, no matching provider base action, a class without its generic parent tag, duplicate matches, or one class matching both mappings all fail preflight before any component-owned handle, display, marker, loadout, or current definition changes. |
+| Default fallback | A no-profile composition preserves the existing generic Guard/Parry resolution and does not require Shield classes. |
+| Shield removal / TwoHanded change | Removing the OffHand through a legal TwoHanded transaction clears Shield grants and resolves the resulting composition's applicable MainHand/default profile without stale Shield handles or tags. |
+| TwoHanded -> Shield normalization | Picking an OffHand Shield while holding the existing TwoHanded fixture composes `UnarmedFallbackDefinition + Shield`, drops the TwoHanded definition through the existing transaction, and resolves Shield Defense tags. |
+| Atomic regressions | Existing direct equip, world pickup, rollback, projected drop, FormerOwner cooldown, socket-sweep, and active-combat swap-refusal assertions still pass. |
+
+The test must exercise ordinary current behavior, not a mock ASC or a parallel Shield-only transaction. It is local-asset-dependent evidence and must not be presented as clean-checkout fixture proof while the authored asset WIP is excluded from the commit.
+
+### User Compile And Editor Readback
+
+1. Compile `PolyQuestEditor` manually.
+2. Run `PolyQuest.Equipment.TransactionMatrix` and report the named result.
+3. In the Editor, read back `DA_Defense_Shield`, `DA_Weapon_Shield`, `GA_PlayerShieldGuard`, `GA_PlayerShieldParry`, and the Shield world-pickup fixture. Confirm the exact authoring checklist above and that no asset resolves to Missing/Unknown classes or NotifyStates.
 
 ### Scene01 PIE Gate
 
-- Start with the migrated Sword equipped. Strike a valid front target during the existing authored Trace Window: damage/Poise must still land once per Trace Window entry, and the sweep should visibly follow the authored blade root-to-tip span.
-- Perform a legal idle equipment transaction using the existing world-pickup route to a distinct valid MainHand fixture, then legally return to `DA_Weapon_Sword`. Verify the rebuilt Sword still has normal display placement and its Trace Window still damages a valid target. Do not use a same-definition pickup because it is intentionally a non-consuming rejection.
-- Swing into empty space and against a normal existing rejection case (same team or Invulnerable, whichever is already available in Scene01): no false damage delivery must appear. This proves the visual endpoint change did not create a second hit route.
-- Run one focused Unarmed regression after a legal return to `DA_Weapon_Unarmed` through an existing debug route or a temporary `BP_WorldWeaponPickup` configured with that definition: the existing punch trace remains on the owner-mesh path and no displayed Sword markers remain. This does not close the separate alternating-hand fidelity debt.
-- Re-run the current Light, Charged, Sprint, Guard, Parry, Dodge, and pickup/drop smoke only to the extent they share the equipment/trace transaction. No animation retune is required by this stage.
+Use a Sword main hand, the authored Shield pickup, an enemy able to attack, and the existing TwoHanded fixture where applicable.
 
-## Review And Closeout
+1. **Sword baseline:** without Shield, RMB and Q still use the existing default Guard/Parry behavior. Light/Charged/Sprint attacks remain Sword-owned; no Shield `1-4` action appears.
+2. **Shield override:** pick up Shield while using Sword. RMB plays only Shield Guard and Q plays only Shield Parry; neither input double-activates the old default and Shield ability. Movement, front-angle blocking, Stamina, and existing Guard/Parry recovery behave as before.
+3. **Parry timing:** an enemy hit inside the Shield Parry NotifyState succeeds through the existing Parry path; the same hit outside the authored window does not gain Parry behavior.
+4. **Guard Break and held-input recovery:** block until the existing Guard Break path occurs. Shield Guard ends with the normal cleanup, Guard Break behaves normally, and a still-held RMB can only resume through the existing input path using the current Shield profile once legal. Physical Released/Canceled remains a clean stop.
+5. **Cancellation and teardown:** attack/Dodge/defense cancellation, Guard Break, death, and montage interruption leave no stale `State.Action.Guarding`, `State.Action.Parrying`, component-owned Shield spec, Trace task, or montage state. Existing generic cancellation behavior must still affect Shield GAs.
+6. **Composite changes:** Sword + Shield -> TwoHanded clears Shield, drops it through the existing world transaction, and falls back to the legal resulting defense profile/default. TwoHanded -> Shield switches the MainHand to Unarmed fallback, equips Shield, drops TwoHanded, and uses the Shield profile. The replaced item stays visible on the ground under the established former-owner rule.
+7. **Regression:** unarmed, Sword, current world pickup/drop-swap, malformed pickup rejection, socket-authored Sword sweep, enemy damage, death, no-hit, same-team rejection, invulnerability rejection, and current Guard/Parry input behavior remain intact.
 
-1. Gemini reviews this plan before implementation.
-2. After the user completes compile, Editor readback, Automation, and PIE gates, Gemini performs the requested strict review: defect-first pass plus adversarial pass, scoped to this stage's approved diff and direct dependencies.
-3. Codex performs a separate fresh review after Gemini's review/repairs and the affected validation has been repeated. Findings remain defect-first; an absence of findings is not presented as build or PIE proof.
-4. Only after all gates pass, update:
-   - `ARCHITECTURE.md` with the stable dual authored-source contract: displayed socket-mode weapons validate a named Static Mesh socket pair and attach the existing transient markers there; Unarmed remains owner-SkeletalMesh relative-marker contact; Trace/Resolver ownership stays unchanged.
-   - `ROADMAP.md` by moving `TODO-03A3B` to Done, recording the actual Sword Editor/Automation/PIE evidence, and retaining the migration debt below.
-   - `plan.md` with implementation, validation, review, and closeout evidence until the next accepted stage replaces it.
+Compile, Automation, Editor readback, PIE, input, and visual checks are separate evidence. A static review or successful test compile is not a substitute for the user-confirmed Scene01 behavior.
 
-### Closeout Record
+## Implementation, Review, And Closeout Record
 
-- Gemini completed its requested strict review. Codex's initial fresh review found that two distinct socket names at the same local location were accepted by preflight and then rejected only by the runtime trace path (P2).
-- The repair compares `UStaticMeshSocket::RelativeLocation` values within `KINDA_SMALL_NUMBER` in `UMeleeWeaponDefinition::IsValidWeaponDefinition()` and extends `PolyQuest.Equipment.TransactionMatrix` to reject the fixture through both direct preflight and direct equipment while preserving the prior TwoHanded composition.
-- The user reran `PolyQuest.Equipment.TransactionMatrix` with `Success`. Codex's post-repair delta fresh review found no P0/P1/P2. No new UBT, Editor, or PIE run is asserted by Codex after this repair.
-- `code-review-graph` was stale at `7093c30` versus the `451cc73` stage baseline, so direct source, diff, CodeGraph, and user-provided Automation evidence were used for the final coverage boundary.
+### Implemented Contract
 
-### Accepted Migration Debt
+- Registered `Ability.Defense.Guard.Shield` and `Ability.Defense.Parry.Shield`.
+- `UDefenseProfileDefinition::IsProfileValid()` now rejects identical Guard/Parry tags. `UWeaponEquipmentComponent::RunPreflight()` selects the prospective OffHand profile first, then MainHand, and fail-closes an explicit profile unless its provider's own `BaseGrantedActions` supplies exactly one distinct Guard class and one distinct Parry class. Each matching CDO must carry both the exact profile tag and the explicit generic parent tag.
+- The existing input resolver and native Guard/Parry/Guard Break ability lifecycle were not changed. A valid Shield profile only changes the selected defense tag and grants its two abilities through the existing component-owned grant set; MainHand attacks, trace delivery, damage, and Shield quick slots stay out of scope.
+- The display component now ignores collision channels explicitly. This keeps a displayed Shield presentation-only and prevents it from becoming a second collision participant.
 
-The legacy displayed-weapon vector mode remains intentionally available only for melee definitions whose two new socket names are both unset. Current evidence is that 03A3B migrates Sword only; Axe, Katana, and future displayed mesh weapons have not yet been adopted or visually calibrated. The impact is authoring ergonomics, not a second runtime damage path. Each future mesh weapon adoption must either author a complete socket pair or deliberately stay in legacy mode with a recorded reason. Remove the legacy relative-marker branch only after an Asset Registry/Reference Viewer plus source audit proves every shipped displayed melee definition uses a complete socket pair; the owning lean-removal gate is `TODO-06C`, not this stage.
+### P3 Automation Repair
 
-## Commit Boundary
+Codex's fresh review found two non-blocking automation gaps after the initial implementation: the matrix did not prove that the selected Shield Guard/Parry classes were current component-owned grants, and it did not prove that a Sword + Shield -> TwoHanded -> Shield sequence clears stale defense Specs before re-granting the Shield pair.
 
-After explicit user approval, the native/documentation candidate may include only:
+- Added the `WITH_DEV_AUTOMATION_TESTS`-only `VerifyGrantedAbilityBinding()` helper. It checks an expected class against the component's current granted handles and ASC Specs without changing runtime behavior.
+- Extended `PolyQuest.Equipment.TransactionMatrix` to assert the valid Sword + Shield grants, exact Shield Guard/Parry resolution, clearing both Shield handles and ASC Specs after the TwoHanded transition, and re-granting them after the TwoHanded -> Shield normalization. The fixture-only `UCombatLoadoutDefinition::AddTestInputAbilityRoute()` supplies the MainHand primary route used by that composed test setup.
 
-- `Source/PolyQuest/Public/Combat/Equipment/MeleeWeaponDefinition.h`
-- `Source/PolyQuest/Private/Combat/Equipment/MeleeWeaponDefinition.cpp` (new)
-- `Source/PolyQuest/Private/Combat/Equipment/WeaponEquipmentComponent.cpp`
-- `Source/PolyQuest/Private/Tests/WeaponEquipmentComponentAutomationTests.cpp`
-- Exact `ARCHITECTURE.md`, `ROADMAP.md`, and `plan.md` closeout hunks.
+### Evidence And Review Boundary
 
-Explicitly exclude all `Content/**`, including the user-authored `SM_Wep_Ornate_Sword_02.uasset` and `DA_Weapon_Sword.uasset`; all GA/GE/Montage/AnimBP/Blueprint/Input/Map work; `.uproject`; generated directories; `.zcode/`; `Config/Tests/Tags.ini`; and unrelated user WIP. The source commit must not claim that it recreates the local socket-authored fixture from a clean checkout.
+- **User-confirmed Automation:** after the repair, `PolyQuest.Equipment.TransactionMatrix` reported `Success`. Its logged TwoHanded/OffHand rejection, coincident-socket rejection, apply/drop rollback, and active-combat swap refusal lines are intentional negative-path assertions.
+- **User-observed presentation:** Shield Guard was exercised far enough to expose a side-on upper-body versus default locomotion twist while moving. That is accepted presentation debt, not evidence of a failed defense transaction; `TODO-07B` owns the focused weapon-aware locomotion/facing solution.
+- **Gemini review:** the user reported Gemini's strict review passed before the final P3 coverage repair.
+- **Codex fresh review:** direct source/diff review, CodeGraph call-path inspection, and the final automation delta found no P0/P1/P2 issue after the two P3 assertions were added. `code-review-graph` was built at `7093c302e47d460580ae22e4b5e6be90bfb6752e`, behind this stage baseline `62cab5d46e2d7dbef0278254a6015b91ff6d1932`; its change summary was treated only as stale-coverage guidance, with direct source/diff review authoritative.
+- **Not claimed:** this closeout does not claim a separate final `PolyQuestEditor` compile, final Editor asset readback, or complete Scene01 PIE regression run after the P3 repair beyond the evidence stated above.
+
+### Candidate Commit Boundary
+
+After explicit user approval, stage only the approved native/config/documentation paths that actually changed:
+
+```text
+Config/Tags/PolyQuestGameplayTags.ini
+Source/PolyQuest/Public/Combat/Equipment/DefenseProfileDefinition.h
+Source/PolyQuest/Public/Combat/Equipment/WeaponEquipmentComponent.h
+Source/PolyQuest/Private/Combat/Equipment/WeaponEquipmentComponent.cpp
+Source/PolyQuest/Public/Combat/Input/CombatLoadoutDefinition.h
+Source/PolyQuest/Private/Tests/WeaponEquipmentComponentAutomationTests.cpp
+ARCHITECTURE.md
+ROADMAP.md
+plan.md
+```
+
+Explicitly exclude all `Content/**`, including Shield DataAssets, Shield GA Blueprints, Shield Montages, NotifyState placements, `BP_WorldWeaponPickup` fixtures, maps, AnimBPs, input assets, imported resources, `.uproject`, generated directories, `Config/Tests/`, `.zcode/`, and all unrelated user WIP. No new native Shield GA, `BP_Weapon`, player/enemy character subclass, inventory, Bow, or world-interaction framework is part of this commit.
