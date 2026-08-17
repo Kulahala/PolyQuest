@@ -1,19 +1,16 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "Abilities/GameplayAbility.h"
 #include "Combat/Equipment/WeaponDefinition.h"
 #include "Combat/Input/CombatLoadoutDefinition.h"
 #include "MeleeWeaponDefinition.generated.h"
 
-class UGameplayAbility;
-
 /**
  * The compatible melee subclass of UWeaponDefinition: blade trace markers in
- * weapon-mesh local space, sweep shape, and the BaseGrantedAbilities source
- * the current LMB/Sprint base chain relies on. Display, slot, action, Defense
- * Profile, and Base Input Profile fields are owned by the base class; the
- * promoted field names keep the serialized values of the existing DataAssets.
+ * weapon-mesh or owner-socket local space, sweep shape, and the BaseGrantedActions
+ * source the current LMB/Sprint base chain relies on. Display, slot, action, Defense
+ * Profile, and Base Input Profile fields are owned by the base class; the promoted
+ * field names keep the serialized values of the existing DataAssets.
  */
 UCLASS(BlueprintType)
 class POLYQUEST_API UMeleeWeaponDefinition : public UWeaponDefinition
@@ -23,11 +20,20 @@ class POLYQUEST_API UMeleeWeaponDefinition : public UWeaponDefinition
 public:
 	virtual bool IsValidWeaponDefinition(FString& OutReason) const override;
 
-	/** Blade-root marker spawned relative to the display mesh. */
+	/**
+	 * Trace markers resolve against the character SkeletalMesh socket named by
+	 * AttachSocketName instead of a spawned weapon display: the Unarmed
+	 * hand-contact source. Bidirectionally validated against WeaponMesh so the
+	 * two contact sources are never combined or both omitted.
+	 */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Trace Markers")
+	bool bUseOwnerMeshSocketForTrace = false;
+
+	/** Blade-root marker spawned relative to the display mesh, or to the owner-mesh socket when bUseOwnerMeshSocketForTrace is set. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Trace Markers")
 	FVector BladeBaseMarkerRelativeLocation = FVector::ZeroVector;
 
-	/** Blade-tip marker spawned relative to the display mesh; must differ from the base marker. */
+	/** Blade-tip marker spawned relative to the display mesh, or to the owner-mesh socket when bUseOwnerMeshSocketForTrace is set; must differ from the base marker. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Trace Markers")
 	FVector BladeTipMarkerRelativeLocation = FVector::ZeroVector;
 
@@ -39,14 +45,6 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Trace", meta = (ClampMin = "1", ClampMax = "8"))
 	int32 BladeSubdivisions = 4;
 
-	/**
-	 * BaseGrantedAbilities source: granted while equipped alongside prepared
-	 * action grants, with duplicate classes rejected. The TODO-03A authoring
-	 * relies on it for Light/Charged/Sprint Attack; removal requires the
-	 * TODO-03A2 migration plus a zero-referencer scan and Editor readback.
-	 */
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Abilities")
-	TArray<TSubclassOf<UGameplayAbility>> GrantedWeaponAbilities;
 };
 
 inline bool UMeleeWeaponDefinition::IsValidWeaponDefinition(FString& OutReason) const
@@ -57,7 +55,13 @@ inline bool UMeleeWeaponDefinition::IsValidWeaponDefinition(FString& OutReason) 
 		return false;
 	}
 
-	if (!WeaponMesh)
+	if (bUseOwnerMeshSocketForTrace && WeaponMesh)
+	{
+		OutReason = TEXT("bUseOwnerMeshSocketForTrace cannot be combined with a WeaponMesh; the trace source would be ambiguous.");
+		return false;
+	}
+
+	if (!bUseOwnerMeshSocketForTrace && !WeaponMesh)
 	{
 		OutReason = TEXT("WeaponMesh is not assigned.");
 		return false;
@@ -79,24 +83,6 @@ inline bool UMeleeWeaponDefinition::IsValidWeaponDefinition(FString& OutReason) 
 	{
 		OutReason = TEXT("BladeSubdivisions must be between 1 and 8.");
 		return false;
-	}
-
-	TSet<TSubclassOf<UGameplayAbility>> SeenAbilityClasses;
-	for (const TSubclassOf<UGameplayAbility>& AbilityClass : GrantedWeaponAbilities)
-	{
-		if (!AbilityClass)
-		{
-			OutReason = TEXT("GrantedWeaponAbilities contains a null entry.");
-			return false;
-		}
-
-		if (SeenAbilityClasses.Contains(AbilityClass))
-		{
-			OutReason = TEXT("GrantedWeaponAbilities contains a duplicate ability class.");
-			return false;
-		}
-
-		SeenAbilityClasses.Add(AbilityClass);
 	}
 
 	if (AssociatedLoadout && !AssociatedLoadout->IsRouteTableValid())

@@ -1,9 +1,9 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "Abilities/GameplayAbility.h"
 #include "Engine/DataAsset.h"
 #include "GameplayTagContainer.h"
-#include "Combat/Equipment/CombatActionDefinition.h"
 #include "Combat/Equipment/DefenseProfileDefinition.h"
 #include "WeaponDefinition.generated.h"
 
@@ -24,7 +24,7 @@ enum class EWeaponHandSlot : uint8
 
 /**
  * The authored base of every player equipment item: hand-slot occupancy,
- * display attachment, compatible combat-action candidates, the default
+ * display attachment, combat-action candidate ability classes, the default
  * prepared layout, the optional Defense Profile, and the Base Input Profile.
  * Subclasses add combat geometry; this base owns no runtime state.
  */
@@ -53,17 +53,21 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Display")
 	FRotator DisplayRotationOffset = FRotator::ZeroRotator;
 
-	/** Combat actions equippable repeatedly alongside other actions. */
+	/** Candidate grouping only: these ability classes join the same runtime candidate union as ExclusiveCombatActions. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Combat Actions")
-	TArray<TObjectPtr<UCombatActionDefinition>> ReusableCombatActions;
+	TArray<TSubclassOf<UGameplayAbility>> ReusableCombatActions;
 
-	/** Combat actions that exclude every other action of this weapon. */
+	/** Compat-retained candidate grouping merged into the same runtime candidate union as ReusableCombatActions; no exclusivity rule is implemented in v1 (real exclusive selection belongs to TODO-03D1). */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Combat Actions")
-	TArray<TObjectPtr<UCombatActionDefinition>> ExclusiveCombatActions;
+	TArray<TSubclassOf<UGameplayAbility>> ExclusiveCombatActions;
 
-	/** The initial 1-4 layout; empty entries are legal no-op slots and the count is validated to at most four. */
+	/** The always-granted-while-equipped ability chain (Light/Charged/Sprint Attack per weapon family); validated disjoint from the candidate lists. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Combat Actions")
+	TArray<TSubclassOf<UGameplayAbility>> BaseGrantedActions;
+
+	/** The initial 1-4 layout; at most four entries, null entries are legal no-op slots, and duplicate non-null classes are rejected. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Prepared Slots")
-	TArray<TObjectPtr<UCombatActionDefinition>> DefaultPreparedActions;
+	TArray<TSubclassOf<UGameplayAbility>> DefaultPreparedActions;
 
 	/** Optional Defense Profile; effective as fallback from the main hand and as override from the off hand. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Defense")
@@ -84,32 +88,53 @@ inline bool UWeaponDefinition::IsValidWeaponDefinition(FString& OutReason) const
 		return false;
 	}
 
-	TArray<UCombatActionDefinition*> CandidateActions;
-	for (const TObjectPtr<UCombatActionDefinition>& Action : ReusableCombatActions)
+	// Reusable and Exclusive are authoring groupings only; the runtime candidate
+	// pool is this one union with no exclusivity rule.
+	TSet<TSubclassOf<UGameplayAbility>> CandidateClasses;
+	auto AppendCandidateClasses = [&CandidateClasses](const TArray<TSubclassOf<UGameplayAbility>>& Classes, const TCHAR* ListName, FString& Reason) -> bool
 	{
-		CandidateActions.Add(Action.Get());
-	}
-	for (const TObjectPtr<UCombatActionDefinition>& Action : ExclusiveCombatActions)
+		for (const TSubclassOf<UGameplayAbility>& AbilityClass : Classes)
+		{
+			if (!AbilityClass)
+			{
+				Reason = FString::Printf(TEXT("%s contains a null entry."), ListName);
+				return false;
+			}
+
+			if (CandidateClasses.Contains(AbilityClass))
+			{
+				Reason = FString::Printf(TEXT("%s contains an ability class that already appears in the candidate lists."), ListName);
+				return false;
+			}
+
+			CandidateClasses.Add(AbilityClass);
+		}
+
+		return true;
+	};
+
+	if (!AppendCandidateClasses(ReusableCombatActions, TEXT("ReusableCombatActions"), OutReason)
+		|| !AppendCandidateClasses(ExclusiveCombatActions, TEXT("ExclusiveCombatActions"), OutReason))
 	{
-		CandidateActions.Add(Action.Get());
+		return false;
 	}
 
-	TSet<UCombatActionDefinition*> SeenActions;
-	for (UCombatActionDefinition* Candidate : CandidateActions)
+	TSet<TSubclassOf<UGameplayAbility>> BaseClasses;
+	for (const TSubclassOf<UGameplayAbility>& AbilityClass : BaseGrantedActions)
 	{
-		if (!Candidate)
+		if (!AbilityClass)
 		{
-			OutReason = TEXT("the combat-action lists contain a null entry.");
+			OutReason = TEXT("BaseGrantedActions contains a null entry.");
 			return false;
 		}
 
-		if (SeenActions.Contains(Candidate))
+		if (BaseClasses.Contains(AbilityClass) || CandidateClasses.Contains(AbilityClass))
 		{
-			OutReason = TEXT("the combat-action lists contain a duplicate action.");
+			OutReason = TEXT("BaseGrantedActions contains a duplicate ability class or one that is also a combat-action candidate.");
 			return false;
 		}
 
-		SeenActions.Add(Candidate);
+		BaseClasses.Add(AbilityClass);
 	}
 
 	if (DefaultPreparedActions.Num() > 4)
@@ -118,13 +143,28 @@ inline bool UWeaponDefinition::IsValidWeaponDefinition(FString& OutReason) const
 		return false;
 	}
 
-	for (const TObjectPtr<UCombatActionDefinition>& PreparedAction : DefaultPreparedActions)
+	TSet<TSubclassOf<UGameplayAbility>> SeenPreparedClasses;
+	for (const TSubclassOf<UGameplayAbility>& PreparedClass : DefaultPreparedActions)
 	{
-		if (PreparedAction && !SeenActions.Contains(PreparedAction.Get()))
+		if (!PreparedClass)
 		{
-			OutReason = TEXT("DefaultPreparedActions contains an action outside the weapon's candidate lists.");
+			// A null default entry is a legal no-op prepared slot.
+			continue;
+		}
+
+		if (!CandidateClasses.Contains(PreparedClass))
+		{
+			OutReason = TEXT("DefaultPreparedActions contains an ability class outside the weapon's candidate lists.");
 			return false;
 		}
+
+		if (SeenPreparedClasses.Contains(PreparedClass))
+		{
+			OutReason = TEXT("DefaultPreparedActions contains a duplicate ability class.");
+			return false;
+		}
+
+		SeenPreparedClasses.Add(PreparedClass);
 	}
 
 	if (DefenseProfile && !DefenseProfile->IsProfileValid())

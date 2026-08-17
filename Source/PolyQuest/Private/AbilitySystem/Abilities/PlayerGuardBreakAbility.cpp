@@ -39,6 +39,7 @@ UPlayerGuardBreakAbility::UPlayerGuardBreakAbility()
 	AbilitiesToCancel.AddTag(FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Attack.Light")), false));
 	AbilitiesToCancel.AddTag(FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Attack.Charged")), false));
 	AbilitiesToCancel.AddTag(FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Attack.Sprint")), false));
+	AbilitiesToCancel.AddTag(FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Skill.Melee")), false));
 }
 
 bool UPlayerGuardBreakAbility::CanActivateAbility(
@@ -184,7 +185,7 @@ bool UPlayerGuardBreakAbility::ValidateActivationSetup(const FGameplayAbilityAct
 	return CharacterASC && PlayerCharacter && AnimInstance && GuardBreakMontage
 		&& CharacterASC->GetNumericAttribute(UCharacterAttributeSet::GetStaminaAttribute()) <= 0.0f
 		&& GuardBreakAbilityTag.IsValid() && GuardBreakEventTag.IsValid() && StunnedStateTag.IsValid() && DeadStateTag.IsValid()
-		&& GuardAbilityTag.IsValid() && SprintAbilityTag.IsValid() && AbilitiesToCancel.Num() == 6;
+		&& GuardAbilityTag.IsValid() && SprintAbilityTag.IsValid() && AbilitiesToCancel.Num() == 7;
 }
 
 void UPlayerGuardBreakAbility::EndFromMontage(bool bWasCancelled)

@@ -44,10 +44,11 @@ UPlayerGuardAbility::UPlayerGuardAbility()
 	ActivationBlockedTags.AddTag(StunnedStateTag);
 	ActivationBlockedTags.AddTag(FGameplayTag::RequestGameplayTag(FName(TEXT("State.Action.Parrying")), false));
 
-	AttackAbilityTags.AddTag(FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Attack.Primary")), false));
-	AttackAbilityTags.AddTag(FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Attack.Light")), false));
-	AttackAbilityTags.AddTag(FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Attack.Charged")), false));
-	AttackAbilityTags.AddTag(FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Attack.Sprint")), false));
+	CancelableMeleeAbilityTags.AddTag(FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Attack.Primary")), false));
+	CancelableMeleeAbilityTags.AddTag(FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Attack.Light")), false));
+	CancelableMeleeAbilityTags.AddTag(FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Attack.Charged")), false));
+	CancelableMeleeAbilityTags.AddTag(FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Attack.Sprint")), false));
+	CancelableMeleeAbilityTags.AddTag(FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Skill.Melee")), false));
 }
 
 bool UPlayerGuardAbility::CanActivateAbility(
@@ -142,7 +143,7 @@ void UPlayerGuardAbility::ActivateAbility(
 	PlayerCharacter->CancelSprintAbility();
 	if (DefenseCancelableStateTag.IsValid() && CharacterASC->HasMatchingGameplayTag(DefenseCancelableStateTag))
 	{
-		CharacterASC->CancelAbilities(&AttackAbilityTags, nullptr, this);
+		CharacterASC->CancelAbilities(&CancelableMeleeAbilityTags, nullptr, this);
 	}
 }
 
@@ -311,7 +312,7 @@ bool UPlayerGuardAbility::ValidateActivationSetup(const FGameplayAbilityActorInf
 		&& StaminaRegenDelayGameplayEffectClass && GuardAbilityTag.IsValid() && GuardingStateTag.IsValid() && GuardInputTag.IsValid()
 		&& InputReleasedEventTag.IsValid() && InputCanceledEventTag.IsValid() && AttackingStateTag.IsValid() && DefenseCancelableStateTag.IsValid()
 		&& GuardStaminaDamageDataTag.IsValid() && GuardBreakEventTag.IsValid() && DeadStateTag.IsValid() && StunnedStateTag.IsValid()
-		&& AttackAbilityTags.Num() == 4;
+		&& CancelableMeleeAbilityTags.Num() == 5;
 }
 
 bool UPlayerGuardAbility::ApplyGuardEffects()

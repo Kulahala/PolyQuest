@@ -89,7 +89,7 @@ private:
 	FGameplayTag DefenseCancelableStateTag;
 	FGameplayTag DeadStateTag;
 	FGameplayTag StunnedStateTag;
-	FGameplayTagContainer AttackAbilityTags;
+	FGameplayTagContainer CancelableMeleeAbilityTags;
 	bool bParryWindowOpen = false;
 	bool bParryActiveTagApplied = false;
 	bool bMovementLockedByParry = false;

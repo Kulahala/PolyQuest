@@ -31,6 +31,7 @@ UDodgeAbility::UDodgeAbility()
 	LightAttackAbilityTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Attack.Light")), false);
 	ChargedAttackAbilityTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Attack.Charged")), false);
 	SprintAttackAbilityTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Attack.Sprint")), false);
+	MeleeSkillAbilityTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Skill.Melee")), false);
 	AttackingStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Action.Attacking")), false);
 	ChargingStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Action.Charging")), false);
 	DodgeCancelableStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Action.CanCancel.Dodge")), false);
@@ -82,8 +83,8 @@ void UDodgeAbility::ActivateAbility(
 
 	if (!AbilitySystemComponent || !PlayerCharacter || !AnimInstance || !DodgeMontage || !CostGameplayEffectClass
 		|| !StaminaRegenDelayGameplayEffectClass || !InvulnerabilityGameplayEffectClass || !PrimaryAttackAbilityTag.IsValid()
-		|| !LightAttackAbilityTag.IsValid() || !ChargedAttackAbilityTag.IsValid() || !SprintAttackAbilityTag.IsValid() || !AttackingStateTag.IsValid()
-		|| !ChargingStateTag.IsValid() || !DodgeCancelableStateTag.IsValid() || !InvulnerabilityBeginEventTag.IsValid() || !InvulnerabilityEndEventTag.IsValid())
+		|| !LightAttackAbilityTag.IsValid() || !ChargedAttackAbilityTag.IsValid() || !SprintAttackAbilityTag.IsValid() || !MeleeSkillAbilityTag.IsValid()
+		|| !AttackingStateTag.IsValid() || !ChargingStateTag.IsValid() || !DodgeCancelableStateTag.IsValid() || !InvulnerabilityBeginEventTag.IsValid() || !InvulnerabilityEndEventTag.IsValid())
 	{
 		UE_LOG(LogPolyQuest, Warning, TEXT("Dodge activation aborted for '%s': ASC, player, AnimInstance, montage, cost, regeneration delay, invulnerability effect, and required tags are required."), *GetNameSafe(PlayerCharacter));
 		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
@@ -114,6 +115,7 @@ void UDodgeAbility::ActivateAbility(
 
 	const bool bCanCancelAttack = AbilitySystemComponent->HasMatchingGameplayTag(DodgeCancelableStateTag);
 	const bool bWasCharging = AbilitySystemComponent->HasMatchingGameplayTag(ChargingStateTag);
+	const bool bShouldCancelMeleeSkill = bCanCancelAttack && MeleeSkillAbilityTag.IsValid();
 	FGameplayTagContainer AbilityTagsToCancel;
 	AbilityTagsToCancel.AddTag(PrimaryAttackAbilityTag);
 	if (bCanCancelAttack || bWasCharging)
@@ -144,6 +146,13 @@ void UDodgeAbility::ActivateAbility(
 		UE_LOG(LogPolyQuest, Warning, TEXT("Dodge activation aborted for '%s': montage '%s' did not start."), *GetNameSafe(PlayerCharacter), *GetNameSafe(DodgeMontage));
 		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
 		return;
+	}
+
+	if (bShouldCancelMeleeSkill)
+	{
+		FGameplayTagContainer SkillCancelTags;
+		SkillCancelTags.AddTag(MeleeSkillAbilityTag);
+		AbilitySystemComponent->CancelAbilities(&SkillCancelTags, nullptr, this);
 	}
 
 	PlayerCharacter->CancelActiveGuardAfterConfirmedAction(false);

@@ -3,7 +3,6 @@
 #include "AbilitySystemComponent.h"
 #include "Abilities/GameplayAbility.h"
 #include "Character/Player/PlayerCharacter.h"
-#include "Combat/Equipment/CombatActionDefinition.h"
 #include "Combat/Equipment/MeleeWeaponDefinition.h"
 #include "Combat/Equipment/WeaponDefinition.h"
 #include "Combat/Input/CombatLoadoutDefinition.h"
@@ -29,7 +28,7 @@ UWeaponEquipmentComponent::UWeaponEquipmentComponent()
 	DefaultGuardAbilityTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Defense.Guard")), false);
 	DefaultParryAbilityTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Defense.Parry")), false);
 
-	PreparedSlotActions.Init(nullptr, PreparedSlotCount);
+	PreparedSlotClasses.SetNum(PreparedSlotCount);
 	PreparedSlotHandles = TArray<FGameplayAbilitySpecHandle>();
 	PreparedSlotHandles.SetNum(PreparedSlotCount);
 }
@@ -66,10 +65,10 @@ bool UWeaponEquipmentComponent::EquipWeapon(UWeaponDefinition* Definition)
 	UWeaponDefinition* NewMainHand = bTargetIsMainHand ? Definition : CurrentMainHandWeapon.Get();
 	UWeaponDefinition* NewOffHand = bTargetIsMainHand ? CurrentOffHandWeapon.Get() : Definition;
 
-	TArray<UCombatActionDefinition*> ComputedPreparedActions;
-	ComputeKeepIfCompatibleLayout(NewMainHand, NewOffHand, ComputedPreparedActions);
+	TArray<TSubclassOf<UGameplayAbility>> ComputedPreparedClasses;
+	ComputeKeepIfCompatibleLayout(NewMainHand, NewOffHand, ComputedPreparedClasses);
 	FString PreflightReason;
-	if (!RunPreflight(PlayerCharacter, CharacterASC, Definition, bTargetIsMainHand, ComputedPreparedActions, PreflightReason))
+	if (!RunPreflight(PlayerCharacter, CharacterASC, Definition, bTargetIsMainHand, ComputedPreparedClasses, PreflightReason))
 	{
 		UE_LOG(LogPolyQuest, Warning, TEXT("Weapon equipment on '%s' failed its preflight: %s"), *GetNameSafe(GetOwner()), *PreflightReason);
 		return false;
@@ -79,17 +78,13 @@ bool UWeaponEquipmentComponent::EquipWeapon(UWeaponDefinition* Definition)
 	UWeaponDefinition* OldMainHand = CurrentMainHandWeapon;
 	UWeaponDefinition* OldOffHand = CurrentOffHandWeapon;
 	UCombatLoadoutDefinition* OldLoadout = PlayerCharacter ? PlayerCharacter->GetActiveCombatLoadout() : nullptr;
-	TArray<UCombatActionDefinition*> OldPreparedActions;
-	for (const TObjectPtr<UCombatActionDefinition>& SlotAction : PreparedSlotActions)
-	{
-		OldPreparedActions.Add(SlotAction.Get());
-	}
+	TArray<TSubclassOf<UGameplayAbility>> OldPreparedClasses = PreparedSlotClasses;
 
 	TeardownEquippedWeapons();
 
-	if (!ApplyComposition(PlayerCharacter, CharacterASC, NewMainHand, NewOffHand, ComputedPreparedActions))
+	if (!ApplyComposition(PlayerCharacter, CharacterASC, NewMainHand, NewOffHand, ComputedPreparedClasses))
 	{
-		if (ApplyComposition(PlayerCharacter, CharacterASC, OldMainHand, OldOffHand, OldPreparedActions)
+		if (ApplyComposition(PlayerCharacter, CharacterASC, OldMainHand, OldOffHand, OldPreparedClasses)
 			&& (!OldLoadout || PlayerCharacter->SetActiveCombatLoadout(OldLoadout)))
 		{
 			UE_LOG(LogPolyQuest, Warning, TEXT("Weapon equipment on '%s' failed mid-apply and restored the previous composition."), *GetNameSafe(GetOwner()));
@@ -143,23 +138,18 @@ bool UWeaponEquipmentComponent::TryGetSprintAttackAbilityTag(FGameplayTag& OutAb
 
 bool UWeaponEquipmentComponent::TryActivatePreparedSlot(int32 SlotIndex)
 {
-	if (SlotIndex < 0 || SlotIndex >= PreparedSlotCount || !PreparedSlotActions.IsValidIndex(SlotIndex))
-	{
-		return false;
-	}
-
 	if (SlotIndex < 0 || SlotIndex >= PreparedSlotCount)
 	{
 		return false;
 	}
 
-	if (!PreparedSlotActions.IsValidIndex(SlotIndex) || !PreparedSlotActions[SlotIndex])
+	if (!PreparedSlotClasses.IsValidIndex(SlotIndex) || !PreparedSlotClasses[SlotIndex])
 	{
 		// An empty prepared slot is a legal no-op.
 		return false;
 	}
 
-	UCombatActionDefinition* SlotAction = PreparedSlotActions[SlotIndex];
+	const TSubclassOf<UGameplayAbility> SlotClass = PreparedSlotClasses[SlotIndex];
 	const FGameplayAbilitySpecHandle& SlotHandle = PreparedSlotHandles[SlotIndex];
 	UAbilitySystemComponent* CharacterASC = GetOwner() ? GetOwner()->FindComponentByClass<UAbilitySystemComponent>() : nullptr;
 	if (!CharacterASC || !SlotHandle.IsValid() || !GrantedAbilitySpecHandles.Contains(SlotHandle))
@@ -169,9 +159,9 @@ bool UWeaponEquipmentComponent::TryActivatePreparedSlot(int32 SlotIndex)
 	}
 
 	const FGameplayAbilitySpec* SlotSpec = CharacterASC->FindAbilitySpecFromHandle(SlotHandle);
-	if (!SlotSpec || SlotSpec->Ability != SlotAction->AbilityClass.GetDefaultObject())
+	if (!SlotSpec || SlotSpec->Ability != SlotClass.GetDefaultObject())
 	{
-		UE_LOG(LogPolyQuest, Warning, TEXT("Weapon equipment on '%s' refused prepared slot %d: the granted ability no longer matches the slot's action."), *GetNameSafe(GetOwner()), SlotIndex + 1);
+		UE_LOG(LogPolyQuest, Warning, TEXT("Weapon equipment on '%s' refused prepared slot %d: the granted ability no longer matches the slot's ability class."), *GetNameSafe(GetOwner()), SlotIndex + 1);
 		return false;
 	}
 
@@ -195,6 +185,18 @@ bool UWeaponEquipmentComponent::CanSwapNow(const UAbilitySystemComponent* Charac
 		return false;
 	}
 
+	// A granted ability may be active without holding one of the four state tags
+	// (a prepared-slot skill), so this component's own grants are checked directly;
+	// tearing them down mid-activation would strand the running ability.
+	for (const FGameplayAbilitySpecHandle& GrantedHandle : GrantedAbilitySpecHandles)
+	{
+		const FGameplayAbilitySpec* GrantedSpec = CharacterASC->FindAbilitySpecFromHandle(GrantedHandle);
+		if (GrantedSpec && GrantedSpec->IsActive())
+		{
+			return false;
+		}
+	}
+
 	// The Primary hold/release arbitration window owns only input-block tags, not a
 	// combat action tag, so an active Primary spec is checked directly to keep a
 	// swap from re-routing an in-flight attack decision.
@@ -216,7 +218,7 @@ bool UWeaponEquipmentComponent::CanSwapNow(const UAbilitySystemComponent* Charac
 	return true;
 }
 
-bool UWeaponEquipmentComponent::RunPreflight(APlayerCharacter* PlayerCharacter, UAbilitySystemComponent* CharacterASC, UWeaponDefinition* Definition, bool bTargetIsMainHand, const TArray<UCombatActionDefinition*>& ComputedPreparedActions, FString& OutReason) const
+bool UWeaponEquipmentComponent::RunPreflight(APlayerCharacter* PlayerCharacter, UAbilitySystemComponent* CharacterASC, UWeaponDefinition* Definition, bool bTargetIsMainHand, const TArray<TSubclassOf<UGameplayAbility>>& ComputedPreparedClasses, FString& OutReason) const
 {
 	OutReason.Empty();
 	if (!Definition->IsValidWeaponDefinition(OutReason))
@@ -259,16 +261,16 @@ bool UWeaponEquipmentComponent::RunPreflight(APlayerCharacter* PlayerCharacter, 
 
 	// Collect every ability class the new composition would grant: both slots'
 	// base grants plus the computed prepared layout, rejecting duplicates.
+	// TODO-03A2 final grant source: preflight and apply both read BaseGrantedActions.
 	TArray<TSubclassOf<UGameplayAbility>> GrantClasses;
 	auto AppendBaseGrants = [&GrantClasses](const UWeaponDefinition* SlotDefinition, FString& Reason) -> bool
 	{
-		const UMeleeWeaponDefinition* MeleeDefinition = Cast<UMeleeWeaponDefinition>(SlotDefinition);
-		if (!MeleeDefinition)
+		if (!SlotDefinition)
 		{
 			return true;
 		}
 
-		for (const TSubclassOf<UGameplayAbility>& AbilityClass : MeleeDefinition->GrantedWeaponAbilities)
+		for (const TSubclassOf<UGameplayAbility>& AbilityClass : SlotDefinition->BaseGrantedActions)
 		{
 			if (GrantClasses.Contains(AbilityClass))
 			{
@@ -287,27 +289,21 @@ bool UWeaponEquipmentComponent::RunPreflight(APlayerCharacter* PlayerCharacter, 
 		return false;
 	}
 
-	for (UCombatActionDefinition* PreparedAction : ComputedPreparedActions)
+	for (const TSubclassOf<UGameplayAbility>& PreparedClass : ComputedPreparedClasses)
 	{
-		if (!PreparedAction)
+		if (!PreparedClass)
 		{
 			// An empty prepared slot is a legal no-op layout entry.
 			continue;
 		}
 
-		if (!PreparedAction->AbilityClass)
+		if (GrantClasses.Contains(PreparedClass))
 		{
-			OutReason = TEXT("the computed prepared layout contains an action without an ability class.");
+			OutReason = FString::Printf(TEXT("ability '%s' would be granted twice by the new composition."), *GetNameSafe(PreparedClass));
 			return false;
 		}
 
-		if (GrantClasses.Contains(PreparedAction->AbilityClass))
-		{
-			OutReason = FString::Printf(TEXT("ability '%s' would be granted twice by the new composition."), *GetNameSafe(PreparedAction->AbilityClass));
-			return false;
-		}
-
-		GrantClasses.Add(PreparedAction->AbilityClass);
+		GrantClasses.Add(PreparedClass);
 	}
 
 	for (const TSubclassOf<UGameplayAbility>& AbilityClass : GrantClasses)
@@ -343,7 +339,7 @@ void UWeaponEquipmentComponent::TeardownEquippedWeapons()
 	}
 	GrantedAbilitySpecHandles.Reset();
 
-	PreparedSlotActions.Reset();
+	PreparedSlotClasses.Reset();
 	PreparedSlotHandles.Reset();
 
 	if (MainHandBladeBaseMarker)
@@ -374,17 +370,17 @@ void UWeaponEquipmentComponent::TeardownEquippedWeapons()
 	CurrentOffHandWeapon = nullptr;
 }
 
-bool UWeaponEquipmentComponent::ApplyComposition(APlayerCharacter* PlayerCharacter, UAbilitySystemComponent* CharacterASC, UWeaponDefinition* MainHandDefinition, UWeaponDefinition* OffHandDefinition, const TArray<UCombatActionDefinition*>& PreparedActions)
+bool UWeaponEquipmentComponent::ApplyComposition(APlayerCharacter* PlayerCharacter, UAbilitySystemComponent* CharacterASC, UWeaponDefinition* MainHandDefinition, UWeaponDefinition* OffHandDefinition, const TArray<TSubclassOf<UGameplayAbility>>& PreparedClasses)
 {
 	USkeletalMeshComponent* OwnerMesh = PlayerCharacter->GetMesh();
 
-	TArray<TObjectPtr<UCombatActionDefinition>> NewPreparedActions;
-	NewPreparedActions.Init(nullptr, PreparedSlotCount);
+	TArray<TSubclassOf<UGameplayAbility>> NewPreparedClasses;
+	NewPreparedClasses.SetNum(PreparedSlotCount);
 	TArray<FGameplayAbilitySpecHandle> NewPreparedHandles;
 	NewPreparedHandles.SetNum(PreparedSlotCount);
-	for (int32 SlotIndex = 0; SlotIndex < PreparedSlotCount && SlotIndex < PreparedActions.Num(); ++SlotIndex)
+	for (int32 SlotIndex = 0; SlotIndex < PreparedSlotCount && SlotIndex < PreparedClasses.Num(); ++SlotIndex)
 	{
-		NewPreparedActions[SlotIndex] = PreparedActions[SlotIndex];
+		NewPreparedClasses[SlotIndex] = PreparedClasses[SlotIndex];
 	}
 
 	TArray<FGameplayAbilitySpecHandle> NewGrantedHandles;
@@ -425,7 +421,23 @@ bool UWeaponEquipmentComponent::ApplyComposition(APlayerCharacter* PlayerCharact
 	USceneComponent* NewBladeBaseMarker = nullptr;
 	USceneComponent* NewBladeTipMarker = nullptr;
 	const UMeleeWeaponDefinition* MainHandMelee = Cast<UMeleeWeaponDefinition>(MainHandDefinition);
-	if (MainHandMelee && NewMainHandDisplay)
+	if (MainHandMelee && MainHandMelee->bUseOwnerMeshSocketForTrace)
+	{
+		// Unarmed hand-contact source: the markers resolve against the character mesh
+		// socket instead of a spawned display, and the trace path is unchanged.
+		NewBladeBaseMarker = NewObject<USceneComponent>(PlayerCharacter, NAME_None, RF_Transient);
+		NewBladeBaseMarker->RegisterComponent();
+		NewBladeBaseMarker->AttachToComponent(OwnerMesh, FAttachmentTransformRules::KeepRelativeTransform, MainHandDefinition->AttachSocketName);
+		NewBladeBaseMarker->SetRelativeLocation(MainHandMelee->BladeBaseMarkerRelativeLocation);
+
+		NewBladeTipMarker = NewObject<USceneComponent>(PlayerCharacter, NAME_None, RF_Transient);
+		NewBladeTipMarker->RegisterComponent();
+		NewBladeTipMarker->AttachToComponent(OwnerMesh, FAttachmentTransformRules::KeepRelativeTransform, MainHandDefinition->AttachSocketName);
+		NewBladeTipMarker->SetRelativeLocation(MainHandMelee->BladeTipMarkerRelativeLocation);
+
+		UE_LOG(LogPolyQuest, Verbose, TEXT("Weapon equipment on '%s' attached its melee markers to owner-mesh socket '%s' (owner-socket contact source)."), *GetNameSafe(GetOwner()), *MainHandDefinition->AttachSocketName.ToString());
+	}
+	else if (MainHandMelee && NewMainHandDisplay)
 	{
 		NewBladeBaseMarker = NewObject<USceneComponent>(PlayerCharacter, NAME_None, RF_Transient);
 		NewBladeBaseMarker->RegisterComponent();
@@ -438,15 +450,15 @@ bool UWeaponEquipmentComponent::ApplyComposition(APlayerCharacter* PlayerCharact
 		NewBladeTipMarker->SetRelativeLocation(MainHandMelee->BladeTipMarkerRelativeLocation);
 	}
 
+	// TODO-03A2 final grant source: reads BaseGrantedActions, exactly as RunPreflight does.
 	auto BaseGrants = [&GrantClass](const UWeaponDefinition* SlotDefinition) -> bool
 	{
-		const UMeleeWeaponDefinition* MeleeDefinition = Cast<UMeleeWeaponDefinition>(SlotDefinition);
-		if (!MeleeDefinition)
+		if (!SlotDefinition)
 		{
 			return true;
 		}
 
-		for (const TSubclassOf<UGameplayAbility>& AbilityClass : MeleeDefinition->GrantedWeaponAbilities)
+		for (const TSubclassOf<UGameplayAbility>& AbilityClass : SlotDefinition->BaseGrantedActions)
 		{
 			if (!GrantClass(AbilityClass))
 			{
@@ -462,13 +474,13 @@ bool UWeaponEquipmentComponent::ApplyComposition(APlayerCharacter* PlayerCharact
 	{
 		for (int32 SlotIndex = 0; SlotIndex < PreparedSlotCount; ++SlotIndex)
 		{
-			UCombatActionDefinition* SlotAction = NewPreparedActions[SlotIndex];
-			if (!SlotAction)
+			const TSubclassOf<UGameplayAbility>& SlotClass = NewPreparedClasses[SlotIndex];
+			if (!SlotClass)
 			{
 				continue;
 			}
 
-			if (!GrantClass(SlotAction->AbilityClass))
+			if (!GrantClass(SlotClass))
 			{
 				bApplySucceeded = false;
 				break;
@@ -486,7 +498,7 @@ bool UWeaponEquipmentComponent::ApplyComposition(APlayerCharacter* PlayerCharact
 		OffHandDisplayComponent = NewOffHandDisplay;
 		MainHandBladeBaseMarker = NewBladeBaseMarker;
 		MainHandBladeTipMarker = NewBladeTipMarker;
-		PreparedSlotActions = MoveTemp(NewPreparedActions);
+		PreparedSlotClasses = MoveTemp(NewPreparedClasses);
 		PreparedSlotHandles = MoveTemp(NewPreparedHandles);
 		GrantedAbilitySpecHandles = MoveTemp(NewGrantedHandles);
 
@@ -526,11 +538,12 @@ bool UWeaponEquipmentComponent::ApplyComposition(APlayerCharacter* PlayerCharact
 	return bApplySucceeded;
 }
 
-bool UWeaponEquipmentComponent::ComputeKeepIfCompatibleLayout(UWeaponDefinition* NewMainHand, UWeaponDefinition* NewOffHand, TArray<UCombatActionDefinition*>& OutPreparedActions) const
+bool UWeaponEquipmentComponent::ComputeKeepIfCompatibleLayout(UWeaponDefinition* NewMainHand, UWeaponDefinition* NewOffHand, TArray<TSubclassOf<UGameplayAbility>>& OutPreparedClasses) const
 {
-	OutPreparedActions.Init(nullptr, PreparedSlotCount);
+	OutPreparedClasses.SetNum(PreparedSlotCount);
 
-	TArray<UCombatActionDefinition*> Candidates;
+	// Reusable and Exclusive are authoring groupings only; runtime uses one candidate union.
+	TArray<TSubclassOf<UGameplayAbility>> CandidateClasses;
 	for (const UWeaponDefinition* SlotDefinition : { NewMainHand, NewOffHand })
 	{
 		if (!SlotDefinition)
@@ -538,23 +551,25 @@ bool UWeaponEquipmentComponent::ComputeKeepIfCompatibleLayout(UWeaponDefinition*
 			continue;
 		}
 
-		for (const TObjectPtr<UCombatActionDefinition>& Action : SlotDefinition->ReusableCombatActions)
+		for (const TSubclassOf<UGameplayAbility>& AbilityClass : SlotDefinition->ReusableCombatActions)
 		{
-			Candidates.AddUnique(Action.Get());
+			CandidateClasses.AddUnique(AbilityClass);
 		}
-		for (const TObjectPtr<UCombatActionDefinition>& Action : SlotDefinition->ExclusiveCombatActions)
+		for (const TSubclassOf<UGameplayAbility>& AbilityClass : SlotDefinition->ExclusiveCombatActions)
 		{
-			Candidates.AddUnique(Action.Get());
+			CandidateClasses.AddUnique(AbilityClass);
 		}
 	}
 
-	// Keep an old slot entry only when its action is still a candidate with a usable ability class.
-	for (int32 SlotIndex = 0; SlotIndex < PreparedSlotCount && SlotIndex < PreparedSlotActions.Num(); ++SlotIndex)
+	// Keep an old slot entry only when its class is still a candidate. Validation
+	// rejects duplicate authored defaults; the Contains checks below stay as
+	// defense in depth, never as the only line of defense.
+	for (int32 SlotIndex = 0; SlotIndex < PreparedSlotCount && SlotIndex < PreparedSlotClasses.Num(); ++SlotIndex)
 	{
-		UCombatActionDefinition* OldAction = PreparedSlotActions[SlotIndex].Get();
-		if (OldAction && OldAction->AbilityClass && Candidates.Contains(OldAction))
+		const TSubclassOf<UGameplayAbility>& OldClass = PreparedSlotClasses[SlotIndex];
+		if (OldClass && CandidateClasses.Contains(OldClass))
 		{
-			OutPreparedActions[SlotIndex] = OldAction;
+			OutPreparedClasses[SlotIndex] = OldClass;
 		}
 	}
 
@@ -566,18 +581,18 @@ bool UWeaponEquipmentComponent::ComputeKeepIfCompatibleLayout(UWeaponDefinition*
 			continue;
 		}
 
-		for (const TObjectPtr<UCombatActionDefinition>& DefaultAction : SlotDefinition->DefaultPreparedActions)
+		for (const TSubclassOf<UGameplayAbility>& DefaultClass : SlotDefinition->DefaultPreparedActions)
 		{
-			if (!DefaultAction || !DefaultAction->AbilityClass || OutPreparedActions.Contains(DefaultAction.Get()))
+			if (!DefaultClass || OutPreparedClasses.Contains(DefaultClass))
 			{
 				continue;
 			}
 
 			for (int32 SlotIndex = 0; SlotIndex < PreparedSlotCount; ++SlotIndex)
 			{
-				if (!OutPreparedActions[SlotIndex])
+				if (!OutPreparedClasses[SlotIndex])
 				{
-					OutPreparedActions[SlotIndex] = DefaultAction.Get();
+					OutPreparedClasses[SlotIndex] = DefaultClass;
 					break;
 				}
 			}

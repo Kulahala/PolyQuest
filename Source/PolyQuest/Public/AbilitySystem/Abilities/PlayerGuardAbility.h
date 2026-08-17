@@ -96,7 +96,7 @@ private:
 	FGameplayTag GuardBreakEventTag;
 	FGameplayTag DeadStateTag;
 	FGameplayTag StunnedStateTag;
-	FGameplayTagContainer AttackAbilityTags;
+	FGameplayTagContainer CancelableMeleeAbilityTags;
 	bool bGuardActive = false;
 	bool bEndAbilityRequested = false;
 

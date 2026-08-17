@@ -6,7 +6,7 @@
 #include "GameplayTagContainer.h"
 #include "WeaponEquipmentComponent.generated.h"
 
-class UCombatActionDefinition;
+class UGameplayAbility;
 class UMeleeWeaponDefinition;
 class UWeaponDefinition;
 class USceneComponent;
@@ -65,10 +65,10 @@ protected:
 
 private:
 	bool CanSwapNow(const UAbilitySystemComponent* CharacterASC) const;
-	bool RunPreflight(APlayerCharacter* PlayerCharacter, UAbilitySystemComponent* CharacterASC, UWeaponDefinition* Definition, bool bTargetIsMainHand, const TArray<UCombatActionDefinition*>& ComputedPreparedActions, FString& OutReason) const;
+	bool RunPreflight(APlayerCharacter* PlayerCharacter, UAbilitySystemComponent* CharacterASC, UWeaponDefinition* Definition, bool bTargetIsMainHand, const TArray<TSubclassOf<UGameplayAbility>>& ComputedPreparedClasses, FString& OutReason) const;
 	void TeardownEquippedWeapons();
-	bool ApplyComposition(APlayerCharacter* PlayerCharacter, UAbilitySystemComponent* CharacterASC, UWeaponDefinition* MainHandDefinition, UWeaponDefinition* OffHandDefinition, const TArray<UCombatActionDefinition*>& PreparedActions);
-	bool ComputeKeepIfCompatibleLayout(UWeaponDefinition* NewMainHand, UWeaponDefinition* NewOffHand, TArray<UCombatActionDefinition*>& OutPreparedActions) const;
+	bool ApplyComposition(APlayerCharacter* PlayerCharacter, UAbilitySystemComponent* CharacterASC, UWeaponDefinition* MainHandDefinition, UWeaponDefinition* OffHandDefinition, const TArray<TSubclassOf<UGameplayAbility>>& PreparedClasses);
+	bool ComputeKeepIfCompatibleLayout(UWeaponDefinition* NewMainHand, UWeaponDefinition* NewOffHand, TArray<TSubclassOf<UGameplayAbility>>& OutPreparedClasses) const;
 	bool ResolveDefenseAbilityTag(bool bGuardIntent, FGameplayTag& OutAbilityTag) const;
 
 	UPROPERTY(Transient)
@@ -89,11 +89,11 @@ private:
 	UPROPERTY(Transient)
 	TObjectPtr<USceneComponent> MainHandBladeTipMarker;
 
-	/** The prepared 1-4 action identities; index-aligned with PreparedSlotHandles. */
+	/** The prepared 1-4 ability-class identities; index-aligned with PreparedSlotHandles. */
 	UPROPERTY(Transient)
-	TArray<TObjectPtr<UCombatActionDefinition>> PreparedSlotActions;
+	TArray<TSubclassOf<UGameplayAbility>> PreparedSlotClasses;
 
-	/** The exact granted spec binding of each prepared slot; index-aligned with PreparedSlotActions. */
+	/** The exact granted spec binding of each prepared slot; index-aligned with PreparedSlotClasses. */
 	TArray<FGameplayAbilitySpecHandle> PreparedSlotHandles;
 
 	UPROPERTY(Transient)
