@@ -1,169 +1,216 @@
-# plan.md - AI Agent Collaboration File
+# TODO-03A3: World Equipment Pickup And Drop-Swap v1
 
-## Rules
+## Status
 
-1. Read this file before continuing a PolyQuest stage.
-2. Keep feedback, active plan, validation evidence, and unresolved blockers scoped to the current stage.
-3. The implementation author cannot mark a stage as review-approved.
-4. Retain the completed plan and closeout record until the next accepted stage deliberately replaces it.
-5. Durable architecture belongs in `ARCHITECTURE.md`; accepted future direction and validation debt belong in `ROADMAP.md`.
+- **Plan state:** completed, validated, strictly reviewed, and closed.
+- **Baseline:** `3f929f5 [Feature] 主手与空手战斗合同 (Main-Hand And Unarmed Combat)`.
+- **Validation:** Automation test `PolyQuest.Equipment.TransactionMatrix` completed with `Success` across all 11 test cases (real fixtures, ECC_Visibility ground projection, bidirectional conflict preflight rejection, TwoHanded and Shield pickup transitions, 2-drop/1-drop enumeration, zero-leak drop cleanup, full ASC AbilitySpec and handle ownership restoration on Apply/Drop failures via `VerifyPreparedSlotBinding`).
+- **Manual Scene01 validation:** The user confirmed the live pickup route: `E` equips the selected fixture, the replaced weapon remains visible on the ground near the player's previous position, and the source/drop behavior matches the transaction contract. The screenshot confirms the displaced weapon presentation in the running scene; authored `Content/**` remains user-owned WIP.
+- **Strict Review:** Main defect-first review + Independent Fresh Reviewer subagent (`e5aa2404-efe1-4ff0-958c-1525870affb2`) completed with "No findings."
 
----
+## Objective
 
-## Most Recent Stage: TODO-03A2 - Player Main-Hand And Unarmed Combat v1 (Completed; closeout recorded 2026-08-17)
+Deliver the first map-facing equipment loop: pressing `E` on one nearby world weapon pickup either completes one validated direct-equipment transaction and then materializes every displaced equipped definition as a world pickup, or changes nothing.
 
-Baseline: `7093c30 [Feature] 装备域与手持槽位合同 (Equipment Domain And Hand Slots)`.
+The primary runtime question is not "can a mesh be picked up?" It is whether world interaction can cross the existing MainHand/OffHand composition boundary without losing Ability specs, prepared-slot identities, displays, trace markers, or a displaced item when any later step fails.
 
-Revision history: Revision 1 applied the four codex rulings (explicit owner-socket trace flag with bidirectional fail-closed validation, staged `GrantedWeaponAbilities` migration with Editor enumeration as the hard gate, the `CanSwapNow` granted-handle active check, a fully designated first `1-4` skill). Revision 2 settled the skill class (`UPlayerMeleeSkillAbility`, identity tags authored on the GA/GE assets, never hardcoded) and the montage-confirmed single-commit ordering. Revision 3 retires `UCombatActionDefinition` per the codex source/asset re-review: the type only wrapped `AbilityClass`, `ActionIntentTag` has no consumer, and each GA is already the sole behavior-and-configuration carrier of its combat action. Weapon definitions hold ability classes directly; the component works by ability class; no replacement action DataAsset type is introduced. Revision 4 settles four refinements: `ReusableCombatActions` and `ExclusiveCombatActions` are compat-retained candidate groupings merged into one runtime candidate union with no exclusivity rule in v1 (their source comments/Editor tooltips must not imply unimplemented behavior; real exclusive selection belongs to TODO-03D1), `DefaultPreparedActions` rejects duplicate non-null ability classes at validation (the layout fill's defensive skip is not the only defense), the staged migration reads legacy grants only until the atomic cutover with `BaseGrantedActions` never merged during Phases 1/2, and the ROADMAP decision sync splits into pre-implementation future-direction alignment versus post-validation done/debt closure with no early `ARCHITECTURE.md` or `README.md` edits. Revision 5 narrows the playable validation fixture set to Sword plus Unarmed: `DA_MeleeWeapon_Axe` and `DA_CombatLoadout_Axe` remain deferred WIP (no DefaultEquippedWeapon/debug-swap routing, no `BaseGrantedActions` requirement, outside the PIE matrix, re-authored under the direct GA-class contract by a future Axe authoring stage); the `BaseGrantedActions` enumeration/readback gate covers every currently routable/equippable validation fixture instead of every historical `UMeleeWeaponDefinition`; and before the legacy-field deletion the user records Axe's old `GrantedWeaponAbilities` list once, disposed of as old WIP per the accepted ruling.
+## Fixed Product Contract
 
-Final native state (2026-08-17): `bUseOwnerMeshSocketForTrace`, the owner-socket marker branch, the `CanSwapNow` granted-handle scan, class-based `BaseGrantedActions`/candidate/default arrays, class-based prepared identities and exact-handle validation, `UPlayerMeleeSkillAbility`, and the three skill vocabulary tags are implemented. `GrantedWeaponAbilities` and `CombatActionDefinition.h` are removed; a Source/Content binary scan found no residual references.
+- `E` is a local one-shot world interaction, not a Combat Loadout input and not a Gameplay Event/Gameplay Tag route.
+- v1 directly equips a compatible immutable `UWeaponDefinition`; it has no inventory, backpack, persistence, random affixes, durability, pickup instance state, or `EquipmentInstance`.
+- Existing `UWeaponEquipmentComponent` remains the sole runtime owner of equipped MainHand/OffHand definitions, displays, markers, weapon-granted specs, prepared slots, active loadout changes, preflight, apply, rollback, and combat-time swap refusal.
+- A world pickup is a map/visual interaction actor only. It may reference an immutable weapon definition, but it may not grant abilities, modify ASC tags/specs, author damage/collision combat, store mutable equipment state, or create a second combat authority.
+- The existing public `EquipWeapon(UWeaponDefinition*)` stays compatible for initial/default/debug equipment routes. A new narrow world-pickup transaction entry reuses the same composition/preflight/apply machinery; a pickup must never call `EquipWeapon` and then independently guess what to drop.
+- A successful new composition is required before any displaced pickup is created. If preflight, apply, ground projection, or any deferred drop spawn fails, the source pickup remains, every provisional drop is destroyed, and the prior equipment composition is restored by definition identity.
+- A same-definition world pickup is a no-op rejection: it consumes no source pickup, creates no drop, and leaves the existing composition untouched. This differs deliberately from the debug-friendly `EquipWeapon` same-slot `true` no-op.
+- A spawned displaced pickup rejects its former owner for `0.5s` of world time. It has no throw impulse or initial physics simulation.
+- Runtime spawned pickups are transient map state: map reload/reset destroys them; initial placed pickups return through normal map loading. No persistence contract is implied.
+- Shield in this stage proves only OffHand occupancy, display, composition conflict handling, rollback, and drop-swap. It has an empty Defense Profile and no Shield action candidates. RMB/Q continue to resolve through the current MainHand fallback until `TODO-03A4`.
+- The plan keeps the existing v1 Unarmed one-socket contact limitation unchanged. It does not add a second trace/resolver path or solve opposite-hand punch fidelity.
 
-### Objective
+## Accepted Decisions
 
-Make `DA_Weapon_Unarmed` a complete legal MainHand fallback that fights through the existing stable input/GAS lifecycle (LMB combo, Charged Attack, Sprint Attack, Guard, Parry, `1-4`), migrate the first Sword onto the class-based equipment grant source with `DA_MeleeWeapon_Axe` deferred as WIP, deliver the first real prepared-slot skill, and close the `GrantedWeaponAbilities` removal debt through its agreed hard gates. The TODO-03A/03A1 transaction, marker, trace, and resolver results are preserved; the single melee delivery path is unchanged. World pickup, Shield override, enemy presets, and Bow remain later stages.
+| ID | Decision | Implementation consequence |
+| --- | --- | --- |
+| D1 | Add a narrow concrete `UOffHandWeaponDefinition` for Shield-like OffHand assets. | `UWeaponDefinition` remains abstract. The subtype validates `HandSlot == OffHand`; it adds no Trace, damage, Ability, runtime state, or component. A header-only type is acceptable when its validation remains inline. |
+| D2 | Do not add `UTwoHandedWeaponDefinition`. | A real `UMeleeWeaponDefinition` authored as `MainHandTwoHanded` is the 03A3 transaction fixture. Create a neutral `DA_Weapon_TwoHandedFixture` from the known-good Sword shape as user WIP; it is not an early Bow/Staff/Greatsword gameplay implementation. |
+| D3 | `UWeaponEquipmentComponent` owns an explicit `UnarmedFallbackDefinition`. | It is configured on the inherited component in `BP_Player`, typed narrowly as `UMeleeWeaponDefinition`, and points to `DA_Weapon_Unarmed`. No hardcoded asset path and no inference from `DefaultEquippedWeapon`. |
+| D4 | `E` chooses the nearest native QueryOnly pickup overlap. | `APlayerCharacter` obtains nearby `AWorldWeaponPickup` actors from an overlap-enabled native interaction shape, chooses smallest distance squared, then uses a stable actor-name/order tie-break. Overlap generation maintains candidates only; it never directly equips on Begin/EndOverlap. No camera/line trace and no generic `IInteractable` framework. |
+| D5 | Use `ECC_Visibility` for ground projection. | The user must confirm Scene01 ground blocks Visibility. The projection starts near the player's feet, traces down `300cm`, offsets the hit by `2cm` along its normal, and fails closed when there is no valid hit. No new collision channel and no reuse of melee `GameTraceChannel1`. |
+| D6 | Separate raw illegal-composition tests from public pickup behavior. | Automation directly proves `{ TwoHanded, OffHand }` preflight rejection in both construction directions. Public world pickup instead normalizes to `{ TwoHanded, null }` or `{ Unarmed, Shield }` before preflight and must succeed when all authored data is valid. |
+| D7 | Use a native Player test fixture with the actual Player SkeletalMesh and real sockets. | The test does not load or mock an entire `BP_Player` and is not a pure DataAsset test. The user supplies the actual mesh path and MainHand/OffHand socket names. If that mesh remains user WIP, the suite is explicitly local-asset-dependent and not a clean-checkout fixture. |
 
-### Locked Goals (user-locked)
+## Existing Runtime Facts And Boundaries
 
-1. `DA_Weapon_Unarmed` is a full-combat MainHand fallback with no dummy StaticMesh; its melee contact points come from the character SkeletalMesh's socket/bone-relative source.
-2. Unarmed and equipped weapons share the existing stable input/GAS lifecycle: LMB combo, Charged, Sprint Attack, Guard, Parry, and `1-4` are never silently removed and never get a second state machine.
-3. The first Sword migrates to its formal MainHand definition; `DA_MeleeWeapon_Axe` and `DA_CombatLoadout_Axe` stay deferred WIP - not routed as DefaultEquippedWeapon or debug-swap targets, not re-authored this stage - and a future Axe authoring stage re-authors them under the direct GA-class contract; Sword/Katana may later share GA/combo assets. No Katana asset work in this stage.
-4. GAs keep owning Montage, GE, Cost, Damage, Timing, Tags, and Cleanup; nothing relocates that configuration.
-5. The selected weapon/action configuration is fixed for the duration of an active action; equipment cannot rewrite it underneath.
-6. The `GrantedWeaponAbilities` migration completes through the staged sequence below; the Editor enumeration and readback of every currently routable/equippable validation fixture is the hard removal gate, and the binary Content scan is auxiliary evidence only.
-7. `UCombatActionDefinition` and every CA_* asset contract retire: `UWeaponDefinition`'s `BaseGrantedActions` / `ReusableCombatActions` / `ExclusiveCombatActions` / `DefaultPreparedActions` hold `TArray<TSubclassOf<UGameplayAbility>>` directly, the component's prepared identity / keep-if-compatible / preflight / apply / exact-handle triple validation all work by ability class, and no replacement Skill DataAsset type is introduced. `ReusableCombatActions` and `ExclusiveCombatActions` are compat-retained authoring groupings merged into one runtime candidate union; no exclusivity rule is implemented in v1, and real exclusive selection belongs to TODO-03D1.
+- `UWeaponEquipmentComponent` currently owns the two transient hand definitions, display components, main-hand markers, granted handles, prepared classes/handles, input resolution, and the only public mutation route. `EquipWeapon` snapshots the old composition, tears it down, applies a new one, and identity-restores on a failed apply.
+- `RunPreflight` currently rejects a direct `{ MainHandTwoHanded, OffHand }` composition before mutating handles. `TODO-03A3` must generalize the component's internal target-composition calculation rather than relaxing that rule.
+- `UMeleeWeaponDefinition` is the compatible MainHand melee subtype because it carries Marker/Sweep fields. It remains correct for the TwoHanded fixture, but incorrect for Shield.
+- `APlayerCharacter::SetupPlayerInputComponent` already binds authored Enhanced Input actions at `Started`/`Completed`/`Canceled`. `InteractAction` adds only an `ETriggerEvent::Started` binding and must not disturb held combat input, combo buffering, Primary arbitration, or `AbilitySlotActions`.
+- Existing `CanSwapNow` blocks changing equipped definitions during Attack, Guard, Parry, Dodge, active weapon-owned prepared skills, and active Primary arbitration. Pickup interaction must respect that gate; it must not cancel an Ability to force an equip.
 
-### Material Design Decisions (Main rulings with rationale)
+## Runtime Ownership
 
-1. **Unarmed contact source: an explicit flag, not implicit null-mesh.** `UMeleeWeaponDefinition` gains `UPROPERTY(EditDefaultsOnly, BlueprintReadOnly) bool bUseOwnerMeshSocketForTrace = false`. `DA_Weapon_Unarmed` sets it true with `WeaponMesh = null`, `HandSlot = MainHandOneHanded`, `AttachSocketName` on the character skeleton (for example `hand_r`), and the two blade-marker offsets authored in that socket's local space plus its own `TraceRadius`/`BladeSubdivisions`. `IsValidWeaponDefinition` is bidirectionally fail-closed so exactly two legal shapes exist:
-   - `bUseOwnerMeshSocketForTrace == true && WeaponMesh` is rejected: an owner-socket trace source cannot also carry a display mesh (ambiguous contact source).
-   - `bUseOwnerMeshSocketForTrace == false && !WeaponMesh` is rejected with today's "WeaponMesh is not assigned" reason (display weapons keep the unchanged contract).
-   - Flag true keeps the existing distinct-marker, radius, and subdivision checks; the socket itself is verified at runtime by the existing `DoesSocketExist` preflight, which is character-skeleton-specific and cannot live on the DataAsset.
-   - `ApplyComposition` branches on the flag: false keeps today's display-attached markers; true attaches the two component-owned marker components directly to `OwnerMesh` at `AttachSocketName` with the authored relative offsets (no display is spawned for a null mesh, as today). `TryGetBladeMarkers`, `GetEquippedMainHandMelee`, `GetTraceRadius`, and `GetBladeSubdivisions` work verbatim, so `UMeleeTraceSourceComponent`, `UAbilityTask_MeleeTraceWindow`, and `FMeleeHitResolver` are untouched and no second damage/trace/resolver path exists. One Verbose log marks the owner-socket attach for the PIE route.
-2. **Action identity is the ability class; the CA wrapper layer retires.** `UWeaponDefinition`'s four action arrays become direct `TArray<TSubclassOf<UGameplayAbility>>`:
-   - `BaseGrantedActions` is the always-granted-while-equipped chain (per weapon family: Light, Charged, Sprint Attack GAs). The 03A1-locked dual-grant model survives - base grants and prepared-slot grants apply together and any duplicate class between or within them fails preflight closed - and the base source migrates from the melee-only legacy field to the shared base-class field, clearing the removal debt instead of freezing it.
-   - `ReusableCombatActions` / `ExclusiveCombatActions` are the `1-4` candidate pool; `DefaultPreparedActions` is the authored initial layout (at most four; null entries are legal no-op slots). The two candidate lists are compat-retained authoring groupings only: runtime merges them into one candidate union and implements no exclusivity rule in v1 - the field comments (Editor tooltips) state this explicitly so the names do not imply unimplemented behavior, and real exclusive selection rules belong to TODO-03D1.
-   - Rationale for the retirement: `UCombatActionDefinition` had no independent data responsibility - it wrapped `AbilityClass` and an `ActionIntentTag` with zero consumers - while each GA already is the unique carrier of its action's behavior and configuration. The wrapper added an asset layer and authoring steps without adding truth. The deliberate tradeoff: a per-action metadata indirection (display names, future UI data) no longer exists; such a layer may return only with a real consumer requirement, not speculatively.
-   - `IsValidWeaponDefinition` validates one class-level discipline: no null classes, no duplicates within or across the reusable/exclusive union, `BaseGrantedActions` disjoint from and deduplicated within itself, `DefaultPreparedActions` at most four with non-null entries inside the candidate union **and with duplicate non-null classes rejected at validation** - `ComputeKeepIfCompatibleLayout`'s skip of already-present defaults stays as defense in depth, never as the only line of defense. Type changes on the three 03A1-committed fields are data-safe: the committed Sword/Axe assets hold empty lists; any partially authored WIP CA references inside the lists are dropped on load and the Editor readback confirms the lists contain only newly authored GA classes.
-   - Route boundaries are unchanged: the Base Input Profile (`AssociatedLoadout`) stays tag-only (`Input.PrimaryAttack` route + Sprint Attack tag); the current `GA_PrimaryAttack` spec is granted through the MainHand `BaseGrantedActions` source that those tags activate; `1-4` keep exact-handle activation from candidates/defaults; Guard/Parry stay startup GAs behind the Effective Defense Profile defaults - Unarmed therefore needs zero defense-specific work.
-3. **Unarmed equip route.** Unarmed is reached only through `DefaultEquippedWeapon` authoring and the existing debug swap bindings calling `EquipWeapon`. No unequip API, no auto-fallback, no world pickup/drop/Former-owner gate (all TODO-03A3), no rest-site editing (TODO-03D1).
-4. **Activation snapshot is enforced by composition plus an explicit granted-handle gate.** (a) Montage/GE/combo/damage configuration is GA-CDO- and per-spec-owned and immutable under equip; (b) `CanSwapNow` keeps the existing Attacking/Guarding/Parrying/Dodging tag gates and the active Primary arbitration spec check, and additionally scans every handle in the component's own `GrantedAbilitySpecHandles` for an active spec - so any active prepared-slot skill (which need not hold any of the four state tags) also blocks a swap; (c) the trace task is ability-scoped and re-queries markers per tick, markers only change inside gated transactions, and a hypothetical post-tag-removal race fails closed (missing markers -> no trace, one warning) - the strict review re-verifies this ordering; (d) `TryActivatePreparedSlot` triple-validates the binding on every call (valid handle, current grant of this component, and the spec's ability class matches the slot's class). This stage adds no snapshot copying; it documents the contract and closes the skill-activation swap hole with (b).
+| Owner | Responsibilities in 03A3 | Explicitly not responsible for |
+| --- | --- | --- |
+| `APlayerCharacter` | Holds/binds `InteractAction`; chooses one eligible nearby pickup under D4; passes the request to the equipment component; forwards a result to optional presentation-only Blueprint hooks. | Direct ASC/spec changes, hand-slot mutation, prepared-slot mutation, drop calculation, rollback, inventory, or combat input arbitration changes. |
+| `UWeaponEquipmentComponent` | Builds the complete target MainHand/OffHand pair; enforces D3/D6; runs `CanSwapNow`, full preflight, snapshots, teardown, apply, identity restore, and calculates displaced definitions. It owns the commit/rollback decision until world drops have succeeded. | Picking a map candidate, direct Blueprint state, collision/damage truth, persistence, dynamic physics, or a public generic unequip API. |
+| `AWorldWeaponPickup` | Holds one immutable definition; supplies an overlap-enabled QueryOnly native interaction shape and definition-derived visual presentation; guards reentrancy through `CanInteract`; exposes a friend-only native staging method for deferred world drops; records former owner/reject deadline; destroys the source after final success; performs no compensation from `EndPlay`. | Ability grants, Gameplay Tags, Attribute writes, combat hit collision, action selection, inventory state, arbitrary Blueprint decision graphs, or autonomous calls to the old public `EquipWeapon`. |
+| `UOffHandWeaponDefinition` | Concrete authored OffHand asset identity and exact slot validation. | Trace marker/sweep data, damage configuration, ability lifecycle, a Shield action system, or a second defense resolver. |
+| `UMeleeWeaponDefinition` TwoHanded fixture | Existing MainHand mesh/marker/sweep/base-action shape with `HandSlot=MainHandTwoHanded`. | Bow draw/fire, projectile delivery, staff casting, special two-handed rules beyond hand occupancy. |
+| `BP_WorldWeaponPickup` / DataAssets | Presentation and immutable authored references only. | Equipment transaction logic, overlap decision branches, attack collision, damage, tags, save state, or `EventGraph` ownership. |
 
-### First Real 1-4 Skill: Designated Contract (no placeholder)
+## Target Composition And Displacement Rules
 
-`UPlayerMeleeSkillAbility : UStaminaActionAbility` (new narrow native class, `AbilitySystem/Abilities/PlayerMeleeSkillAbility.h/.cpp`), following the validated `USprintAttackAbility` single-shot skeleton minus its Sprint gate. First authored instance: `GA_Skill_Whirlwind` (Sword Whirlwind, 旋风斩) - a spin attack whose montage animates a wide blade sweep the existing marker trace resolves naturally. It is registered on the Sword by ability class directly: `ReusableCombatActions` += `GA_Skill_Whirlwind`, `DefaultPreparedActions` slot 1 = `GA_Skill_Whirlwind`.
+| Current composition | Incoming definition | Target composition before preflight | Displaced definitions after commit |
+| --- | --- | --- | --- |
+| `{ Unarmed, null }` | OneHanded MainHand | `{ Incoming, null }` | none |
+| `{ MainHand A, OffHand B }` | OneHanded MainHand C | `{ C, B }` | `A` |
+| `{ MainHand A, OffHand B }` | TwoHanded C | `{ C, null }` | `A`, `B` |
+| `{ TwoHanded A, null }` | OneHanded MainHand B | `{ B, null }` | `A` |
+| `{ TwoHanded A, null }` | OffHand Shield B | `{ UnarmedFallbackDefinition, B }` | `A` |
+| `{ MainHand A, OffHand B }` | OffHand Shield C | `{ A, C }` | `B` when `B` exists and differs from `C` |
+| any | same definition already in its effective target slot | no-op rejection | none; source pickup stays in world |
 
-- **Identity (authored on assets, not in the native class):** `GA_Skill_Whirlwind` carries `Ability.Skill.Whirlwind` in its Ability Tags; its Cooldown GE grants `Cooldown.Skill.Whirlwind` through its Granted Tags (the 02D2 pattern). Both tags are new registered vocabulary (`PolyQuestGameplayTags.ini`); `Ability.Attack.Skill.Whirlwind` is not added. The reusable native class hardcodes no Whirlwind or skill-identity tag - it references only the shared state/event/input tags - so future skill instances configure identity entirely through their GA and GE assets. No `Ability.Attack.*` tag means the Primary/Light/Charged/Sprint arbitration can never activate or suppress the skill through a tag route.
-- **Activation:** only through `TryActivatePreparedSlot`'s exact spec handle (`1` with the skill prepared). `CanActivateAbility`: grounded, and none of Attacking/Dodging/Parrying/Charging/Dead/Exhausted/Stunned active (Guarding is not blocked: like every existing attack, the skill cancels Guard on confirmation and preserves the resume path); Stamina through the shared `CheckCost`. One press is one activation attempt; there is no hold/release arbitration.
-- **Commit ordering (single commit, montage-confirmed):** exactly one `CommitAbility` (Stamina cost + Cooldown GE) per activation. The Montage task alone may start and confirm pre-commit: the commit executes only after the tracked `ActiveMontage` identity is verified with `Montage_IsActive` true - not at key press, and not merely after calling the task's activation. The six `WaitGameplayEvent` window tasks (trace/dodge-cancel/rate) call `ReadyForActivation` only after the commit succeeds. With no valid montage (null/failed to start, or the active-montage check fails) or a failed commit, the ability commits nothing - zero Stamina cost, zero Cooldown - leaves no trace window, no cancel tag, no rate window, and no Guard cancel, stops any started montage, and ends through the converged `EndAbility` with a fail-visible warning. Ending the never-armed window tasks is engine-safe (`UGameplayTask::EndTask` and `WaitGameplayEvent::OnDestroy` both guard un-activated state).
-- **Side effects gated behind the commit:** `State.Action.Attacking` plus the input-block tags, the six window tasks' activation, any Guard cancel, and facing begin only after the successful commit; a failed commit applies none of them and must not have cancelled Guard or opened a trace. Tags are removed in the converged `EndAbility`; authored rate windows restore the baseline rate on every teardown path.
-- **Damage contract:** `GE_Skill_Whirlwind_Damage` is a fixed-modifier Damage GameplayEffect (no SetByCaller; the trace window passes an empty SetByCaller tag exactly like Light/SprintAttack), delivered only through the same `UAbilityTask_MeleeTraceWindow` and `FMeleeHitResolver` with per-window target dedup. `CanActivateAbility` requires `DamageGameplayEffectClass`, so this class claims no null-damage-GE utility variant; a non-damage skill is future work that must change that requirement first.
-- **Cancellation:** montage natural end ends normally; Dodge inside the cancel window, death, stun, and teardown converge through the same `EndAbility` cleanup (task end, tag removal, rate restore). Input release after the press does nothing.
+`UnarmedFallbackDefinition` is a legal MainHand definition but is never a displaced world item. A malformed or missing fallback rejects the transaction before teardown.
 
-### GrantedWeaponAbilities / UCombatActionDefinition Retirement (completed)
+## Atomic Pickup Flow
 
-- The class-based cutover is atomic in the runtime transaction: preflight and apply read `BaseGrantedActions` from both hand definitions, merge the two candidate groups only for prepared slots, and grant every selected class through component-owned handles. There is no legacy/mixed grant source.
-- The user completed the routable Sword/Unarmed readback, the former `GrantedWeaponAbilities` data was cleared/resaved, and the final static Source/Content binary scan found zero `GrantedWeaponAbilities` or `CombatActionDefinition` references. `DA_MeleeWeapon_Axe` remains deferred authoring WIP and starts directly from the new class contract when that weapon is taken up.
-- `CombatActionDefinition.h` and the unreferenced CA_* WIP contract are retired. Each GA remains the sole source of its Montage, GameplayEffects, timing, cost, damage, tags, and cleanup configuration.
+1. **Input and candidate selection:** `IA_Interact` fires `Started`. `APlayerCharacter` gathers only currently overlapping, valid native `AWorldWeaponPickup` actors, selects one by D4, and returns immediately when none exists. It does not send combat input events or edit an ASC.
+2. **Source eligibility:** the selected pickup rejects an invalid Definition, a dead/tearing-down requester, an active interaction, or its former owner while `WorldTime < RejectUntil`. It then sets only a temporary `bInteractionInProgress` guard. The source is still alive and no map/ASC state has changed.
+3. **Pure target construction:** the component receives the incoming Definition through a narrow world-pickup entry point. It builds the entire target pair from current composition, hand slot, and D3. TwoHanded always clears target OffHand; picking an OffHand while a TwoHanded MainHand is current first chooses the canonical `{ UnarmedFallbackDefinition, IncomingOffHand }` target.
+4. **Fail-closed preflight:** before any teardown, the component checks `CanSwapNow`, Player/ASC validity, Player SkeletalMesh sockets, every target definition, legal hand composition, candidate/prepared grants, duplicate classes, Startup Ability conflicts, and foreign Specs. A preflight failure or no-op clears `bInteractionInProgress`, preserves the source pickup, and has zero handle/display/marker/world-drop mutation.
+5. **Snapshot and apply:** the component privately snapshots prior MainHand, OffHand, ActiveCombatLoadout, prepared-class identities, and the data required for a fresh-handle restore. It tears down then applies the target composition using the existing one-authority grant/display/marker path. It retains the snapshot after a successful apply instead of committing immediately.
+6. **Provisional displaced drops:** only after a complete target composition exists, the component invokes the source pickup's friend-only native staging method. The pickup ground-projects near the player's feet using D5, then creates every displaced pickup using `SpawnActorDeferred`. Each provisional Actor has interaction collision disabled until every spawn and initialization succeeds. Before `FinishSpawning`, it receives the Definition, `FormerOwner=Player`, and `RejectUntil=WorldTime+0.5`.
+7. **Commit:** after all provisional Actors finish spawning and enable QueryOnly interaction, the component drops its snapshot and reports success. The source pickup executes presentation-only success feedback and destroys itself. The new equipped composition is the single equipment truth; the spawned Actors are only future map entry points.
+8. **Any post-apply failure:** failure of projection, deferred spawn, initialization, or finish-spawn destroys every provisional dropped Actor, then asks the component to restore the old definition identities, loadout, prepared classes, displays, markers, and freshly granted valid component-owned handles. The source pickup clears its guard, remains in the map, and reports failure. A failed restore is a fatal configuration error: source is not consumed and no provisional drop remains, but the defect blocks stage closeout.
+9. **Teardown:** `EndPlay`, level reset, actor destruction, or invalid owner pointers only clear guards/references. They do not spawn replacement pickups, revive a source, or mutate an ASC after teardown.
 
-### Native Contract (draft)
+## Public And Private API Shape
 
-- `WeaponDefinition.h`: the four action arrays as `TArray<TSubclassOf<UGameplayAbility>>` with one class-level validation discipline (non-null, no duplicates within or across the reusable/exclusive union, `BaseGrantedActions` disjoint and deduplicated, `DefaultPreparedActions` at most four with candidate-only entries and duplicate non-null classes rejected); the Reusable/Exclusive field comments (Editor tooltips) state the candidate-union grouping with no v1 exclusivity rule; the `CombatActionDefinition.h` include is removed. No other base-class change.
-- `MeleeWeaponDefinition.h`: `bUseOwnerMeshSocketForTrace` with the bidirectional validation; gated deletion of `GrantedWeaponAbilities` per the staged retirement; comments updated to the class-based BaseGrantedActions source.
-- `WeaponEquipmentComponent.h/.cpp`: `PreparedSlotClasses` (`Transient`, `TArray<TSubclassOf<UGameplayAbility>>`) index-aligned with `PreparedSlotHandles`; `ComputeKeepIfCompatibleLayout` keeps an old class only when it is still in the new composition's candidate class union and fills remaining slots from `DefaultPreparedActions` classes; preflight and apply collect/grant by class from both slots' `BaseGrantedActions` (base type, no melee cast needed from cutover onward) and each prepared class; `TryActivatePreparedSlot` triple-validates that the handle is valid, a current grant, and that the spec's ability matches the slot's class; the `CanSwapNow` granted-handle active scan and the owner-socket marker branch are retained.
-- `AbilitySystem/Abilities/PlayerMeleeSkillAbility.h/.cpp`: the designated skill class above; one narrow reflected ability type with no generic skill framework, no data-driven dispatch, and no skill-identity tag hardcoded.
-- `Config/Tags/PolyQuestGameplayTags.ini`: `Ability.Skill.Melee`, `Ability.Skill.Whirlwind`, and `Cooldown.Skill.Whirlwind`.
-- `Combat/Equipment/CombatActionDefinition.h`: removed during the rework phase on explicit user authorization (CA_* assets already deleted unreferenced, zero Content references, zero Source references); no interim dead class remains.
-- `PlayerCharacter`, `ABaseCharacter`, enemy classes, `UMeleeTraceSourceComponent`, `UAbilityTask_MeleeTraceWindow`, `FMeleeHitResolver`: no changes. Any diff there must be justified in review, not assumed.
-- `DodgeAbility`, `PlayerGuardAbility`, `PlayerParryAbility`, `PlayerGuardBreakAbility`: updated cancel sets and validation to include `Ability.Skill.Melee`.
+- Keep `EquipWeapon(UWeaponDefinition*)` as the current direct/debug route. Do not give it hidden world-spawn side effects.
+- Add one narrow C++ world transaction entry on `UWeaponEquipmentComponent`, concretely `TryEquipWorldPickup(AWorldWeaponPickup* SourcePickup)`. It is the only world-entry mutation and is not Blueprint-callable. The component reads the source Definition, owns target construction/snapshot/apply/rollback, and calls a friend-only native staging method on the source pickup to provision displaced Actors. No public `TFunctionRef`, generic two-phase transaction token, generic unequip, inventory API, or direct Blueprint composition API is allowed.
+- Keep target-pair construction, raw composition validation, snapshot lifecycle, displaced-definition calculation, and restore private to the component. Tests may access a strictly test-only seam only under `WITH_DEV_AUTOMATION_TESTS`.
+- `AWorldWeaponPickup` exposes only `CanInteract`, immutable Definition/presentation properties needed by Player and Blueprint placement, and the private/friend-only staging method used by the component. Success/failure presentation may be a narrow `BlueprintImplementableEvent` or equivalent callback, but it must carry no gameplay decision back into the transaction.
+- No new Gameplay Tags, GameplayEffects, Abilities, Damage GE, Trace Task, Resolver, StateTree topology, Controller logic, or Build.cs module dependencies are expected. Any claim that one is needed pauses implementation for a plan amendment.
 
-### User-Owned Editor Gate
+## Implementation Sequence
 
-1. Author `GA_Skill_Whirlwind` (BP on `UPlayerMeleeSkillAbility`, Ability Tags = `Ability.Skill.Whirlwind`) with its montage, `GE_Skill_Whirlwind_Damage` (fixed-modifier Damage GE, no SetByCaller), `GE_Skill_Whirlwind_Cost` (duplicated from the Light Attack cost GE and then tuned; the shared Light cost GE is never modified), and a Cooldown GE with Granted Tags `Cooldown.Skill.Whirlwind` (fixed duration, no SetByCaller). The Whirlwind montage's trace/dodge-cancel/rate window notifies must not begin at frame 0 - leave at least one normal animation frame after montage start, because the window tasks arm only after the commit and a frame-0 window would be silently missed.
-2. Register the skill on the Sword by ability class: `ReusableCombatActions` += `GA_Skill_Whirlwind`; `DefaultPreparedActions` slot 1 = `GA_Skill_Whirlwind` (other slots may stay empty).
-3. Author `DA_Weapon_Unarmed`: `bUseOwnerMeshSocketForTrace = true`, null mesh, hand socket, socket-local marker pair (v1 single-pair constraint: the pair follows the one anchored hand socket - see the open point on alternating-hand fidelity), radius/subdivisions, `BaseGrantedActions` = the punch Light/Charged/SprintAttack GA classes, `AssociatedLoadout = DA_CombatLoadout_StraightSword` (settled reuse).
-4. Migrate `DA_MeleeWeapon_Sword` to class-based `BaseGrantedActions`; `DA_MeleeWeapon_Axe` and `DA_CombatLoadout_Axe` stay deferred WIP - not a DefaultEquippedWeapon or debug-swap target, no `BaseGrantedActions` authoring this stage; complete the stage-2 enumeration readback across the routable fixtures, including the dropped-CA-entries confirmation and a one-time note of Axe's legacy `GrantedWeaponAbilities` contents for the disposition record.
-5. Final phase only: after the zero-referencer confirmation, delete the four CA_* WIP assets.
-6. Readback after each compile round: the staged-retirement gates above plus `BP_Player.DefaultEquippedWeapon` still the Sword for the regression route; the Unarmed PIE route may temporarily point it at `DA_Weapon_Unarmed` or use the existing debug swap bindings (not committed).
-7. No enemy, map, StateTree, AnimBP, or input-mapping edits.
+1. Re-read the final approved plan, current component source/callers, `PlayerCharacter` input binding, weapon definitions, and direct test infrastructure. Confirm the current CodeGraph/code-review-graph freshness before using either as supplemental evidence.
+2. Add `UOffHandWeaponDefinition` and the D3 component property/validation. Do not create a `UTwoHandedWeaponDefinition` or alter `UMeleeWeaponDefinition` semantics.
+3. Refactor only the component's private composition flow enough to support a complete target pair, displaced-definition calculation, retained snapshot, friend-only post-apply staging call, and identity restore. Preserve the existing `EquipWeapon` behavior and its existing callers.
+4. Add the test-only one-shot apply-failure seam and raw-composition validation access under `WITH_DEV_AUTOMATION_TESTS`; it may not leak a production debug switch. Add the Automation suite before treating rollback behavior as done.
+5. Add `AWorldWeaponPickup` with no Tick: a definition-derived visible mesh, a native QueryOnly interaction shape, reentrancy/former-owner guards, deferred drop factory, provisional-spawn cleanup, and safe `EndPlay` behavior. It must not become a combat collision actor.
+6. Add `InteractAction` and `Started` binding to `APlayerCharacter`. Keep selection D4 in Player and world transaction ownership in the component. Do not route `E` through held combat input, `CombatLoadoutDefinition`, or a new tag.
+7. Run Main static checks. The user then compiles `PolyQuestEditor`; only after C++ types are available does the user author/read back the D1-D7 Editor fixtures.
+8. Run the native Automation suite and Scene01 PIE matrix. Diagnose failures from the first bad transition only, apply the smallest source repair, and repeat the affected gate.
+9. Gemini performs the user-arranged strict review after user-confirmed validation. Main performs a separate fresh review after the Gemini review/fixes; a repair requires affected validation rerun and delta review before documentation closeout.
 
-### Validation Matrix
+## Candidate Native Paths
 
-Main static gate: final source/caller reads, CodeGraph, Gameplay Tag cross-check (including the two new tags), class-level duplicate/disjoint validation review, `git diff --check`, and the auxiliary Content scans. Main does not run UBT, Editor writes, or PIE.
+| Path | Planned responsibility |
+| --- | --- |
+| `Source/PolyQuest/Public/Combat/Equipment/OffHandWeaponDefinition.h` | New narrow concrete OffHand DataAsset type and exact-slot validation. A `.cpp` exists only if non-inline logic actually requires it. |
+| `Source/PolyQuest/Public/Combat/Equipment/WeaponEquipmentComponent.h` | Explicit `UnarmedFallbackDefinition`, narrow world-transaction API/result types, private snapshot/composition seams, and test-only declarations. |
+| `Source/PolyQuest/Private/Combat/Equipment/WeaponEquipmentComponent.cpp` | Target construction, preflight/rollback reuse, displaced-definition calculation, post-apply callback transaction, and test-only failure injection. |
+| `Source/PolyQuest/Public/Combat/Equipment/WorldWeaponPickup.h` | New native world pickup Actor, immutable Definition, QueryOnly interaction surface, former-owner state, and narrow presentation/interaction API. |
+| `Source/PolyQuest/Private/Combat/Equipment/WorldWeaponPickup.cpp` | Definition-derived presentation, eligibility/reentrancy, ground projection, deferred drop spawning, provisional cleanup, and EndPlay convergence. |
+| `Source/PolyQuest/Public/Character/Player/PlayerCharacter.h` | `InteractAction`, one-shot interaction handler, and presentation-only result hook. |
+| `Source/PolyQuest/Private/Character/Player/PlayerCharacter.cpp` | Existing-style `Started` binding and deterministic nearby-pickup selection only. |
+| `Source/PolyQuest/Private/Tests/WeaponEquipmentComponentAutomationTests.cpp` | New `WITH_DEV_AUTOMATION_TESTS` fixture and 03A3 transaction coverage. |
+| `ARCHITECTURE.md`, `ROADMAP.md`, `README.md`, `plan.md` | Exact closeout hunks only after implementation, user validation, reviews, and debt handoff. |
 
-User compile and Scene01 PIE gates:
+Expected unchanged native/config paths include `MeleeWeaponDefinition.h`, `Config/Tags/PolyQuestGameplayTags.ini`, `PolyQuest.Build.cs`, every Ability/GE/Trace/Resolver file, AI/StateTree, and all Enemy classes. Do not add a `TwoHandedWeaponDefinition` file.
 
-- Compile rounds per the staged retirement: rework, cutover, final deletion - each with its authoring/resave/readback steps.
-- Sword regression, byte-equivalent to 03A1: display/markers, LMB combo, Charged, Sprint Attack, Guard/Parry through the default Effective Defense Profile, rate windows, Poise/hit-reaction enemy route, swap refusal, same-weapon no-op.
-- Unarmed route: no weapon display spawns; punch LMB combo registers hits from the hand-contact sweep; Charged punch; Sprint Attack punch; Guard/Parry work; the Verbose owner-socket log appears; swapping Unarmed<->Sword through debug bindings rebuilds markers/display correctly and keep-if-compatible rebuilds the prepared layout by class.
-- Skill route: `1` activates Whirlwind through the exact handle with the Stamina deduction and cooldown applying only after the montage is confirmed active; a second press inside the cooldown does not reactivate; an active skill blocks weapon swap (the handle gate); Dodge inside the cancel window cancels into Dodge with converged cleanup; the sweep damages the enemy through the shared trace; an empty slot stays a no-op. An unconfigured skill variant (missing Montage or Cooldown GE) is rejected cleanly by CanActivateAbility before activation with zero Stamina cost, zero Cooldown, no action tags, and no Guard disturbance; a configured but unstartable Montage variant reaches ActivateAbility's active-montage check, aborts with the Warning log, and leaves zero side effects.
-- Failure-injection paths beyond static evidence remain out of scope here (see automation boundary).
+## User-Owned Editor Work
 
-### Automated Testing Boundary
+Perform this only after the native C++ classes compile and appear in the Editor. All assets remain user-owned WIP and are excluded from the native commit unless the user later approves a stable asset closure.
 
-This stage ships no automation; the equipment transaction matrix's automatable part becomes a required TODO-03A3 plan item, recorded in `ROADMAP.md` under 03A3: a native automation-test slice running against a real Player/skeletal-mesh fixture with the authored sockets (not a pure DataAsset mock), covering EquipWeapon preflight rejections (TwoHanded/OffHand both directions, duplicate class grants, StartupAbilities collision, foreign specs), class-based keep-if-compatible layout transitions, identity-based restore under an injected apply failure, and prepared-slot triple validation. Resolver-precedence coverage is not part of this requirement. Injection-based closure of the committed-cost debt stays governed by its existing ROADMAP entry and is not relaxed by this stage.
+1. Create digital `IA_Interact`, map exactly one E binding in the active `IMC_Default`, and assign it to inherited `BP_Player.InteractAction`. Confirm the existing Controller still installs that mapping context and no duplicate E binding consumes it.
+2. Create `DA_Weapon_Shield` with parent `UOffHandWeaponDefinition`. Confirm its enforced `HandSlot=OffHand`, display mesh, exact OffHand socket, empty Defense Profile, and empty Base/Reusable/Exclusive/Prepared action lists. It is an occupancy/display fixture only.
+3. Create `DA_Weapon_TwoHandedFixture` with parent `UMeleeWeaponDefinition`, `HandSlot=MainHandTwoHanded`, valid visible mesh, existing-compatible socket/markers/radius/subdivisions, and a known-valid base input/action configuration. It may reuse the known Sword behavior for the fixture, but it must not claim Bow/Staff/Greatsword gameplay or add projectile assets.
+4. Read back `DA_Weapon_Unarmed` exact asset path, parent class, hand slot, owner-mesh socket, markers, and bind it explicitly to `BP_Player`'s `UnarmedFallbackDefinition` property. Do not assume the initial default weapon is Unarmed.
+5. Create `BP_WorldWeaponPickup` from the native Actor. It may set visual defaults and `WeaponDefinition` on placed instances, but its EventGraph must contain no equipment, damage, collision, ability, tag, save, or candidate-selection logic. Place Sword, Shield, and TwoHanded fixture instances in Scene01.
+6. Read back collision: world pickup visual mesh has no collision; native interaction shape is QueryOnly and generates overlaps for Player candidate discovery; no Begin/EndOverlap callback directly equips, no physics simulation, overlap-driven damage, melee trace, or Blueprint collision branch exists.
+7. Confirm Scene01's eligible ground blocks `Visibility`. Verify the prescribed foot-near `300cm` downward projection has a valid point with the `2cm` normal offset, without blocking the Player or causing a throw.
+8. Supply the Automation fixture facts: actual Player SkeletalMesh asset path, MainHand socket name, OffHand socket name, and whether the mesh is committed or user WIP. The test must use that actual mesh, not a fake socket or whole-BP mock.
 
-### Documentation And Commit Boundary (documentation complete; commit pending explicit approval)
+## Native Automation Slice
 
-Documentation sync runs in two deliberate steps:
+The suite runs under `WITH_DEV_AUTOMATION_TESTS` using a native `APlayerCharacter` test fixture, real ASC, real `USkeletalMeshComponent`, and the D7 mesh/socket asset. It must not rely on a pure DataAsset mock as proof of Player socket preflight. Any WIP asset dependency is declared in output and documentation.
 
-1. **Pre-implementation future-direction alignment (after this plan's approval, before the rework lands):** `ROADMAP.md` only - revise every `UCombatActionDefinition` dependency in TODO-03A2/03A4/03A5/03D1 to the ability-class vocabulary (including the candidate-union note that real exclusive selection belongs to TODO-03D1), add the retirement note to the 03A1 Done record, and attach the 03A3 automation requirement (with the real Player/skeletal-socket fixture condition). `ARCHITECTURE.md` and `README.md` are not touched in this step.
-2. **Post-validation closeout (completed 2026-08-17):** `ARCHITECTURE.md` now records the owner-socket contact-source contract, the class-based action/grant contract (retiring the action-reference type), the prepared-skill lifecycle, and the activation-snapshot/gate guarantee; `ROADMAP.md` marks 03A2 done and carries the remaining Unarmed fidelity release gate; `README.md` advances its status line; this file contains the closeout. No commit is created until explicit approval.
+Test hooks are private/test-only, deterministic, one-shot, and removed from shipping behavior. They may inject exactly one new-composition apply failure or one deferred-drop failure, but may never fire again during restoration.
 
-Native candidate paths: `Combat/Equipment/WeaponDefinition.h`, `Combat/Equipment/MeleeWeaponDefinition.h`, `Combat/Equipment/WeaponEquipmentComponent.h`, `Combat/Equipment/WeaponEquipmentComponent.cpp`, `AbilitySystem/Abilities/PlayerMeleeSkillAbility.h/.cpp`, `Config/Tags/PolyQuestGameplayTags.ini`, deletion of `Combat/Equipment/CombatActionDefinition.h` in the final phase, and exact `README.md`/`ARCHITECTURE.md`/`ROADMAP.md`/`plan.md` hunks. Exclude every other `Content/**` item (GA/GE/Montage/DA authoring stays local WIP unless the user explicitly approves a stable closure), generated directories, and unrelated WIP. No commit without explicit approval.
+| Test | Required assertion |
+| --- | --- |
+| Raw illegal composition, both directions | A deliberately constructed `{ TwoHanded, OffHand }` target is rejected before mutation in both construction orders; no component handle, marker, display, or current-definition change. |
+| Public TwoHanded conversion | `Sword + Shield + TwoHanded pickup` resolves to `{ TwoHanded, null }`; both displaced definitions are scheduled as drops only after target apply. |
+| Public OffHand conversion | `{ TwoHanded, null } + Shield pickup` resolves to `{ Unarmed, Shield }`; only the former TwoHanded item is displaced. |
+| Standard and Unarmed replacement | OneHanded replacement drops the old OneHanded item; Unarmed to OneHanded creates no nonexistent Unarmed drop; same-definition pickup is a non-consuming no-op. |
+| Duplicate grants | Duplicate Base/Prepared or cross-slot ability classes reject before mutation. |
+| Startup/foreign Spec conflict | Startup Ability collision or same-CDO foreign ASC Spec rejects while preserving current component-owned and foreign specs. |
+| Keep-if-compatible layout | Compatible prepared class stays at its existing index; incompatible slots reseed MainHand then OffHand candidates only. |
+| Apply failure identity restore | A one-shot target apply failure restores old MainHand, OffHand, loadout, prepared-class identities, display/markers, and valid fresh component-owned handles. Numeric handle reuse is not required. |
+| Prepared-slot triple validation | Invalid handle, non-component handle, and spec-class mismatch each fail activation; only the current exact component-owned matching handle activates. |
+| Ground/drop failure atomicity | No drop exists after preflight/apply/projection/deferred-spawn failure; provisional drops are removed and old composition restores. |
+| Former owner and teardown | Former owner is rejected before `0.5s`, can interact after expiry, and teardown does not dereference invalid Player or emit compensation drops. |
 
-### Route And Ownership
+Automation does not prove Enhanced Input hardware dispatch, visual placement quality, Shield defense behavior, Bow combat, network replication, persistence, or Resolver precedence. Those remain outside this stage.
+
+## Validation Matrix
+
+| Gate | Owner | Success condition | Evidence type |
+| --- | --- | --- | --- |
+| Main static gate | Main | Re-read final source/callers, CodeGraph C++ flow, type/slot/asset-facing validation paths, test seam isolation, no duplicate input binding, and `git diff --check`. Use code-review-graph only as supplemental impact evidence when its index is current. | Static only, not compile or PIE. |
+| Manual compile | User | Compile `PolyQuestEditor` (Development Editor) and report exact first failure or success. | Compile. |
+| Editor readback | User | Complete all eight authoring/readback items above, including D5 collision and D7 mesh/socket facts. | Editor readback, not PIE. |
+| Native Automation | User | Run the 03A3 `PolyQuest.Equipment` suite with all listed transaction cases passing. | Automation, not visual/input proof. |
+| Scene01 direct pickup | User | E equips OneHanded, Unarmed-to-OneHanded, Shield, and TwoHanded fixtures; MainHand/OffHand displays/specs/markers are coherent and no illegal pair remains. | PIE/runtime. |
+| Scene01 refusal and rollback | User | E during Attack, Guard, Parry, Dodge, active Primary arbitration, or active prepared skill leaves source and old composition intact. Invalid data/failure injection likewise leaves no drop. | PIE/runtime. |
+| Scene01 drop lifecycle | User | Replaced definitions land on validated ground without initial physics throw; former owner cannot immediately re-pick; after `0.5s` it can; map reload restores placed pickups and clears runtime drops. | PIE/runtime/visual. |
+| Shield fallback regression | User | With Shield equipped, RMB/Q still use MainHand fallback and no Shield block/parry presentation is claimed. | PIE/runtime. |
+| Existing combat regression | User | Sword/Unarmed LMB, Charged, Sprint Attack, Guard, Parry, Prepared Slot, existing debug swap refusal, enemy trace/damage, and current death/Poise contracts remain intact. | PIE/runtime. |
+
+The planning-time no-evidence note is superseded by the user-confirmed Automation run and the focused Scene01 manual pickup/drop validation recorded above. Controller, network, package, and mutable authored-asset clean-checkout evidence remain outside this stage.
+
+## Review And Closeout Sequence
+
+1. Gemini performs a read-only plan review before implementation. Any material architecture objection returns to this plan; it does not become an implementation-time guess.
+2. After user-confirmed compile, Editor work, Automation, and PIE, Gemini performs the user-arranged strict review against the approved source/test/document scope.
+3. After Gemini's fixes and the relevant validation rerun, Main performs a separate fresh review of the final diff plus direct callers/callees. This is independent source/static review, not a claim of additional PIE evidence.
+4. A real blocker is repaired before closeout. Any repair repeats the affected validation and receives delta review before documentation or commit approval.
+5. Completed for this stage: `ARCHITECTURE.md` records the implemented single transaction/world-pickup ownership contract, `ROADMAP.md` marks 03A3 done and retains the explicit 03A3B sweep-authoring follow-up, and this plan retains the evidence and commit boundary until the next accepted stage replaces it.
+
+## Debt And Commit Boundary
+
+- Retain the existing Unarmed alternating-hand contact release gate unchanged. 03A3 neither proves nor bypasses it.
+- If D7 relies on an uncommitted Player mesh/socket asset, record the exact local-only dependency and closure condition in `ROADMAP.md`; do not call the Automation suite clean-checkout coverage.
+- If Scene01 does not block `Visibility`, do not add a silent alternate trace channel. Record the failed Editor fact, correct/approve collision policy, and rerun D5 validation before closing the stage.
+- Any failed map-reset, ground-projection, restore, or former-owner validation gets a canonical roadmap entry with affected boundary, evidence, impact, owner, and concrete closure trigger. "Deferred" alone is not sufficient.
+- Candidate commit paths are only the final approved `Source/PolyQuest/**` paths above, native test file, and exact documentation hunks. Exclude all `Content/**`, `.uproject`, maps, input assets, Blueprints, AnimBPs, GAs/GEs/Montages, imported assets, generated files, `.zcode/`, and unrelated user WIP.
+- No staging or commit occurs without the user's later explicit approval. Never use `git add -A`.
+
+## Route And Delegation Record
 
 ```text
 Outer: ue-stage-workflow
 Primary: ue5-cpp-gameplay
-Support: ue5-blueprint-workflow
-Route reason: The stage reworks the equipment action identity to ability classes, adds the owner-socket trace source, and delivers one narrow GAS skill class inside existing contracts - Main-only integration territory; the user owns the GA/GE/DA authoring gates.
+Support: unreal-enhanced-input, ue5-blueprint-workflow, ue5-debug-validation
+Route reason: The stage extends a shared equipment composition transaction, adds a native world Actor, binds one Enhanced Input intent, and requires authored DataAsset/Blueprint fixtures plus rollback-oriented validation.
 ```
 
 ```text
-Plan explorers: 0 (direct reads: equipment domain, PlayerCharacter input chain, trace source/task, Primary/Light/Charged/Sprint/Guard/Parry ability contracts, loadout profile, tag taxonomy, engine task/anim-instance signatures, Content referencer scans)
+Plan explorers: 0
 Implementation executors: 0
 Complex Executor: none
 Main parallel work: none
-Reason: One grant-source migration and one marker-source branch sit inside a single transaction owner; any second writer races grant bookkeeping and marker state.
+Reason: Equipment composition, ASC grants, prepared-slot identities, rollback, world-drop commit order, and Player input are one coupled lifecycle. Parallel writers would create conflicting transaction ownership. Gemini participation is user-directed review/execution after this plan is approved, not a delegated Codex child writer.
 ```
 
-Main owns native source, static checks, review, documentation, staging, and commit boundaries. The user owns GA/GE/DA authoring, Editor readback and enumeration, the three manual `PolyQuestEditor` compiles, Scene01 PIE validation, CA_* asset deletion, and commit approval.
+## Non-Goals
 
-### Non-Goals
-
-No world pickup/drop-swap/Former-owner gate (03A3); no Shield Defense Profile override or shield skills (03A4); no enemy Attack Sets/presets (03A5); no Bow, inventory, persistence, or rest-site work; no replacement action DataAsset or per-action metadata layer without a real consumer; no generic weapon framework, no generic skill framework or data-driven skill dispatch, and no second damage/trace/resolver path; no `BP_Player_Sword`/`BP_Player_Unarmed` gameplay Blueprint classes; no Katana migration; no non-damage skill variant in this stage; no moving Montage/GE/damage/timing configuration out of GAs; no unequip or bare-handed fallback state beyond the Unarmed definition itself; no CoreRedirects or UPROPERTY renames; no mid-combat slot rearrangement.
-
-### Active Review And Repair Record (TODO-03A2 Review Rework)
-
-- **Ability.Skill.Melee 类别标签职责**：作为“可由近战动作取消门禁统一取消”的通用类别标签（添加至 `PolyQuestGameplayTags.ini` 并在 `UPlayerMeleeSkillAbility` 构造函数注册到 `AbilityTags`）。具体技能身份标签（如 `Ability.Skill.Whirlwind`）由 GA 资产作者化，不与类别标签混淆。
-- **P1 修复理由与实现**：
-  - `DodgeAbility.cpp`：仅在 `bCanCancelAttack` 分支中将 `Ability.Skill.Melee` 纳入 `AbilityTagsToCancel`；保留 `bWasCharging` 的蓄力取消语义，防止 Dodge 在非取消窗口提前取消技能。
-  - `PlayerGuardAbility.cpp` / `PlayerParryAbility.cpp`：在既有 `DefenseCancelableStateTag` 取消门禁内统一取消 `CancelableMeleeAbilityTags`（重命名自 `AttackAbilityTags`，包含 4 个 `Ability.Attack.*` 及 `Ability.Skill.Melee`），并同步将 `ValidateActivationSetup` 校验数量更新为 5。
-  - `PlayerGuardBreakAbility.cpp`：`AbilitiesToCancel` 纳入 `Ability.Skill.Melee`，并将 `ValidateActivationSetup` 校验数量更新为 7；仅在破防 Montage 确认 active 后执行取消。
-  - 单一收敛出口：所有取消均汇聚于 `PlayerMeleeSkillAbility::EndAbility` 统一收敛（关闭 Trace Window、移除 CanCancel tags、恢复 PlayRate、清理 Attacking 及 Input Block tags），不建立第二套技能状态或取消框架。
-- **P2 修复理由与实现**：
-  - `UPlayerMeleeSkillAbility` 保留 `MeleeSkillAbilityTag` 成员，并在 `PostLoad()` 与 Editor `PostCDOCompiled()` 将有效的 `Ability.Skill.Melee` 重新加入 Ability CDO 的 `AbilityTags`。`CanActivateAbility` / `ActivateAbility` 只验证字典 Tag 本身有效，不再以 `AbilityTags.HasTagExact(...)` 作为会被派生蓝图默认值覆盖的自我激活门禁；具体 `Ability.Skill.Whirlwind` 身份 Tag 仍由 GA 资产作者化。
-  - `UPlayerMeleeSkillAbility` 的 `CanActivateAbility` 与 `ActivateAbility` 显式校验 `CooldownGameplayEffectClass` 非空；失败日志明确要求 Cost/Cooldown/Damage/Regen 均为必填配置。
-  - `DodgeAbility.cpp` 延迟 `Ability.Skill.Melee` 取消时序：在 `MontageTask->ReadyForActivation()` 并确认 `Montage_IsActive` 后才执行技能取消，避免 Dodge 起播失败时误杀已在活动的技能；保留既有 Primary/Light/Charged/Sprint 历史取消时序。
-- **P3 计划与验证断言修正**：
-  - 明确缺失 `SkillMontage` 或 `CooldownGameplayEffectClass` 是由 `CanActivateAbility` 拒绝（未激活且零副作用），而非 `ActivateAbility` 的 Warning 日志；只有非空但起播失败的 Montage 才会进入 `ActivateAbility` 的 Warning 路径。
-  - 破防断言规范为“受控 Gameplay Event / 静态取消合同验证”，即通过向角色发送 `Event.Reaction.Player.GuardBreak` 验证破防 Montage 启动后正确取消运行中技能。
-- **验证证据与范围：** 用户完成了本地 Editor 编译/重载及 `GA_Skill_Whirlwind`、其 Cost/Cooldown/Damage 配置、`DA_Weapon_Unarmed` 与 Sword 定义的资产读回。最终 Scene01 PIE 确认覆盖 Sword/Unarmed 夹具路线及 `1` 槽旋风斩的正常播放。静态复核覆盖 Dodge/Guard/Parry/GuardBreak 的取消接线与 Dodge 失败起播时序；本次收尾不宣称已完成故障注入套件、打包、手柄验证或完整交替手出拳覆盖。
-
-### Closeout And Debt Handoff
-
-- **User validation:** the user confirmed the final local Editor readback for `GA_Skill_Whirlwind` (native `Ability.Skill.Melee` plus authored `Ability.Skill.Whirlwind`, Cost, and Cooldown) and the Scene01 PIE route, including normal Whirlwind playback from `1`. Earlier stage gates cover the Sword and Unarmed base paths; this closeout does not claim a new automation suite, packaged build, controller route, or clean-checkout authored fixture.
-- **Static/review evidence:** Main re-read the source/input/equipment/trace lifecycle with CodeGraph, checked tag registration and `git diff --check`, and found no remaining P0-P2 blocker. The code-review graph remained supplemental because its built baseline was `7093c30` and the new skill files were untracked. Gemini supplied a second independent delta review after the slot-activation repair; its conclusion was accepted after correcting the documentation wording about CDO tag ownership.
-- **Debt handoff:** the v1 single owner-socket marker pair does not prove alternating-hand punch coverage. `ROADMAP.md` now carries the concrete release gate: before an opposite-hand Unarmed attack ships, constrain the animation to the anchored contact hand and validate it, or approve a dedicated per-hand marker/active-hand selection slice. No second trace/resolver path is accepted as an incidental repair.
-- **Commit boundary:** documentation is synchronized, but no files are staged or committed by this closeout. A later explicit approval must stage only the approved native/config/documentation paths and exclude all `Content/**`, generated output, and unrelated user WIP.
-
----
-
-## Previous Stage Record: TODO-03A1 (durable record lives in ROADMAP Done Milestones)
-
-- 03A1 delivered the equipment-domain contract (UWeaponDefinition base, UCombatActionDefinition, UDefenseProfileDefinition, hand-slot rules, keep-if-compatible prepared layout, exact-handle activation, single input resolver, Defense Profile chain) with five review repairs, user-confirmed compile/readback/PIE including the post-repair gate, and the honest multi-slot-evidence limits. `GrantedWeaponAbilities` removal was handed to 03A2. Committed as `7093c30`. (Revision 3 note: the UCombatActionDefinition action-reference type is being retired by TODO-03A2's class-based contract.)
-
-## Previous Stage Record: TODO-03A (durable record lives in ROADMAP Done Milestones)
-
-- 03A delivered the player-only single-slot equipment foundation (definition DataAsset, validated rollback transaction, runtime markers, weapon sweep shape, player-first trace resolution with the enemy fixed fallback), with the Primary-arbitration and foreign-spec review repairs, user-confirmed compile/PIE, and the deliberate-v1-limit debt handoff to the now-accepted TODO-03A1-03A5 direction. Committed as `601ad38`.
+- No inventory/backpack, pickup persistence, SaveGame, short/held E arbitration, item instances, random affixes, upgrades, durability, crafting, or generic interaction framework.
+- No public unequip or automatic bare-handed fallback outside the explicitly configured `UnarmedFallbackDefinition` needed for the TwoHanded-to-OffHand transaction.
+- No Shield defense override, Shield ability, Shield animation, Defense Profile change, or prepared Shield skill before `TODO-03A4`.
+- No Bow/Staff/Greatsword gameplay, projectiles, ranged mode, or a `UTwoHandedWeaponDefinition` before `TODO-03B` has a concrete behavior need.
+- No enemy pickup, enemy dynamic switching, enemy Attack Set, StateTree change, Controller change, melee trace/resolver change, damage change, Gameplay Tag change, multiplayer authority, or physics throw behavior.
+- No `Content/**` mutation by Main, no asset import/delete/redirect, no map cleanup, and no clean-checkout claim for mutable authored WIP.

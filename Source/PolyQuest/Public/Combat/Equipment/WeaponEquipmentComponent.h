@@ -13,14 +13,14 @@ class USceneComponent;
 class UStaticMeshComponent;
 class UAbilitySystemComponent;
 class APlayerCharacter;
+class AWorldWeaponPickup;
 
 /**
  * Owns the player's equipped hand-slot weapons, their runtime-spawned display
  * and trace markers, every weapon-granted ability handle, the prepared 1-4
  * layout, and the single input-resolution path (Base Input Profile, Effective
  * Defense Profile, and exact-handle prepared activation). EquipWeapon is the
- * only public mutation; teardown is a private helper shared by a validated
- * swap and component destruction.
+ * direct/debug route; TryEquipWorldPickup is the transactional world-pickup route.
  */
 UCLASS(ClassGroup = (Combat))
 class POLYQUEST_API UWeaponEquipmentComponent : public UActorComponent
@@ -42,6 +42,13 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Combat|Equipment")
 	bool EquipWeapon(UWeaponDefinition* Definition);
 
+	/**
+	 * Transactional world pickup equipment: builds target composition, runs full preflight,
+	 * applies new composition, stages displaced drops, and commits or rolls back atomically.
+	 * Returns true on success; false on failure, rejection, or same-definition no-op.
+	 */
+	bool TryEquipWorldPickup(AWorldWeaponPickup* SourcePickup);
+
 	UWeaponDefinition* GetCurrentMainHandWeapon() const { return CurrentMainHandWeapon; }
 	UWeaponDefinition* GetCurrentOffHandWeapon() const { return CurrentOffHandWeapon; }
 
@@ -60,15 +67,44 @@ public:
 	/** Activates a prepared slot through its exact spec handle after validating the binding is current. */
 	bool TryActivatePreparedSlot(int32 SlotIndex);
 
+	/** The explicit canonical Unarmed fallback definition used during TwoHanded->OffHand swaps. */
+	UMeleeWeaponDefinition* GetUnarmedFallbackDefinition() const { return UnarmedFallbackDefinition; }
+
+	/** Constructs the full target MainHand/OffHand composition for an incoming weapon definition. */
+	bool BuildTargetCompositionForIncoming(UWeaponDefinition* IncomingDefinition, UWeaponDefinition*& OutTargetMainHand, UWeaponDefinition*& OutTargetOffHand, FString& OutReason) const;
+
+	/** Computes the set of equipped definitions displaced by a new composition (excluding the Unarmed fallback). */
+	void CalculateDisplacedDefinitions(UWeaponDefinition* OldMainHand, UWeaponDefinition* OldOffHand, UWeaponDefinition* NewMainHand, UWeaponDefinition* NewOffHand, TArray<UWeaponDefinition*>& OutDisplacedDefinitions) const;
+
+	/** Computes the keep-if-compatible prepared ability layout for a new weapon composition. */
+	bool ComputeKeepIfCompatibleLayout(UWeaponDefinition* NewMainHand, UWeaponDefinition* NewOffHand, TArray<TSubclassOf<UGameplayAbility>>& OutPreparedClasses) const;
+
+#if WITH_DEV_AUTOMATION_TESTS
+public:
+	void SetInjectApplyFailureOnce(bool bInject) { bInjectApplyFailureOnce = bInject; }
+	void SetInjectDropFailureOnce(bool bInject) { bInjectDropFailureOnce = bInject; }
+	bool TestDirectPreflight(UWeaponDefinition* MainHand, UWeaponDefinition* OffHand, FString& OutReason);
+
+	/** Read-only test validation helper: verifies that a prepared slot has a valid, current ASC binding. */
+	bool VerifyPreparedSlotBinding(int32 SlotIndex, TSubclassOf<UGameplayAbility> ExpectedClass, FString& OutDiagnostic) const;
+
+private:
+	bool bInjectApplyFailureOnce = false;
+	bool bInjectDropFailureOnce = false;
+#endif
+
 protected:
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 
+	/** The explicit Unarmed definition asset; configured on BP_Player. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Equipment")
+	TObjectPtr<UMeleeWeaponDefinition> UnarmedFallbackDefinition;
+
 private:
 	bool CanSwapNow(const UAbilitySystemComponent* CharacterASC) const;
-	bool RunPreflight(APlayerCharacter* PlayerCharacter, UAbilitySystemComponent* CharacterASC, UWeaponDefinition* Definition, bool bTargetIsMainHand, const TArray<TSubclassOf<UGameplayAbility>>& ComputedPreparedClasses, FString& OutReason) const;
+	bool RunPreflight(APlayerCharacter* PlayerCharacter, UAbilitySystemComponent* CharacterASC, UWeaponDefinition* NewMainHand, UWeaponDefinition* NewOffHand, const TArray<TSubclassOf<UGameplayAbility>>& ComputedPreparedClasses, FString& OutReason) const;
 	void TeardownEquippedWeapons();
 	bool ApplyComposition(APlayerCharacter* PlayerCharacter, UAbilitySystemComponent* CharacterASC, UWeaponDefinition* MainHandDefinition, UWeaponDefinition* OffHandDefinition, const TArray<TSubclassOf<UGameplayAbility>>& PreparedClasses);
-	bool ComputeKeepIfCompatibleLayout(UWeaponDefinition* NewMainHand, UWeaponDefinition* NewOffHand, TArray<TSubclassOf<UGameplayAbility>>& OutPreparedClasses) const;
 	bool ResolveDefenseAbilityTag(bool bGuardIntent, FGameplayTag& OutAbilityTag) const;
 
 	UPROPERTY(Transient)
@@ -103,6 +139,7 @@ private:
 	FGameplayTag GuardingStateTag;
 	FGameplayTag ParryingStateTag;
 	FGameplayTag DodgingStateTag;
+	FGameplayTag DeadStateTag;
 	FGameplayTag PrimaryAttackAbilityTag;
 	FGameplayTag GuardInputTag;
 	FGameplayTag ParryInputTag;

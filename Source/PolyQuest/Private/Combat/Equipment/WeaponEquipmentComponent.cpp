@@ -5,6 +5,7 @@
 #include "Character/Player/PlayerCharacter.h"
 #include "Combat/Equipment/MeleeWeaponDefinition.h"
 #include "Combat/Equipment/WeaponDefinition.h"
+#include "Combat/Equipment/WorldWeaponPickup.h"
 #include "Combat/Input/CombatLoadoutDefinition.h"
 #include "Components/SceneComponent.h"
 #include "Components/SkeletalMeshComponent.h"
@@ -21,6 +22,7 @@ UWeaponEquipmentComponent::UWeaponEquipmentComponent()
 	GuardingStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Action.Guarding")), false);
 	ParryingStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Action.Parrying")), false);
 	DodgingStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Action.Dodging")), false);
+	DeadStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Status.Dead")), false);
 	PrimaryAttackAbilityTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Attack.Primary")), false);
 	GuardInputTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Input.Guard")), false);
 	ParryInputTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Input.Parry")), false);
@@ -33,21 +35,79 @@ UWeaponEquipmentComponent::UWeaponEquipmentComponent()
 	PreparedSlotHandles.SetNum(PreparedSlotCount);
 }
 
+bool UWeaponEquipmentComponent::BuildTargetCompositionForIncoming(UWeaponDefinition* IncomingDefinition, UWeaponDefinition*& OutTargetMainHand, UWeaponDefinition*& OutTargetOffHand, FString& OutReason) const
+{
+	OutReason.Empty();
+	OutTargetMainHand = nullptr;
+	OutTargetOffHand = nullptr;
+
+	if (!IncomingDefinition)
+	{
+		OutReason = TEXT("IncomingDefinition is null.");
+		return false;
+	}
+
+	if (IncomingDefinition->HandSlot == EWeaponHandSlot::MainHandOneHanded)
+	{
+		OutTargetMainHand = IncomingDefinition;
+		OutTargetOffHand = (CurrentMainHandWeapon && CurrentMainHandWeapon->HandSlot == EWeaponHandSlot::MainHandTwoHanded)
+			? nullptr
+			: CurrentOffHandWeapon.Get();
+		return true;
+	}
+
+	if (IncomingDefinition->HandSlot == EWeaponHandSlot::MainHandTwoHanded)
+	{
+		OutTargetMainHand = IncomingDefinition;
+		OutTargetOffHand = nullptr;
+		return true;
+	}
+
+	if (IncomingDefinition->HandSlot == EWeaponHandSlot::OffHand)
+	{
+		if (CurrentMainHandWeapon && CurrentMainHandWeapon->HandSlot == EWeaponHandSlot::MainHandTwoHanded)
+		{
+			if (!UnarmedFallbackDefinition)
+			{
+				OutReason = TEXT("UnarmedFallbackDefinition is not configured; cannot equip an OffHand weapon while holding a TwoHanded weapon.");
+				return false;
+			}
+
+			OutTargetMainHand = UnarmedFallbackDefinition.Get();
+			OutTargetOffHand = IncomingDefinition;
+			return true;
+		}
+
+		OutTargetMainHand = CurrentMainHandWeapon.Get();
+		OutTargetOffHand = IncomingDefinition;
+		return true;
+	}
+
+	OutReason = TEXT("Unknown HandSlot on incoming definition.");
+	return false;
+}
+
+void UWeaponEquipmentComponent::CalculateDisplacedDefinitions(UWeaponDefinition* OldMainHand, UWeaponDefinition* OldOffHand, UWeaponDefinition* NewMainHand, UWeaponDefinition* NewOffHand, TArray<UWeaponDefinition*>& OutDisplacedDefinitions) const
+{
+	OutDisplacedDefinitions.Reset();
+
+	if (OldMainHand && OldMainHand != NewMainHand && OldMainHand != UnarmedFallbackDefinition)
+	{
+		OutDisplacedDefinitions.Add(OldMainHand);
+	}
+
+	if (OldOffHand && OldOffHand != NewOffHand)
+	{
+		OutDisplacedDefinitions.Add(OldOffHand);
+	}
+}
+
 bool UWeaponEquipmentComponent::EquipWeapon(UWeaponDefinition* Definition)
 {
 	if (!Definition)
 	{
 		UE_LOG(LogPolyQuest, Warning, TEXT("Weapon equipment on '%s' rejected a null weapon definition."), *GetNameSafe(GetOwner()));
 		return false;
-	}
-
-	const bool bTargetIsMainHand = Definition->HandSlot != EWeaponHandSlot::OffHand;
-	const bool bSameSlotDefinition = bTargetIsMainHand
-		? CurrentMainHandWeapon == Definition
-		: CurrentOffHandWeapon == Definition;
-	if (bSameSlotDefinition)
-	{
-		return true;
 	}
 
 	APlayerCharacter* PlayerCharacter = Cast<APlayerCharacter>(GetOwner());
@@ -62,13 +122,22 @@ bool UWeaponEquipmentComponent::EquipWeapon(UWeaponDefinition* Definition)
 		return false;
 	}
 
+	const bool bTargetIsMainHand = Definition->HandSlot != EWeaponHandSlot::OffHand;
+	const bool bSameSlotDefinition = bTargetIsMainHand
+		? CurrentMainHandWeapon == Definition
+		: CurrentOffHandWeapon == Definition;
+	if (bSameSlotDefinition)
+	{
+		return true;
+	}
+
 	UWeaponDefinition* NewMainHand = bTargetIsMainHand ? Definition : CurrentMainHandWeapon.Get();
 	UWeaponDefinition* NewOffHand = bTargetIsMainHand ? CurrentOffHandWeapon.Get() : Definition;
 
 	TArray<TSubclassOf<UGameplayAbility>> ComputedPreparedClasses;
 	ComputeKeepIfCompatibleLayout(NewMainHand, NewOffHand, ComputedPreparedClasses);
 	FString PreflightReason;
-	if (!RunPreflight(PlayerCharacter, CharacterASC, Definition, bTargetIsMainHand, ComputedPreparedClasses, PreflightReason))
+	if (!RunPreflight(PlayerCharacter, CharacterASC, NewMainHand, NewOffHand, ComputedPreparedClasses, PreflightReason))
 	{
 		UE_LOG(LogPolyQuest, Warning, TEXT("Weapon equipment on '%s' failed its preflight: %s"), *GetNameSafe(GetOwner()), *PreflightReason);
 		return false;
@@ -98,6 +167,235 @@ bool UWeaponEquipmentComponent::EquipWeapon(UWeaponDefinition* Definition)
 	bSwapRefusalWarningIssued = false;
 	return true;
 }
+
+bool UWeaponEquipmentComponent::TryEquipWorldPickup(AWorldWeaponPickup* SourcePickup)
+{
+	APlayerCharacter* PlayerCharacter = Cast<APlayerCharacter>(GetOwner());
+	if (!SourcePickup || !PlayerCharacter || !SourcePickup->CanInteract(PlayerCharacter))
+	{
+		return false;
+	}
+
+	UWeaponDefinition* Incoming = SourcePickup->GetWeaponDefinition();
+	if (!Incoming)
+	{
+		return false;
+	}
+
+	UAbilitySystemComponent* CharacterASC = PlayerCharacter->GetAbilitySystemComponent();
+	if (!CanSwapNow(CharacterASC))
+	{
+		if (!bSwapRefusalWarningIssued)
+		{
+			UE_LOG(LogPolyQuest, Warning, TEXT("Weapon equipment on '%s' refused world pickup while a combat action is active."), *GetNameSafe(GetOwner()));
+			bSwapRefusalWarningIssued = true;
+		}
+		return false;
+	}
+
+	UWeaponDefinition* NewMainHand = nullptr;
+	UWeaponDefinition* NewOffHand = nullptr;
+	FString TargetReason;
+	if (!BuildTargetCompositionForIncoming(Incoming, NewMainHand, NewOffHand, TargetReason))
+	{
+		UE_LOG(LogPolyQuest, Warning, TEXT("Weapon equipment on '%s' failed to build target composition for world pickup: %s"), *GetNameSafe(GetOwner()), *TargetReason);
+		return false;
+	}
+
+	// Same-definition world pickup is a non-consuming no-op rejection.
+	const bool bIsSame = (Incoming->HandSlot == EWeaponHandSlot::OffHand)
+		? (CurrentOffHandWeapon == Incoming)
+		: (CurrentMainHandWeapon == Incoming);
+	if (bIsSame)
+	{
+		return false;
+	}
+
+	TArray<TSubclassOf<UGameplayAbility>> ComputedPreparedClasses;
+	ComputeKeepIfCompatibleLayout(NewMainHand, NewOffHand, ComputedPreparedClasses);
+	FString PreflightReason;
+	if (!RunPreflight(PlayerCharacter, CharacterASC, NewMainHand, NewOffHand, ComputedPreparedClasses, PreflightReason))
+	{
+		UE_LOG(LogPolyQuest, Warning, TEXT("Weapon equipment on '%s' failed world pickup preflight: %s"), *GetNameSafe(GetOwner()), *PreflightReason);
+		return false;
+	}
+
+	SourcePickup->BeginInteraction();
+
+	UWeaponDefinition* OldMainHand = CurrentMainHandWeapon;
+	UWeaponDefinition* OldOffHand = CurrentOffHandWeapon;
+	UCombatLoadoutDefinition* OldLoadout = PlayerCharacter->GetActiveCombatLoadout();
+	TArray<TSubclassOf<UGameplayAbility>> OldPreparedClasses = PreparedSlotClasses;
+
+	TArray<UWeaponDefinition*> DisplacedDefinitions;
+	CalculateDisplacedDefinitions(OldMainHand, OldOffHand, NewMainHand, NewOffHand, DisplacedDefinitions);
+
+	TeardownEquippedWeapons();
+
+	bool bApplySucceeded = ApplyComposition(PlayerCharacter, CharacterASC, NewMainHand, NewOffHand, ComputedPreparedClasses);
+
+#if WITH_DEV_AUTOMATION_TESTS
+	if (bInjectApplyFailureOnce)
+	{
+		bInjectApplyFailureOnce = false;
+		bApplySucceeded = false;
+	}
+#endif
+
+	if (!bApplySucceeded)
+	{
+		TeardownEquippedWeapons();
+		const bool bRestoreSucceeded = ApplyComposition(PlayerCharacter, CharacterASC, OldMainHand, OldOffHand, OldPreparedClasses)
+			&& (!OldLoadout || PlayerCharacter->SetActiveCombatLoadout(OldLoadout));
+		SourcePickup->EndInteraction();
+
+		if (bRestoreSucceeded)
+		{
+			UE_LOG(LogPolyQuest, Warning, TEXT("Weapon equipment on '%s' failed to apply world pickup composition; restored old composition."), *GetNameSafe(GetOwner()));
+		}
+		else
+		{
+			UE_LOG(LogPolyQuest, Error, TEXT("Weapon equipment on '%s' failed to apply world pickup composition and failed to restore the old composition; the player has no valid melee weapon. This is a fatal configuration error."), *GetNameSafe(GetOwner()));
+		}
+		return false;
+	}
+
+	TArray<AWorldWeaponPickup*> ProvisionalDrops;
+	bool bDropsStaged = SourcePickup->StageDisplacedDrops(PlayerCharacter, DisplacedDefinitions, ProvisionalDrops);
+
+#if WITH_DEV_AUTOMATION_TESTS
+	if (bInjectDropFailureOnce)
+	{
+		bInjectDropFailureOnce = false;
+		bDropsStaged = false;
+	}
+#endif
+
+	if (!bDropsStaged)
+	{
+		for (AWorldWeaponPickup* Drop : ProvisionalDrops)
+		{
+			if (Drop)
+			{
+				Drop->Destroy();
+			}
+		}
+		ProvisionalDrops.Reset();
+
+		TeardownEquippedWeapons();
+		const bool bRestoreSucceeded = ApplyComposition(PlayerCharacter, CharacterASC, OldMainHand, OldOffHand, OldPreparedClasses)
+			&& (!OldLoadout || PlayerCharacter->SetActiveCombatLoadout(OldLoadout));
+		SourcePickup->EndInteraction();
+
+		if (bRestoreSucceeded)
+		{
+			UE_LOG(LogPolyQuest, Warning, TEXT("Weapon equipment on '%s' failed to stage displaced drops; restored old composition."), *GetNameSafe(GetOwner()));
+		}
+		else
+		{
+			UE_LOG(LogPolyQuest, Error, TEXT("Weapon equipment on '%s' failed to stage displaced drops and failed to restore the old composition; the player has no valid melee weapon. This is a fatal configuration error."), *GetNameSafe(GetOwner()));
+		}
+		return false;
+	}
+
+	// Final commit: destroy the consumed source pickup and clear temporary state.
+	bSwapRefusalWarningIssued = false;
+	// Final Commit: activate interaction collision on all successfully staged provisional drops
+	for (AWorldWeaponPickup* StagedDrop : ProvisionalDrops)
+	{
+		if (StagedDrop)
+		{
+			StagedDrop->SetInteractionEnabled(true);
+		}
+	}
+
+	SourcePickup->OnPickupConsumed();
+	SourcePickup->Destroy();
+	return true;
+}
+
+#if WITH_DEV_AUTOMATION_TESTS
+bool UWeaponEquipmentComponent::TestDirectPreflight(UWeaponDefinition* MainHand, UWeaponDefinition* OffHand, FString& OutReason)
+{
+	APlayerCharacter* PlayerCharacter = Cast<APlayerCharacter>(GetOwner());
+	UAbilitySystemComponent* CharacterASC = PlayerCharacter ? PlayerCharacter->GetAbilitySystemComponent() : nullptr;
+	TArray<TSubclassOf<UGameplayAbility>> ComputedPreparedClasses;
+	ComputeKeepIfCompatibleLayout(MainHand, OffHand, ComputedPreparedClasses);
+	return RunPreflight(PlayerCharacter, CharacterASC, MainHand, OffHand, ComputedPreparedClasses, OutReason);
+}
+
+bool UWeaponEquipmentComponent::VerifyPreparedSlotBinding(int32 SlotIndex, TSubclassOf<UGameplayAbility> ExpectedClass, FString& OutDiagnostic) const
+{
+	OutDiagnostic.Empty();
+
+	if (SlotIndex < 0 || SlotIndex >= PreparedSlotCount)
+	{
+		OutDiagnostic = FString::Printf(TEXT("SlotIndex %d is out of bounds [0, %d)."), SlotIndex, PreparedSlotCount);
+		return false;
+	}
+
+	if (!PreparedSlotClasses.IsValidIndex(SlotIndex) || !PreparedSlotHandles.IsValidIndex(SlotIndex))
+	{
+		OutDiagnostic = FString::Printf(TEXT("Prepared slot arrays are not initialized for slot %d."), SlotIndex);
+		return false;
+	}
+
+	const TSubclassOf<UGameplayAbility>& BoundClass = PreparedSlotClasses[SlotIndex];
+	if (BoundClass != ExpectedClass)
+	{
+		OutDiagnostic = FString::Printf(TEXT("Slot %d class mismatch: expected '%s', found '%s'."),
+			SlotIndex, *GetNameSafe(ExpectedClass), *GetNameSafe(BoundClass));
+		return false;
+	}
+
+	if (!ExpectedClass)
+	{
+		if (PreparedSlotHandles[SlotIndex].IsValid())
+		{
+			OutDiagnostic = FString::Printf(TEXT("Slot %d is expected to be empty, but has a valid handle."), SlotIndex);
+			return false;
+		}
+		return true;
+	}
+
+	const FGameplayAbilitySpecHandle& SlotHandle = PreparedSlotHandles[SlotIndex];
+	if (!SlotHandle.IsValid())
+	{
+		OutDiagnostic = FString::Printf(TEXT("Slot %d has an invalid spec handle."), SlotIndex);
+		return false;
+	}
+
+	if (!GrantedAbilitySpecHandles.Contains(SlotHandle))
+	{
+		OutDiagnostic = FString::Printf(TEXT("Slot %d handle is not contained in GrantedAbilitySpecHandles."), SlotIndex);
+		return false;
+	}
+
+	const AActor* Owner = GetOwner();
+	const UAbilitySystemComponent* ASC = Owner ? Owner->FindComponentByClass<UAbilitySystemComponent>() : nullptr;
+	if (!ASC)
+	{
+		OutDiagnostic = TEXT("Owner ASC is not found.");
+		return false;
+	}
+
+	const FGameplayAbilitySpec* Spec = ASC->FindAbilitySpecFromHandle(SlotHandle);
+	if (!Spec)
+	{
+		OutDiagnostic = FString::Printf(TEXT("Slot %d handle could not be found on the ASC."), SlotIndex);
+		return false;
+	}
+
+	if (!Spec->Ability || Spec->Ability->GetClass() != ExpectedClass)
+	{
+		OutDiagnostic = FString::Printf(TEXT("Slot %d Spec Ability class '%s' does not match expected '%s'."),
+			SlotIndex, *GetNameSafe(Spec->Ability ? Spec->Ability->GetClass() : nullptr), *GetNameSafe(ExpectedClass));
+		return false;
+	}
+
+	return true;
+}
+#endif
 
 UMeleeWeaponDefinition* UWeaponEquipmentComponent::GetEquippedMainHandMelee() const
 {
@@ -177,6 +475,7 @@ void UWeaponEquipmentComponent::EndPlay(const EEndPlayReason::Type EndPlayReason
 bool UWeaponEquipmentComponent::CanSwapNow(const UAbilitySystemComponent* CharacterASC) const
 {
 	if (!CharacterASC
+		|| (DeadStateTag.IsValid() && CharacterASC->HasMatchingGameplayTag(DeadStateTag))
 		|| (AttackingStateTag.IsValid() && CharacterASC->HasMatchingGameplayTag(AttackingStateTag))
 		|| (GuardingStateTag.IsValid() && CharacterASC->HasMatchingGameplayTag(GuardingStateTag))
 		|| (ParryingStateTag.IsValid() && CharacterASC->HasMatchingGameplayTag(ParryingStateTag))
@@ -218,13 +517,9 @@ bool UWeaponEquipmentComponent::CanSwapNow(const UAbilitySystemComponent* Charac
 	return true;
 }
 
-bool UWeaponEquipmentComponent::RunPreflight(APlayerCharacter* PlayerCharacter, UAbilitySystemComponent* CharacterASC, UWeaponDefinition* Definition, bool bTargetIsMainHand, const TArray<TSubclassOf<UGameplayAbility>>& ComputedPreparedClasses, FString& OutReason) const
+bool UWeaponEquipmentComponent::RunPreflight(APlayerCharacter* PlayerCharacter, UAbilitySystemComponent* CharacterASC, UWeaponDefinition* NewMainHand, UWeaponDefinition* NewOffHand, const TArray<TSubclassOf<UGameplayAbility>>& ComputedPreparedClasses, FString& OutReason) const
 {
 	OutReason.Empty();
-	if (!Definition->IsValidWeaponDefinition(OutReason))
-	{
-		return false;
-	}
 
 	if (!PlayerCharacter)
 	{
@@ -239,29 +534,60 @@ bool UWeaponEquipmentComponent::RunPreflight(APlayerCharacter* PlayerCharacter, 
 		return false;
 	}
 
-	if (!OwnerMesh->DoesSocketExist(Definition->AttachSocketName))
-	{
-		OutReason = FString::Printf(TEXT("the owner mesh does not contain socket '%s'."), *Definition->AttachSocketName.ToString());
-		return false;
-	}
-
 	if (!CharacterASC || !PlayerCharacter->HasAuthority())
 	{
 		OutReason = TEXT("the owner has no authoritative Ability System Component.");
 		return false;
 	}
 
-	UWeaponDefinition* NewMainHand = bTargetIsMainHand ? Definition : CurrentMainHandWeapon.Get();
-	UWeaponDefinition* NewOffHand = bTargetIsMainHand ? CurrentOffHandWeapon.Get() : Definition;
+	if (NewMainHand)
+	{
+		if (!NewMainHand->IsValidWeaponDefinition(OutReason))
+		{
+			return false;
+		}
+
+		if (NewMainHand->HandSlot == EWeaponHandSlot::OffHand)
+		{
+			OutReason = TEXT("Main hand cannot be an OffHand definition.");
+			return false;
+		}
+
+		if (!OwnerMesh->DoesSocketExist(NewMainHand->AttachSocketName))
+		{
+			OutReason = FString::Printf(TEXT("the owner mesh does not contain socket '%s' for main hand."), *NewMainHand->AttachSocketName.ToString());
+			return false;
+		}
+	}
+
+	if (NewOffHand)
+	{
+		if (!NewOffHand->IsValidWeaponDefinition(OutReason))
+		{
+			return false;
+		}
+
+		if (NewOffHand->HandSlot != EWeaponHandSlot::OffHand)
+		{
+			OutReason = TEXT("Off hand must be an OffHand definition.");
+			return false;
+		}
+
+		if (!OwnerMesh->DoesSocketExist(NewOffHand->AttachSocketName))
+		{
+			OutReason = FString::Printf(TEXT("the owner mesh does not contain socket '%s' for off hand."), *NewOffHand->AttachSocketName.ToString());
+			return false;
+		}
+	}
+
 	if (NewMainHand && NewMainHand->HandSlot == EWeaponHandSlot::MainHandTwoHanded && NewOffHand)
 	{
-		OutReason = TEXT("a TwoHanded main hand cannot coexist with an off-hand item; the combined drop-swap belongs to TODO-03A3.");
+		OutReason = TEXT("a TwoHanded main hand cannot coexist with an off-hand item.");
 		return false;
 	}
 
 	// Collect every ability class the new composition would grant: both slots'
 	// base grants plus the computed prepared layout, rejecting duplicates.
-	// TODO-03A2 final grant source: preflight and apply both read BaseGrantedActions.
 	TArray<TSubclassOf<UGameplayAbility>> GrantClasses;
 	auto AppendBaseGrants = [&GrantClasses](const UWeaponDefinition* SlotDefinition, FString& Reason) -> bool
 	{
@@ -450,7 +776,6 @@ bool UWeaponEquipmentComponent::ApplyComposition(APlayerCharacter* PlayerCharact
 		NewBladeTipMarker->SetRelativeLocation(MainHandMelee->BladeTipMarkerRelativeLocation);
 	}
 
-	// TODO-03A2 final grant source: reads BaseGrantedActions, exactly as RunPreflight does.
 	auto BaseGrants = [&GrantClass](const UWeaponDefinition* SlotDefinition) -> bool
 	{
 		if (!SlotDefinition)
@@ -561,9 +886,7 @@ bool UWeaponEquipmentComponent::ComputeKeepIfCompatibleLayout(UWeaponDefinition*
 		}
 	}
 
-	// Keep an old slot entry only when its class is still a candidate. Validation
-	// rejects duplicate authored defaults; the Contains checks below stay as
-	// defense in depth, never as the only line of defense.
+	// Keep an old slot entry only when its class is still a candidate.
 	for (int32 SlotIndex = 0; SlotIndex < PreparedSlotCount && SlotIndex < PreparedSlotClasses.Num(); ++SlotIndex)
 	{
 		const TSubclassOf<UGameplayAbility>& OldClass = PreparedSlotClasses[SlotIndex];

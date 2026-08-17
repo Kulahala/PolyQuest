@@ -27,7 +27,7 @@ struct FInputActionValue;
 /**
  * Player-specific camera and input layer built on the shared GAS character.
  */
-UCLASS(Abstract)
+UCLASS(Blueprintable)
 class POLYQUEST_API APlayerCharacter : public ABaseCharacter
 {
 	GENERATED_BODY()
@@ -85,6 +85,10 @@ protected:
 	UPROPERTY(EditAnywhere, Category="Input")
 	UInputAction* DodgeSprintAction;
 
+	/** Input action used for world interaction (such as equipment pickup). */
+	UPROPERTY(EditAnywhere, Category="Input")
+	UInputAction* InteractAction;
+
 	/** Hold duration at which the shared Dodge/Sprint input resolves to Sprint intent. */
 	UPROPERTY(EditDefaultsOnly, Category="Input", meta=(ClampMin="0.01", UIMin="0.01"))
 	float DodgeSprintHoldThresholdSeconds = 0.15f;
@@ -120,6 +124,13 @@ protected:
 
 	/** Clears cached directional input after movement input ends. */
 	void ClearMoveInput(const FInputActionValue& Value);
+
+	/** Handles an interact-start input from the InteractAction. */
+	void HandleInteractStarted(const FInputActionValue& Value);
+
+	/** Optional presentation hook called when a world pickup interaction concludes. */
+	UFUNCTION(BlueprintImplementableEvent, Category = "Combat|Equipment", meta = (DisplayName = "On World Pickup Interaction Result"))
+	void OnWorldPickupInteractionResult(bool bSuccess, UWeaponDefinition* PickedUpWeapon);
 
 public:
 	/** Handles movement input from controls or UI interfaces. */

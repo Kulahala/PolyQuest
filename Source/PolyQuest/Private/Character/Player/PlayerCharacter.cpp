@@ -24,6 +24,7 @@
 #include "AbilitySystem/CharacterAttributeSet.h"
 #include "Combat/Equipment/MeleeWeaponDefinition.h"
 #include "Combat/Equipment/WeaponEquipmentComponent.h"
+#include "Combat/Equipment/WorldWeaponPickup.h"
 #include "Combat/Input/CombatLoadoutDefinition.h"
 #include "PolyQuest.h"
 
@@ -263,6 +264,15 @@ void APlayerCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputCom
 		else
 		{
 			UE_LOG(LogPolyQuest, Warning, TEXT("'%s' has no DodgeSprintAction configured."), *GetNameSafe(this));
+		}
+
+		if (InteractAction)
+		{
+			EnhancedInputComponent->BindAction(InteractAction, ETriggerEvent::Started, this, &APlayerCharacter::HandleInteractStarted);
+		}
+		else
+		{
+			UE_LOG(LogPolyQuest, Warning, TEXT("'%s' has no InteractAction configured."), *GetNameSafe(this));
 		}
 	}
 	else
@@ -610,6 +620,52 @@ void APlayerCharacter::HandleAbilitySlotCompleted(const FInputActionValue&, int3
 void APlayerCharacter::HandleAbilitySlotCanceled(const FInputActionValue&, int32 SlotIndex)
 {
 	HandleCombatInputEnded(GetAbilitySlotInputIntentTag(SlotIndex), true);
+}
+
+void APlayerCharacter::HandleInteractStarted(const FInputActionValue&)
+{
+	const UAbilitySystemComponent* CharacterASC = GetAbilitySystemComponent();
+	if (!WeaponEquipment || IsActorBeingDestroyed() || (CharacterASC && DeadStateTag.IsValid() && CharacterASC->HasMatchingGameplayTag(DeadStateTag)))
+	{
+		return;
+	}
+
+	TArray<AActor*> OverlappingActors;
+	GetOverlappingActors(OverlappingActors, AWorldWeaponPickup::StaticClass());
+
+	AWorldWeaponPickup* BestCandidate = nullptr;
+	float BestDistanceSq = MAX_flt;
+
+	for (AActor* Actor : OverlappingActors)
+	{
+		AWorldWeaponPickup* Pickup = Cast<AWorldWeaponPickup>(Actor);
+		if (!Pickup || !Pickup->CanInteract(this))
+		{
+			continue;
+		}
+
+		const float DistSq = FVector::DistSquared(GetActorLocation(), Pickup->GetActorLocation());
+		if (DistSq < BestDistanceSq)
+		{
+			BestDistanceSq = DistSq;
+			BestCandidate = Pickup;
+		}
+		else if (FMath::IsNearlyEqual(DistSq, BestDistanceSq, KINDA_SMALL_NUMBER) && BestCandidate)
+		{
+			// Deterministic tie-break by actor name
+			if (Pickup->GetName() < BestCandidate->GetName())
+			{
+				BestCandidate = Pickup;
+			}
+		}
+	}
+
+	if (BestCandidate)
+	{
+		UWeaponDefinition* IncomingDefinition = BestCandidate->GetWeaponDefinition();
+		const bool bSuccess = WeaponEquipment->TryEquipWorldPickup(BestCandidate);
+		OnWorldPickupInteractionResult(bSuccess, IncomingDefinition);
+	}
 }
 
 void APlayerCharacter::HandleDodgeSprintStarted(const FInputActionValue&)
