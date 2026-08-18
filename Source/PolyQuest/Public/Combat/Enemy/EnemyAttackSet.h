@@ -33,7 +33,8 @@ class POLYQUEST_API UEnemyAttackSet : public UDataAsset
 
 public:
 	/**
-	 * Rejects empty, null, invalid, duplicate, non-positive weight, or unreachable engagement range entries.
+	 * Rejects empty, null, invalid, duplicate, or non-positive weight entries, and non-positive EngagementRange.
+	 * Individual AttackRanges govern approach and execution distance rather than set validity.
 	 * Returns true only when the set is fully valid for combat execution.
 	 */
 	bool IsAttackSetValid(FString& OutReason) const;
@@ -44,8 +45,9 @@ public:
 	const TArray<FEnemyAttackSetEntry>& GetEntries() const { return Entries; }
 
 	/**
-	 * Pure weighted profile selection for a given target distance and normalized random fraction [0, 1].
-	 * Returns nullptr if the set is invalid, target is outside EngagementRange, no entry reaches distance, or fraction is out of range.
+	 * Pure weighted profile selection for a target within EngagementRange and normalized random fraction [0, 1].
+	 * All valid entries in the set participate in weighted selection without filtering by their individual AttackRange.
+	 * Returns nullptr if the set is invalid, target is outside EngagementRange, or fraction is out of range.
 	 */
 	const UEnemyAttackProfile* SelectAttackProfile(float TargetDistance2D, float NormalizedRandomFraction) const;
 

@@ -214,3 +214,149 @@ void FEnemyStateTreeTask_RepositionDuringCooldown::ExitState(FStateTreeExecution
 		EnemyAIController.StopCooldownReposition(false);
 	}
 }
+
+FEnemyStateTreeTask_PrepareMeleeAttack::FEnemyStateTreeTask_PrepareMeleeAttack()
+{
+	bShouldCallTick = false;
+	bShouldCopyBoundPropertiesOnTick = false;
+	bShouldCopyBoundPropertiesOnExitState = false;
+}
+
+bool FEnemyStateTreeTask_PrepareMeleeAttack::Link(FStateTreeLinker& Linker)
+{
+	Linker.LinkExternalData(EnemyAIControllerHandle);
+	return true;
+}
+
+EStateTreeRunStatus FEnemyStateTreeTask_PrepareMeleeAttack::EnterState(FStateTreeExecutionContext& Context, const FStateTreeTransitionResult&) const
+{
+	AEnemyAIController& EnemyAIController = Context.GetExternalData(EnemyAIControllerHandle);
+	if (EnemyAIController.IsEnemyStunned() || EnemyAIController.IsEnemyHitReactionActive() || EnemyAIController.IsEnemyMeleeAttackActive() || EnemyAIController.IsMeleeAttackOnCooldown())
+	{
+		EnemyAIController.ClearPendingAttackProfile();
+		return EStateTreeRunStatus::Failed;
+	}
+
+	if (!EnemyAIController.HasValidCombatTarget() || !EnemyAIController.IsCombatTargetInMeleeRange() || EnemyAIController.IsExceedingLeash())
+	{
+		EnemyAIController.ClearPendingAttackProfile();
+		return EStateTreeRunStatus::Failed;
+	}
+
+	return EnemyAIController.PreparePendingAttackProfile() ? EStateTreeRunStatus::Succeeded : EStateTreeRunStatus::Failed;
+}
+
+FEnemyStateTreeTask_ApproachSelectedMeleeAttack::FEnemyStateTreeTask_ApproachSelectedMeleeAttack()
+{
+	bShouldCallTick = true;
+}
+
+bool FEnemyStateTreeTask_ApproachSelectedMeleeAttack::Link(FStateTreeLinker& Linker)
+{
+	Linker.LinkExternalData(EnemyAIControllerHandle);
+	return true;
+}
+
+EStateTreeRunStatus FEnemyStateTreeTask_ApproachSelectedMeleeAttack::EnterState(FStateTreeExecutionContext& Context, const FStateTreeTransitionResult&) const
+{
+	FInstanceDataType& InstanceData = Context.GetInstanceData(*this);
+	InstanceData.bIssuedMoveRequest = false;
+
+	AEnemyAIController& EnemyAIController = Context.GetExternalData(EnemyAIControllerHandle);
+	if (EnemyAIController.IsEnemyStunned()
+		|| EnemyAIController.IsEnemyHitReactionActive()
+		|| EnemyAIController.IsEnemyMeleeAttackActive()
+		|| !EnemyAIController.HasValidCombatTarget()
+		|| !EnemyAIController.HasValidAttackSet()
+		|| !EnemyAIController.HasValidAIProfile()
+		|| EnemyAIController.IsExceedingLeash()
+		|| !EnemyAIController.IsCombatTargetInMeleeRange()
+		|| !EnemyAIController.HasPendingAttackProfile())
+	{
+		EnemyAIController.ClearPendingAttackProfile();
+		return EStateTreeRunStatus::Failed;
+	}
+
+	if (EnemyAIController.IsPendingAttackInRange())
+	{
+		// Target is already within the selected attack's range
+		return EStateTreeRunStatus::Succeeded;
+	}
+
+	if (!EnemyAIController.CanRequestApproach())
+	{
+		EnemyAIController.ClearPendingAttackProfile();
+		return EStateTreeRunStatus::Failed;
+	}
+
+	if (!EnemyAIController.TryRequestApproach())
+	{
+		// Pathfinding/navigation failed
+		return EStateTreeRunStatus::Failed;
+	}
+
+	InstanceData.bIssuedMoveRequest = true;
+	return EnemyAIController.IsApproaching() ? EStateTreeRunStatus::Running : EStateTreeRunStatus::Succeeded;
+}
+
+EStateTreeRunStatus FEnemyStateTreeTask_ApproachSelectedMeleeAttack::Tick(FStateTreeExecutionContext& Context, const float) const
+{
+	FInstanceDataType& InstanceData = Context.GetInstanceData(*this);
+	AEnemyAIController& EnemyAIController = Context.GetExternalData(EnemyAIControllerHandle);
+
+	if (EnemyAIController.IsEnemyStunned()
+		|| EnemyAIController.IsEnemyHitReactionActive()
+		|| EnemyAIController.IsEnemyMeleeAttackActive()
+		|| !EnemyAIController.HasValidCombatTarget()
+		|| !EnemyAIController.HasValidAttackSet()
+		|| !EnemyAIController.HasValidAIProfile()
+		|| EnemyAIController.IsExceedingLeash()
+		|| !EnemyAIController.IsCombatTargetInMeleeRange()
+		|| !EnemyAIController.HasPendingAttackProfile())
+	{
+		EnemyAIController.ClearPendingAttackProfile();
+		return EStateTreeRunStatus::Failed;
+	}
+
+	if (EnemyAIController.HasApproachTimedOut())
+	{
+		EnemyAIController.ClearPendingAttackProfile();
+		return EStateTreeRunStatus::Failed;
+	}
+
+	if (EnemyAIController.IsPendingAttackInRange())
+	{
+		EnemyAIController.StopApproach(false);
+		return EStateTreeRunStatus::Succeeded;
+	}
+
+	if (InstanceData.bIssuedMoveRequest)
+	{
+		if (EnemyAIController.IsApproaching())
+		{
+			return EStateTreeRunStatus::Running;
+		}
+
+		// Move completed: check if within attack range
+		if (EnemyAIController.IsPendingAttackInRange())
+		{
+			return EStateTreeRunStatus::Succeeded;
+		}
+
+		// Otherwise navigation completed without reaching attack range -> fail and retry
+		EnemyAIController.ClearPendingAttackProfile();
+		return EStateTreeRunStatus::Failed;
+	}
+
+	EnemyAIController.ClearPendingAttackProfile();
+	return EStateTreeRunStatus::Failed;
+}
+
+void FEnemyStateTreeTask_ApproachSelectedMeleeAttack::ExitState(FStateTreeExecutionContext& Context, const FStateTreeTransitionResult&) const
+{
+	AEnemyAIController& EnemyAIController = Context.GetExternalData(EnemyAIControllerHandle);
+	if (EnemyAIController.IsApproaching())
+	{
+		EnemyAIController.StopApproach(false);
+	}
+}

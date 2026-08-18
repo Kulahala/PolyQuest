@@ -5,6 +5,7 @@
 #include "Character/Enemy/EnemyCharacter.h"
 #include "Character/Player/PlayerCharacter.h"
 #include "Components/StateTreeAIComponent.h"
+#include "Combat/Enemy/EnemyAttackProfile.h"
 #include "Combat/Enemy/EnemyAttackSet.h"
 #include "Engine/World.h"
 #include "Navigation/PathFollowingComponent.h"
@@ -113,6 +114,7 @@ void AEnemyAIController::OnPossess(APawn* InPawn)
 	bHasValidAttackSet = false;
 	bHasValidAIProfile = false;
 	StopCooldownReposition(true);
+	ClearPendingAttackProfile();
 
 	const AEnemyCharacter* EnemyCharacter = Cast<AEnemyCharacter>(InPawn);
 	if (EnemyCharacter && EnemyCharacter->IsDead())
@@ -200,6 +202,7 @@ void AEnemyAIController::OnUnPossess()
 	}
 
 	StopCooldownReposition(true);
+	ClearPendingAttackProfile();
 	StopMovement();
 	ClearCurrentTarget(false);
 	MeleeRange = 0.0f;
@@ -434,6 +437,212 @@ void AEnemyAIController::StopCooldownReposition(bool bResetAttempts)
 	}
 }
 
+bool AEnemyAIController::HasPendingAttackProfile() const
+{
+	if (IsControlledEnemyDead() || !PendingAttackProfile.IsValid() || !HasValidAttackSet() || !HasValidCombatTarget() || !IsCombatTargetInMeleeRange())
+	{
+		return false;
+	}
+
+	const AEnemyCharacter* EnemyCharacter = Cast<AEnemyCharacter>(GetPawn());
+	const UEnemyAttackSet* AttackSet = EnemyCharacter ? EnemyCharacter->GetAttackSet() : nullptr;
+	if (!AttackSet)
+	{
+		return false;
+	}
+
+	for (const FEnemyAttackSetEntry& Entry : AttackSet->GetEntries())
+	{
+		if (Entry.AttackProfile.Get() == PendingAttackProfile.Get())
+		{
+			return PendingAttackProfile->IsValidAttackProfile();
+		}
+	}
+
+	return false;
+}
+
+const UEnemyAttackProfile* AEnemyAIController::GetPendingAttackProfile() const
+{
+	return HasPendingAttackProfile() ? PendingAttackProfile.Get() : nullptr;
+}
+
+float AEnemyAIController::GetPendingAttackRange() const
+{
+	const UEnemyAttackProfile* Profile = GetPendingAttackProfile();
+	return Profile ? Profile->GetAttackRange() : MeleeRange;
+}
+
+bool AEnemyAIController::IsPendingAttackInRange() const
+{
+	if (!HasPendingAttackProfile())
+	{
+		return false;
+	}
+
+	float Distance2D = 0.0f;
+	if (!TryGetCurrentTargetDistance2D(Distance2D))
+	{
+		return false;
+	}
+
+	return Distance2D <= PendingAttackProfile->GetAttackRange() && Distance2D <= MeleeRange;
+}
+
+bool AEnemyAIController::PreparePendingAttackProfile()
+{
+	if (IsControlledEnemyDead() || IsEnemyStunned() || IsEnemyHitReactionActive() || IsEnemyMeleeAttackActive() || IsMeleeAttackOnCooldown()
+		|| !HasValidAttackSet() || !HasValidCombatTarget() || !IsCombatTargetInMeleeRange() || IsExceedingLeash())
+	{
+		ClearPendingAttackProfile();
+		return false;
+	}
+
+	if (HasPendingAttackProfile())
+	{
+		// Retain existing selected profile during approach; do not re-roll
+		return true;
+	}
+
+	const AEnemyCharacter* EnemyCharacter = Cast<AEnemyCharacter>(GetPawn());
+	const UEnemyAttackSet* AttackSet = EnemyCharacter ? EnemyCharacter->GetAttackSet() : nullptr;
+	if (!AttackSet)
+	{
+		ClearPendingAttackProfile();
+		return false;
+	}
+
+	float Distance2D = 0.0f;
+	if (!TryGetCurrentTargetDistance2D(Distance2D))
+	{
+		ClearPendingAttackProfile();
+		return false;
+	}
+
+	const UEnemyAttackProfile* Selected = AttackSet->SelectAttackProfile(Distance2D, FMath::FRand());
+	if (!Selected || !Selected->IsValidAttackProfile())
+	{
+		ClearPendingAttackProfile();
+		return false;
+	}
+
+	PendingAttackProfile = Selected;
+	return true;
+}
+
+void AEnemyAIController::ClearPendingAttackProfile()
+{
+	PendingAttackProfile = nullptr;
+	StopApproach(false);
+}
+
+bool AEnemyAIController::CanRequestApproach() const
+{
+	return !IsControlledEnemyDead()
+		&& !IsEnemyStunned()
+		&& !IsEnemyHitReactionActive()
+		&& !IsEnemyMeleeAttackActive()
+		&& HasValidCombatTarget()
+		&& HasValidAttackSet()
+		&& HasValidAIProfile()
+		&& !IsMeleeAttackOnCooldown()
+		&& !IsExceedingLeash()
+		&& IsCombatTargetInMeleeRange()
+		&& HasPendingAttackProfile()
+		&& !IsPendingAttackInRange();
+}
+
+bool AEnemyAIController::TryRequestApproach()
+{
+	if (!CanRequestApproach())
+	{
+		return false;
+	}
+
+	const UWorld* World = GetWorld();
+	APlayerCharacter* Target = GetCurrentTarget();
+	const UEnemyAttackProfile* Profile = GetPendingAttackProfile();
+	if (!World || !Target || !Profile)
+	{
+		return false;
+	}
+
+	// If already approaching the same target, maintain dynamic tracking without spamming new requests
+	if (bIsApproaching)
+	{
+		if (HasApproachTimedOut())
+		{
+			ClearPendingAttackProfile();
+			return false;
+		}
+		return true;
+	}
+
+	FAIMoveRequest MoveRequest(Target);
+	MoveRequest.SetAcceptanceRadius(Profile->GetAttackRange());
+	MoveRequest.SetUsePathfinding(true);
+	MoveRequest.SetAllowPartialPath(true);
+	MoveRequest.SetProjectGoalLocation(true);
+	MoveRequest.SetReachTestIncludesAgentRadius(false);
+	MoveRequest.SetReachTestIncludesGoalRadius(false);
+
+	const FPathFollowingRequestResult MoveResult = MoveTo(MoveRequest);
+	if (MoveResult.Code == EPathFollowingRequestResult::RequestSuccessful)
+	{
+		bIsApproaching = true;
+		CurrentApproachRequestID = MoveResult.MoveId;
+		ApproachStartTime = World->GetTimeSeconds();
+		return true;
+	}
+	else if (MoveResult.Code == EPathFollowingRequestResult::AlreadyAtGoal)
+	{
+		bIsApproaching = false;
+		CurrentApproachRequestID = FAIRequestID::InvalidRequest;
+		ApproachStartTime = 0.0f;
+		return true;
+	}
+
+	// Pathfinding/navigation failure: fail-closed and clear decision
+	bIsApproaching = false;
+	CurrentApproachRequestID = FAIRequestID::InvalidRequest;
+	ApproachStartTime = 0.0f;
+	ClearPendingAttackProfile();
+	return false;
+}
+
+void AEnemyAIController::StopApproach(bool bClearPendingProfile)
+{
+	if (bIsApproaching)
+	{
+		StopMovement();
+		bIsApproaching = false;
+		CurrentApproachRequestID = FAIRequestID::InvalidRequest;
+		ApproachStartTime = 0.0f;
+	}
+
+	if (bClearPendingProfile)
+	{
+		PendingAttackProfile = nullptr;
+	}
+}
+
+bool AEnemyAIController::HasApproachTimedOut() const
+{
+	if (!bIsApproaching)
+	{
+		return false;
+	}
+
+	const UWorld* World = GetWorld();
+	const UEnemyAIProfile* AIProfile = GetAIProfile();
+	if (!World || !AIProfile)
+	{
+		return true;
+	}
+
+	return (World->GetTimeSeconds() - ApproachStartTime) >= AIProfile->GetApproachTimeout();
+}
+
 void AEnemyAIController::OnMoveCompleted(FAIRequestID RequestID, const FPathFollowingResult& Result)
 {
 	Super::OnMoveCompleted(RequestID, Result);
@@ -452,6 +661,18 @@ void AEnemyAIController::OnMoveCompleted(FAIRequestID RequestID, const FPathFoll
 			FailedAttemptsOnCurrentSide++;
 		}
 	}
+	else if (CurrentApproachRequestID.IsValid() && RequestID == CurrentApproachRequestID)
+	{
+		bIsApproaching = false;
+		CurrentApproachRequestID = FAIRequestID::InvalidRequest;
+		ApproachStartTime = 0.0f;
+
+		// If navigation failed (aborted/invalid path), clear pending decision
+		if (!Result.IsSuccess() && !Result.IsInterrupted())
+		{
+			ClearPendingAttackProfile();
+		}
+	}
 }
 
 void AEnemyAIController::StartMeleeAttackCooldown(float CooldownAfterAttack)
@@ -463,6 +684,7 @@ void AEnemyAIController::StartMeleeAttackCooldown(float CooldownAfterAttack)
 	}
 
 	MeleeAttackCooldownEndTime = World->GetTimeSeconds() + CooldownAfterAttack;
+	ClearPendingAttackProfile();
 	StopCooldownReposition(true);
 }
 
@@ -490,6 +712,7 @@ void AEnemyAIController::BeginAlert()
 		return;
 	}
 
+	ClearPendingAttackProfile();
 	StopMovement();
 
 	if (HasValidCombatTarget())
@@ -503,14 +726,20 @@ bool AEnemyAIController::TryRequestMeleeAttack()
 	AEnemyCharacter* EnemyCharacter = Cast<AEnemyCharacter>(GetPawn());
 	UAbilitySystemComponent* CharacterASC = EnemyCharacter ? EnemyCharacter->GetAbilitySystemComponent() : nullptr;
 	if (IsControlledEnemyDead() || IsEnemyStunned() || IsEnemyHitReactionActive() || !CharacterASC || !EnemyMeleeAbilityTag.IsValid() || !HasValidAttackSet() || IsMeleeAttackOnCooldown()
-		|| !HasValidCombatTarget() || !IsCombatTargetInMeleeRange())
+		|| !HasValidCombatTarget() || !IsCombatTargetInMeleeRange() || !IsPendingAttackInRange())
 	{
+		ClearPendingAttackProfile();
 		return false;
 	}
 
 	FGameplayTagContainer AbilityTags;
 	AbilityTags.AddTag(EnemyMeleeAbilityTag);
-	return CharacterASC->TryActivateAbilitiesByTag(AbilityTags, false);
+	const bool bActivated = CharacterASC->TryActivateAbilitiesByTag(AbilityTags, false);
+	if (!bActivated)
+	{
+		ClearPendingAttackProfile();
+	}
+	return bActivated;
 }
 
 bool AEnemyAIController::IsEnemyMeleeAttackActive() const
@@ -549,6 +778,7 @@ void AEnemyAIController::HandleControlledEnemyDeath()
 		StateTreeComponent->StopLogic(TEXT("Controlled enemy died."));
 	}
 
+	ClearPendingAttackProfile();
 	StopCooldownReposition(true);
 	StopMovement();
 	ClearCurrentTarget(false);
@@ -628,6 +858,7 @@ void AEnemyAIController::SetCurrentTarget(APlayerCharacter* NewTarget)
 
 void AEnemyAIController::ClearCurrentTarget(bool bSendTargetLostEvent)
 {
+	ClearPendingAttackProfile();
 	StopCooldownReposition(true);
 	const bool bHadTarget = CurrentTarget.Get() != nullptr;
 	CurrentTarget = nullptr;

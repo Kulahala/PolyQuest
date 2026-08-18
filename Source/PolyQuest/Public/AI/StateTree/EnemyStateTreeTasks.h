@@ -89,3 +89,56 @@ struct POLYQUEST_API FEnemyStateTreeTask_RepositionDuringCooldown : public FStat
 private:
 	TStateTreeExternalDataHandle<AEnemyAIController> EnemyAIControllerHandle;
 };
+
+USTRUCT()
+struct FEnemyStateTreeTask_PrepareMeleeAttackInstanceData
+{
+	GENERATED_BODY()
+};
+
+/** Prepares / selects a weighted attack profile for the current target without re-rolling during approach. */
+USTRUCT(meta = (DisplayName = "Enemy Prepare Melee Attack", Category = "AI|Enemy"))
+struct POLYQUEST_API FEnemyStateTreeTask_PrepareMeleeAttack : public FStateTreeAITaskBase
+{
+	GENERATED_BODY()
+
+	using FInstanceDataType = FEnemyStateTreeTask_PrepareMeleeAttackInstanceData;
+
+	FEnemyStateTreeTask_PrepareMeleeAttack();
+
+	virtual const UStruct* GetInstanceDataType() const override { return FInstanceDataType::StaticStruct(); }
+	virtual bool Link(FStateTreeLinker& Linker) override;
+	virtual EStateTreeRunStatus EnterState(FStateTreeExecutionContext& Context, const FStateTreeTransitionResult& Transition) const override;
+
+private:
+	TStateTreeExternalDataHandle<AEnemyAIController> EnemyAIControllerHandle;
+};
+
+USTRUCT()
+struct FEnemyStateTreeTask_ApproachSelectedMeleeAttackInstanceData
+{
+	GENERATED_BODY()
+
+	UPROPERTY(Transient)
+	bool bIssuedMoveRequest = false;
+};
+
+/** Dynamically approaches the combat target until reaching the selected attack's AttackRange or timing out. */
+USTRUCT(meta = (DisplayName = "Enemy Approach Selected Melee Attack", Category = "AI|Enemy"))
+struct POLYQUEST_API FEnemyStateTreeTask_ApproachSelectedMeleeAttack : public FStateTreeAITaskBase
+{
+	GENERATED_BODY()
+
+	using FInstanceDataType = FEnemyStateTreeTask_ApproachSelectedMeleeAttackInstanceData;
+
+	FEnemyStateTreeTask_ApproachSelectedMeleeAttack();
+
+	virtual const UStruct* GetInstanceDataType() const override { return FInstanceDataType::StaticStruct(); }
+	virtual bool Link(FStateTreeLinker& Linker) override;
+	virtual EStateTreeRunStatus EnterState(FStateTreeExecutionContext& Context, const FStateTreeTransitionResult& Transition) const override;
+	virtual EStateTreeRunStatus Tick(FStateTreeExecutionContext& Context, const float DeltaTime) const override;
+	virtual void ExitState(FStateTreeExecutionContext& Context, const FStateTreeTransitionResult& Transition) const override;
+
+private:
+	TStateTreeExternalDataHandle<AEnemyAIController> EnemyAIControllerHandle;
+};

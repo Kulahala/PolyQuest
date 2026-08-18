@@ -1,118 +1,195 @@
-# TODO-03AI1：普通近战冷却间距与持续重定位 v1
+# TODO-03AI2：Distance-Aware Weighted Melee Approach And Attack Execution v1
 
-## 状态
+## 状态与目标
 
-- **Plan state:** CLOSED - implementation, user validation, strict review, fresh review, and documentation closeout completed. Retain this record until the next accepted stage replaces it.
-- **Baseline:** `bc1a91e` (`TODO-03AI` planning gate closed). Preserve all existing user-owned Content WIP and unrelated worktree changes.
-- **Prerequisites:** `TODO-03AI` and `TODO-03A5B` are closed. `TODO-03H1` waits for both implementation slices below.
-- **Primary question:** can an ordinary melee enemy keep issuing bounded target-relative spacing requests for the full attack cooldown, alternate lateral sides, and stop deterministically at cooldown expiry without creating a second AI state machine or damage path?
+- **Plan state:** COMPLETED
+- **Baseline:** 74ab01c（盾牌防御标签作者化兼容修复）
+- **Prerequisites:** TODO-03AI、TODO-03AI1A、TODO-03AI1B、TODO-03A5B 已完成。
+- **Primary question:** 当敌人在 EngagementRange 内时，能否先对全部近战招式进行一次加权选择，再根据选中招式的 AttackRange 决定立即攻击或主动接近，而不是在选择阶段提前过滤短招。
 
-```text
+~~~
 Outer: ue-stage-workflow
 Primary: ue5-state-tree-ai
 Support: ue5-cpp-gameplay, ue5-debug-validation
-Route reason: the stage adds an AI-owned spacing data contract, Controller-owned navigation state, native StateTree task/condition integration, and user-authored StateTree validation.
-```
+Route reason: 本阶段同时涉及 AttackSet 选择契约、Controller 运行时决策状态、StateTree 接近分支和 GAS Ability 交接。
+~~~
 
-```text
+## 锁定行为
+
+- UEnemyAttackSet::EngagementRange 是进入 Combat 和允许重新决策的外层距离。
+- 目标进入 EngagementRange 后，对当前 AttackSet 中所有有效 Entry 按权重抽取一次，不再按当前距离过滤 AttackRange。
+- 选中的 AttackProfile 在本次决策期间保持不变，不在 Approach 过程中重新抽招。
+- 如果目标距离已经小于等于 SelectedProfile.AttackRange，直接进入攻击。
+- 如果目标仍在 EngagementRange 内，但距离大于选中招式的 AttackRange，进入 Approach。
+- Approach 使用当前 TargetActor 作为动态目标，每次距离判断使用 2D Actor-center 距离。
+- 当 Distance2D 小于等于 SelectedProfile.AttackRange 时停止接近并请求 GAS Ability。
+- 当目标离开 EngagementRange、目标失效、敌人死亡/眩晕/受击反应或超出 Leash 时，清除待攻击 Profile，停止 Approach，返回 Chase/Alert。
+- Approach 导航失败或超过 UEnemyAIProfile::ApproachTimeout 时，清除待攻击 Profile；若目标仍在 EngagementRange 内，经过现有 Wait = 0.5s 后重新决策一次。
+- 纯短招集合（所有招式 AttackRange < EngagementRange）完全合法，抽中后由 Approach 动态接近到对应 AttackRange 出招；所有招式在 EngagementRange 内均参与纯加权选择。
+- 示例配置必须成立：普通平砍 AttackRange = 180cm、突进跳劈 AttackRange = 300cm、AttackSet EngagementRange = 300cm。目标在 250cm 时抽中平砍，敌人接近到 180cm 后攻击；抽中跳劈则可直接攻击。纯短招配置（如 EngagementRange = 250cm，所有招式 AttackRange = 180cm）同样合法成立。
+- 不新增 Approach Ability、Null Action、Behavior Tree、Blackboard 或第二条伤害路径。
+
+## 实施切片
+
+### Slice A：Weighted Decision And Controller Approach Primitive
+
+Gemini 可执行的范围：
+
+- 修改 UEnemyAttackSet::SelectAttackProfile()：只验证目标是否位于 EngagementRange，在有效范围内让全部有效 Entry 参与权重选择，并保留距离、随机值、Set 配置和权重的 fail-closed 校验。
+- 为 UEnemyAIProfile 增加 ApproachTimeout、Getter、作者化字段和有限值校验。
+- 为 AEnemyAIController 增加待攻击 Profile 的运行时快照、Profile 距离查询、一次性 Prepare/Select API、动态 TargetActor Approach MoveTo、超时/导航失败/request ID 保护，以及目标丢失、死亡、眩晕、HitReact、Leash、UnPossess、Teardown 清理。
+- 待攻击 Profile 只引用当前 AttackSet 中的不可变 DataAsset，不复制可变战斗数据，不在 Controller 中保存伤害、Montage 或 GAS 状态。
+- Approach 同一时刻只允许一个活动 MoveTo；目标位置变化时由 Controller 维护动态目标，不允许 StateTree 每帧重复发起请求。
+
+Main-only 集成范围：
+
+- UEnemyMeleeAbility::ActivateAbility() 不再自行调用 FMath::FRand() 或 SelectAttackProfile()。
+- Ability 消费 Controller 已准备的 Profile，并在启动前验证 Profile 仍属于当前 AttackSet、配置有效、当前目标有效且当前距离已进入该 Profile 的 AttackRange。
+- Ability 激活失败时必须清除待攻击决策并在 Commit 前结束，不得留下旧 Profile。
+- 成功取得 Profile 后由 Ability 保存本次攻击快照，继续使用现有 Montage、Trace、Damage GE、Guard Stamina、Poise、Cooldown 和统一 EndAbility() 清理流程。
+- TryRequestMeleeAttack() 只允许在待攻击 Profile 的 AttackRange 内请求 GAS，不再只检查 EngagementRange。
+
+### Slice B：StateTree Integration
+
+新增最小的原生 StateTree 类型：
+
+- Enemy Prepare Melee Attack
+- Enemy Approach Selected Melee Attack
+- Enemy Has Pending Melee Attack
+- Enemy Pending Melee Attack In Range
+- Enemy Pending Melee Attack Out Of Range
+
+保持现有 FEnemyStateTreeTask_RequestMeleeAttack 的结构、基类和实例数据布局不变；需要不同生命周期时新增任务类型，不改旧任务序列化契约。
+
+用户在 Editor 中将 Goblin Combat 拓扑调整为：
+
+~~~
+Decision -> Approach -> Attack -> Reposition -> Wait
+~~~
+
+行为约束：
+
+- Decision 负责一次 Prepare。
+- 已进入 Profile AttackRange 时转 Attack。
+- 超出 Profile AttackRange 时转 Approach。
+- Approach 成功后转 Attack。
+- Approach 失败/超时但目标仍在 EngagementRange 内时转 Wait，等待 0.5s 后重新 Decision。
+- 目标离开 EngagementRange 时转 Chase/Alert。
+- 攻击结束后保留现有冷却重定位流程。
+- Wait = 0.5s 仍只是 StateTree 轮询间隔，不能替代 Controller 自己的冷却、请求 ID 和超时状态。
+
+## 允许与禁止修改
+
+允许修改：
+
+- E:/GameDevelop/PolyQuest/Source/PolyQuest/Public/Combat/Enemy/EnemyAttackSet.h
+- E:/GameDevelop/PolyQuest/Source/PolyQuest/Private/Combat/Enemy/EnemyAttackSet.cpp
+- E:/GameDevelop/PolyQuest/Source/PolyQuest/Public/AI/EnemyAIProfile.h
+- E:/GameDevelop/PolyQuest/Source/PolyQuest/Private/AI/EnemyAIProfile.cpp
+- E:/GameDevelop/PolyQuest/Source/PolyQuest/Public/AI/EnemyAIController.h
+- E:/GameDevelop/PolyQuest/Source/PolyQuest/Private/AI/EnemyAIController.cpp
+- E:/GameDevelop/PolyQuest/Source/PolyQuest/Public/AI/StateTree/EnemyStateTreeTasks.h
+- E:/GameDevelop/PolyQuest/Source/PolyQuest/Private/AI/StateTree/EnemyStateTreeTasks.cpp
+- E:/GameDevelop/PolyQuest/Source/PolyQuest/Public/AI/StateTree/EnemyStateTreeConditions.h
+- E:/GameDevelop/PolyQuest/Source/PolyQuest/Private/AI/StateTree/EnemyStateTreeConditions.cpp
+- 相关 Automation 测试文件。
+
+由用户在 Editor 中作者化：
+
+- ST_Enemy_Goblin_Melee
+- DA_EnemyAIProfile_GoblinMelee
+- Goblin 的 AttackSet/Profile 参数。
+
+本阶段禁止：
+
+- Gemini 修改 UEnemyMeleeAbility、ASC、GameplayEffect、GameplayTag、输入路由或共享 GAS 生命周期；
+- 新增远程敌人、弓箭、法术、Boss、群体协同；
+- 引入 Behavior Tree、Blackboard、通用 AI 框架；
+- 修改装备系统、近战伤害/Trace 路径或角色移动架构；
+- 手动编辑 .uasset、.umap；
+- 删除用户-owned Content/** WIP；
+- 提交 Git。
+
+## 验证矩阵
+
+自动化：
+
+- PolyQuest.Enemy.AttackSetSelection
+  - 目标在 250cm、短招 AttackRange = 180cm 时，短招仍能按权重被选中；
+  - 长招和短招都参加权重选择；
+  - 目标超过 EngagementRange 时返回空；
+  - 纯短招配置（如 EngagementRange = 250cm，所有 Profile AttackRange = 180cm）合法通过校验并能正常加权抽招；
+  - 随机边界和无效浮点输入保持安全。
+- PolyQuest.Enemy.CombatSpacing
+  - ApproachTimeout 默认值有效；
+  - 0、负数、NaN、Infinity 被拒绝；
+  - 现有冷却重定位、Leash、死亡和请求 ID 保护无回归。
+- 保持回归测试通过：PolyQuest.Equipment.TransactionMatrix、PolyQuest.Melee.TraceSourceGeometry。
+
+用户编译与 Editor readback：
+
+- 手动编译 PolyQuestEditor。
+- 读取 ST_Enemy_Goblin_Melee 的任务类型、外部 Controller 绑定、完成模式、条件和转换。
+- 读取 DA_EnemyAIProfile_GoblinMelee.ApproachTimeout。
+- 确认 AttackSet/Profile 的 180cm/300cm/300cm 测试配置。
+
+PIE：
+
+- 目标约 250cm 时抽中短招，敌人主动接近到 180cm 后攻击。
+- 抽中长招时不执行多余 Approach。
+- Approach 过程中玩家后退但仍在 EngagementRange 内时，敌人继续跟随当前已选 Profile。
+- 玩家离开 EngagementRange 时清除决策并 Chase。
+- 导航失败/超时后等待 0.5s 并重新抽招。
+- 原有攻击 Montage、Trace、Damage、Poise、Guard、Stun、Death、Cooldown Reposition 保持正常。
+
+## 委托记录与交接
+
+~~~
 Plan explorers: 0
 Implementation executors: 1
-Complex Executor: one scoped lifecycle-sensitive implementation, executed sequentially as 03AI1A then 03AI1B
+Complex Executor: one scoped lifecycle-sensitive Controller/StateTree implementation, sequentially
 Main parallel work: none
-Reason: Controller cooldown state, navigation completion, and StateTree transitions share one lifecycle; concurrent writers would create competing ownership.
-```
+Reason: Controller、StateTree 和 GAS Ability 共享待攻击 Profile 生命周期，必须顺序实施；Main 保留 GAS/ASC 集成与最终审查。
+~~~
 
-## Locked behavior
+Gemini 执行提示词：
 
-- `EngagementRange` remains owned by `UEnemyAttackSet` and remains the attack-entry limit. It is not increased to create retreat space.
-- The reposition point is **target-centered**. At generation time:
-  1. `TargetToEnemy = EnemyLocation - TargetLocation` on the XY plane.
-  2. Build a left/right perpendicular from `TargetToEnemy`.
-  3. `RepositionPoint = TargetLocation + TargetToEnemyNormalized * PreferredCombatDistance + Side * LateralRepositionDistance`.
-  4. Keep the target-centered radius as spacing tuning, then clamp lateral distance via $\sqrt{EngagementRange^2 - PreferredCombatDistance^2}$ so the authoritative attack-distance check `Distance2D(TargetLocation, RepositionPoint) <= EngagementRange` passes before issuing `MoveTo`. If `PreferredCombatDistance == EngagementRange`, lateral repositioning is clamped to `0` (pure straight backpedal to the engagement edge).
-
-- The target point is therefore relative to the current target, while the enemy owns and issues the movement request. Use explicit names such as `TargetLocation`, `EnemyLocation`, `TargetToEnemy`, and `RepositionPoint`; do not use ambiguous `EnemyTargetPoint`/`EnemyPointTarget` semantics.
-- During an active attack cooldown, the Controller may keep issuing reposition requests until cooldown expiry, but owns at most one active `MoveTo` and must respect the authored minimum request interval. This is continuous bounded repositioning, not a free-running orbit or per-frame request loop.
-- Each successful reposition alternates left/right for the next request. A point-generation or navigation failure may retry the current side once after the configured interval; if that retry also fails, the next new request changes side so a bad point cannot trap the enemy in a same-side loop.
-- Every request recalculates from the target's current location. If the player closes inside `PreferredCombatDistance`, the target-relative point naturally produces a retreat/side response; no separate unlimited backpedal state is introduced.
-- On cooldown expiry, the Controller stops any active reposition request and existing `Combat`/`Chase` range logic decides whether to attack or close distance. No reposition request may be issued after expiry.
-- Reposition stops and fails closed for invalid target, dead/stunned/hit-reacting enemy, teardown, Leash violation, invalid profile, invalid radial direction, failed navigation, or cooldown expiry. It never applies damage, grants abilities, changes GAS tags, or changes attack selection.
-
-## Slice A - TODO-03AI1A: spacing data and Controller navigation primitive
-
-Owned source surface:
-
-- Add `UEnemyAIProfile` under `Source/PolyQuest/Public/AI/EnemyAIProfile.h` and `Source/PolyQuest/Private/AI/EnemyAIProfile.cpp`.
-- Add an authored `AIProfile` reference/getter to `AEnemyCharacter`.
-- Extend `AEnemyAIController` with cached profile validation, target-relative point generation, Leash checks, request-interval/retry state, and guarded `MoveTo` request/completion handling.
-- Add a focused automation file under `Source/PolyQuest/Private/Tests/` for pure spacing/profile behavior. Test-only setters remain behind `WITH_DEV_AUTOMATION_TESTS`.
-
-`UEnemyAIProfile` owns authored data only: `PreferredCombatDistance`, `LateralRepositionDistance`, `RepositionAcceptanceRadius`, `RepositionRetryDelay`, and `LeashRadius`. For this slice, the existing `RepositionRetryDelay` field is the minimum interval between cooldown reposition requests, including a failed-request retry; retain the field name for asset compatibility. All values require finite, positive bounds where applicable; `PreferredCombatDistance` must not exceed the possessed AttackSet `EngagementRange`. Runtime target, next-request time, side selection, retry state, active request ID, and current goal remain Controller state.
-
-Use standard `AAIController::MoveTo`/path-following result ownership. Do not add manual `ProjectPointToNavigation`, a Blackboard, a Behavior Tree, a physics/overlap steering path, or a second movement component. Guard request completion by the active request identity and clear it from `OnUnPossess`, target loss, death, interruption, and teardown.
-
-Validation gate for Slice A:
-
-- User compiles `PolyQuestEditor`.
-- Automation `PolyQuest.Enemy.CombatSpacing` passes profile validation, target-relative point construction, `EngagementRange` bound, deterministic L/R alternation across successful requests, one same-side failure retry, minimum request interval, and no request after cooldown expiry. It must not encode a fixed two-request cap.
-- Existing `PolyQuest.Enemy.AttackSetSelection`, `PolyQuest.Equipment.TransactionMatrix`, and `PolyQuest.Melee.TraceSourceGeometry` remain regression checks.
-- User creates `DA_EnemyAIProfile_GoblinMelee`, assigns it to `BP_Enemy_Goblin`, and reads back every field and reference. No StateTree behavior change is claimed yet.
-
-## Slice B - TODO-03AI1B: StateTree cooldown integration
-
-Owned source/asset surface:
-
-- Add new native StateTree task `FEnemyStateTreeTask_RepositionDuringCooldown` and the minimal cooldown condition required by the asset. `FEnemyStateTreeCondition_CanRequestReposition` and its Controller query remain reusable native API, but the current Goblin asset must not use that immediate-request gate on `Wait -> Reposition`.
-- Do not change the serialized base class, instance-data layout, or struct name of `FEnemyStateTreeTask_RequestMeleeAttack`; add a new task type when instance data or lifecycle differs.
-- User authors the existing `ST_Enemy_Goblin_Melee` asset so its five top-level intents remain `Patrol`, `Alert`, `Chase`, `Combat`, and `Return`, with a bounded `Combat -> Attack -> Reposition -> Wait` flow.
-
-The new task calls Controller APIs only. The `Combat -> Attack -> Reposition -> Wait` loop may repeat while cooldown remains: one active MoveTo is awaited, then the next request is gated by the Controller interval/retry state. It returns terminal statuses for cooldown expiry, target loss, interruption, and Leash/death paths; it must not leave a stale request running after completion. The user-authored `Wait` delay is `0.5s` and is a polling interval, not a replacement for the Controller-owned minimum request interval. The authored `Wait -> Reposition` transition therefore checks only `Enemy Is Attack On Cooldown`; temporary interval gating is handled inside the task.
-
-Validation gate for Slice B:
-
-- User compiles again and reads back task identity, external Controller binding, completion mode, conditions, and all StateTree transitions.
-- User confirms NavMesh coverage for the Goblin fixture and runs PIE: continuous bounded lateral repositioning throughout a long cooldown, left/right alternation, one same-side failed-point retry, retreat when the player pushes inside the preferred band, no point beyond `EngagementRange`, cooldown expiry stopping further requests, attack recovery, target loss, death, stun/hit reaction, and Leash return.
-- Existing Goblin attack Montage/Trace/Poise/death behavior and the player equipment/trace regression tests remain intact.
-
-## Handoff to Gemini
-
-```text
-工作目录：E:\GameDevelop\PolyQuest
-基线：bc1a91e
+~~~
+工作目录：E:/GameDevelop/PolyQuest
+基线：74ab01c
 先读取当前 plan.md，并使用 ue-stage-workflow、ue5-state-tree-ai、ue5-cpp-gameplay、ue5-debug-validation。
 
-严格按 TODO-03AI1A -> 用户编译/Automation/Editor readback -> Main 接受证据 -> TODO-03AI1B 执行；本次修订要求重新对齐此前的有限请求实现。
-遵守 target-centered 点位：TargetToEnemy = EnemyLocation - TargetLocation；点位不得超过 EngagementRange；冷却期间持续按最小间隔请求；成功后左右交替；失败允许当前侧重试一次，重试仍失败后换侧；冷却结束立即停止。
-不要保留每冷却两次的硬上限：冷却未结束即可继续请求，但同一时刻只能有一个活动 MoveTo，且必须消费 `UEnemyAIProfile::RepositionRetryDelay` 作为最小请求间隔。用户已将 `ST_Enemy_Goblin_Melee` 的 Wait 设为 `0.5s`，它只是 StateTree 轮询间隔，不能替代 Controller 的时间门禁。
-攻击选择的远距离 Approach 不属于本次实现：本阶段不要修改 `UEnemyAttackSet::SelectAttackProfile` 的距离仲裁，也不要创建 Approach Ability；该行为记录在后续 `TODO-03AI2`。
+按 Slice A -> 用户编译/Automation/readback -> Main 集成 Ability -> Slice B Editor 作者化 -> 用户 PIE 的顺序执行。
+严格遵守 EngagementRange 是 Combat 外层距离；AttackSet 在 EngagementRange 内对全部有效 Profile 加权选择；选中的 Profile 在 Approach 中保持不变。
+不要在 SelectAttackProfile 中按 AttackRange 过滤，不要在 Approach 中重新抽招。
+Approach 必须使用当前 TargetActor，最终用 2D Actor-center 距离小于等于 SelectedProfile.AttackRange 判定可攻击；超出 EngagementRange、目标无效、导航失败或 ApproachTimeout 时清理待攻击 Profile。
+Wait = 0.5s 是 StateTree 轮询间隔，不得替代 Controller 的请求状态和超时逻辑。
 
-允许修改仅限计划中列出的 PolyQuest Source/PolyQuest 测试和 StateTree 原生类型。Blueprint、DataAsset、StateTree 资产由用户在 Editor 作者化；用户已将 StateTree `Wait` 设为 `0.5s`，不得擅自改回。禁止 Bow、Boss、群体协同、Behavior Tree、远距离攻击 Approach 仲裁、第二伤害路径、装备系统、破坏性清理、无关重构和提交。
+允许修改仅限计划列出的 EnemyAttackSet、EnemyAIProfile、EnemyAIController、EnemyStateTree 原生类型和 Automation 测试。
+不要修改 UEnemyMeleeAbility、ASC、GameplayEffect、GameplayTag、输入、装备系统、Content 资产或文档；不要手动编辑 .uasset/.umap；不要提交。
+完成后执行严格自审，只报告修改路径、静态检查、测试结果、Editor/PIE 缺口和停止原因。
+~~~
 
-完成后执行严格自审，只报告修改路径、静态检查、测试结果、已知缺口和停止原因；不得把自审称为 Main fresh review。
-```
+## 文档与提交边界
 
-## Documentation and commit boundary
+- 本阶段完成用户编译、Automation、Editor readback、PIE、Gemini 严格自审和 Main fresh/adversarial review 后，才更新 E:/GameDevelop/PolyQuest/ARCHITECTURE.md、E:/GameDevelop/PolyQuest/ROADMAP.md 和本文件的 closeout 记录。
+- ROADMAP.md 记录 TODO-03AI2 的完成结果及仍未关闭的风险。
+- 最终提交只包含批准的 Source、测试和文档路径，排除当前所有用户-owned Content/**、.uproject、Config WIP 及无关删除。
+- 未经用户明确提交批准，不执行 Git commit。
 
-- Before Slice B validation, update no stable architecture claim.
-- After both slices pass the user-owned compile/Automation/Editor/PIE gates, Gemini strict self-review, and Main fresh review, update `ARCHITECTURE.md` with the implemented ownership and `ROADMAP.md` by recording `TODO-03AI1A` and `TODO-03AI1B`; `TODO-03H1` depends on both.
-- Closeout evidence: the user confirmed the four named Automation tests succeeded after the StateTree transition edit and reported no behavioral difference; Gemini's strict review and Main's separate fresh/adversarial review found no P0-P2 source defect. The focused commit excludes all authored `Content/**` WIP and unrelated project/editor changes.
+## 收尾记录 (Closeout Summary)
 
-## Closeout Record
-
-- **Implementation:** `UEnemyAIProfile`, target-centered/clamped reposition geometry, Controller-owned cooldown/request/retry/alternation state, guarded MoveTo completion, lifecycle cleanup, `FEnemyStateTreeTask_RepositionDuringCooldown`, supporting native conditions, and `PolyQuest.Enemy.CombatSpacing` were delivered in the approved source/test surface.
-- **Editor adjustment:** User set `ST_Enemy_Goblin_Melee` `Wait` to `0.5s`, removed only `Enemy Can Request Reposition` from `Wait -> Reposition`, retained `Enemy Is Attack On Cooldown` and the unconditional fallback, then saved/compiled the asset. The C++ condition class was intentionally retained.
-- **Validation:** User-confirmed Automation success: `PolyQuest.Enemy.AttackSetSelection`, `PolyQuest.Enemy.CombatSpacing`, `PolyQuest.Equipment.TransactionMatrix`, and `PolyQuest.Melee.TraceSourceGeometry`. The warning lines are expected negative matrix/fixture branches. No new native build was invoked by Main; Editor/PIE evidence is user-owned and reported as user confirmation only.
-- **Review:** Gemini performed the strict implementation review. Main performed a separate fresh/adversarial source review after the repair; no P0-P2 defect remained. Static `git diff --check` was clean apart from normal line-ending warnings.
-- **Scope:** Stage only the approved native AI/test files and `ARCHITECTURE.md`, `ROADMAP.md`, and `plan.md`. Preserve all unrelated user WIP and authored assets outside the commit.
-
-## Non-goals
-
-No ranged enemy, Bow/Staff projectile behavior, Boss phases, encounter coordination, free-running orbit outside an active cooldown, distance-banded attack/Approach arbitration, attack-memory heuristics, Behavior Tree/Blackboard, new GAS Ability/GameplayEffect, new damage/trace path, inventory, camera-facing rewrite, or broad enemy locomotion system.
-
-## Post-closeout Repair
-
-- **Scope:** Shield defense preflight compatibility with Unreal Editor-authored GameplayTag containers.
-- **Cause:** Editor-authored Shield Ability CDOs may serialize only `Ability.Defense.Guard.Shield` / `Ability.Defense.Parry.Shield`; `HasTagExact()` on the generic parent categories incorrectly rejected the otherwise valid Shield pickup.
-- **Repair:** `RunPreflight()` retains exact matching for the profile-specific tags and uses hierarchical `HasTag()` for the generic Guard/Parry categories. The transaction-matrix test now exercises the child-only CDO authoring shape and restores the expected native generic-tag setup after the test.
-- **Evidence:** The user reran `PolyQuest.Equipment.TransactionMatrix`, `PolyQuest.Enemy.AttackSetSelection`, `PolyQuest.Enemy.CombatSpacing`, and `PolyQuest.Melee.TraceSourceGeometry` with `Success`; expected rejection, rollback, invalid socket, and invalid Poise messages remain negative branches. Main's fresh/adversarial review found no remaining P0-P2 defect. No new native build was invoked by Main; compile/PIE evidence remains user-owned.
-- **Commit boundary:** Include only the two native source/test files and the synchronized `ARCHITECTURE.md`, `ROADMAP.md`, and this closeout record. Preserve all user-owned `Content/**`, Config, project, and unrelated WIP.
+- **核心交付：**
+  - `UEnemyAttackSet`：实现 `EngagementRange` 内全 Profile 纯加权抽取；移除了纯短招限制门禁 `bHasReachableProfile`。
+  - `UEnemyAIProfile`：增加 `ApproachTimeout`（默认 3.0s）及有限正数校验。
+  - `AEnemyAIController`：实现 `PendingAttackProfile` 弱指针快照管理；动态 `TargetActor` Approach MoveTo；超时、导航失败、死亡、眩晕、受击反应、超出 Leash 及超出 `EngagementRange` 的全生命周期清理。
+  - `UEnemyMeleeAbility`：消费 Controller 决策并在 Commit 前校验有效性；`EndAbility` 统一、无条件清理 Controller 待攻击决策。
+  - `EnemyStateTreeTasks / Conditions`：支持 `Decision -> Approach -> Attack -> Reposition -> Wait (0.5s)` 拓扑。
+- **自动化测试验证：**
+  - `PolyQuest.Enemy.AttackSetSelection`：Success
+  - `PolyQuest.Enemy.CombatSpacing`：Success（含 4.7 GAS 失败清理、4.8 Ability 未启动退出清理、4.9 超出 EngagementRange 判负、4.10 冷却期间 Prepare/StateTree fail-closed）
+  - `PolyQuest.Equipment.TransactionMatrix`：Success
+  - `PolyQuest.Melee.TraceSourceGeometry`：Success
+- **复核结论：**
+  - Gemini 完成严格执行者自审；Main 完成 normal review 与 adversarial fallback，冷却门禁修复后未发现 P0-P2 源码问题。
+  - Luna/gpt-5.6-luna 因服务 HTTP 503 未启动，因此不宣称存在独立 Reviewer 结果。

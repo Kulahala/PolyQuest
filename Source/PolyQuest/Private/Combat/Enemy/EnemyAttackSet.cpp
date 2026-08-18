@@ -19,7 +19,6 @@ bool UEnemyAttackSet::IsAttackSetValid(FString& OutReason) const
 	}
 
 	TSet<const UEnemyAttackProfile*> SeenProfiles;
-	bool bHasReachableProfile = false;
 	float TotalSetWeight = 0.0f;
 
 	for (int32 Index = 0; Index < Entries.Num(); ++Index)
@@ -52,22 +51,11 @@ bool UEnemyAttackSet::IsAttackSetValid(FString& OutReason) const
 		SeenProfiles.Add(Entry.AttackProfile.Get());
 
 		TotalSetWeight += Entry.SelectionWeight;
-
-		if (Entry.AttackProfile->GetAttackRange() >= EngagementRange)
-		{
-			bHasReachableProfile = true;
-		}
 	}
 
 	if (!FMath::IsFinite(TotalSetWeight) || TotalSetWeight <= 0.0f)
 	{
 		OutReason = FString::Printf(TEXT("AttackSet '%s' has non-positive or non-finite total selection weight (%f)."), *GetNameSafe(this), TotalSetWeight);
-		return false;
-	}
-
-	if (!bHasReachableProfile)
-	{
-		OutReason = FString::Printf(TEXT("AttackSet '%s' has no AttackProfile whose AttackRange reaches EngagementRange (%f)."), *GetNameSafe(this), EngagementRange);
 		return false;
 	}
 
@@ -92,35 +80,35 @@ const UEnemyAttackProfile* UEnemyAttackSet::SelectAttackProfile(float TargetDist
 		return nullptr;
 	}
 
-	// Filter eligible profiles whose authored AttackRange covers the current target distance
-	TArray<const FEnemyAttackSetEntry*, TInlineAllocator<8>> EligibleEntries;
-	float TotalEligibleWeight = 0.0f;
-
+	// All valid entries in the set participate in weighted selection
+	float TotalSetWeight = 0.0f;
 	for (const FEnemyAttackSetEntry& Entry : Entries)
 	{
-		if (Entry.AttackProfile && Entry.AttackProfile->GetAttackRange() >= TargetDistance2D)
+		if (Entry.AttackProfile && Entry.AttackProfile->IsValidAttackProfile() && FMath::IsFinite(Entry.SelectionWeight) && Entry.SelectionWeight > 0.0f)
 		{
-			EligibleEntries.Add(&Entry);
-			TotalEligibleWeight += Entry.SelectionWeight;
+			TotalSetWeight += Entry.SelectionWeight;
 		}
 	}
 
-	if (EligibleEntries.IsEmpty() || !FMath::IsFinite(TotalEligibleWeight) || TotalEligibleWeight <= 0.0f)
+	if (!FMath::IsFinite(TotalSetWeight) || TotalSetWeight <= 0.0f)
 	{
 		return nullptr;
 	}
 
-	const float TargetThreshold = NormalizedRandomFraction * TotalEligibleWeight;
+	const float TargetThreshold = NormalizedRandomFraction * TotalSetWeight;
 	float AccumulatedWeight = 0.0f;
 	const UEnemyAttackProfile* SelectedProfile = nullptr;
 
-	for (const FEnemyAttackSetEntry* EntryPtr : EligibleEntries)
+	for (const FEnemyAttackSetEntry& Entry : Entries)
 	{
-		AccumulatedWeight += EntryPtr->SelectionWeight;
-		SelectedProfile = EntryPtr->AttackProfile.Get();
-		if (TargetThreshold <= AccumulatedWeight)
+		if (Entry.AttackProfile && Entry.AttackProfile->IsValidAttackProfile() && FMath::IsFinite(Entry.SelectionWeight) && Entry.SelectionWeight > 0.0f)
 		{
-			return SelectedProfile;
+			AccumulatedWeight += Entry.SelectionWeight;
+			SelectedProfile = Entry.AttackProfile.Get();
+			if (TargetThreshold <= AccumulatedWeight)
+			{
+				return SelectedProfile;
+			}
 		}
 	}
 

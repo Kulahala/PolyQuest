@@ -10,6 +10,7 @@ class APlayerCharacter;
 class UAIPerceptionComponent;
 class UAISenseConfig_Sight;
 class UEnemyAIProfile;
+class UEnemyAttackProfile;
 class UStateTreeAIComponent;
 struct FPathFollowingResult;
 
@@ -99,6 +100,53 @@ public:
 	/** True if all combat/profile conditions are valid for repositioning, but delayed solely by NextAllowedRepositionTime. */
 	UFUNCTION(BlueprintPure, Category = "AI|Combat|Reposition")
 	bool IsRepositionTemporarilyIntervalGated() const;
+
+	/** True if controller currently holds a valid pending attack profile selected from AttackSet. */
+	UFUNCTION(BlueprintPure, Category = "AI|Combat")
+	bool HasPendingAttackProfile() const;
+
+	/** Returns the immutable pending attack profile snapshot, if any. */
+	UFUNCTION(BlueprintPure, Category = "AI|Combat")
+	const UEnemyAttackProfile* GetPendingAttackProfile() const;
+
+	/** Returns the AttackRange of the pending attack profile, or MeleeRange if none. */
+	UFUNCTION(BlueprintPure, Category = "AI|Combat")
+	float GetPendingAttackRange() const;
+
+	/** Returns true if target distance is within the pending attack profile's AttackRange. */
+	UFUNCTION(BlueprintPure, Category = "AI|Combat")
+	bool IsPendingAttackInRange() const;
+
+	/**
+	 * Prepares / selects a weighted attack profile for the current target if none is currently pending.
+	 * If a profile is already pending, retains it unchanged.
+	 * Returns true if a valid profile is ready for execution or approach.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "AI|Combat")
+	bool PreparePendingAttackProfile();
+
+	/** Clears the pending attack profile and stops any active approach movement. */
+	UFUNCTION(BlueprintCallable, Category = "AI|Combat")
+	void ClearPendingAttackProfile();
+
+	/** Checks if melee approach can be requested towards the current combat target. */
+	UFUNCTION(BlueprintPure, Category = "AI|Combat|Approach")
+	bool CanRequestApproach() const;
+
+	/** Issues a dynamic MoveTo request tracking TargetActor with acceptance radius equal to PendingAttackProfile.AttackRange. */
+	UFUNCTION(BlueprintCallable, Category = "AI|Combat|Approach")
+	bool TryRequestApproach();
+
+	/** Stops active approach movement and optionally clears pending profile. */
+	UFUNCTION(BlueprintCallable, Category = "AI|Combat|Approach")
+	void StopApproach(bool bClearPendingProfile = false);
+
+	UFUNCTION(BlueprintPure, Category = "AI|Combat|Approach")
+	bool IsApproaching() const { return bIsApproaching; }
+
+	/** True if approach has exceeded ApproachTimeout. */
+	UFUNCTION(BlueprintPure, Category = "AI|Combat|Approach")
+	bool HasApproachTimedOut() const;
 
 	UFUNCTION(BlueprintPure, Category = "AI|Home")
 	float GetHomeAcceptanceRadius() const { return HomeAcceptanceRadius; }
@@ -197,4 +245,11 @@ private:
 	bool bLastRepositionSucceeded = false;
 	bool bIsRepositioning = false;
 	FAIRequestID CurrentRepositionRequestID = FAIRequestID::InvalidRequest;
+
+	UPROPERTY(Transient)
+	TWeakObjectPtr<const UEnemyAttackProfile> PendingAttackProfile = nullptr;
+
+	bool bIsApproaching = false;
+	FAIRequestID CurrentApproachRequestID = FAIRequestID::InvalidRequest;
+	float ApproachStartTime = 0.0f;
 };

@@ -75,3 +75,39 @@ bool FEnemyStateTreeCondition_IsTargetOutsideMeleeRange::TestCondition(FStateTre
 	const AEnemyAIController& EnemyAIController = Context.GetExternalData(EnemyAIControllerHandle);
 	return !EnemyAIController.IsCombatTargetInMeleeRange();
 }
+
+bool FEnemyStateTreeCondition_HasPendingMeleeAttack::Link(FStateTreeLinker& Linker)
+{
+	Linker.LinkExternalData(EnemyAIControllerHandle);
+	return true;
+}
+
+bool FEnemyStateTreeCondition_HasPendingMeleeAttack::TestCondition(FStateTreeExecutionContext& Context) const
+{
+	const AEnemyAIController& EnemyAIController = Context.GetExternalData(EnemyAIControllerHandle);
+	return EnemyAIController.HasPendingAttackProfile();
+}
+
+bool FEnemyStateTreeCondition_IsPendingAttackInRange::Link(FStateTreeLinker& Linker)
+{
+	Linker.LinkExternalData(EnemyAIControllerHandle);
+	return true;
+}
+
+bool FEnemyStateTreeCondition_IsPendingAttackInRange::TestCondition(FStateTreeExecutionContext& Context) const
+{
+	const AEnemyAIController& EnemyAIController = Context.GetExternalData(EnemyAIControllerHandle);
+	return EnemyAIController.IsPendingAttackInRange();
+}
+
+bool FEnemyStateTreeCondition_IsPendingAttackOutOfRange::Link(FStateTreeLinker& Linker)
+{
+	Linker.LinkExternalData(EnemyAIControllerHandle);
+	return true;
+}
+
+bool FEnemyStateTreeCondition_IsPendingAttackOutOfRange::TestCondition(FStateTreeExecutionContext& Context) const
+{
+	const AEnemyAIController& EnemyAIController = Context.GetExternalData(EnemyAIControllerHandle);
+	return EnemyAIController.HasPendingAttackProfile() && !EnemyAIController.IsPendingAttackInRange();
+}

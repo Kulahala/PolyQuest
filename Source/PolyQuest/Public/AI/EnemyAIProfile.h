@@ -35,12 +35,16 @@ public:
 	UFUNCTION(BlueprintPure, Category = "AI|Leash")
 	float GetLeashRadius() const { return LeashRadius; }
 
+	UFUNCTION(BlueprintPure, Category = "AI|Combat")
+	float GetApproachTimeout() const { return ApproachTimeout; }
+
 #if WITH_DEV_AUTOMATION_TESTS
 	void SetTestPreferredCombatDistance(float InDistance) { PreferredCombatDistance = InDistance; }
 	void SetTestLateralRepositionDistance(float InDistance) { LateralRepositionDistance = InDistance; }
 	void SetTestRepositionAcceptanceRadius(float InRadius) { RepositionAcceptanceRadius = InRadius; }
 	void SetTestRepositionRetryDelay(float InDelay) { RepositionRetryDelay = InDelay; }
 	void SetTestLeashRadius(float InRadius) { LeashRadius = InRadius; }
+	void SetTestApproachTimeout(float InTimeout) { ApproachTimeout = InTimeout; }
 #endif
 
 private:
@@ -74,4 +78,10 @@ private:
 	 */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "AI|Leash", meta = (AllowPrivateAccess = "true", ClampMin = "0.01", Units = "Centimeters"))
 	float LeashRadius = 2500.0f;
+
+	/**
+	 * Maximum duration in seconds allowed for melee approach before timing out and clearing decision.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "AI|Combat", meta = (AllowPrivateAccess = "true", ClampMin = "0.01", Units = "Seconds"))
+	float ApproachTimeout = 3.0f;
 };

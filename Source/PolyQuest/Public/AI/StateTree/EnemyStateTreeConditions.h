@@ -140,3 +140,69 @@ struct POLYQUEST_API FEnemyStateTreeCondition_IsTargetOutsideMeleeRange : public
 private:
 	TStateTreeExternalDataHandle<AEnemyAIController> EnemyAIControllerHandle;
 };
+
+USTRUCT()
+struct FEnemyStateTreeCondition_HasPendingMeleeAttackInstanceData
+{
+	GENERATED_BODY()
+};
+
+/** Checks if the controller currently holds a valid pending attack profile. */
+USTRUCT(meta = (DisplayName = "Enemy Has Pending Melee Attack", Category = "AI|Enemy"))
+struct POLYQUEST_API FEnemyStateTreeCondition_HasPendingMeleeAttack : public FStateTreeConditionCommonBase
+{
+	GENERATED_BODY()
+
+	using FInstanceDataType = FEnemyStateTreeCondition_HasPendingMeleeAttackInstanceData;
+
+	virtual const UStruct* GetInstanceDataType() const override { return FInstanceDataType::StaticStruct(); }
+	virtual bool Link(FStateTreeLinker& Linker) override;
+	virtual bool TestCondition(FStateTreeExecutionContext& Context) const override;
+
+private:
+	TStateTreeExternalDataHandle<AEnemyAIController> EnemyAIControllerHandle;
+};
+
+USTRUCT()
+struct FEnemyStateTreeCondition_IsPendingAttackInRangeInstanceData
+{
+	GENERATED_BODY()
+};
+
+/** Checks if the combat target is within the pending attack profile's AttackRange. */
+USTRUCT(meta = (DisplayName = "Enemy Pending Melee Attack In Range", Category = "AI|Enemy"))
+struct POLYQUEST_API FEnemyStateTreeCondition_IsPendingAttackInRange : public FStateTreeConditionCommonBase
+{
+	GENERATED_BODY()
+
+	using FInstanceDataType = FEnemyStateTreeCondition_IsPendingAttackInRangeInstanceData;
+
+	virtual const UStruct* GetInstanceDataType() const override { return FInstanceDataType::StaticStruct(); }
+	virtual bool Link(FStateTreeLinker& Linker) override;
+	virtual bool TestCondition(FStateTreeExecutionContext& Context) const override;
+
+private:
+	TStateTreeExternalDataHandle<AEnemyAIController> EnemyAIControllerHandle;
+};
+
+USTRUCT()
+struct FEnemyStateTreeCondition_IsPendingAttackOutOfRangeInstanceData
+{
+	GENERATED_BODY()
+};
+
+/** Checks if the pending attack profile requires approach because target distance exceeds its AttackRange. */
+USTRUCT(meta = (DisplayName = "Enemy Pending Melee Attack Out Of Range", Category = "AI|Enemy"))
+struct POLYQUEST_API FEnemyStateTreeCondition_IsPendingAttackOutOfRange : public FStateTreeConditionCommonBase
+{
+	GENERATED_BODY()
+
+	using FInstanceDataType = FEnemyStateTreeCondition_IsPendingAttackOutOfRangeInstanceData;
+
+	virtual const UStruct* GetInstanceDataType() const override { return FInstanceDataType::StaticStruct(); }
+	virtual bool Link(FStateTreeLinker& Linker) override;
+	virtual bool TestCondition(FStateTreeExecutionContext& Context) const override;
+
+private:
+	TStateTreeExternalDataHandle<AEnemyAIController> EnemyAIControllerHandle;
+};

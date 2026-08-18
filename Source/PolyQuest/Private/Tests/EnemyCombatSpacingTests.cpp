@@ -84,6 +84,18 @@ bool FEnemyCombatSpacingTest::RunTest(const FString& Parameters)
 		TestFalse(TEXT("NaN LeashRadius is rejected"), Profile->IsValidAIProfile(Reason));
 		Profile->SetTestLeashRadius(2500.0f);
 
+		// 1.7 ApproachTimeout checks (must be finite and > 0, default 3.0s)
+		TestNearlyEqual(TEXT("Default ApproachTimeout is 3.0s"), Profile->GetApproachTimeout(), 3.0f, 0.01f);
+		Profile->SetTestApproachTimeout(0.0f);
+		TestFalse(TEXT("Zero ApproachTimeout is rejected"), Profile->IsValidAIProfile(Reason));
+		Profile->SetTestApproachTimeout(-1.0f);
+		TestFalse(TEXT("Negative ApproachTimeout is rejected"), Profile->IsValidAIProfile(Reason));
+		Profile->SetTestApproachTimeout(std::numeric_limits<float>::infinity());
+		TestFalse(TEXT("+INF ApproachTimeout is rejected"), Profile->IsValidAIProfile(Reason));
+		Profile->SetTestApproachTimeout(std::numeric_limits<float>::quiet_NaN());
+		TestFalse(TEXT("NaN ApproachTimeout is rejected"), Profile->IsValidAIProfile(Reason));
+		Profile->SetTestApproachTimeout(3.0f);
+
 		TestTrue(TEXT("Restored profile is valid"), Profile->IsValidAIProfile());
 	}
 
@@ -430,6 +442,237 @@ bool FEnemyCombatSpacingTest::RunTest(const FString& Parameters)
 		bSimulatedOnCooldown = false;
 		TestFalse(TEXT("Cooldown ended enemy is not interval gated"), SimulateIsTemporarilyIntervalGated(10.0f, 15.0f));
 		bSimulatedOnCooldown = true;
+	}
+
+	// 4. Approach Lifecycle, Timeout, and Dynamic Target Tracking State Machine Tests
+	{
+		const float EngagementRange = 300.0f;
+		const float ShortAttackRange = 180.0f;
+		const float ApproachTimeout = 3.0f;
+
+		bool bDead = false;
+		bool bStunned = false;
+		bool bHitReacting = false;
+		bool bAttacking = false;
+		bool bHasTarget = true;
+		bool bHasAttackSet = true;
+		bool bHasAIProfile = true;
+		bool bOnCooldown = false;
+		bool bExceedingLeash = false;
+		float TargetDistance2D = 250.0f;
+
+		bool bHasPendingProfile = false;
+		float PendingProfileRange = 0.0f;
+		bool bIsApproaching = false;
+		float ApproachStartTime = 0.0f;
+		float CurrentSimulatedTime = 10.0f;
+
+		auto ClearPendingDecision = [&]()
+		{
+			bHasPendingProfile = false;
+			PendingProfileRange = 0.0f;
+			bIsApproaching = false;
+			ApproachStartTime = 0.0f;
+		};
+
+		auto SimulatePreparePending = [&](float SelectedRange) -> bool
+		{
+			if (bDead || bStunned || bHitReacting || bAttacking || !bHasTarget || !bHasAttackSet || bOnCooldown || bExceedingLeash || TargetDistance2D > EngagementRange)
+			{
+				ClearPendingDecision();
+				return false;
+			}
+
+			if (bHasPendingProfile)
+			{
+				// Retain existing profile during approach
+				return true;
+			}
+
+			bHasPendingProfile = true;
+			PendingProfileRange = SelectedRange;
+			return true;
+		};
+
+		auto SimulateCanRequestApproach = [&]() -> bool
+		{
+			return !bDead && !bStunned && !bHitReacting && !bAttacking && bHasTarget && bHasAttackSet && bHasAIProfile
+				&& !bOnCooldown && !bExceedingLeash && TargetDistance2D <= EngagementRange
+				&& bHasPendingProfile && TargetDistance2D > PendingProfileRange;
+		};
+
+		auto SimulateHasPendingProfile = [&]() -> bool
+		{
+			return bHasPendingProfile && !bDead && bHasTarget && bHasAttackSet && TargetDistance2D <= EngagementRange;
+		};
+
+		auto SimulateIsPendingInRange = [&]() -> bool
+		{
+			return SimulateHasPendingProfile() && TargetDistance2D <= PendingProfileRange && TargetDistance2D <= EngagementRange;
+		};
+
+		auto SimulateHasTimedOut = [&]() -> bool
+		{
+			if (!bIsApproaching)
+			{
+				return false;
+			}
+			return (CurrentSimulatedTime - ApproachStartTime) >= ApproachTimeout;
+		};
+
+		// 4.1 Target at 250cm, Select Short Attack (180cm) -> Requires Approach
+		TestTrue(TEXT("Prepare pending short attack (180cm) succeeds at 250cm"), SimulatePreparePending(ShortAttackRange));
+		TestTrue(TEXT("Has pending profile"), bHasPendingProfile);
+		TestEqual(TEXT("Pending profile range is 180cm"), PendingProfileRange, ShortAttackRange);
+		TestFalse(TEXT("Not yet in attack range at 250cm"), SimulateIsPendingInRange());
+		TestTrue(TEXT("Can request approach towards target"), SimulateCanRequestApproach());
+
+		// 4.2 Start Approach
+		bIsApproaching = true;
+		ApproachStartTime = CurrentSimulatedTime;
+		TestFalse(TEXT("Approach not timed out initially"), SimulateHasTimedOut());
+
+		// 4.3 Profile Retained without re-roll during approach while player moves (e.g. player shifts to 220cm)
+		TargetDistance2D = 220.0f;
+		TestTrue(TEXT("Prepare retains existing profile without re-rolling"), SimulatePreparePending(300.0f)); // Try injecting 300cm
+		TestEqual(TEXT("Profile range remained 180cm"), PendingProfileRange, ShortAttackRange);
+
+		// 4.4 Player reached within 180cm (e.g. 175cm) -> Can Attack!
+		TargetDistance2D = 175.0f;
+		TestTrue(TEXT("Target at 175cm is within pending attack range (180cm)"), SimulateIsPendingInRange());
+		TestFalse(TEXT("Can no longer request approach once in attack range"), SimulateCanRequestApproach());
+
+		// Simulate attack execution and cooldown start -> Clears decision
+		bAttacking = true;
+		ClearPendingDecision();
+		TestFalse(TEXT("Pending decision cleared on attack/cooldown"), bHasPendingProfile);
+		bAttacking = false;
+
+		// 4.5 Approach Timeout handling
+		TargetDistance2D = 250.0f;
+		TestTrue(TEXT("Prepare new short attack"), SimulatePreparePending(ShortAttackRange));
+		bIsApproaching = true;
+		ApproachStartTime = CurrentSimulatedTime;
+
+		// Advance time by 2.0s (< 3.0s timeout)
+		CurrentSimulatedTime += 2.0f;
+		TestFalse(TEXT("At +2.0s, approach has not timed out"), SimulateHasTimedOut());
+
+		// Advance time by another 1.5s (total 3.5s >= 3.0s timeout)
+		CurrentSimulatedTime += 1.5f;
+		TestTrue(TEXT("At +3.5s, approach has timed out"), SimulateHasTimedOut());
+		ClearPendingDecision();
+		TestFalse(TEXT("Decision cleared on timeout"), bHasPendingProfile);
+
+		// 4.6 Interruption / Invalidation Cases (Target lost, death, stun, hit react, leash break)
+		// Case A: Target leaves EngagementRange (320cm > 300cm)
+		TargetDistance2D = 320.0f;
+		TestFalse(TEXT("Target outside engagement range fails prepare"), SimulatePreparePending(ShortAttackRange));
+
+		// Case B: Stunned
+		TargetDistance2D = 250.0f;
+		bStunned = true;
+		TestFalse(TEXT("Stunned enemy fails prepare"), SimulatePreparePending(ShortAttackRange));
+		bStunned = false;
+
+		// Case C: Hit Reaction
+		bHitReacting = true;
+		TestFalse(TEXT("Hit reacting enemy fails prepare"), SimulatePreparePending(ShortAttackRange));
+		bHitReacting = false;
+
+		// Case D: Exceeding Leash
+		bExceedingLeash = true;
+		TestFalse(TEXT("Leash-broken enemy fails prepare"), SimulatePreparePending(ShortAttackRange));
+		bExceedingLeash = false;
+
+		// Case E: Dead
+		bDead = true;
+		TestFalse(TEXT("Dead enemy fails prepare"), SimulatePreparePending(ShortAttackRange));
+		bDead = false;
+
+		// Case F: Attack on Cooldown
+		TargetDistance2D = 250.0f;
+		bOnCooldown = true;
+		TestFalse(TEXT("Attack on cooldown fails prepare and does not generate pending profile"), SimulatePreparePending(ShortAttackRange));
+		TestFalse(TEXT("No pending profile during cooldown"), bHasPendingProfile);
+		// If a profile was somehow pending beforehand, cooldown prepare must clear it
+		bHasPendingProfile = true;
+		TestFalse(TEXT("Prepare during cooldown clears existing pending profile"), SimulatePreparePending(ShortAttackRange));
+		TestFalse(TEXT("Pending profile cleared by cooldown prepare"), bHasPendingProfile);
+		bOnCooldown = false;
+
+		// 4.7 GAS Activation Failure cleans up Pending Decision immediately
+		TargetDistance2D = 150.0f;
+		TestTrue(TEXT("Prepare pending profile for attack request"), SimulatePreparePending(ShortAttackRange));
+		TestTrue(TEXT("Has pending profile before activation"), bHasPendingProfile);
+		// Simulate GAS TryActivateAbilitiesByTag returning false (e.g. cost/blocking tags)
+		auto SimulateTryRequestMeleeAttack = [&](bool bGASActivationSuccess) -> bool
+		{
+			if (!SimulateIsPendingInRange())
+			{
+				ClearPendingDecision();
+				return false;
+			}
+			if (!bGASActivationSuccess)
+			{
+				ClearPendingDecision();
+				return false;
+			}
+			return true;
+		};
+		TestFalse(TEXT("Melee attack request returns false when GAS activation rejected"), SimulateTryRequestMeleeAttack(false));
+		TestFalse(TEXT("Pending profile cleared when GAS activation rejected"), bHasPendingProfile);
+
+		// 4.8 Ability End without attack start cleans up Pending Decision
+		TestTrue(TEXT("Prepare pending profile for ability start"), SimulatePreparePending(ShortAttackRange));
+		TestTrue(TEXT("Has pending profile before ability"), bHasPendingProfile);
+		auto SimulateEndAbility = [&](bool bAbilityAttackStarted, bool bWasCancelled)
+		{
+			const bool bShouldStartCooldown = bAbilityAttackStarted && !bWasCancelled;
+			if (bShouldStartCooldown)
+			{
+				// StartMeleeAttackCooldown clears decision and sets CD
+				bOnCooldown = true;
+				ClearPendingDecision();
+			}
+			else
+			{
+				// EndAbility unconditional cleanup
+				ClearPendingDecision();
+			}
+		};
+		SimulateEndAbility(false, false); // Montage did not start / synchronous abort
+		TestFalse(TEXT("Pending profile cleared when ability ended before attack started"), bHasPendingProfile);
+
+		// 4.9 Target exceeds EngagementRange even if AttackRange is larger (e.g. AttackRange 400cm, EngagementRange 300cm, Target at 350cm)
+		const float LargeAttackRange = 400.0f;
+		TargetDistance2D = 250.0f;
+		TestTrue(TEXT("Prepare large attack profile inside EngagementRange"), SimulatePreparePending(LargeAttackRange));
+		// Target moves to 350cm (outside EngagementRange 300cm, but within LargeAttackRange 400cm)
+		TargetDistance2D = 350.0f;
+		TestFalse(TEXT("IsPendingInRange returns false when target is outside EngagementRange despite AttackRange > distance"), SimulateIsPendingInRange());
+		ClearPendingDecision();
+		TestFalse(TEXT("Pending profile cleared after range test"), bHasPendingProfile);
+
+		// 4.10 StateTree PrepareMeleeAttack Task fail-closed during cooldown
+		bOnCooldown = true;
+		auto SimulateStateTreePrepareMeleeAttackTask = [&]() -> bool
+		{
+			if (bDead || bStunned || bHitReacting || bAttacking || bOnCooldown || !bHasTarget || !bHasAttackSet || TargetDistance2D > EngagementRange || bExceedingLeash)
+			{
+				ClearPendingDecision();
+				return false;
+			}
+			return SimulatePreparePending(ShortAttackRange);
+		};
+		// Test 1: Task fails when called during cooldown
+		TestFalse(TEXT("PrepareMeleeAttack Task fails during cooldown"), SimulateStateTreePrepareMeleeAttackTask());
+		TestFalse(TEXT("Pending profile remains false after Task fail during cooldown"), bHasPendingProfile);
+		// Test 2: If a decision was somehow pending beforehand, Task during cooldown clears it
+		bHasPendingProfile = true;
+		TestFalse(TEXT("PrepareMeleeAttack Task during cooldown clears existing pending decision"), SimulateStateTreePrepareMeleeAttackTask());
+		TestFalse(TEXT("Pending profile cleared by Task during cooldown"), bHasPendingProfile);
+		bOnCooldown = false;
 	}
 
 	return true;

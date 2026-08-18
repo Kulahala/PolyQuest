@@ -123,12 +123,12 @@ bool FEnemyAttackSetSelectionTest::RunTest(const FString& Parameters)
 		TestFalse(TEXT("Duplicate AttackProfile reference is rejected"), TestSet->IsAttackSetValid(Reason));
 		TestTrue(TEXT("Duplicate reason names duplicate profile"), Reason.Contains(TEXT("contains duplicate AttackProfile")));
 
-		// 1.7 EngagementRange that no entry can reach must be rejected
+		// 1.7 Pure short-range attack set (all AttackRanges < EngagementRange) is valid and relies on Approach
 		TestSet->ClearTestEntries();
-		TestSet->SetTestEngagementRange(200.0f);
-		TestSet->AddTestEntry(ProfileShort, 1.0f); // Short has Range 120, EngagementRange is 200
-		TestFalse(TEXT("EngagementRange exceeding all entries' AttackRange is rejected"), TestSet->IsAttackSetValid(Reason));
-		TestTrue(TEXT("Unreachable engagement range reason matches"), Reason.Contains(TEXT("no AttackProfile whose AttackRange reaches EngagementRange")));
+		TestSet->SetTestEngagementRange(250.0f);
+		TestSet->AddTestEntry(ProfileShort, 1.0f); // Short has Range 120 (< 250)
+		TestSet->AddTestEntry(ProfileA, 2.0f); // Range 200 (< 250)
+		TestTrue(TEXT("Pure short-range attack set where all AttackRanges < EngagementRange is accepted"), TestSet->IsAttackSetValid(Reason));
 
 		// 1.8 Total weight overflow check
 		TestSet->ClearTestEntries();
@@ -148,8 +148,8 @@ bool FEnemyAttackSetSelectionTest::RunTest(const FString& Parameters)
 		TestSet->SetTestEngagementRange(200.0f);
 		TestSet->AddTestEntry(ProfileA, 1.0f); // Range 200
 		TestSet->AddTestEntry(ProfileB, 3.0f); // Range 250
-		TestSet->AddTestEntry(ProfileShort, 2.0f); // Range 120 (< 200, but ProfileA and ProfileB reach 200)
-		TestTrue(TEXT("Multiple valid entries with reachable range accepted"), TestSet->IsAttackSetValid(Reason));
+		TestSet->AddTestEntry(ProfileShort, 2.0f); // Range 120 (< 200)
+		TestTrue(TEXT("Multiple valid entries with mixed ranges accepted"), TestSet->IsAttackSetValid(Reason));
 	}
 
 	// 2. Pure Weighted Selection Tests
@@ -188,20 +188,49 @@ bool FEnemyAttackSetSelectionTest::RunTest(const FString& Parameters)
 		TestEqual(TEXT("Fraction 0.75 selects ProfileB"), Set->SelectAttackProfile(150.0f, 0.75f), Cast<const UEnemyAttackProfile>(ProfileB));
 		TestEqual(TEXT("Fraction 1.0 selects ProfileB (upper bound)"), Set->SelectAttackProfile(150.0f, 1.0f), Cast<const UEnemyAttackProfile>(ProfileB));
 
-		// 2.4 Range filtering: At distance 205 (ProfileA Range 200 is filtered out, only ProfileB Range 250 is eligible)
-		// Total weight = 3.0
-		// All valid fractions [0, 1] must select ProfileB
+		// 2.4 Distance-Aware Weighted Selection: At distance 205 (ProfileA Range 200 is NOT filtered out in EngagementRange 250)
+		// Total weight remains 4.0 (1.0 + 3.0)
+		// Both ProfileA and ProfileB participate in weighted selection regardless of current distance
 		Set->SetTestEngagementRange(250.0f);
-		TestEqual(TEXT("At distance 205, Fraction 0.0 selects ProfileB"), Set->SelectAttackProfile(205.0f, 0.0f), Cast<const UEnemyAttackProfile>(ProfileB));
-		TestEqual(TEXT("At distance 205, Fraction 0.5 selects ProfileB"), Set->SelectAttackProfile(205.0f, 0.5f), Cast<const UEnemyAttackProfile>(ProfileB));
+		TestEqual(TEXT("At distance 205, Fraction 0.0 selects ProfileA (short profile participating in selection)"), Set->SelectAttackProfile(205.0f, 0.0f), Cast<const UEnemyAttackProfile>(ProfileA));
+		TestEqual(TEXT("At distance 205, Fraction 0.25 selects ProfileA"), Set->SelectAttackProfile(205.0f, 0.25f), Cast<const UEnemyAttackProfile>(ProfileA));
+		TestEqual(TEXT("At distance 205, Fraction 0.26 selects ProfileB"), Set->SelectAttackProfile(205.0f, 0.26f), Cast<const UEnemyAttackProfile>(ProfileB));
 		TestEqual(TEXT("At distance 205, Fraction 1.0 selects ProfileB"), Set->SelectAttackProfile(205.0f, 1.0f), Cast<const UEnemyAttackProfile>(ProfileB));
 
-		// 2.5 Distance where all entries are filtered out
+		// 2.5 Example Scenario Contract: Short Slash (180cm) vs Leap Attack (300cm), EngagementRange = 300cm
+		// Target at 250cm can select either Short Slash or Leap Attack depending on random weight
+		UEnemyAttackProfile* ProfileShortSlash = CreateValidProfile(TEXT("Test_ShortSlash"), 180.0f, 1.0f, 20.0f);
+		UEnemyAttackProfile* ProfileLeapAttack = CreateValidProfile(TEXT("Test_LeapAttack"), 300.0f, 2.0f, 40.0f);
+		UEnemyAttackSet* ExampleSet = NewObject<UEnemyAttackSet>(GetTransientPackage(), TEXT("Test_ExampleSet"));
+		ExampleSet->SetTestEngagementRange(300.0f);
+		ExampleSet->AddTestEntry(ProfileShortSlash, 2.0f); // Weight 2.0
+		ExampleSet->AddTestEntry(ProfileLeapAttack, 1.0f); // Weight 1.0
+		// Total weight = 3.0: [0, 2.0/3.0=0.666] -> ShortSlash, (0.666, 1.0] -> LeapAttack
+		TestEqual(TEXT("Example scenario at 250cm: Fraction 0.3 selects ShortSlash (180cm)"), ExampleSet->SelectAttackProfile(250.0f, 0.3f), Cast<const UEnemyAttackProfile>(ProfileShortSlash));
+		TestEqual(TEXT("Example scenario at 250cm: Fraction 0.8 selects LeapAttack (300cm)"), ExampleSet->SelectAttackProfile(250.0f, 0.8f), Cast<const UEnemyAttackProfile>(ProfileLeapAttack));
+		TestNull(TEXT("Example scenario at 310cm (> EngagementRange 300cm) returns null"), ExampleSet->SelectAttackProfile(310.0f, 0.5f));
+
+		// 2.6 Out of EngagementRange target distance returns null
 		UEnemyAttackSet* ShortSet = NewObject<UEnemyAttackSet>(GetTransientPackage(), TEXT("Test_ShortSet"));
 		ShortSet->SetTestEngagementRange(100.0f);
 		ShortSet->AddTestEntry(ProfileShort, 1.0f); // Range 120
 		// Target at 150 > EngagementRange (100) -> null
 		TestNull(TEXT("Target distance 150 > EngagementRange 100 returns null"), ShortSet->SelectAttackProfile(150.0f, 0.5f));
+
+		// 2.7 Pure Short-Range Attack Set Contract: Two 180cm profiles, EngagementRange = 250cm
+		UEnemyAttackProfile* ShortProfile1 = CreateValidProfile(TEXT("Test_PureShort1"), 180.0f, 1.5f, 20.0f);
+		UEnemyAttackProfile* ShortProfile2 = CreateValidProfile(TEXT("Test_PureShort2"), 180.0f, 2.0f, 25.0f);
+		UEnemyAttackSet* PureShortSet = NewObject<UEnemyAttackSet>(GetTransientPackage(), TEXT("Test_PureShortSet"));
+		PureShortSet->SetTestEngagementRange(250.0f);
+		PureShortSet->AddTestEntry(ShortProfile1, 1.0f); // Weight 1.0
+		PureShortSet->AddTestEntry(ShortProfile2, 1.0f); // Weight 1.0
+		FString PureShortReason;
+		TestTrue(TEXT("PureShortSet is valid"), PureShortSet->IsAttackSetValid(PureShortReason));
+		// Target at 220cm (inside EngagementRange 250cm, but > AttackRange 180cm)
+		TestEqual(TEXT("PureShortSet at 220cm: Fraction 0.2 selects ShortProfile1"), PureShortSet->SelectAttackProfile(220.0f, 0.2f), Cast<const UEnemyAttackProfile>(ShortProfile1));
+		TestEqual(TEXT("PureShortSet at 220cm: Fraction 0.8 selects ShortProfile2"), PureShortSet->SelectAttackProfile(220.0f, 0.8f), Cast<const UEnemyAttackProfile>(ShortProfile2));
+		// Target at 260cm (> EngagementRange 250cm) returns null
+		TestNull(TEXT("PureShortSet at 260cm (> EngagementRange 250cm) returns null"), PureShortSet->SelectAttackProfile(260.0f, 0.5f));
 	}
 
 	return true;

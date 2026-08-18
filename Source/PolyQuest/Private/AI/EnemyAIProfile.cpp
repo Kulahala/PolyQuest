@@ -34,6 +34,12 @@ bool UEnemyAIProfile::IsValidAIProfile(FString& OutReason) const
 		return false;
 	}
 
+	if (!FMath::IsFinite(ApproachTimeout) || ApproachTimeout <= 0.0f)
+	{
+		OutReason = FString::Printf(TEXT("EnemyAIProfile '%s' has non-positive or non-finite ApproachTimeout (%f)."), *GetNameSafe(this), ApproachTimeout);
+		return false;
+	}
+
 	return true;
 }
 
