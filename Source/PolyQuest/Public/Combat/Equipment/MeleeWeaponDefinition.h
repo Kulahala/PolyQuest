@@ -21,6 +21,12 @@ public:
 	virtual bool IsValidWeaponDefinition(FString& OutReason) const override;
 
 	/**
+	 * Validates this definition purely as a Static Mesh trace geometry provider (for static enemy display binding).
+	 * Ignores player-specific fields (BaseGrantedActions, DefenseProfile, AssociatedLoadout, AttachSocketName, etc.).
+	 */
+	bool IsValidStaticMeshTraceGeometry(FString& OutReason) const;
+
+	/**
 	 * Trace markers resolve against the character SkeletalMesh socket named by
 	 * AttachSocketName instead of a spawned weapon display: the Unarmed
 	 * hand-contact source. Bidirectionally validated against WeaponMesh so the

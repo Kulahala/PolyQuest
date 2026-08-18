@@ -6,6 +6,7 @@
 #include "Combat/Melee/MeleeTraceSourceComponent.h"
 #include "Components/CapsuleComponent.h"
 #include "Components/PrimitiveComponent.h"
+#include "Components/SkeletalMeshComponent.h"
 #include "GameplayAbilitySpec.h"
 #include "GameplayEffectTypes.h"
 #include "GameFramework/Controller.h"
@@ -17,12 +18,22 @@ ABaseCharacter::ABaseCharacter()
 	Attributes = CreateDefaultSubobject<UCharacterAttributeSet>(TEXT("Attributes"));
 	MeleeTraceSource = CreateDefaultSubobject<UMeleeTraceSourceComponent>(TEXT("MeleeTraceSource"));
 	GetCapsuleComponent()->SetCollisionResponseToChannel(ECC_GameTraceChannel1, ECR_Block);
+	GetCapsuleComponent()->SetCollisionResponseToChannel(ECC_Camera, ECR_Ignore);
+	GetMesh()->SetCollisionResponseToChannel(ECC_Camera, ECR_Ignore);
 	AbilitySystemComponent->AddAttributeSetSubobject(Attributes.Get());
 }
 
 void ABaseCharacter::BeginPlay()
 {
 	Super::BeginPlay();
+	if (UCapsuleComponent* CapsuleComp = GetCapsuleComponent())
+	{
+		CapsuleComp->SetCollisionResponseToChannel(ECC_Camera, ECR_Ignore);
+	}
+	if (USkeletalMeshComponent* MeshComp = GetMesh())
+	{
+		MeshComp->SetCollisionResponseToChannel(ECC_Camera, ECR_Ignore);
+	}
 	DisableFixedWeaponDisplayCollision();
 	InitializeAbilityActorInfo();
 }
@@ -106,6 +117,8 @@ void ABaseCharacter::DisableFixedWeaponDisplayCollision()
 		}
 
 		PrimitiveComponent->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+		PrimitiveComponent->SetCollisionResponseToAllChannels(ECR_Ignore);
+		PrimitiveComponent->SetCollisionResponseToChannel(ECC_Camera, ECR_Ignore);
 		PrimitiveComponent->SetGenerateOverlapEvents(false);
 		return;
 	}

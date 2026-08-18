@@ -3,6 +3,7 @@
 #include "Combat/Equipment/MeleeWeaponDefinition.h"
 #include "Combat/Equipment/WeaponEquipmentComponent.h"
 #include "Components/SceneComponent.h"
+#include "Components/StaticMeshComponent.h"
 #include "GameFramework/Actor.h"
 #include "PolyQuest.h"
 
@@ -45,6 +46,11 @@ float UMeleeTraceSourceComponent::GetTraceRadius() const
 		}
 	}
 
+	if (StaticMeleeWeaponDefinition)
+	{
+		return StaticMeleeWeaponDefinition->TraceRadius;
+	}
+
 	return TraceRadius;
 }
 
@@ -56,6 +62,11 @@ int32 UMeleeTraceSourceComponent::GetBladeSubdivisions() const
 		{
 			return EquippedWeapon->BladeSubdivisions;
 		}
+	}
+
+	if (StaticMeleeWeaponDefinition)
+	{
+		return StaticMeleeWeaponDefinition->BladeSubdivisions;
 	}
 
 	return BladeSubdivisions;
@@ -80,6 +91,75 @@ bool UMeleeTraceSourceComponent::TryGetBladeEndpoints(FVector& OutBladeBase, FVe
 			bConfigurationWarningIssued = false;
 			return true;
 		}
+	}
+
+	if (StaticMeleeWeaponDefinition)
+	{
+		FString GeometryReason;
+		if (!StaticMeleeWeaponDefinition->IsValidStaticMeshTraceGeometry(GeometryReason))
+		{
+			WarnInvalidConfiguration(FString::Printf(TEXT("StaticMeleeWeaponDefinition '%s' is invalid: %s"), *GetNameSafe(StaticMeleeWeaponDefinition), *GeometryReason));
+			return false;
+		}
+
+		AActor* Owner = GetOwner();
+		if (!Owner)
+		{
+			WarnInvalidConfiguration(TEXT("the component has no owning actor."));
+			return false;
+		}
+
+		UStaticMeshComponent* WeaponDisplayStaticMesh = nullptr;
+		TInlineComponentArray<UStaticMeshComponent*> StaticMeshComponents(Owner);
+		for (UStaticMeshComponent* MeshComp : StaticMeshComponents)
+		{
+			if (MeshComp && MeshComp->GetFName() == WeaponDisplayComponentName)
+			{
+				WeaponDisplayStaticMesh = MeshComp;
+				break;
+			}
+		}
+
+		if (!WeaponDisplayStaticMesh)
+		{
+			WarnInvalidConfiguration(FString::Printf(
+				TEXT("owning actor '%s' has no UStaticMeshComponent named '%s'."),
+				*GetNameSafe(Owner),
+				*WeaponDisplayComponentName.ToString()));
+			return false;
+		}
+
+		if (WeaponDisplayStaticMesh->GetStaticMesh() != StaticMeleeWeaponDefinition->WeaponMesh)
+		{
+			WarnInvalidConfiguration(FString::Printf(
+				TEXT("WeaponMesh component '%s' mesh '%s' does not match StaticMeleeWeaponDefinition mesh '%s'."),
+				*WeaponDisplayComponentName.ToString(),
+				*GetNameSafe(WeaponDisplayStaticMesh->GetStaticMesh()),
+				*GetNameSafe(StaticMeleeWeaponDefinition->WeaponMesh)));
+			return false;
+		}
+
+		OutBladeBase = WeaponDisplayStaticMesh->GetSocketLocation(StaticMeleeWeaponDefinition->BladeBaseSocketName);
+		OutBladeTip = WeaponDisplayStaticMesh->GetSocketLocation(StaticMeleeWeaponDefinition->BladeTipSocketName);
+
+		if (!FMath::IsFinite(OutBladeBase.X) || !FMath::IsFinite(OutBladeBase.Y) || !FMath::IsFinite(OutBladeBase.Z) ||
+			!FMath::IsFinite(OutBladeTip.X) || !FMath::IsFinite(OutBladeTip.Y) || !FMath::IsFinite(OutBladeTip.Z))
+		{
+			WarnInvalidConfiguration(TEXT("StaticMeleeWeaponDefinition blade socket world locations must be finite."));
+			return false;
+		}
+
+		if (OutBladeBase.Equals(OutBladeTip, KINDA_SMALL_NUMBER))
+		{
+			WarnInvalidConfiguration(FString::Printf(
+				TEXT("StaticMeleeWeaponDefinition blade sockets '%s' and '%s' resolve to the same world position."),
+				*StaticMeleeWeaponDefinition->BladeBaseSocketName.ToString(),
+				*StaticMeleeWeaponDefinition->BladeTipSocketName.ToString()));
+			return false;
+		}
+
+		bConfigurationWarningIssued = false;
+		return true;
 	}
 
 	USceneComponent* WeaponDisplay = nullptr;

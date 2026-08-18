@@ -112,3 +112,73 @@ bool UMeleeWeaponDefinition::IsValidWeaponDefinition(FString& OutReason) const
 
 	return true;
 }
+
+bool UMeleeWeaponDefinition::IsValidStaticMeshTraceGeometry(FString& OutReason) const
+{
+	OutReason.Empty();
+
+	if (bUseOwnerMeshSocketForTrace)
+	{
+		OutReason = TEXT("bUseOwnerMeshSocketForTrace cannot be used as StaticMesh trace geometry.");
+		return false;
+	}
+
+	if (!WeaponMesh)
+	{
+		OutReason = TEXT("WeaponMesh is not assigned.");
+		return false;
+	}
+
+	if (BladeBaseSocketName.IsNone() || BladeTipSocketName.IsNone())
+	{
+		OutReason = TEXT("BladeBaseSocketName and BladeTipSocketName must both be configured.");
+		return false;
+	}
+
+	if (BladeBaseSocketName == BladeTipSocketName)
+	{
+		OutReason = TEXT("BladeBaseSocketName and BladeTipSocketName must be distinct socket names.");
+		return false;
+	}
+
+	const UStaticMeshSocket* BaseSocket = WeaponMesh->FindSocket(BladeBaseSocketName);
+	if (!BaseSocket)
+	{
+		OutReason = FString::Printf(TEXT("WeaponMesh '%s' does not contain socket '%s' for blade base."), *GetNameSafe(WeaponMesh), *BladeBaseSocketName.ToString());
+		return false;
+	}
+
+	const UStaticMeshSocket* TipSocket = WeaponMesh->FindSocket(BladeTipSocketName);
+	if (!TipSocket)
+	{
+		OutReason = FString::Printf(TEXT("WeaponMesh '%s' does not contain socket '%s' for blade tip."), *GetNameSafe(WeaponMesh), *BladeTipSocketName.ToString());
+		return false;
+	}
+
+	if (!FMath::IsFinite(BaseSocket->RelativeLocation.X) || !FMath::IsFinite(BaseSocket->RelativeLocation.Y) || !FMath::IsFinite(BaseSocket->RelativeLocation.Z) ||
+		!FMath::IsFinite(TipSocket->RelativeLocation.X) || !FMath::IsFinite(TipSocket->RelativeLocation.Y) || !FMath::IsFinite(TipSocket->RelativeLocation.Z))
+	{
+		OutReason = TEXT("Blade socket relative locations must be finite.");
+		return false;
+	}
+
+	if (BaseSocket->RelativeLocation.Equals(TipSocket->RelativeLocation, KINDA_SMALL_NUMBER))
+	{
+		OutReason = FString::Printf(TEXT("BladeBaseSocket '%s' and BladeTipSocket '%s' on WeaponMesh '%s' must not have identical RelativeLocations."), *BladeBaseSocketName.ToString(), *BladeTipSocketName.ToString(), *GetNameSafe(WeaponMesh));
+		return false;
+	}
+
+	if (!FMath::IsFinite(TraceRadius) || TraceRadius <= 0.0f)
+	{
+		OutReason = TEXT("TraceRadius must be positive and finite.");
+		return false;
+	}
+
+	if (BladeSubdivisions < 1 || BladeSubdivisions > 8)
+	{
+		OutReason = TEXT("BladeSubdivisions must be between 1 and 8.");
+		return false;
+	}
+
+	return true;
+}

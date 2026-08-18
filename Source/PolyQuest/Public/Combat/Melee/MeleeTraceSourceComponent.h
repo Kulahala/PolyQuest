@@ -6,6 +6,7 @@
 #include "MeleeTraceSourceComponent.generated.h"
 
 class USceneComponent;
+class UMeleeWeaponDefinition;
 class UWeaponEquipmentComponent;
 
 /**
@@ -37,6 +38,10 @@ private:
 
 	/** The optional equipped-weapon owner; cached once in BeginPlay, null on the enemy fixture path. */
 	TWeakObjectPtr<UWeaponEquipmentComponent> CachedEquipmentComponent;
+
+	/** Optional static melee weapon definition used as a geometry provider on non-equipped (e.g. enemy) owners. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Melee Trace|Source", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<UMeleeWeaponDefinition> StaticMeleeWeaponDefinition;
 
 	/** The actual weapon display component. This v1 name is shared by player and first-enemy fixed fixtures without equipment. */
 	UPROPERTY(VisibleDefaultsOnly, BlueprintReadOnly, Category = "Melee Trace|Source", meta = (AllowPrivateAccess = "true"))
