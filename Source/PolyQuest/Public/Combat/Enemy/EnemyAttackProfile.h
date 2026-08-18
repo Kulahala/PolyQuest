@@ -23,6 +23,14 @@ public:
 	float GetCooldownAfterAttack() const { return CooldownAfterAttack; }
 	float GetGuardStaminaDamage() const { return GuardStaminaDamage; }
 
+#if WITH_DEV_AUTOMATION_TESTS
+	void SetTestMontage(UAnimMontage* InMontage) { AttackMontage = InMontage; }
+	void SetTestDamageEffectClass(TSubclassOf<UGameplayEffect> InClass) { DamageGameplayEffectClass = InClass; }
+	void SetTestAttackRange(float InRange) { AttackRange = InRange; }
+	void SetTestCooldown(float InCooldown) { CooldownAfterAttack = InCooldown; }
+	void SetTestGuardStaminaDamage(float InDamage) { GuardStaminaDamage = InDamage; }
+#endif
+
 private:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Enemy Attack", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<UAnimMontage> AttackMontage;

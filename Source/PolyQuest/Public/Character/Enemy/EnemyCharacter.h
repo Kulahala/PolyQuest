@@ -5,7 +5,7 @@
 #include "Character/BaseCharacter.h"
 #include "EnemyCharacter.generated.h"
 
-class UEnemyAttackProfile;
+class UEnemyAttackSet;
 class UGameplayEffect;
 class UAbilitySystemComponent;
 struct FOnAttributeChangeData;
@@ -22,9 +22,13 @@ class POLYQUEST_API AEnemyCharacter : public ABaseCharacter
 public:
 	AEnemyCharacter();
 
-	/** Static authored attack input. Runtime cooldown and active attack state do not live on the Character. */
+	/** Static authored attack set. Runtime cooldown and active attack state do not live on the Character. */
 	UFUNCTION(BlueprintPure, Category = "Combat|Enemy")
-	UEnemyAttackProfile* GetAttackProfile() const { return AttackProfile; }
+	UEnemyAttackSet* GetAttackSet() const { return AttackSet; }
+
+#if WITH_DEV_AUTOMATION_TESTS
+	void SetTestAttackSet(UEnemyAttackSet* InSet) { AttackSet = InSet; }
+#endif
 
 	/** The ASC-owned terminal tag is the only gameplay source of truth for enemy death. */
 	UFUNCTION(BlueprintPure, Category = "Combat|Enemy")
@@ -59,7 +63,7 @@ private:
 	bool ApplyPoiseRecoveryMagnitude(float Magnitude);
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Enemy", meta = (AllowPrivateAccess = "true"))
-	TObjectPtr<UEnemyAttackProfile> AttackProfile;
+	TObjectPtr<UEnemyAttackSet> AttackSet;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Enemy|Death", meta = (AllowPrivateAccess = "true"))
 	bool bUseRagdollOnDeath = true;

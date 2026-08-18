@@ -5,5 +5,8 @@
 
 bool UEnemyAttackProfile::IsValidAttackProfile() const
 {
-	return AttackMontage != nullptr && DamageGameplayEffectClass != nullptr && AttackRange > 0.0f && CooldownAfterAttack >= 0.0f && GuardStaminaDamage >= 0.0f;
+	return AttackMontage != nullptr && DamageGameplayEffectClass != nullptr
+		&& FMath::IsFinite(AttackRange) && AttackRange > 0.0f
+		&& FMath::IsFinite(CooldownAfterAttack) && CooldownAfterAttack >= 0.0f
+		&& FMath::IsFinite(GuardStaminaDamage) && GuardStaminaDamage >= 0.0f;
 }

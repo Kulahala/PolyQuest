@@ -1,34 +1,23 @@
-# TODO-03A4: Off-Hand Shield And Composite Defense Loadout v1
+# TODO-03A5: Ordinary Enemy Weapon Presets And Weighted Attack Sets v1
 
 ## Status
 
-- **Plan state:** CLOSED - implementation, repaired automation coverage, reviews, and documentation closeout are recorded; explicit commit approval remains pending.
-- **Baseline:** `62cab5d [Feature] 武器扫掠 Socket 作者化与校准 (Melee Sweep Socket Authoring And Calibration)`.
-- **Prerequisites:** `TODO-03A1`, `TODO-03A2`, `TODO-03A3`, and `TODO-03A3B` are closed. The current player equipment transaction, concrete `UOffHandWeaponDefinition`, `UDefenseProfileDefinition`, equipment-owned ability grants, world pickup/drop-swap path, and socket-authored main-hand sweep path are the required foundation.
-- **Primary runtime question:** can an equipped OffHand Shield override only the current Guard/Parry ability selection through the existing equipment component, while the MainHand continues to own Primary/Charged/Sprint attacks and all existing GAS cancellation, Guard Break, held-input, rollback, and cleanup contracts remain intact?
+- **Plan state:** COMPLETED - Passed Verification, Independent Review, and Debt Handoff. Ready for explicit commit approval.
+- **Baseline:** `5f7555d [Feature] 副手盾牌与组合防御装配 (Off-Hand Shield And Composite Defense Loadout)`.
+- **Prerequisites:** `TODO-02A`, `TODO-02D3`, `TODO-03A1` through `TODO-03A4`, and `TODO-03A3B` are closed. The existing first enemy endpoint, StateTree controller lifecycle, native enemy melee Ability, shared Trace Window/resolver, Hyper Armor window, and fixed-component trace fallback are the required foundation.
+- **Primary runtime question:** can an ordinary enemy use one immutable authored Attack Set to approach to an authored combat distance, choose one currently valid attack by pure weight, and execute it through the existing GAS Ability lifecycle without adding a second AI, damage, trace, weapon-equipment, or mutable DataAsset state path?
 
 ## Summary
 
-`TODO-03A4` adds the first usable OffHand Shield to the established MainHand + OffHand composition. The shield is an authored `UOffHandWeaponDefinition` carrying a pure `UDefenseProfileDefinition`; it does not become a second combat component, a trace source, a damage actor, or a new generic ability framework.
+`TODO-03A5` replaces the first enemy's one direct `UEnemyAttackProfile` reference with a finite `UEnemyAttackSet`. The set is static authored data. `AEnemyAIController` continues to own target acquisition, StateTree lifetime, the one approach/engagement range, and attack cooldown. `UEnemyMeleeAbility` chooses and snapshots one Profile only after activation has been admitted.
 
-The runtime path remains:
-
-```text
-Input.Guard / Input.Parry
-    -> APlayerCharacter existing combat-input delivery
-    -> UWeaponEquipmentComponent effective defense tag resolution
-       OffHand DefenseProfile -> MainHand DefenseProfile -> current generic default
-    -> ASC activates exactly one matching granted/default Guard or Parry Ability
-    -> existing UPlayerGuardAbility / UPlayerParryAbility lifecycle and cleanup
-```
-
-The Shield-specific Blueprint GAs inherit the existing native Guard/Parry lifecycle. They differ only in authored Montage/presentation and their exact Shield identity tags. Existing generic tags remain explicitly present so old cancellation and input-resume contracts continue to see them.
+The first realized preset is `BP_Enemy_Goblin_Axe`, a configuration-only child of the current Goblin Blueprint (or assigned directly on `BP_Enemy_Goblin`). It retains the existing fixed `WeaponMesh`, `BladeTraceBase`, and `BladeTraceTip` display/trace fixture and uses an Axe Attack Set containing two distinct, Editor-verified Goblin attacks. No Sword preset is required in this slice; the same native contract will be reused only after compatible Sword assets are actually verified.
 
 ```text
 Outer: ue-stage-workflow
 Primary: ue5-cpp-gameplay
-Support: ue5-blueprint-workflow, ue5-debug-validation
-Route reason: Defense Profile validation, component-owned grants, input routing, and Guard/Parry teardown are one GAS/equipment lifecycle boundary.
+Support: ue5-state-tree-ai, ue5-blueprint-workflow, ue5-debug-validation
+Route reason: Attack Set data, Controller approach/cooldown ownership, EnemyMeleeAbility selection/snapshot, and StateTree attack requests are one enemy-combat lifecycle contract.
 ```
 
 ```text
@@ -36,221 +25,145 @@ Plan explorers: 0
 Implementation executors: 0
 Complex Executor: none
 Main parallel work: none
-Reason: the preflight, grant set, profile resolver, rollback, and existing Defense Ability cancellation contracts share one transaction boundary. Splitting writers would create duplicate ownership of the same live AbilitySpecs and tags.
+Reason: EnemyCharacter, Controller, Ability, and StateTree share one selection and teardown boundary. Splitting writers would create duplicate ownership of the selected Profile or cooldown.
 ```
-
-The user may have Gemini review this draft and later implement the accepted C++ slice, but the route record remains zero child agents for this plan. Main retains plan acceptance, integration, validation interpretation, documentation, staging, and commit ownership.
 
 ## Locked Decisions
 
-1. **Shield definition type:** retain the existing narrow `UOffHandWeaponDefinition`. It validates only `HandSlot == OffHand`; there is no second `UShieldWeaponDefinition`, trace payload, damage data, runtime state, or additional equipment component. `UWeaponDefinition` stays abstract.
-2. **Profile data boundary:** retain `UDefenseProfileDefinition` as a pure Guard/Parry input-to-Ability-Tag DataAsset. This stage introduces no second reflected profile type. A profile stores no Montage, GE, Stamina, collision, damage, active state, or AbilitySpec handle.
-3. **Shield identity tags:** add exactly these two Gameplay Tags:
-   - `Ability.Defense.Guard.Shield`
-   - `Ability.Defense.Parry.Shield`
-4. **Shield Ability form:** create no new native Shield Ability. `GA_PlayerShieldGuard` is a Blueprint child of `UPlayerGuardAbility`; `GA_PlayerShieldParry` is a Blueprint child of `UPlayerParryAbility`.
-5. **Required Ability tags:** each Shield GA explicitly carries both its legacy parent category and its exact Shield identity:
-   - Shield Guard: `Ability.Defense.Guard` and `Ability.Defense.Guard.Shield`.
-   - Shield Parry: `Ability.Defense.Parry` and `Ability.Defense.Parry.Shield`.
-   The parent tags preserve generic Guard lookup, `UPlayerGuardBreakAbility` cancellation, Guard/Parry cancellation from other combat actions, and the existing held-RMB resume route. The specific tags make the active profile unambiguous.
-6. **Existing defaults stay startup-owned:** `GA_Guard_Sowrd`, `GA_PlayerParry`, and Guard Break remain in `BP_Player.StartupAbilities`. Do not migrate them into weapon grants and do not change `APlayerCharacter` or `UPlayerGuardBreakAbility` for Shield routing.
-7. **MainHand combat stays MainHand-owned:** Shield grants only its Guard/Parry GAs. It does not replace the active MainHand Primary/Charged/Sprint chain, MainHand trace sources, current Combat Loadout, or base attack Montage selection.
-8. **Shield slots are deferred:** `DA_Weapon_Shield` has an empty candidate list and empty prepared `1-4` layout in v1. Shield skill selection at a rest site remains exclusively `TODO-03D1`; this stage does not create permanent Shield `1-4` grants.
-9. **Mechanical reuse:** Shield Guard/Parry reuse the existing native ability contracts and current Guard/Parry GameplayEffect configuration. The only v1 presentation change is authorship of Shield-compatible Montages: Guard needs a held loop, and Parry uses the existing `Player Parry Window` NotifyState.
-10. **No unrelated presentation or combat expansion:** no weapon-aware locomotion, shield collision/hit trace/damage, bash, block-angle rewrite, new GE, new input asset, `BP_Weapon`, Bow behavior, inventory, Rest-site UI, AnimBP topology, physics asset, map, or enemy change belongs to this stage.
+1. **Attack Set type:** add a narrow `UEnemyAttackSet` DataAsset. Do not reuse the player-only `UWeaponDefinition` hierarchy and do not add `UEnemyWeaponPresetDefinition`.
+2. **Entry shape:** `FEnemyAttackSetEntry` contains only one `UEnemyAttackProfile` reference and one positive `SelectionWeight`. The Profile remains the complete static configuration owner for Montage, Damage GE, `AttackRange`, cooldown, and Guard Stamina Damage.
+3. **Two-layer range contract:** `UEnemyAttackSet::EngagementRange` is the Controller/StateTree chase-stop and attack-request range. A Profile's existing `AttackRange` is its maximum eligible selection range. Both checks use the existing 2D actor-center distance convention.
+4. **Axe behavior example:** when `EngagementRange` is close range, an Axe attack with `AttackRange = 250` does not repeatedly fire while the player holds 180 cm distance; the Controller chases to the Set's closer engagement distance first. Once inside, all Profiles whose `AttackRange` covers the current distance participate in weighted selection.
+5. **Selection owner:** `UEnemyMeleeAbility` selects one Profile during `ActivateAbility()`, not in the Controller and not in StateTree. It snapshots that Profile's execution values for the active Ability lifetime.
+6. **Random policy:** selection is pure weighted random. Immediate repeats are legal; this version deliberately has no previous-attack memory, combo queue, minimum-range bands, utility scoring, opener rule, or tactical repositioning layer.
+7. **Deterministic test seam:** the Set's pure selection helper accepts a caller-supplied normalized selection fraction. Runtime passes a fresh random fraction; Automation passes fixed fractions. The DataAsset itself does not own an RNG or mutable selection history.
+8. **Validity policy:** an Attack Set fails closed for an empty list, null or invalid Profile, duplicate Profile reference, non-positive/non-finite weight, non-positive `EngagementRange`, or an `EngagementRange` that no entry can reach. A valid general Set may contain one entry, but the Axe authoring gate requires two distinct valid entries to prove weighting.
+9. **Migration policy:** replace `AEnemyCharacter::AttackProfile` with `AttackSet` in this slice. Do not leave an old-profile compatibility fallback or two runtime branches. The existing `DA_EnemyAttackProfile_GoblinAxe` asset remains and becomes an entry in the new Set.
+10. **Preset boundary:** `BP_Enemy_Goblin_Axe` is an authored presentation/configuration preset only. It may select its Attack Set and fixed weapon display components; it must not acquire player pickups, use `UWeaponEquipmentComponent`, dynamically switch weapons, own inventory, or become a separate gameplay authority.
+11. **Cooldown and teardown:** Controller cooldown begins exactly as it does now, only after the selected Montage actually started and the active Ability has ended. A failed selection or failed Montage start starts no cooldown. Existing Trace, Hyper Armor, C3B Hit Reaction, C3C Stance Break, death, and `EndAbility()` cleanup remain their current owners.
+12. **No premature long-range AI:** a future enemy that truly needs a long-range opener, minimum-distance attacks, strafing, or tactical spacing receives a dedicated behavior stage. This slice makes farther engagement an explicit Set authoring decision rather than inferring it from the largest Profile range.
 
 ## Current Source Contract And Gap
 
-Static source inspection at the baseline establishes these facts:
+- `UEnemyAttackProfile` is currently a valid-or-invalid immutable DataAsset containing one Montage, one damage effect, `AttackRange`, cooldown, and Guard Stamina Damage. It explicitly has no selector, queue, random table, or weapon-switching behavior.
+- `AEnemyCharacter` currently exposes one `AttackProfile`. `AEnemyAIController::OnPossess()` validates it, caches its `AttackRange` into `MeleeRange`, and starts StateTree. `TryRequestMeleeAttack()` only activates `Ability.Attack.Enemy.Melee`; it does not play a Montage or mutate combat state.
+- `UEnemyMeleeAbility` currently reads the direct Profile, snapshots Montage/effect/cooldown/Guard Stamina Damage, creates the existing Montage/Trace/Hyper Armor tasks, and starts the Controller cooldown only after a confirmed attack began and later ends.
+- `FEnemyStateTreeTask_RequestMeleeAttack` only waits for target/range/cooldown and requests the GAS Ability. It never chooses an attack or owns a Montage.
+- `UMeleeTraceSourceComponent` currently resolves the enemy's fixed component-name fallback (`WeaponMesh`, `BladeTraceBase`, `BladeTraceTip`) when no player equipment markers are present. It remains a legal enemy trace provider. Its removal is still exclusively `TODO-06C` and requires source plus Editor Reference Viewer evidence of zero users.
 
-- `UWeaponEquipmentComponent::ResolveDefenseAbilityTag()` already resolves the current OffHand `DefenseProfile` first, then the current MainHand profile, then `Ability.Defense.Guard` / `Ability.Defense.Parry` defaults.
-- `RunPreflight()` runs before any equipment teardown and already composes both hand definitions' `BaseGrantedActions`, rejects duplicate Ability classes, and validates the prospective transaction before existing handles, display components, markers, loadout, or current definitions change.
-- `UPlayerGuardAbility` and `UPlayerParryAbility` are reusable native lifecycle bases. `UPlayerGuardBreakAbility` continues to cancel the generic Guard category, which is why the Shield children must retain the generic parent tag explicitly.
-
-The missing contract is not a second profile resolver. It is preflight proof that a non-default authored Defense Profile actually corresponds to exactly one correctly tagged Guard class and one correctly tagged Parry class in the prospective profile provider's own base grant set.
+The missing contract is one immutable Attack Set with an explicit engagement range and a pure weighted selection helper. The implementation must not solve this by putting selected state in a DataAsset, by adding a second controller state machine, or by making a Player weapon definition pretend to be an Enemy weapon definition.
 
 ## Runtime Implementation
 
-### 1. Gameplay Tag Registration
+### 1. `UEnemyAttackSet`
 
-In `Config/Tags/PolyQuestGameplayTags.ini`, add only:
+Add `Source/PolyQuest/Public/Combat/Enemy/EnemyAttackSet.h` and `Source/PolyQuest/Private/Combat/Enemy/EnemyAttackSet.cpp`.
 
-```text
-Ability.Defense.Guard.Shield
-Ability.Defense.Parry.Shield
-```
+- Declare a BlueprintType `FEnemyAttackSetEntry` with `AttackProfile` and `SelectionWeight` only.
+- Declare a BlueprintType `UEnemyAttackSet : UDataAsset` with authorable positive `EngagementRange` and `Entries`.
+- Expose narrow native accessors for `EngagementRange`, validation with a human-readable failure reason, and pure profile selection for a supplied 2D distance plus normalized random fraction.
+- Validation must inspect every entry rather than silently skip malformed data. Duplicate references are invalid; changing probability must be done through the one entry's weight.
+- Selection must return no Profile when the Set is invalid, the target lies outside `EngagementRange`, no Profile reaches the current distance, or the supplied random fraction is invalid. It sums only currently eligible positive weights, then uses cumulative weighted selection.
+- Do not add Gameplay Tags, Blueprint condition callbacks, random seeds, timers, Target references, ASC references, current profile fields, cooldown fields, or weapon display data to the Set.
 
-Do not rename `Input.Guard`, `Input.Parry`, `Ability.Defense.Guard`, `Ability.Defense.Parry`, Guard Break tags, or existing event/state tags. The new tags identify the selected Shield behavior; they do not create a new physical input intent.
+### 2. Enemy Character And Controller Migration
 
-### 2. `UDefenseProfileDefinition` Validity
+In `AEnemyCharacter`, replace the direct `AttackProfile` property/accessor with `AttackSet` / `GetAttackSet()`. Do not modify the existing death, Poise recovery, team, ASC, startup-ability, fixed display, or trace-source lifecycle.
 
-Keep `UDefenseProfileDefinition` data-only. Tighten its existing `IsProfileValid()` predicate so a present profile requires two valid, distinct tags. It remains a small local validity check only; it must not reference Blueprint GAs, Montages, GEs, an ASC, an equipped actor, or mutable equipment state.
+In `AEnemyAIController`:
 
-An absent `DefenseProfile` remains legal and continues to select the existing generic default tags. A non-null but invalid profile is an authored error and must fail preflight rather than being silently ignored or falling back.
+- Rename the validity concept/API from Profile to Attack Set and update all native callers and logs accordingly.
+- During `OnPossess()`, validate the possessed enemy's Set before StateTree starts. Cache only `AttackSet.EngagementRange` into the existing `MeleeRange` field, resetting it during unpossess/death as today.
+- Add one narrow native helper that retrieves the current valid target's 2D distance. `IsCombatTargetInMeleeRange()` must use that helper and the cached engagement range so the Controller and Ability share one distance convention.
+- Keep Controller ownership of target, focus, perception, StateTree start/stop, `MeleeAttackCooldownEndTime`, and cooldown timing. It must not choose, cache, or pass a selected Profile to the Ability.
+- An invalid Set remains fail-visible: log once with the validation reason and do not start StateTree. A target outside `EngagementRange` remains a normal chase condition, not an error.
 
-### 3. Prospective Defense-Profile Preflight
+### 3. `UEnemyMeleeAbility` Selection And Snapshot
 
-Extend `UWeaponEquipmentComponent::RunPreflight()` before teardown or handle mutation. Determine the prospective profile provider from the proposed composition:
+- Update `CanActivateAbility()` and setup validation to require a valid Attack Set, valid Controller target, active-range admission, AnimInstance, tags, and existing GAS state gates. They must not roll random numbers or select a Profile.
+- At the start of `ActivateAbility()`, reset all current active fields, retrieve the current target distance through the Controller, and ask the Attack Set to select a Profile using a fresh runtime random fraction.
+- Store the selected Profile in a transient GC-tracked `ActiveAttackProfile` field, then snapshot its Montage, Damage GE, cooldown, and Guard Stamina Damage before creating any AbilityTasks or committing the Ability.
+- If selection fails because the target moved or no entry is eligible, end through the existing unified failure path before `CommitAbility()`. Do not create tasks, set attack state, apply cooldown, or leave a selected pointer behind.
+- Retain current Montage identity filtering, Trace Window delivery, Hyper Armor Begin/End filtering, and confirmed-start behavior. `EndAbility()` must clear `ActiveAttackProfile` alongside the existing active snapshot fields after using the already-snapshotted cooldown value when `bAttackStarted` is true.
+- StateTree task and condition topology remain unchanged. They continue to ask Controller questions and request the one enemy melee Ability; no Blueprint StateTree authoring is required for weighted selection.
 
-```text
-NewOffHand->DefenseProfile when present
-    else NewMainHand->DefenseProfile when present
-    else no profile provider (existing generic-default path)
-```
+### 4. Focused Native Automation
 
-For an explicit provider, fail closed unless all of the following hold:
+Add `Source/PolyQuest/Private/Tests/EnemyAttackSetAutomationTests.cpp` with `PolyQuest.Enemy.AttackSetSelection` under the existing Editor automation convention.
 
-1. The `UDefenseProfileDefinition` is valid, including distinct Guard and Parry profile tags.
-2. The provider's `BaseGrantedActions` contains exactly one Guard candidate whose Ability CDO has both the exact profile Guard tag and the exact generic `Ability.Defense.Guard` tag.
-3. The same provider's `BaseGrantedActions` contains exactly one Parry candidate whose Ability CDO has both the exact profile Parry tag and the exact generic `Ability.Defense.Parry` tag.
-4. Guard and Parry resolve to two different Ability classes.
-5. Missing classes, null CDOs, a class missing either required tag, more than one class for either mapping, one class satisfying both mappings, invalid profile tags, and duplicated profile tags all reject the prospective composition.
+- Build test Profiles and Sets as transient native objects. Follow the existing automation style for private authored fields through reflection; do not add public production setters or require local `Content/**` fixtures.
+- Assert rejection for empty Sets, null/invalid entries, duplicate Profiles, zero/negative weights, and an engagement range that no Profile can cover.
+- Assert target distance above `EngagementRange` produces no selection, Profile ranges filter candidates, and fixed random fractions select the expected cumulative-weight entry at lower/middle/upper boundaries.
+- Assert a single valid entry remains legal for the general data type. The two-entry requirement belongs only to this stage's authoring and PIE evidence.
 
-Use exact Gameplay Tag checks for this validation. Parent hierarchy alone is insufficient: the Shield profile must select `Ability.Defense.Guard.Shield` or `Ability.Defense.Parry.Shield` deliberately, while the generic tags remain compatibility categories on the same CDOs.
+## Editor Authoring Gate
 
-Keep the existing broad composition validation and duplicate-class rejection. The new rule validates only the effective profile provider's own `BaseGrantedActions`; a Sword MainHand may not accidentally satisfy a malformed Shield profile, and an OffHand profile must not borrow a default Startup Ability to pass preflight.
+After the user compiles `PolyQuestEditor` successfully:
 
-No profile means no new validation or grant requirement: the existing default Guard/Parry fallback stays behaviorally unchanged. A valid explicit profile continues through the existing grant/apply path; no separate Shield grant, resolver, or post-apply repair path is added.
+1. Create `DA_EnemyAttackSet_GoblinAxe` under the existing enemy combat data location.
+2. Add the existing `DA_EnemyAttackProfile_GoblinAxe` and one new, distinct `DA_EnemyAttackProfile_GoblinAxe_*` entry. Each must use a different attack Montage confirmed by Editor to be compatible with the Goblin Skeleton, have a valid damage GE, positive `AttackRange`, non-negative cooldown, and non-negative Guard Stamina Damage.
+3. Configure both positive weights and an explicit `EngagementRange` no greater than at least one entry's `AttackRange`. For the intended close-combat Goblin behavior, set a close engagement range so the AI walks in before it can select either attack.
+4. Create `BP_Enemy_Goblin_Axe` as a configuration-only child of the current `BP_Enemy_Goblin`. Assign its Attack Set and preserve the existing `WeaponMesh`, `BladeTraceBase`, `BladeTraceTip`, trace settings, `GA_EnemyMelee`, Hit Reaction, Stance Break, AnimBP, and StateTree configuration.
+5. On each new attack Montage, author a valid existing `AttackTraceWindow`. Preserve or add the existing `Enemy Hyper Armor` NotifyState only where that individual attack genuinely needs it; it is not mandatory for every profile.
+6. Replace the Scene01 Goblin test instance with `BP_Enemy_Goblin_Axe`, save affected assets, and read back that no Blueprint has a missing/unknown enemy attack property. The old single Profile asset is retained as a Set entry; do not delete imported assets or unused WIP.
+7. Do not create `BP_Enemy_Goblin_Sword` in this stage. It becomes a later configuration-only preset after its display mesh, fixed markers, and at least two usable Sword attacks are actually verified.
 
-### 4. Existing Input And Ability Lifecycle Remain Intact
+All Editor assets remain local authoring WIP and are excluded from the focused native/documentation commit unless the user later gives explicit asset-commit approval.
 
-Do not modify `APlayerCharacter`, `UPlayerGuardAbility`, `UPlayerParryAbility`, or `UPlayerGuardBreakAbility` for tag routing. After a successful Shield composition, existing input delivery asks the equipment component for the effective tag and activates the existing component-granted Shield GA. The Shield GAs then execute the inherited lifecycle unchanged.
-
-In particular, preserve all of these current contracts:
-
-- `State.Action.Guarding`, `State.Action.Parrying`, Stamina, movement, damage absorption, parry timing, collision/trace, and `EndAbility()` cleanup retain their existing owners.
-- Guard Break continues to cancel the generic Guard category; therefore a Shield Guard cannot survive a Guard Break merely because it has a more specific identity tag.
-- Held RMB resumes through the established path using the **current** effective profile after Guard Break, interruption, release/cancel, drop-swap, or a successful TwoHanded/OffHand composition change.
-- Existing attack/Dodge/Defense cancellation tags continue to see the Shield GAs through their explicit generic parent tags.
-- A valid Shield Profile must not cause both a default startup Guard/Parry and a Shield Guard/Parry to activate for one input.
-
-### 5. Native Scope And Expected Paths
-
-Expected native/config changes are limited to:
-
-```text
-Config/Tags/PolyQuestGameplayTags.ini
-Source/PolyQuest/Public/Combat/Equipment/DefenseProfileDefinition.h
-Source/PolyQuest/Public/Combat/Equipment/WeaponEquipmentComponent.h
-Source/PolyQuest/Private/Combat/Equipment/WeaponEquipmentComponent.cpp
-Source/PolyQuest/Private/Tests/WeaponEquipmentComponentAutomationTests.cpp
-```
-
-`WeaponEquipmentComponent.h` may expose only a narrow private/helper or test-only seam needed by the existing local automation fixture. Do not broaden it into public profile editing, weapon inventories, generic interaction, or an alternate combat authority. `UOffHandWeaponDefinition` already exists and is not expected to change unless implementation discovers a concrete defect in its current `HandSlot == OffHand` validation.
-
-## User-Owned Editor Authoring Gate
-
-Do these asset steps only after the native source compiles and the new tags are visible in the Editor. All `Content/**` work remains local authoring WIP and is excluded from the native/documentation commit.
-
-1. Create `DA_Defense_Shield` as `UDefenseProfileDefinition`.
-   - `GuardAbilityTag = Ability.Defense.Guard.Shield`.
-   - `ParryAbilityTag = Ability.Defense.Parry.Shield`.
-   - Confirm the two values are valid and distinct.
-2. Complete the existing `Content/_DataAssets/Weapon/DA_Weapon_Shield` as `UOffHandWeaponDefinition`.
-   - Keep `HandSlot = OffHand`.
-   - Set `DefenseProfile = DA_Defense_Shield`.
-   - Set `BaseGrantedActions` to exactly `GA_PlayerShieldGuard` and `GA_PlayerShieldParry`.
-   - Keep candidate/reusable/exclusive and prepared-slot arrays empty for v1.
-   - Preserve its existing display mesh/socket/offset authoring unless a concrete Shield presentation defect is found. Do not add trace markers or damage data.
-3. Create `GA_PlayerShieldGuard` as a Blueprint child of `UPlayerGuardAbility`.
-   - In `AbilityTags`, explicitly retain `Ability.Defense.Guard` and add `Ability.Defense.Guard.Shield`.
-   - Assign a Shield-compatible Guard Montage with an authored held loop.
-   - Reuse the current Guard cost/move-speed/regen/delay configuration required by the inherited ability. Do not create a new Shield-only GE in this stage.
-4. Create `GA_PlayerShieldParry` as a Blueprint child of `UPlayerParryAbility`.
-   - In `AbilityTags`, explicitly retain `Ability.Defense.Parry` and add `Ability.Defense.Parry.Shield`.
-   - Assign a Shield-compatible Parry Montage and place the existing `Player Parry Window` NotifyState only over the intended parry frames.
-   - Reuse the inherited/current Parry configuration; no Shield-only cost, cooldown, damage, or reaction contract is introduced.
-5. Configure one local `BP_WorldWeaponPickup` fixture to reference `DA_Weapon_Shield`. This is map/presentation authoring only; `AWorldWeaponPickup` and its C++ transaction remain the sole pickup authority.
-6. Read the assets back before PIE. Confirm Blueprint parent classes, both exact tag pairs, profile linkage, only two Shield base grants, empty Shield `1-4` arrays, Montages, and no Missing/Unknown Notify or class references.
-
-Do not change `BP_Player.StartupAbilities`, default `GA_Guard_Sowrd`, `GA_PlayerParry`, Guard Break, `GA_PrimaryAttack`, input mappings, `DA_Weapon_Sword`, `DA_Weapon_Unarmed`, `DA_Weapon_TwoHandedFixture`, `DA_CombatLoadout_*`, AnimBP topology, maps, physics, or collision settings as routine Shield setup.
-
-## Validation Matrix
+## Validation And Review Record
 
 ### Main Static Gate
 
-Before requesting user validation:
+- Re-read `UEnemyAttackSet`, `AEnemyCharacter`, `AEnemyAIController`, `UEnemyMeleeAbility`, and `UEnemyAttackProfile`.
+- Verified pure fail-closed validation on `IsAttackSetValid` (rejecting empty list, non-positive/non-finite engagement range, null/invalid profiles, non-positive/non-finite weights, duplicate profile references, and unreachable engagement ranges).
+- Verified deterministic weighted selection on `SelectAttackProfile` (distance filtering, bounds checks, cumulative weights).
+- Verified `AEnemyAIController` caches `EngagementRange` into `MeleeRange` and validates `AttackSet` on `OnPossess()`, with `TryGetCurrentTargetDistance2D` providing 2D actor distance.
+- Verified `UEnemyMeleeAbility::ActivateAbility()` selects and snapshots Profile dynamically and cleans up in `EndAbility()`.
+- Verified zero remaining `AttackProfile` property/accessor paths in `AEnemyCharacter` and `AEnemyAIController`.
+- `git diff --check` passed cleanly with 0 whitespace errors.
 
-1. Re-read the final `UDefenseProfileDefinition`, `UWeaponEquipmentComponent`, current input resolver path, Guard/Parry/Guard Break direct cancellation callers, and the automation fixture.
-2. Use CodeGraph for the component/profile/direct-caller graph. Use `code-review-graph` as supplemental diff/impact evidence when its index covers the baseline; if stale, record the stale-coverage fallback and review the direct source/diff instead.
-3. Cross-check both new tags in configuration, preflight, test fixture, and the two authored-asset requirements. Confirm no code path treats the new specific tags as a replacement for their generic parent categories.
-4. Scan added locals and helpers for inherited-member shadowing/C4458 exposure, null CDO handling, and profile/provider confusion.
-5. Run `git diff --check` on the approved source/config/documentation paths.
-6. Do not run UBT, Visual Studio, Unreal Editor, PIE, or mutate assets. Those gates remain user-owned.
+### User Compile, Automation, And PIE Evidence
 
-### Native Automation Gate
+- **Compilation**: Compiled `PolyQuestEditor` with Live Coding (`Ctrl+Alt+F11`) with success.
+- **Automation Test 1**: `PolyQuest.Enemy.AttackSetSelection` passed 100% with `Success` (covering validation edge cases and cumulative selection).
+- **Automation Test 2**: `PolyQuest.Equipment.TransactionMatrix` passed 100% with `Success` (regression guard confirming player equipment transactions intact).
+- **Asset Configuration**: Authored `DA_EnemyAttackProfile_GoblinAxe_02` (distinct montage with NotifyState `AttackTraceWindow`) and `DA_EnemyAttackSet_GoblinAxe` (`EngagementRange = 180.0cm`, 2 entries with weights `1.0`).
+- **Scene01 PIE**: Confirmed Goblin chases to engagement range and randomly executes both axe attack montages at melee range.
 
-Extend `PolyQuest.Equipment.TransactionMatrix` using the real local Shield fixture and the existing real Player skeleton/socket fixture. The test must cover, at minimum:
+### Independent Review Record
 
-| Case | Required assertion |
-| --- | --- |
-| Valid Sword + Shield composition | Preflight/application succeeds; Shield Guard and Parry are component-owned base grants; effective Guard/Parry resolution returns the exact Shield tags; MainHand attack grants and current MainHand remain intact. |
-| Malformed explicit profile | Null/invalid/duplicate profile tags, no matching provider base action, a class without its generic parent tag, duplicate matches, or one class matching both mappings all fail preflight before any component-owned handle, display, marker, loadout, or current definition changes. |
-| Default fallback | A no-profile composition preserves the existing generic Guard/Parry resolution and does not require Shield classes. |
-| Shield removal / TwoHanded change | Removing the OffHand through a legal TwoHanded transaction clears Shield grants and resolves the resulting composition's applicable MainHand/default profile without stale Shield handles or tags. |
-| TwoHanded -> Shield normalization | Picking an OffHand Shield while holding the existing TwoHanded fixture composes `UnarmedFallbackDefinition + Shield`, drops the TwoHanded definition through the existing transaction, and resolves Shield Defense tags. |
-| Atomic regressions | Existing direct equip, world pickup, rollback, projected drop, FormerOwner cooldown, socket-sweep, and active-combat swap-refusal assertions still pass. |
+- **Reviewer**: Fresh Independent Reviewer (Codex / Fresh Review pass).
+- **Mode**: Strict Defect-First Code Review (Pass 1 Normal Review + Pass 2 Adversarial Defense/Audit).
+- **Outcome**: 2 P2s and 1 P3 identified and repaired; 0 P0/P1s.
+  - **P2 (Fixed)**: Replaced stale single-Profile descriptions in `ARCHITECTURE.md` (lines 170-175, 198) and `EnemyAIController.h` (line 110) comment with explicit `UEnemyAttackSet` and `EngagementRange` contracts.
+  - **P2 (Fixed)**: Added `FMath::IsFinite` checks across `UEnemyAttackProfile::IsValidAttackProfile`, `UEnemyAttackSet::IsAttackSetValid` (total weight sum overflow), `UEnemyAttackSet::SelectAttackProfile` (total eligible weight), and `AEnemyAIController::StartMeleeAttackCooldown`.
+  - **P3 (Fixed)**: Added explicit automation test assertions in `EnemyAttackSetAutomationTests.cpp` covering `+INF`, `NaN`, and total weight overflow on Profile fields, EngagementRange, SelectionWeight, and target distance / random fraction.
 
-The test must exercise ordinary current behavior, not a mock ASC or a parallel Shield-only transaction. It is local-asset-dependent evidence and must not be presented as clean-checkout fixture proof while the authored asset WIP is excluded from the commit.
+### Debt Handoff
 
-### User Compile And Editor Readback
+- Static enemy weapon geometry convergence (consuming `UMeleeWeaponDefinition` geometry directly for trace markers and display) is owned by `TODO-03A5B`.
+- Fixed-component trace marker fallback removal remains owned by `TODO-06C`.
+- All authored `Content/**` assets (`DA_EnemyAttackProfile_GoblinAxe_02`, `DA_EnemyAttackSet_GoblinAxe`, `BP_Enemy_Goblin`, maps, montages) remain local authoring WIP and are excluded from the native/documentation commit.
 
-1. Compile `PolyQuestEditor` manually.
-2. Run `PolyQuest.Equipment.TransactionMatrix` and report the named result.
-3. In the Editor, read back `DA_Defense_Shield`, `DA_Weapon_Shield`, `GA_PlayerShieldGuard`, `GA_PlayerShieldParry`, and the Shield world-pickup fixture. Confirm the exact authoring checklist above and that no asset resolves to Missing/Unknown classes or NotifyStates.
+## Commit Boundary
 
-### Scene01 PIE Gate
-
-Use a Sword main hand, the authored Shield pickup, an enemy able to attack, and the existing TwoHanded fixture where applicable.
-
-1. **Sword baseline:** without Shield, RMB and Q still use the existing default Guard/Parry behavior. Light/Charged/Sprint attacks remain Sword-owned; no Shield `1-4` action appears.
-2. **Shield override:** pick up Shield while using Sword. RMB plays only Shield Guard and Q plays only Shield Parry; neither input double-activates the old default and Shield ability. Movement, front-angle blocking, Stamina, and existing Guard/Parry recovery behave as before.
-3. **Parry timing:** an enemy hit inside the Shield Parry NotifyState succeeds through the existing Parry path; the same hit outside the authored window does not gain Parry behavior.
-4. **Guard Break and held-input recovery:** block until the existing Guard Break path occurs. Shield Guard ends with the normal cleanup, Guard Break behaves normally, and a still-held RMB can only resume through the existing input path using the current Shield profile once legal. Physical Released/Canceled remains a clean stop.
-5. **Cancellation and teardown:** attack/Dodge/defense cancellation, Guard Break, death, and montage interruption leave no stale `State.Action.Guarding`, `State.Action.Parrying`, component-owned Shield spec, Trace task, or montage state. Existing generic cancellation behavior must still affect Shield GAs.
-6. **Composite changes:** Sword + Shield -> TwoHanded clears Shield, drops it through the existing world transaction, and falls back to the legal resulting defense profile/default. TwoHanded -> Shield switches the MainHand to Unarmed fallback, equips Shield, drops TwoHanded, and uses the Shield profile. The replaced item stays visible on the ground under the established former-owner rule.
-7. **Regression:** unarmed, Sword, current world pickup/drop-swap, malformed pickup rejection, socket-authored Sword sweep, enemy damage, death, no-hit, same-team rejection, invulnerability rejection, and current Guard/Parry input behavior remain intact.
-
-Compile, Automation, Editor readback, PIE, input, and visual checks are separate evidence. A static review or successful test compile is not a substitute for the user-confirmed Scene01 behavior.
-
-## Implementation, Review, And Closeout Record
-
-### Implemented Contract
-
-- Registered `Ability.Defense.Guard.Shield` and `Ability.Defense.Parry.Shield`.
-- `UDefenseProfileDefinition::IsProfileValid()` now rejects identical Guard/Parry tags. `UWeaponEquipmentComponent::RunPreflight()` selects the prospective OffHand profile first, then MainHand, and fail-closes an explicit profile unless its provider's own `BaseGrantedActions` supplies exactly one distinct Guard class and one distinct Parry class. Each matching CDO must carry both the exact profile tag and the explicit generic parent tag.
-- The existing input resolver and native Guard/Parry/Guard Break ability lifecycle were not changed. A valid Shield profile only changes the selected defense tag and grants its two abilities through the existing component-owned grant set; MainHand attacks, trace delivery, damage, and Shield quick slots stay out of scope.
-- The display component now ignores collision channels explicitly. This keeps a displayed Shield presentation-only and prevents it from becoming a second collision participant.
-
-### P3 Automation Repair
-
-Codex's fresh review found two non-blocking automation gaps after the initial implementation: the matrix did not prove that the selected Shield Guard/Parry classes were current component-owned grants, and it did not prove that a Sword + Shield -> TwoHanded -> Shield sequence clears stale defense Specs before re-granting the Shield pair.
-
-- Added the `WITH_DEV_AUTOMATION_TESTS`-only `VerifyGrantedAbilityBinding()` helper. It checks an expected class against the component's current granted handles and ASC Specs without changing runtime behavior.
-- Extended `PolyQuest.Equipment.TransactionMatrix` to assert the valid Sword + Shield grants, exact Shield Guard/Parry resolution, clearing both Shield handles and ASC Specs after the TwoHanded transition, and re-granting them after the TwoHanded -> Shield normalization. The fixture-only `UCombatLoadoutDefinition::AddTestInputAbilityRoute()` supplies the MainHand primary route used by that composed test setup.
-
-### Evidence And Review Boundary
-
-- **User-confirmed Automation:** after the repair, `PolyQuest.Equipment.TransactionMatrix` reported `Success`. Its logged TwoHanded/OffHand rejection, coincident-socket rejection, apply/drop rollback, and active-combat swap refusal lines are intentional negative-path assertions.
-- **User-observed presentation:** Shield Guard was exercised far enough to expose a side-on upper-body versus default locomotion twist while moving. That is accepted presentation debt, not evidence of a failed defense transaction; `TODO-07B` owns the focused weapon-aware locomotion/facing solution.
-- **Gemini review:** the user reported Gemini's strict review passed before the final P3 coverage repair.
-- **Codex fresh review:** direct source/diff review, CodeGraph call-path inspection, and the final automation delta found no P0/P1/P2 issue after the two P3 assertions were added. `code-review-graph` was built at `7093c302e47d460580ae22e4b5e6be90bfb6752e`, behind this stage baseline `62cab5d46e2d7dbef0278254a6015b91ff6d1932`; its change summary was treated only as stale-coverage guidance, with direct source/diff review authoritative.
-- **Not claimed:** this closeout does not claim a separate final `PolyQuestEditor` compile, final Editor asset readback, or complete Scene01 PIE regression run after the P3 repair beyond the evidence stated above.
-
-### Candidate Commit Boundary
-
-After explicit user approval, stage only the approved native/config/documentation paths that actually changed:
+Candidate native/documentation paths are limited to:
 
 ```text
-Config/Tags/PolyQuestGameplayTags.ini
-Source/PolyQuest/Public/Combat/Equipment/DefenseProfileDefinition.h
-Source/PolyQuest/Public/Combat/Equipment/WeaponEquipmentComponent.h
-Source/PolyQuest/Private/Combat/Equipment/WeaponEquipmentComponent.cpp
-Source/PolyQuest/Public/Combat/Input/CombatLoadoutDefinition.h
-Source/PolyQuest/Private/Tests/WeaponEquipmentComponentAutomationTests.cpp
+Source/PolyQuest/Public/Combat/Enemy/EnemyAttackSet.h
+Source/PolyQuest/Private/Combat/Enemy/EnemyAttackSet.cpp
+Source/PolyQuest/Public/Combat/Enemy/EnemyAttackProfile.h      (only if comments/API need the clarified contract)
+Source/PolyQuest/Private/Combat/Enemy/EnemyAttackProfile.cpp  (only if validation support needs it)
+Source/PolyQuest/Public/Character/Enemy/EnemyCharacter.h
+Source/PolyQuest/Private/Character/Enemy/EnemyCharacter.cpp
+Source/PolyQuest/Public/AI/EnemyAIController.h
+Source/PolyQuest/Private/AI/EnemyAIController.cpp
+Source/PolyQuest/Public/AbilitySystem/Abilities/EnemyMeleeAbility.h
+Source/PolyQuest/Private/AbilitySystem/Abilities/EnemyMeleeAbility.cpp
+Source/PolyQuest/Private/Tests/EnemyAttackSetAutomationTests.cpp
 ARCHITECTURE.md
 ROADMAP.md
 plan.md
 ```
 
-Explicitly exclude all `Content/**`, including Shield DataAssets, Shield GA Blueprints, Shield Montages, NotifyState placements, `BP_WorldWeaponPickup` fixtures, maps, AnimBPs, input assets, imported resources, `.uproject`, generated directories, `Config/Tests/`, `.zcode/`, and all unrelated user WIP. No new native Shield GA, `BP_Weapon`, player/enemy character subclass, inventory, Bow, or world-interaction framework is part of this commit.
+Explicitly exclude all `Content/**`, `Config/**`, `.uproject`, maps, StateTree assets, AnimBPs, GA/GE assets, Montages, imported content, `.zcode/`, `Config/Tests/`, generated directories, and unrelated user WIP. Do not use `git add -A`.

@@ -11,6 +11,7 @@ class UAbilityTask_PlayMontageAndWait;
 class UAbilityTask_WaitGameplayEvent;
 class UAnimInstance;
 class UAnimMontage;
+class UEnemyAttackProfile;
 class UGameplayEffect;
 
 /**
@@ -46,6 +47,9 @@ public:
 		bool bWasCancelled) override;
 
 private:
+	UPROPERTY(Transient)
+	TObjectPtr<const UEnemyAttackProfile> ActiveAttackProfile;
+
 	UPROPERTY(Transient)
 	TObjectPtr<UAbilityTask_PlayMontageAndWait> MontageTask;
 

@@ -10,6 +10,7 @@
 #include "Character/BaseCharacter.h"
 #include "Character/Enemy/EnemyCharacter.h"
 #include "Combat/Enemy/EnemyAttackProfile.h"
+#include "Combat/Enemy/EnemyAttackSet.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "GameplayEffect.h"
 #include "PolyQuest.h"
@@ -54,6 +55,7 @@ void UEnemyMeleeAbility::ActivateAbility(
 	const FGameplayEventData*)
 {
 	bEndAbilityRequested = false;
+	ActiveAttackProfile = nullptr;
 	ActiveMontage = nullptr;
 	ActiveDamageGameplayEffectClass = nullptr;
 	ActiveCooldownAfterAttack = 0.0f;
@@ -64,25 +66,39 @@ void UEnemyMeleeAbility::ActivateAbility(
 
 	if (!ValidateActivationSetup(ActorInfo))
 	{
-		UE_LOG(LogPolyQuest, Warning, TEXT("Enemy melee activation aborted for '%s': ASC, controller target/range, AnimInstance, montage, damage effect, and trace window tags are required."), *GetNameSafe(GetAvatarActorFromActorInfo()));
+		UE_LOG(LogPolyQuest, Warning, TEXT("Enemy melee activation aborted for '%s': ASC, controller target/range, AnimInstance, valid AttackSet, and trace window tags are required."), *GetNameSafe(GetAvatarActorFromActorInfo()));
 		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
 		return;
 	}
 
 	AEnemyCharacter* EnemyCharacter = Cast<AEnemyCharacter>(GetAvatarActorFromActorInfo());
-	const UEnemyAttackProfile* AttackProfile = EnemyCharacter ? EnemyCharacter->GetAttackProfile() : nullptr;
+	AEnemyAIController* EnemyAIController = EnemyCharacter ? Cast<AEnemyAIController>(EnemyCharacter->GetController()) : nullptr;
+	const UEnemyAttackSet* AttackSet = EnemyCharacter ? EnemyCharacter->GetAttackSet() : nullptr;
 	USkeletalMeshComponent* SkeletalMesh = EnemyCharacter ? EnemyCharacter->GetMesh() : nullptr;
 	UAnimInstance* AnimInstance = SkeletalMesh ? SkeletalMesh->GetAnimInstance() : nullptr;
-	if (!AttackProfile)
+
+	float TargetDistance2D = 0.0f;
+	if (!EnemyAIController || !EnemyAIController->TryGetCurrentTargetDistance2D(TargetDistance2D))
 	{
+		UE_LOG(LogPolyQuest, Warning, TEXT("Enemy melee activation aborted for '%s': could not retrieve valid target distance from controller."), *GetNameSafe(EnemyCharacter));
 		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
 		return;
 	}
 
-	ActiveMontage = AttackProfile->GetAttackMontage();
-	ActiveDamageGameplayEffectClass = AttackProfile->GetDamageGameplayEffectClass();
-	ActiveCooldownAfterAttack = AttackProfile->GetCooldownAfterAttack();
-	ActiveGuardStaminaDamage = AttackProfile->GetGuardStaminaDamage();
+	const float RandomFraction = FMath::FRand();
+	const UEnemyAttackProfile* SelectedProfile = AttackSet ? AttackSet->SelectAttackProfile(TargetDistance2D, RandomFraction) : nullptr;
+	if (!SelectedProfile || !SelectedProfile->IsValidAttackProfile())
+	{
+		UE_LOG(LogPolyQuest, Warning, TEXT("Enemy melee activation aborted for '%s': failed to select a valid AttackProfile at distance %f."), *GetNameSafe(EnemyCharacter), TargetDistance2D);
+		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
+		return;
+	}
+
+	ActiveAttackProfile = SelectedProfile;
+	ActiveMontage = SelectedProfile->GetAttackMontage();
+	ActiveDamageGameplayEffectClass = SelectedProfile->GetDamageGameplayEffectClass();
+	ActiveCooldownAfterAttack = SelectedProfile->GetCooldownAfterAttack();
+	ActiveGuardStaminaDamage = SelectedProfile->GetGuardStaminaDamage();
 
 	MontageTask = UAbilityTask_PlayMontageAndWait::CreatePlayMontageAndWaitProxy(this, NAME_None, ActiveMontage);
 	TraceWindowBeginTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, TraceWindowBeginEventTag, nullptr, false, true);
@@ -200,6 +216,7 @@ void UEnemyMeleeAbility::EndAbility(
 		HyperArmorEndTask = nullptr;
 	}
 
+	ActiveAttackProfile = nullptr;
 	ActiveMontage = nullptr;
 	ActiveDamageGameplayEffectClass = nullptr;
 	ActiveCooldownAfterAttack = 0.0f;
@@ -279,11 +296,12 @@ bool UEnemyMeleeAbility::ValidateActivationSetup(const FGameplayAbilityActorInfo
 	const UAbilitySystemComponent* AbilitySystemComponent = ActorInfo ? ActorInfo->AbilitySystemComponent.Get() : nullptr;
 	const AEnemyCharacter* EnemyCharacter = ActorInfo ? Cast<AEnemyCharacter>(ActorInfo->AvatarActor.Get()) : nullptr;
 	const AEnemyAIController* EnemyAIController = EnemyCharacter ? Cast<AEnemyAIController>(EnemyCharacter->GetController()) : nullptr;
-	const UEnemyAttackProfile* AttackProfile = EnemyCharacter ? EnemyCharacter->GetAttackProfile() : nullptr;
+	const UEnemyAttackSet* AttackSet = EnemyCharacter ? EnemyCharacter->GetAttackSet() : nullptr;
+	FString SetValidationReason;
 	const USkeletalMeshComponent* SkeletalMesh = EnemyCharacter ? EnemyCharacter->GetMesh() : nullptr;
 	const UAnimInstance* AnimInstance = SkeletalMesh ? SkeletalMesh->GetAnimInstance() : nullptr;
 
-	return AbilitySystemComponent && EnemyCharacter && EnemyAIController && AttackProfile && AttackProfile->IsValidAttackProfile() && EnemyAIController->HasValidAttackProfile() && AnimInstance
+	return AbilitySystemComponent && EnemyCharacter && EnemyAIController && AttackSet && AttackSet->IsAttackSetValid(SetValidationReason) && EnemyAIController->HasValidAttackSet() && AnimInstance
 		&& EnemyMeleeAbilityTag.IsValid() && AttackingStateTag.IsValid() && HitReactingStateTag.IsValid() && TraceWindowBeginEventTag.IsValid() && TraceWindowEndEventTag.IsValid()
 		&& HyperArmorStateTag.IsValid() && HyperArmorBeginEventTag.IsValid() && HyperArmorEndEventTag.IsValid()
 		&& EnemyAIController->HasValidCombatTarget() && EnemyAIController->IsCombatTargetInMeleeRange();
