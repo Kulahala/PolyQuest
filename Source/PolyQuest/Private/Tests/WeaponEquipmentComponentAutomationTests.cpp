@@ -564,7 +564,7 @@ bool FWeaponEquipmentComponentTransactionMatrixTest::RunTest(const FString& Para
 		const FGameplayTag TagInputParry = FGameplayTag::RequestGameplayTag(TEXT("Input.Parry"));
 		const FGameplayTag TagInputPrimary = FGameplayTag::RequestGameplayTag(TEXT("Input.PrimaryAttack"));
 
-		// 12.1 Valid Shield DefenseProfile with dual-tagged actions
+		// 12.1 Valid Shield DefenseProfile with profile-specific child tags
 		UDefenseProfileDefinition* ValidShieldProfile = NewObject<UDefenseProfileDefinition>(GetTransientPackage(), TEXT("Test_ValidShieldProfile"));
 		ValidShieldProfile->GuardAbilityTag = TagShieldGuard;
 		ValidShieldProfile->ParryAbilityTag = TagShieldParry;
@@ -595,21 +595,16 @@ bool FWeaponEquipmentComponentTransactionMatrixTest::RunTest(const FString& Para
 		TestFalse(TEXT("Preflight rejects Shield profile when CDOs lack specific shield tags"), EquipmentComp->TestDirectPreflight(SwordForShieldDef, ShieldWithProfileDef, MissingTagsReason));
 		TestTrue(TEXT("Missing tags reason names unmatching action"), MissingTagsReason.Contains(TEXT("no BaseGrantedAction matching both")));
 
-		// With specific tag but missing generic parent tag, Preflight must reject (HasTagExact requirement)
+		// Editor-authored GameplayTag containers commonly serialize only the specialized child.
 		UPlayerGuardAbility* GuardCDO = GetMutableDefault<UPlayerGuardAbility>(UPlayerGuardAbility::StaticClass());
+		UPlayerParryAbility* ParryCDO = GetMutableDefault<UPlayerParryAbility>(UPlayerParryAbility::StaticClass());
 		GuardCDO->AbilityTags.RemoveTag(TagGenericGuard);
 		GuardCDO->AbilityTags.AddTag(TagShieldGuard);
-		FString MissingGenericTagReason;
-		TestFalse(TEXT("Preflight rejects Shield profile when CDO has specific shield tag but lacks exact generic parent tag"), EquipmentComp->TestDirectPreflight(SwordForShieldDef, ShieldWithProfileDef, MissingGenericTagReason));
-		TestTrue(TEXT("Missing generic tag reason names unmatching action"), MissingGenericTagReason.Contains(TEXT("no BaseGrantedAction matching both")));
-		GuardCDO->AbilityTags.AddTag(TagGenericGuard);
-
-		// Add specific tags to CDO for testing valid execution
-		UPlayerParryAbility* ParryCDO = GetMutableDefault<UPlayerParryAbility>(UPlayerParryAbility::StaticClass());
+		ParryCDO->AbilityTags.RemoveTag(TagGenericParry);
 		ParryCDO->AbilityTags.AddTag(TagShieldParry);
 
-		FString ValidPreflightReason;
-		TestTrue(TEXT("Preflight accepts valid Shield profile with dual-tagged CDOs"), EquipmentComp->TestDirectPreflight(SwordForShieldDef, ShieldWithProfileDef, ValidPreflightReason));
+		FString ChildOnlyTagPreflightReason;
+		TestTrue(TEXT("Preflight accepts editor-style child-only Shield CDO tags"), EquipmentComp->TestDirectPreflight(SwordForShieldDef, ShieldWithProfileDef, ChildOnlyTagPreflightReason));
 
 		// Equip Sword + ShieldWithProfile
 		const bool bEquipShieldSuccess = EquipmentComp->EquipWeapon(SwordForShieldDef) && EquipmentComp->EquipWeapon(ShieldWithProfileDef);
@@ -659,7 +654,6 @@ bool FWeaponEquipmentComponentTransactionMatrixTest::RunTest(const FString& Para
 
 		// 12.2.3 Same ability class satisfying both Guard and Parry
 		GuardCDO->AbilityTags.AddTag(TagShieldParry);
-		GuardCDO->AbilityTags.AddTag(TagGenericParry);
 
 		UOffHandWeaponDefinition* SameActionShield = NewObject<UOffHandWeaponDefinition>(GetTransientPackage(), TEXT("Test_SameActionShield"));
 		SameActionShield->HandSlot = EWeaponHandSlot::OffHand;
@@ -730,7 +724,9 @@ bool FWeaponEquipmentComponentTransactionMatrixTest::RunTest(const FString& Para
 		}
 
 		GuardCDO->AbilityTags.RemoveTag(TagShieldGuard);
+		GuardCDO->AbilityTags.AddTag(TagGenericGuard);
 		ParryCDO->AbilityTags.RemoveTag(TagShieldParry);
+		ParryCDO->AbilityTags.AddTag(TagGenericParry);
 	}
 
 	Player->Destroy();

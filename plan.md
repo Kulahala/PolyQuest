@@ -108,3 +108,11 @@ Validation gate for Slice B:
 ## Non-goals
 
 No ranged enemy, Bow/Staff projectile behavior, Boss phases, encounter coordination, free-running orbit outside an active cooldown, distance-banded attack/Approach arbitration, attack-memory heuristics, Behavior Tree/Blackboard, new GAS Ability/GameplayEffect, new damage/trace path, inventory, camera-facing rewrite, or broad enemy locomotion system.
+
+## Post-closeout Repair
+
+- **Scope:** Shield defense preflight compatibility with Unreal Editor-authored GameplayTag containers.
+- **Cause:** Editor-authored Shield Ability CDOs may serialize only `Ability.Defense.Guard.Shield` / `Ability.Defense.Parry.Shield`; `HasTagExact()` on the generic parent categories incorrectly rejected the otherwise valid Shield pickup.
+- **Repair:** `RunPreflight()` retains exact matching for the profile-specific tags and uses hierarchical `HasTag()` for the generic Guard/Parry categories. The transaction-matrix test now exercises the child-only CDO authoring shape and restores the expected native generic-tag setup after the test.
+- **Evidence:** The user reran `PolyQuest.Equipment.TransactionMatrix`, `PolyQuest.Enemy.AttackSetSelection`, `PolyQuest.Enemy.CombatSpacing`, and `PolyQuest.Melee.TraceSourceGeometry` with `Success`; expected rejection, rollback, invalid socket, and invalid Poise messages remain negative branches. Main's fresh/adversarial review found no remaining P0-P2 defect. No new native build was invoked by Main; compile/PIE evidence remains user-owned.
+- **Commit boundary:** Include only the two native source/test files and the synchronized `ARCHITECTURE.md`, `ROADMAP.md`, and this closeout record. Preserve all user-owned `Content/**`, Config, project, and unrelated WIP.

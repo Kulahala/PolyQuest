@@ -655,7 +655,10 @@ bool UWeaponEquipmentComponent::RunPreflight(APlayerCharacter* PlayerCharacter, 
 			}
 
 			const bool bHasProfileGuardTag = AbilityCDO->AbilityTags.HasTagExact(DefenseProfile->GuardAbilityTag);
-			const bool bHasGenericGuardTag = AbilityCDO->AbilityTags.HasTagExact(DefaultGuardAbilityTag);
+			// GameplayTag containers authored in the Editor may serialize only a
+			// specialized child (for example Ability.Defense.Guard.Shield). A
+			// hierarchical match is required for the generic defense category.
+			const bool bHasGenericGuardTag = AbilityCDO->AbilityTags.HasTag(DefaultGuardAbilityTag);
 			if (bHasProfileGuardTag && bHasGenericGuardTag)
 			{
 				if (GuardActionClass)
@@ -667,7 +670,7 @@ bool UWeaponEquipmentComponent::RunPreflight(APlayerCharacter* PlayerCharacter, 
 			}
 
 			const bool bHasProfileParryTag = AbilityCDO->AbilityTags.HasTagExact(DefenseProfile->ParryAbilityTag);
-			const bool bHasGenericParryTag = AbilityCDO->AbilityTags.HasTagExact(DefaultParryAbilityTag);
+			const bool bHasGenericParryTag = AbilityCDO->AbilityTags.HasTag(DefaultParryAbilityTag);
 			if (bHasProfileParryTag && bHasGenericParryTag)
 			{
 				if (ParryActionClass)
