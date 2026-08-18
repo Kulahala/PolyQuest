@@ -5,6 +5,7 @@
 #include "Character/BaseCharacter.h"
 #include "EnemyCharacter.generated.h"
 
+class UEnemyAIProfile;
 class UEnemyAttackSet;
 class UGameplayEffect;
 class UAbilitySystemComponent;
@@ -26,8 +27,13 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Combat|Enemy")
 	UEnemyAttackSet* GetAttackSet() const { return AttackSet; }
 
+	/** Static authored AI profile for combat spacing, repositioning, and leash parameters. */
+	UFUNCTION(BlueprintPure, Category = "AI|Enemy")
+	UEnemyAIProfile* GetAIProfile() const { return AIProfile; }
+
 #if WITH_DEV_AUTOMATION_TESTS
 	void SetTestAttackSet(UEnemyAttackSet* InSet) { AttackSet = InSet; }
+	void SetTestAIProfile(UEnemyAIProfile* InProfile) { AIProfile = InProfile; }
 #endif
 
 	/** The ASC-owned terminal tag is the only gameplay source of truth for enemy death. */
@@ -64,6 +70,9 @@ private:
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Enemy", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<UEnemyAttackSet> AttackSet;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "AI|Enemy", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<UEnemyAIProfile> AIProfile;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Enemy|Death", meta = (AllowPrivateAccess = "true"))
 	bool bUseRagdollOnDeath = true;

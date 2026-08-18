@@ -60,3 +60,32 @@ struct POLYQUEST_API FEnemyStateTreeTask_RequestMeleeAttack : public FStateTreeA
 private:
 	TStateTreeExternalDataHandle<AEnemyAIController> EnemyAIControllerHandle;
 };
+
+USTRUCT()
+struct FEnemyStateTreeTask_RepositionDuringCooldownInstanceData
+{
+	GENERATED_BODY()
+
+	UPROPERTY(Transient)
+	bool bIssuedMoveRequest = false;
+};
+
+/** Executes a bounded reposition move during melee cooldown and returns upon move completion, failure, or cooldown expiry. */
+USTRUCT(meta = (DisplayName = "Enemy Reposition During Cooldown", Category = "AI|Enemy"))
+struct POLYQUEST_API FEnemyStateTreeTask_RepositionDuringCooldown : public FStateTreeAITaskBase
+{
+	GENERATED_BODY()
+
+	using FInstanceDataType = FEnemyStateTreeTask_RepositionDuringCooldownInstanceData;
+
+	FEnemyStateTreeTask_RepositionDuringCooldown();
+
+	virtual const UStruct* GetInstanceDataType() const override { return FInstanceDataType::StaticStruct(); }
+	virtual bool Link(FStateTreeLinker& Linker) override;
+	virtual EStateTreeRunStatus EnterState(FStateTreeExecutionContext& Context, const FStateTreeTransitionResult& Transition) const override;
+	virtual EStateTreeRunStatus Tick(FStateTreeExecutionContext& Context, const float DeltaTime) const override;
+	virtual void ExitState(FStateTreeExecutionContext& Context, const FStateTreeTransitionResult& Transition) const override;
+
+private:
+	TStateTreeExternalDataHandle<AEnemyAIController> EnemyAIControllerHandle;
+};

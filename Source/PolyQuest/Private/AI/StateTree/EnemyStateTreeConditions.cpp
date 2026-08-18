@@ -27,3 +27,51 @@ bool FEnemyStateTreeCondition_IsTargetInMeleeRange::TestCondition(FStateTreeExec
 	const AEnemyAIController& EnemyAIController = Context.GetExternalData(EnemyAIControllerHandle);
 	return EnemyAIController.IsCombatTargetInMeleeRange();
 }
+
+bool FEnemyStateTreeCondition_IsAttackOnCooldown::Link(FStateTreeLinker& Linker)
+{
+	Linker.LinkExternalData(EnemyAIControllerHandle);
+	return true;
+}
+
+bool FEnemyStateTreeCondition_IsAttackOnCooldown::TestCondition(FStateTreeExecutionContext& Context) const
+{
+	const AEnemyAIController& EnemyAIController = Context.GetExternalData(EnemyAIControllerHandle);
+	return EnemyAIController.IsMeleeAttackOnCooldown();
+}
+
+bool FEnemyStateTreeCondition_CanRequestReposition::Link(FStateTreeLinker& Linker)
+{
+	Linker.LinkExternalData(EnemyAIControllerHandle);
+	return true;
+}
+
+bool FEnemyStateTreeCondition_CanRequestReposition::TestCondition(FStateTreeExecutionContext& Context) const
+{
+	const AEnemyAIController& EnemyAIController = Context.GetExternalData(EnemyAIControllerHandle);
+	return EnemyAIController.CanRequestCooldownReposition();
+}
+
+bool FEnemyStateTreeCondition_IsAttackReady::Link(FStateTreeLinker& Linker)
+{
+	Linker.LinkExternalData(EnemyAIControllerHandle);
+	return true;
+}
+
+bool FEnemyStateTreeCondition_IsAttackReady::TestCondition(FStateTreeExecutionContext& Context) const
+{
+	const AEnemyAIController& EnemyAIController = Context.GetExternalData(EnemyAIControllerHandle);
+	return !EnemyAIController.IsMeleeAttackOnCooldown();
+}
+
+bool FEnemyStateTreeCondition_IsTargetOutsideMeleeRange::Link(FStateTreeLinker& Linker)
+{
+	Linker.LinkExternalData(EnemyAIControllerHandle);
+	return true;
+}
+
+bool FEnemyStateTreeCondition_IsTargetOutsideMeleeRange::TestCondition(FStateTreeExecutionContext& Context) const
+{
+	const AEnemyAIController& EnemyAIController = Context.GetExternalData(EnemyAIControllerHandle);
+	return !EnemyAIController.IsCombatTargetInMeleeRange();
+}

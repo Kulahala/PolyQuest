@@ -9,7 +9,9 @@
 class APlayerCharacter;
 class UAIPerceptionComponent;
 class UAISenseConfig_Sight;
+class UEnemyAIProfile;
 class UStateTreeAIComponent;
+struct FPathFollowingResult;
 
 /**
  * Owns the first enemy's Sight target, focus, home location, and StateTree
@@ -24,6 +26,16 @@ class POLYQUEST_API AEnemyAIController : public AAIController
 public:
 	AEnemyAIController();
 
+	/** Pure helper for target-relative reposition point calculation. */
+	static bool CalculateTargetRelativeRepositionPoint(
+		const FVector& TargetLocation,
+		const FVector& EnemyLocation,
+		float PreferredCombatDistance,
+		float LateralRepositionDistance,
+		float EngagementRange,
+		bool bUseRightSide,
+		FVector& OutRepositionPoint);
+
 	UFUNCTION(BlueprintPure, Category = "AI|Target")
 	APlayerCharacter* GetCurrentTarget() const;
 
@@ -36,6 +48,17 @@ public:
 	/** True only after OnPossess has accepted and cached the possessed enemy's authored Attack Set. */
 	bool HasValidAttackSet() const;
 
+	/** True only after OnPossess has accepted and cached the possessed enemy's authored AI Profile. */
+	UFUNCTION(BlueprintPure, Category = "AI|Profile")
+	bool HasValidAIProfile() const;
+
+	UFUNCTION(BlueprintPure, Category = "AI|Profile")
+	const UEnemyAIProfile* GetAIProfile() const;
+
+	/** True if the controlled enemy has exceeded LeashRadius from HomeLocation. */
+	UFUNCTION(BlueprintPure, Category = "AI|Leash")
+	bool IsExceedingLeash() const;
+
 	/** Returns true and calculates the planar 2D distance to the current combat target if valid. */
 	UFUNCTION(BlueprintPure, Category = "AI|Combat")
 	bool TryGetCurrentTargetDistance2D(float& OutDistance2D) const;
@@ -45,6 +68,37 @@ public:
 
 	UFUNCTION(BlueprintPure, Category = "AI|Combat")
 	bool IsMeleeAttackOnCooldown() const;
+
+	/** Checks if repositioning during cooldown is allowed (has valid target, profile, cooldown active, attempts remaining, not dead/stunned/reacting/leash-broken). */
+	UFUNCTION(BlueprintPure, Category = "AI|Combat|Reposition")
+	bool CanRequestCooldownReposition() const;
+
+	/** Attempts to calculate a reposition point and issue a MoveTo request. */
+	UFUNCTION(BlueprintCallable, Category = "AI|Combat|Reposition")
+	bool TryRequestCooldownReposition();
+
+	/** Stops any active reposition movement and optionally resets attempt state. */
+	UFUNCTION(BlueprintCallable, Category = "AI|Combat|Reposition")
+	void StopCooldownReposition(bool bResetAttempts = false);
+
+	UFUNCTION(BlueprintPure, Category = "AI|Combat|Reposition")
+	bool IsRepositioning() const { return bIsRepositioning; }
+
+	UFUNCTION(BlueprintPure, Category = "AI|Combat|Reposition")
+	int32 GetRepositionAttemptsInCurrentCooldown() const { return RepositionAttemptsInCurrentCooldown; }
+
+	UFUNCTION(BlueprintPure, Category = "AI|Combat|Reposition")
+	bool GetLastRepositionUsedRightSide() const { return bLastRepositionUsedRightSide; }
+
+	UFUNCTION(BlueprintPure, Category = "AI|Combat|Reposition")
+	float GetNextAllowedRepositionTime() const { return NextAllowedRepositionTime; }
+
+	UFUNCTION(BlueprintPure, Category = "AI|Combat|Reposition")
+	int32 GetFailedAttemptsOnCurrentSide() const { return FailedAttemptsOnCurrentSide; }
+
+	/** True if all combat/profile conditions are valid for repositioning, but delayed solely by NextAllowedRepositionTime. */
+	UFUNCTION(BlueprintPure, Category = "AI|Combat|Reposition")
+	bool IsRepositionTemporarilyIntervalGated() const;
 
 	UFUNCTION(BlueprintPure, Category = "AI|Home")
 	float GetHomeAcceptanceRadius() const { return HomeAcceptanceRadius; }
@@ -74,6 +128,8 @@ public:
 
 	/** Stops StateTree, movement, target, and focus once the currently possessed enemy owns State.Status.Dead. */
 	void HandleControlledEnemyDeath();
+
+	virtual void OnMoveCompleted(FAIRequestID RequestID, const FPathFollowingResult& Result) override;
 
 protected:
 	virtual void OnPossess(APawn* InPawn) override;
@@ -127,7 +183,18 @@ private:
 	FGameplayTag TargetAcquiredEventTag;
 	FGameplayTag TargetLostEventTag;
 	float MeleeAttackCooldownEndTime = 0.0f;
+	float CachedLeashRadius = 0.0f;
 	bool bHasValidAttackSet = false;
+	bool bHasValidAIProfile = false;
 	bool bHasLoggedInvalidAttackSet = false;
+	bool bHasLoggedInvalidAIProfile = false;
 	bool bHasLoggedInvalidPoiseRecoverySetup = false;
+
+	float NextAllowedRepositionTime = 0.0f;
+	int32 RepositionAttemptsInCurrentCooldown = 0;
+	int32 FailedAttemptsOnCurrentSide = 0;
+	bool bLastRepositionUsedRightSide = false;
+	bool bLastRepositionSucceeded = false;
+	bool bIsRepositioning = false;
+	FAIRequestID CurrentRepositionRequestID = FAIRequestID::InvalidRequest;
 };

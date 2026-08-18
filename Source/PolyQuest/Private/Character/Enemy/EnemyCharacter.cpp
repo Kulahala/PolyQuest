@@ -1,6 +1,7 @@
 #include "Character/Enemy/EnemyCharacter.h"
 
 #include "AI/EnemyAIController.h"
+#include "AI/EnemyAIProfile.h"
 #include "Abilities/GameplayAbilityTypes.h"
 #include "AbilitySystem/CharacterAttributeSet.h"
 #include "AbilitySystemComponent.h"

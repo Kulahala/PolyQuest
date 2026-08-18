@@ -109,3 +109,108 @@ EStateTreeRunStatus FEnemyStateTreeTask_RequestMeleeAttack::Tick(FStateTreeExecu
 	InstanceData.bObservedAttacking = true;
 	return EStateTreeRunStatus::Running;
 }
+
+FEnemyStateTreeTask_RepositionDuringCooldown::FEnemyStateTreeTask_RepositionDuringCooldown()
+{
+	bShouldCallTick = true;
+}
+
+bool FEnemyStateTreeTask_RepositionDuringCooldown::Link(FStateTreeLinker& Linker)
+{
+	Linker.LinkExternalData(EnemyAIControllerHandle);
+	return true;
+}
+
+EStateTreeRunStatus FEnemyStateTreeTask_RepositionDuringCooldown::EnterState(FStateTreeExecutionContext& Context, const FStateTreeTransitionResult&) const
+{
+	FInstanceDataType& InstanceData = Context.GetInstanceData(*this);
+	InstanceData.bIssuedMoveRequest = false;
+
+	AEnemyAIController& EnemyAIController = Context.GetExternalData(EnemyAIControllerHandle);
+	if (EnemyAIController.IsEnemyStunned()
+		|| EnemyAIController.IsEnemyHitReactionActive()
+		|| EnemyAIController.IsEnemyMeleeAttackActive()
+		|| !EnemyAIController.HasValidCombatTarget()
+		|| !EnemyAIController.HasValidAttackSet()
+		|| !EnemyAIController.HasValidAIProfile()
+		|| EnemyAIController.IsExceedingLeash())
+	{
+		return EStateTreeRunStatus::Failed;
+	}
+
+	if (!EnemyAIController.IsMeleeAttackOnCooldown())
+	{
+		// Cooldown is already over, no need to reposition
+		return EStateTreeRunStatus::Succeeded;
+	}
+
+	if (!EnemyAIController.CanRequestCooldownReposition())
+	{
+		// Only if temporarily delayed by the minimum request interval (NextAllowedRepositionTime),
+		// return Succeeded to cycle through Wait without breaking the cooldown loop.
+		if (EnemyAIController.IsRepositionTemporarilyIntervalGated())
+		{
+			return EStateTreeRunStatus::Succeeded;
+		}
+
+		// Otherwise it is an unrecoverable/concurrent failure -> Fail closed
+		return EStateTreeRunStatus::Failed;
+	}
+
+	if (!EnemyAIController.TryRequestCooldownReposition())
+	{
+		// Move request calculation or immediate failure:
+		// Returning Succeeded allows transitioning to Wait for the next retry interval instead of prematurely breaking Combat.
+		return EStateTreeRunStatus::Succeeded;
+	}
+
+	InstanceData.bIssuedMoveRequest = true;
+	return EnemyAIController.IsRepositioning() ? EStateTreeRunStatus::Running : EStateTreeRunStatus::Succeeded;
+}
+
+EStateTreeRunStatus FEnemyStateTreeTask_RepositionDuringCooldown::Tick(FStateTreeExecutionContext& Context, const float) const
+{
+	FInstanceDataType& InstanceData = Context.GetInstanceData(*this);
+	AEnemyAIController& EnemyAIController = Context.GetExternalData(EnemyAIControllerHandle);
+
+	if (EnemyAIController.IsEnemyStunned()
+		|| EnemyAIController.IsEnemyHitReactionActive()
+		|| EnemyAIController.IsEnemyMeleeAttackActive()
+		|| !EnemyAIController.HasValidCombatTarget()
+		|| !EnemyAIController.HasValidAttackSet()
+		|| !EnemyAIController.HasValidAIProfile()
+		|| EnemyAIController.IsExceedingLeash())
+	{
+		EnemyAIController.StopCooldownReposition(false);
+		return EStateTreeRunStatus::Failed;
+	}
+
+	if (!EnemyAIController.IsMeleeAttackOnCooldown())
+	{
+		// Cooldown expired during reposition
+		EnemyAIController.StopCooldownReposition(false);
+		return EStateTreeRunStatus::Succeeded;
+	}
+
+	if (InstanceData.bIssuedMoveRequest)
+	{
+		if (EnemyAIController.IsRepositioning())
+		{
+			return EStateTreeRunStatus::Running;
+		}
+
+		// Move completed (either success or path following end)
+		return EStateTreeRunStatus::Succeeded;
+	}
+
+	return EStateTreeRunStatus::Failed;
+}
+
+void FEnemyStateTreeTask_RepositionDuringCooldown::ExitState(FStateTreeExecutionContext& Context, const FStateTreeTransitionResult&) const
+{
+	AEnemyAIController& EnemyAIController = Context.GetExternalData(EnemyAIControllerHandle);
+	if (EnemyAIController.IsRepositioning())
+	{
+		EnemyAIController.StopCooldownReposition(false);
+	}
+}
