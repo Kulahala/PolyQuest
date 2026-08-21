@@ -52,4 +52,44 @@ public:
 	/** Display scale multiplier. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Projectile|Display")
 	FVector DisplayScale = FVector::OneVector;
+
+	/** When true, Bow Release will attempt to pick a valid hostile target within angle and distance cones. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Projectile|TargetAssist")
+	bool bEnableTargetAssist = false;
+
+	/** Maximum horizontal distance in cm for target assist selection. Must be positive and finite. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Projectile|TargetAssist", meta = (EditCondition = "bEnableTargetAssist", ClampMin = "100.0", UIMin = "500.0"))
+	float TargetAssistMaxDistance = 1500.0f;
+
+	/** Maximum horizontal half-angle in degrees from pointer direction for target assist selection. Must be > 0 and <= 180. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Projectile|TargetAssist", meta = (EditCondition = "bEnableTargetAssist", ClampMin = "1.0", ClampMax = "180.0", UIMin = "10.0", UIMax = "180.0"))
+	float TargetAssistMaxAngleDegrees = 50.0f;
+
+	/** Maximum absolute height difference in cm between launch socket and target aim point. Must be positive and finite. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Projectile|TargetAssist", meta = (EditCondition = "bEnableTargetAssist", ClampMin = "1.0", UIMin = "50.0"))
+	float TargetAssistMaxHeightDelta = 250.0f;
+
+	/** Maximum absolute pitch angle in degrees from horizontal for target assist selection. Must be > 0 and < 90. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Projectile|TargetAssist", meta = (EditCondition = "bEnableTargetAssist", ClampMin = "1.0", ClampMax = "89.0", UIMin = "5.0", UIMax = "60.0"))
+	float TargetAssistMaxPitchDegrees = 45.0f;
+
+	/** When true, projectile will perform limited homing towards the target selected at launch. Requires bEnableTargetAssist=true. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Projectile|Homing")
+	bool bEnableLimitedHoming = false;
+
+	/** Delay in seconds before homing steering activates, during which the projectile flies straight in its initial launch direction. Must be non-negative, finite, and < LifespanSeconds. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Projectile|Homing", meta = (EditCondition = "bEnableLimitedHoming", ClampMin = "0.0", UIMin = "0.0"))
+	float HomingStartDelaySeconds = 0.06f;
+
+	/** Maximum homing flight duration in seconds before abandoning tracking and flying straight. Must be positive, finite, and <= LifespanSeconds. Defaults to 5.0s (matching LifespanSeconds). */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Projectile|Homing", meta = (EditCondition = "bEnableLimitedHoming", ClampMin = "0.01", UIMin = "0.1"))
+	float HomingDurationSeconds = 5.0f;
+
+	/** Maximum turning rate in degrees per second. Must be positive and finite. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Projectile|Homing", meta = (EditCondition = "bEnableLimitedHoming", ClampMin = "1.0", UIMin = "30.0"))
+	float HomingTurnRateDegreesPerSecond = 120.0f;
+
+	/** Maximum total accumulated deflection angle in degrees relative to the initial launch direction. Must be positive and finite. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Projectile|Homing", meta = (EditCondition = "bEnableLimitedHoming", ClampMin = "1.0", UIMin = "15.0", UIMax = "360.0"))
+	float HomingMaxTotalTurnDegrees = 60.0f;
 };

@@ -10,6 +10,7 @@
 #include "Components/CapsuleComponent.h"
 #include "EnhancedInputComponent.h"
 #include "GameFramework/CharacterMovementComponent.h"
+#include "GameFramework/PlayerController.h"
 #include "GameFramework/SpringArmComponent.h"
 #include "GameplayEffect.h"
 #include "GameplayAbilitySpec.h"
@@ -17,6 +18,8 @@
 #include "InputActionValue.h"
 #include "Perception/AIPerceptionStimuliSourceComponent.h"
 #include "Perception/AISense_Sight.h"
+#include "DrawDebugHelpers.h"
+#include "Kismet/GameplayStatics.h"
 #include "TimerManager.h"
 
 #include "AbilitySystem/Abilities/PlayerGuardAbility.h"
@@ -30,6 +33,9 @@
 
 APlayerCharacter::APlayerCharacter()
 {
+	PrimaryActorTick.bCanEverTick = true;
+	PrimaryActorTick.bStartWithTickEnabled = true;
+
 	AbilitySlotActions.SetNum(4);
 	CombatTeamTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Team.Player")), false);
 	PrimaryAttackInputTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Input.PrimaryAttack")), false);
@@ -156,7 +162,31 @@ void APlayerCharacter::EndPlay(const EEndPlayReason::Type EndPlayReason)
 	UnbindSprintStateEvents();
 	ClearSprintJumpAirSpeed();
 
+	ActiveBowAimRequester = nullptr;
+	bHasValidBowAimDirection = false;
+	LastValidBowAimDirection = FVector::ZeroVector;
+
 	Super::EndPlay(EndPlayReason);
+}
+
+void APlayerCharacter::PawnClientRestart()
+{
+	Super::PawnClientRestart();
+
+	if (APlayerController* PC = Cast<APlayerController>(GetController()))
+	{
+		if (PC->IsLocalController())
+		{
+			PC->bShowMouseCursor = true;
+			PC->bEnableClickEvents = true;
+			PC->bEnableMouseOverEvents = true;
+
+			FInputModeGameAndUI InputMode;
+			InputMode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
+			InputMode.SetHideCursorDuringCapture(false);
+			PC->SetInputMode(InputMode);
+		}
+	}
 }
 
 void APlayerCharacter::OnMovementModeChanged(EMovementMode PrevMovementMode, uint8 PreviousCustomMode)
@@ -947,6 +977,176 @@ void APlayerCharacter::ApplyActionFacing()
 	{
 		SetActorRotation(FRotator(0.0f, ActionDirection.Rotation().Yaw, 0.0f));
 	}
+}
+
+void APlayerCharacter::Tick(float DeltaSeconds)
+{
+	Super::Tick(DeltaSeconds);
+
+	if (ActiveBowAimRequester.IsValid())
+	{
+		UpdateBowAimFacing();
+	}
+}
+
+bool APlayerCharacter::RegisterBowAimRequester(const UObject* Requester)
+{
+	if (!Requester)
+	{
+		return false;
+	}
+
+	ActiveBowAimRequester = Requester;
+	UpdateBowAimFacing();
+	return true;
+}
+
+void APlayerCharacter::UnregisterBowAimRequester(const UObject* Requester)
+{
+	if (ActiveBowAimRequester.Get() == Requester)
+	{
+		ActiveBowAimRequester = nullptr;
+		bHasValidBowAimDirection = false;
+		LastValidBowAimDirection = FVector::ZeroVector;
+	}
+}
+
+bool APlayerCharacter::HasActiveBowAimRequester() const
+{
+	return ActiveBowAimRequester.IsValid();
+}
+
+bool APlayerCharacter::TryGetBowAimWorldDirection(FVector& OutDirection) const
+{
+	if (bHasValidBowAimDirection && !LastValidBowAimDirection.ContainsNaN() && LastValidBowAimDirection.SizeSquared2D() > KINDA_SMALL_NUMBER)
+	{
+		OutDirection = LastValidBowAimDirection;
+		return true;
+	}
+	return false;
+}
+
+bool APlayerCharacter::CalculateRayPlaneIntersection(
+	const FVector& WorldOrigin,
+	const FVector& WorldDirection,
+	const float PlaneZ,
+	FVector& OutIntersectionPoint)
+{
+	if (WorldOrigin.ContainsNaN() || WorldDirection.ContainsNaN() || !FMath::IsFinite(PlaneZ))
+	{
+		return false;
+	}
+
+	if (FMath::IsNearlyZero(WorldDirection.Z, KINDA_SMALL_NUMBER))
+	{
+		return false;
+	}
+
+	const float T = (PlaneZ - WorldOrigin.Z) / WorldDirection.Z;
+	if (T <= 0.0f || !FMath::IsFinite(T))
+	{
+		return false;
+	}
+
+	OutIntersectionPoint = WorldOrigin + WorldDirection * T;
+	return !OutIntersectionPoint.ContainsNaN();
+}
+
+bool APlayerCharacter::TryCalculateMousePlaneIntersection(FVector& OutIntersectionPoint) const
+{
+	const APlayerController* PC = Cast<APlayerController>(GetController());
+	if (!PC || !PC->IsLocalController())
+	{
+		return false;
+	}
+
+	FVector WorldOrigin;
+	FVector WorldDirection;
+	bool bDeprojected = PC->DeprojectMousePositionToWorld(WorldOrigin, WorldDirection);
+	if (!bDeprojected)
+	{
+		float MouseX = 0.0f;
+		float MouseY = 0.0f;
+		if (PC->GetMousePosition(MouseX, MouseY))
+		{
+			bDeprojected = UGameplayStatics::DeprojectScreenToWorld(PC, FVector2D(MouseX, MouseY), WorldOrigin, WorldDirection);
+		}
+	}
+
+	if (!bDeprojected)
+	{
+		return false;
+	}
+
+	const float CharacterCenterZ = GetActorLocation().Z;
+	return CalculateRayPlaneIntersection(WorldOrigin, WorldDirection, CharacterCenterZ, OutIntersectionPoint);
+}
+
+void APlayerCharacter::UpdateBowAimFacing()
+{
+	FVector IntersectionPoint = FVector::ZeroVector;
+	const bool bIntersected = TryCalculateMousePlaneIntersection(IntersectionPoint);
+	if (bIntersected)
+	{
+		FVector AimDir2D = IntersectionPoint - GetActorLocation();
+		AimDir2D.Z = 0.0f;
+		if (AimDir2D.SizeSquared2D() > KINDA_SMALL_NUMBER && !AimDir2D.ContainsNaN())
+		{
+			LastValidBowAimDirection = AimDir2D.GetSafeNormal2D();
+			bHasValidBowAimDirection = true;
+		}
+	}
+
+	if (bHasValidBowAimDirection)
+	{
+		ApplyBowAimFacing(LastValidBowAimDirection);
+	}
+
+#if !(UE_BUILD_SHIPPING)
+	if (UWorld* World = GetWorld())
+	{
+		const FVector PlayerLoc = GetActorLocation();
+		const FVector ForwardVec = GetActorForwardVector();
+
+		// 1. Red sphere at Bow aim reference plane intersection & yellow line to intersection
+		if (bIntersected)
+		{
+			DrawDebugSphere(World, IntersectionPoint, 20.0f, 12, FColor::Red, false, -1.0f, 0, 2.5f);
+			DrawDebugLine(World, PlayerLoc, IntersectionPoint, FColor::Yellow, false, -1.0f, 0, 2.0f);
+		}
+
+		// 2. Green arrow showing current Character Capsule Forward
+		DrawDebugDirectionalArrow(World, PlayerLoc + FVector(0,0,40), PlayerLoc + FVector(0,0,40) + ForwardVec * 350.0f, 50.0f, FColor::Green, false, -1.0f, 0, 3.5f);
+
+		// 3. Cyan arrow showing calculated Bow Aim Direction
+		if (bHasValidBowAimDirection)
+		{
+			DrawDebugDirectionalArrow(World, PlayerLoc + FVector(0,0,60), PlayerLoc + FVector(0,0,60) + LastValidBowAimDirection * 350.0f, 50.0f, FColor::Cyan, false, -1.0f, 0, 3.5f);
+		}
+
+		// 4. On-screen text with rotation angles and intersection coordinates
+		if (GEngine)
+		{
+			const float ActorYaw = GetActorRotation().Yaw;
+			const float AimYaw = LastValidBowAimDirection.Rotation().Yaw;
+			const FString Msg = FString::Printf(TEXT("[Bow Aim Debug] ActorYaw: %.1f | AimYaw: %.1f | Intersected: %s | HitPoint: (%.0f, %.0f, %.0f)"),
+				ActorYaw, AimYaw, bIntersected ? TEXT("TRUE") : TEXT("FALSE"),
+				IntersectionPoint.X, IntersectionPoint.Y, IntersectionPoint.Z);
+			GEngine->AddOnScreenDebugMessage(1001, 0.0f, FColor::Cyan, Msg);
+		}
+	}
+#endif
+}
+
+void APlayerCharacter::ApplyBowAimFacing(const FVector& AimDirection)
+{
+	if (AimDirection.IsNearlyZero() || AimDirection.ContainsNaN())
+	{
+		return;
+	}
+
+	const FRotator TargetRotation(0.0f, AimDirection.Rotation().Yaw, 0.0f);
+	SetActorRotation(TargetRotation);
 }
 
 void APlayerCharacter::GetCameraPlanarAxes(FVector& OutForwardDirection, FVector& OutRightDirection) const

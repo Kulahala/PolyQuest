@@ -111,6 +111,7 @@ public:
 protected:
 	virtual void BeginPlay() override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
+	virtual void PawnClientRestart() override;
 	virtual void OnMovementModeChanged(EMovementMode PrevMovementMode, uint8 PreviousCustomMode = 0) override;
 
 	/** Initialize Enhanced Input bindings for the player pawn. */
@@ -215,6 +216,26 @@ public:
 	/** Closes the exhausted-until-release gate when a Sprint drain reaches zero. */
 	void MarkSprintRequiresReleaseAfterExhaustion();
 
+	/** Registers an active requester for continuous horizontal Bow aiming. */
+	bool RegisterBowAimRequester(const UObject* Requester);
+
+	/** Unregisters a Bow aiming requester; only the active requester can unregister. */
+	void UnregisterBowAimRequester(const UObject* Requester);
+
+	/** Returns true if a valid Bow aim requester is active. */
+	bool HasActiveBowAimRequester() const;
+
+	/** Attempts to get the current horizontal Bow aim direction. */
+	bool TryGetBowAimWorldDirection(FVector& OutDirection) const;
+
+	/**
+	 * Intersects a 3D ray with a horizontal plane at Z = PlaneZ.
+	 * Returns true if the ray intersects the plane at T > 0 with finite coordinates.
+	 */
+	static bool CalculateRayPlaneIntersection(const FVector& WorldOrigin, const FVector& WorldDirection, float PlaneZ, FVector& OutIntersectionPoint);
+
+	virtual void Tick(float DeltaSeconds) override;
+
 	/** Returns the player camera boom. */
 	FORCEINLINE USpringArmComponent* GetCameraBoom() const { return CameraBoom; }
 
@@ -307,4 +328,12 @@ private:
 	bool bGuardResumeEligibleAfterAttack = false;
 	bool bGuardRequiresReleaseAfterBreak = false;
 	bool bStaminaRegenEffectApplied = false;
+
+	bool TryCalculateMousePlaneIntersection(FVector& OutIntersectionPoint) const;
+	void UpdateBowAimFacing();
+	void ApplyBowAimFacing(const FVector& AimDirection);
+
+	TWeakObjectPtr<const UObject> ActiveBowAimRequester;
+	FVector LastValidBowAimDirection = FVector::ZeroVector;
+	bool bHasValidBowAimDirection = false;
 };

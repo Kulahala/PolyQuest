@@ -4,7 +4,7 @@
 #include "AbilitySystemGlobals.h"
 #include "ActiveGameplayEffectHandle.h"
 #include "Character/Player/PlayerCharacter.h"
-#include "Combat/Melee/CombatTeamAgent.h"
+#include "Combat/Projectile/CombatProjectileTargeting.h"
 #include "GameFramework/Actor.h"
 #include "GameplayEffect.h"
 #include "GameplayEffectTypes.h"
@@ -12,30 +12,6 @@
 
 namespace
 {
-	FGameplayTag ResolveTeamTag(AActor* Actor)
-	{
-		if (!Actor)
-		{
-			return FGameplayTag();
-		}
-
-		if (ICombatTeamAgent* TeamAgent = Cast<ICombatTeamAgent>(Actor))
-		{
-			const FGameplayTag NativeTag = TeamAgent->GetCombatTeamTag_Implementation();
-			if (NativeTag.IsValid())
-			{
-				return NativeTag;
-			}
-		}
-
-		if (Actor->GetClass()->ImplementsInterface(UCombatTeamAgent::StaticClass()))
-		{
-			return ICombatTeamAgent::Execute_GetCombatTeamTag(Actor);
-		}
-
-		return FGameplayTag();
-	}
-
 	const FGameplayTag& GetProjectileDeadTag()
 	{
 		static const FGameplayTag DeadTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Status.Dead")), false);
@@ -66,8 +42,8 @@ bool FCombatProjectileHitResolver::TryResolveHit(const FCombatProjectileHitReque
 		return false;
 	}
 
-	const FGameplayTag SourceTeamTag = ResolveTeamTag(SourceActor);
-	const FGameplayTag TargetTeamTag = ResolveTeamTag(TargetActor);
+	const FGameplayTag SourceTeamTag = FCombatProjectileTargeting::ResolveTeamTag(SourceActor);
+	const FGameplayTag TargetTeamTag = FCombatProjectileTargeting::ResolveTeamTag(TargetActor);
 	if (!SourceTeamTag.IsValid() || !TargetTeamTag.IsValid() || SourceTeamTag.MatchesTagExact(TargetTeamTag))
 	{
 		return false;

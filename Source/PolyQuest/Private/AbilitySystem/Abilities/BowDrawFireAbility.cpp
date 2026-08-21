@@ -10,6 +10,8 @@
 #include "Combat/Equipment/ProjectileDefinition.h"
 #include "Combat/Equipment/WeaponEquipmentComponent.h"
 #include "Combat/Projectile/CombatProjectile.h"
+#include "Combat/Projectile/CombatProjectileTargeting.h"
+#include "DrawDebugHelpers.h"
 #include "Engine/World.h"
 #include "PolyQuest.h"
 
@@ -200,7 +202,7 @@ void UBowDrawFireAbility::ActivateAbility(
 	WaitInputCanceledTask->EventReceived.AddDynamic(this, &UBowDrawFireAbility::OnInputCanceled);
 	WaitInputCanceledTask->ReadyForActivation();
 
-	PlayerCharacter->ApplyActionFacing();
+	PlayerCharacter->RegisterBowAimRequester(this);
 	MontageTask->ReadyForActivation();
 
 	UAnimInstance* AnimInstance = ActorInfo ? ActorInfo->GetAnimInstance() : nullptr;
@@ -337,6 +339,8 @@ void UBowDrawFireAbility::SpawnProjectile()
 		return;
 	}
 
+	const UProjectileDefinition* ProjDef = BowDef->DefaultProjectileDefinition;
+
 	FTransform LaunchSocketTransform;
 	if (!EquipmentComp->TryGetEquippedMainHandDisplaySocketTransform(BowDef->LaunchSocketName, LaunchSocketTransform))
 	{
@@ -345,7 +349,45 @@ void UBowDrawFireAbility::SpawnProjectile()
 		return;
 	}
 
-	const FVector LaunchDirection = PlayerCharacter->GetActionWorldDirection();
+	const FVector LaunchLocation = LaunchSocketTransform.GetLocation();
+
+	// 1. Resolve pointer direction or fallback to action facing
+	FVector PointerDirection;
+	if (!PlayerCharacter->TryGetBowAimWorldDirection(PointerDirection))
+	{
+		PointerDirection = PlayerCharacter->GetActionWorldDirection();
+	}
+
+	FVector LaunchDirection = PointerDirection;
+	TWeakObjectPtr<AActor> SelectedTarget = nullptr;
+	FVector TargetAimPoint = FVector::ZeroVector;
+
+	// 2. Target assistance evaluation on release
+	if (ProjDef->bEnableTargetAssist)
+	{
+		FCombatProjectileTargetFilter Filter;
+		Filter.MaxHorizontalDistance = ProjDef->TargetAssistMaxDistance;
+		Filter.MaxAngleDegrees = ProjDef->TargetAssistMaxAngleDegrees;
+		Filter.MaxHeightDelta = ProjDef->TargetAssistMaxHeightDelta;
+		Filter.MaxPitchDegrees = ProjDef->TargetAssistMaxPitchDegrees;
+
+		FCombatProjectileTargetCandidate Candidate;
+		const bool bFoundTarget = FCombatProjectileTargeting::TryFindBestTargetCandidate(
+			World,
+			PlayerCharacter,
+			GetAbilitySystemComponentFromActorInfo(),
+			LaunchLocation,
+			PointerDirection,
+			Filter,
+			Candidate);
+
+		if (bFoundTarget && Candidate.TargetActor.IsValid())
+		{
+			SelectedTarget = Candidate.TargetActor;
+			TargetAimPoint = Candidate.AimPoint;
+		}
+	}
+
 	const FRotator LaunchRotation = LaunchDirection.Rotation();
 
 	FActorSpawnParameters SpawnParams;
@@ -356,7 +398,7 @@ void UBowDrawFireAbility::SpawnProjectile()
 	UClass* ClassToSpawn = ProjectileClass ? ProjectileClass.Get() : ACombatProjectile::StaticClass();
 	ACombatProjectile* Projectile = World->SpawnActor<ACombatProjectile>(
 		ClassToSpawn,
-		LaunchSocketTransform.GetLocation(),
+		LaunchLocation,
 		LaunchRotation,
 		SpawnParams);
 
@@ -367,16 +409,35 @@ void UBowDrawFireAbility::SpawnProjectile()
 	}
 
 	FCombatProjectileLaunchRequest LaunchRequest;
-	LaunchRequest.Definition = BowDef->DefaultProjectileDefinition;
+	LaunchRequest.Definition = ProjDef;
 	LaunchRequest.SourceActor = PlayerCharacter;
 	LaunchRequest.SourceAbilitySystemComponent = GetAbilitySystemComponentFromActorInfo();
 	LaunchRequest.AbilityLevel = GetAbilityLevel();
+	LaunchRequest.InitialFlightDirection = LaunchDirection;
+	LaunchRequest.TargetActor = SelectedTarget;
+	LaunchRequest.InitialTargetAimPoint = TargetAimPoint;
+	LaunchRequest.bEnableLimitedHoming = ProjDef->bEnableLimitedHoming;
+	LaunchRequest.HomingStartDelaySeconds = ProjDef->HomingStartDelaySeconds;
+	LaunchRequest.HomingDurationSeconds = ProjDef->HomingDurationSeconds;
+	LaunchRequest.HomingTurnRateDegreesPerSecond = ProjDef->HomingTurnRateDegreesPerSecond;
+	LaunchRequest.HomingMaxTotalTurnDegrees = ProjDef->HomingMaxTotalTurnDegrees;
+	LaunchRequest.TargetAssistMaxDistance = ProjDef->TargetAssistMaxDistance;
+	LaunchRequest.TargetAssistMaxHeightDelta = ProjDef->TargetAssistMaxHeightDelta;
 
 	if (!Projectile->InitializeProjectile(LaunchRequest))
 	{
 		UE_LOG(LogPolyQuest, Warning, TEXT("UBowDrawFireAbility::SpawnProjectile: projectile failed to initialize with definition."));
 		return;
 	}
+
+#if !(UE_BUILD_SHIPPING)
+	DrawDebugDirectionalArrow(World, LaunchLocation, LaunchLocation + LaunchDirection * 500.0f, 60.0f, FColor::Magenta, false, 2.5f, 0, 3.5f);
+	if (SelectedTarget.IsValid())
+	{
+		DrawDebugSphere(World, TargetAimPoint, 25.0f, 16, FColor::Green, false, 2.5f, 0, 3.0f);
+		DrawDebugLine(World, LaunchLocation, TargetAimPoint, FColor::Green, false, 2.5f, 0, 1.5f);
+	}
+#endif
 
 	bSpawnedProjectile = true;
 }
@@ -413,6 +474,11 @@ void UBowDrawFireAbility::EndAbility(
 		return;
 	}
 	bEndAbilityInProgress = true;
+
+	if (APlayerCharacter* PlayerCharacter = Cast<APlayerCharacter>(GetAvatarActorFromActorInfo()))
+	{
+		PlayerCharacter->UnregisterBowAimRequester(this);
+	}
 
 	if (MontageTask)
 	{

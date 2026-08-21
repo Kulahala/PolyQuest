@@ -49,5 +49,65 @@ bool UProjectileDefinition::IsValidProjectileDefinition(FString& OutReason) cons
 		return false;
 	}
 
+	if (bEnableLimitedHoming && !bEnableTargetAssist)
+	{
+		OutReason = TEXT("bEnableLimitedHoming requires bEnableTargetAssist to be enabled.");
+		return false;
+	}
+
+	if (bEnableTargetAssist)
+	{
+		if (!FMath::IsFinite(TargetAssistMaxDistance) || TargetAssistMaxDistance <= 0.0f)
+		{
+			OutReason = FString::Printf(TEXT("TargetAssistMaxDistance (%.2f) must be positive and finite."), TargetAssistMaxDistance);
+			return false;
+		}
+
+		if (!FMath::IsFinite(TargetAssistMaxAngleDegrees) || TargetAssistMaxAngleDegrees <= 0.0f || TargetAssistMaxAngleDegrees > 180.0f)
+		{
+			OutReason = FString::Printf(TEXT("TargetAssistMaxAngleDegrees (%.2f) must be > 0 and <= 180."), TargetAssistMaxAngleDegrees);
+			return false;
+		}
+
+		if (!FMath::IsFinite(TargetAssistMaxHeightDelta) || TargetAssistMaxHeightDelta <= 0.0f)
+		{
+			OutReason = FString::Printf(TEXT("TargetAssistMaxHeightDelta (%.2f) must be positive and finite."), TargetAssistMaxHeightDelta);
+			return false;
+		}
+
+		if (!FMath::IsFinite(TargetAssistMaxPitchDegrees) || TargetAssistMaxPitchDegrees <= 0.0f || TargetAssistMaxPitchDegrees >= 90.0f)
+		{
+			OutReason = FString::Printf(TEXT("TargetAssistMaxPitchDegrees (%.2f) must be > 0 and < 90."), TargetAssistMaxPitchDegrees);
+			return false;
+		}
+	}
+
+	if (bEnableLimitedHoming)
+	{
+		if (!FMath::IsFinite(HomingStartDelaySeconds) || HomingStartDelaySeconds < 0.0f || HomingStartDelaySeconds >= LifespanSeconds)
+		{
+			OutReason = FString::Printf(TEXT("HomingStartDelaySeconds (%.2f) must be non-negative, finite, and < LifespanSeconds (%.2f)."), HomingStartDelaySeconds, LifespanSeconds);
+			return false;
+		}
+
+		if (!FMath::IsFinite(HomingDurationSeconds) || HomingDurationSeconds <= 0.0f || HomingDurationSeconds > LifespanSeconds)
+		{
+			OutReason = FString::Printf(TEXT("HomingDurationSeconds (%.2f) must be positive, finite, and <= LifespanSeconds (%.2f)."), HomingDurationSeconds, LifespanSeconds);
+			return false;
+		}
+
+		if (!FMath::IsFinite(HomingTurnRateDegreesPerSecond) || HomingTurnRateDegreesPerSecond <= 0.0f)
+		{
+			OutReason = FString::Printf(TEXT("HomingTurnRateDegreesPerSecond (%.2f) must be positive and finite."), HomingTurnRateDegreesPerSecond);
+			return false;
+		}
+
+		if (!FMath::IsFinite(HomingMaxTotalTurnDegrees) || HomingMaxTotalTurnDegrees <= 0.0f)
+		{
+			OutReason = FString::Printf(TEXT("HomingMaxTotalTurnDegrees (%.2f) must be positive and finite."), HomingMaxTotalTurnDegrees);
+			return false;
+		}
+	}
+
 	return true;
 }

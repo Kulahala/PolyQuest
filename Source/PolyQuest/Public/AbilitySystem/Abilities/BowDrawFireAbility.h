@@ -57,6 +57,7 @@ public:
 	void SetTestBowStateReleasing() { BowState = EBowState::Releasing; }
 	void SetTestBowMontage(UAnimMontage* Montage) { BowMontage = Montage; }
 	void SetTestCurrentActorInfo(const FGameplayAbilityActorInfo* InActorInfo) { CurrentActorInfo = InActorInfo; }
+	void TestSpawnProjectile() { SpawnProjectile(); }
 #endif
 
 protected:
