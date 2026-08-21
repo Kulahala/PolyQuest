@@ -34,6 +34,11 @@ AEnemyCharacter::AEnemyCharacter()
 
 void AEnemyCharacter::BeginPlay()
 {
+	if (!DeadStateTag.IsValid())
+	{
+		DeadStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Status.Dead")), false);
+	}
+
 	Super::BeginPlay();
 	BindDeathEvents();
 

@@ -1,4 +1,4 @@
-﻿// Fill out your copyright notice in the Description page of Project Settings.
+// Fill out your copyright notice in the Description page of Project Settings.
 
 #pragma once
 
@@ -32,6 +32,10 @@ public:
 
 	/** Returns the single fixed-weapon sample provider used by active melee abilities. */
 	UMeleeTraceSourceComponent* GetMeleeTraceSource() const;
+
+#if WITH_DEV_AUTOMATION_TESTS
+	void SetTestCombatTeamTag(const FGameplayTag& InTag) { CombatTeamTag = InTag; }
+#endif
 
 protected:
 	void InitializeAbilityActorInfo();

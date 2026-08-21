@@ -58,6 +58,9 @@ public:
 	/** Returns the live blade markers of the equipped melee main hand for trace sampling. */
 	bool TryGetBladeMarkers(USceneComponent*& OutBladeBase, USceneComponent*& OutBladeTip) const;
 
+	/** Resolves a named Socket on the current main-hand display mesh to a finite world transform. */
+	bool TryGetEquippedMainHandDisplaySocketTransform(FName SocketName, FTransform& OutTransform) const;
+
 	/** The single input resolver: Guard/Parry through the Effective Defense Profile, Primary through the Base Input Profile. */
 	bool TryResolveInputIntent(const FGameplayTag& InputIntentTag, FGameplayTag& OutAbilityTag) const;
 

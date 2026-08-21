@@ -80,6 +80,10 @@ bool FWeaponEquipmentComponentTransactionMatrixTest::RunTest(const FString& Para
 	// Create test loadouts
 	const FGameplayTag TagInputPrimaryAttack = FGameplayTag::RequestGameplayTag(TEXT("Input.PrimaryAttack"));
 	const FGameplayTag TagAbilityPrimaryAttack = FGameplayTag::RequestGameplayTag(TEXT("Ability.Attack.Primary"));
+	const FGameplayTag TagBowDrawReady = FGameplayTag::RequestGameplayTag(TEXT("Event.Attack.Bow.DrawReady"), false);
+	const FGameplayTag TagBowRelease = FGameplayTag::RequestGameplayTag(TEXT("Event.Attack.Bow.Release"), false);
+	TestTrue(TEXT("Bow DrawReady event tag is registered"), TagBowDrawReady.IsValid());
+	TestTrue(TEXT("Bow Release event tag is registered"), TagBowRelease.IsValid());
 
 	UCombatLoadoutDefinition* SwordLoadout = NewObject<UCombatLoadoutDefinition>(GetTransientPackage(), TEXT("Test_SwordLoadout"));
 	SwordLoadout->AddTestInputAbilityRoute(TagInputPrimaryAttack, TagAbilityPrimaryAttack);
@@ -154,6 +158,10 @@ bool FWeaponEquipmentComponentTransactionMatrixTest::RunTest(const FString& Para
 	{
 		return false;
 	}
+
+	FTransform NoMainHandSocketTransform(FQuat(0.2f, 0.3f, 0.4f, 0.5f), FVector(10.0f), FVector(2.0f));
+	TestFalse(TEXT("Main-hand display socket query rejects no equipped main hand"), EquipmentComp->TryGetEquippedMainHandDisplaySocketTransform(SocketNameTraceBase, NoMainHandSocketTransform));
+	TestTrue(TEXT("Main-hand display socket query resets output on no equipped main hand"), NoMainHandSocketTransform.Equals(FTransform::Identity));
 
 	// Wire Unarmed fallback
 	if (FProperty* Prop = EquipmentComp->GetClass()->FindPropertyByName(TEXT("UnarmedFallbackDefinition")))
@@ -249,6 +257,22 @@ bool FWeaponEquipmentComponentTransactionMatrixTest::RunTest(const FString& Para
 			TestEqual(TEXT("BladeTipComp attached to Trace_Tip socket"), BladeTipComp->GetAttachSocketName(), SocketNameTraceTip);
 			TestNotEqual(TEXT("Blade markers have distinct world locations"), BladeBaseComp->GetComponentLocation(), BladeTipComp->GetComponentLocation());
 		}
+
+		FTransform ValidMainHandSocketTransform;
+		TestTrue(TEXT("Main-hand display socket query resolves Trace_Base"), EquipmentComp->TryGetEquippedMainHandDisplaySocketTransform(SocketNameTraceBase, ValidMainHandSocketTransform));
+		const FVector ValidSocketLocation = ValidMainHandSocketTransform.GetLocation();
+		const FQuat ValidSocketRotation = ValidMainHandSocketTransform.GetRotation();
+		const FVector ValidSocketScale = ValidMainHandSocketTransform.GetScale3D();
+		TestTrue(TEXT("Main-hand display socket query returns the live world-space socket location"),
+			BladeBaseComp && ValidSocketLocation.Equals(BladeBaseComp->GetComponentLocation(), KINDA_SMALL_NUMBER));
+		TestTrue(TEXT("Main-hand display socket query returns a finite transform"),
+			FMath::IsFinite(ValidSocketLocation.X) && FMath::IsFinite(ValidSocketLocation.Y) && FMath::IsFinite(ValidSocketLocation.Z)
+			&& FMath::IsFinite(ValidSocketRotation.X) && FMath::IsFinite(ValidSocketRotation.Y) && FMath::IsFinite(ValidSocketRotation.Z) && FMath::IsFinite(ValidSocketRotation.W)
+			&& FMath::IsFinite(ValidSocketScale.X) && FMath::IsFinite(ValidSocketScale.Y) && FMath::IsFinite(ValidSocketScale.Z));
+
+		FTransform MissingMainHandSocketTransform(FQuat(0.2f, 0.3f, 0.4f, 0.5f), FVector(10.0f), FVector(2.0f));
+		TestFalse(TEXT("Main-hand display socket query rejects a missing socket"), EquipmentComp->TryGetEquippedMainHandDisplaySocketTransform(TEXT("Missing_Bow_Launch_Socket"), MissingMainHandSocketTransform));
+		TestTrue(TEXT("Main-hand display socket query resets output on missing socket"), MissingMainHandSocketTransform.Equals(FTransform::Identity));
 
 		FString PreflightReason1;
 		const bool bPreflight1 = EquipmentComp->TestDirectPreflight(TwoHandedDef, ShieldDef, PreflightReason1);

@@ -35,6 +35,32 @@ UWeaponEquipmentComponent::UWeaponEquipmentComponent()
 	PreparedSlotHandles.SetNum(PreparedSlotCount);
 }
 
+bool UWeaponEquipmentComponent::TryGetEquippedMainHandDisplaySocketTransform(FName SocketName, FTransform& OutTransform) const
+{
+	OutTransform = FTransform::Identity;
+
+	if (SocketName.IsNone() || !CurrentMainHandWeapon || !IsValid(MainHandDisplayComponent)
+		|| !CurrentMainHandWeapon->WeaponMesh || MainHandDisplayComponent->GetStaticMesh() != CurrentMainHandWeapon->WeaponMesh
+		|| !MainHandDisplayComponent->DoesSocketExist(SocketName))
+	{
+		return false;
+	}
+
+	const FTransform SocketTransform = MainHandDisplayComponent->GetSocketTransform(SocketName, RTS_World);
+	const FVector Location = SocketTransform.GetLocation();
+	const FQuat Rotation = SocketTransform.GetRotation();
+	const FVector Scale = SocketTransform.GetScale3D();
+	if (!FMath::IsFinite(Location.X) || !FMath::IsFinite(Location.Y) || !FMath::IsFinite(Location.Z)
+		|| !FMath::IsFinite(Rotation.X) || !FMath::IsFinite(Rotation.Y) || !FMath::IsFinite(Rotation.Z) || !FMath::IsFinite(Rotation.W)
+		|| !FMath::IsFinite(Scale.X) || !FMath::IsFinite(Scale.Y) || !FMath::IsFinite(Scale.Z))
+	{
+		return false;
+	}
+
+	OutTransform = SocketTransform;
+	return true;
+}
+
 bool UWeaponEquipmentComponent::BuildTargetCompositionForIncoming(UWeaponDefinition* IncomingDefinition, UWeaponDefinition*& OutTargetMainHand, UWeaponDefinition*& OutTargetOffHand, FString& OutReason) const
 {
 	OutReason.Empty();
