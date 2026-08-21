@@ -8,6 +8,8 @@ PolyQuest has completed its native first-enemy combat loop and weapon/AI combat 
 
 `TODO-03B-2` extends the TwoHanded Bow with local pointer-facing over a character-center reference plane, one Release-time hostile-target selection inside the current viewport plus a 6% edge overscan, and a projectile-owned target snapshot. Arrows first fly along the pointer direction, then optionally steer under authored duration, turn-rate, and total-turn budgets; a data value above 90 degrees deliberately permits the current casual U-turn behavior. A selected target never triggers a new search, and leaving the screen after Release does not cancel the arrow. The shared projectile collision, GameplayEffect delivery, and ownership boundary remain unchanged. PolyQuest continues to reuse validated player-facing behavior from the old Test project without copying its FSM, save schema, or authored asset topology.
 
+`TODO-01C3` Slice A is complete: Bow Draw/Hold/Release/Recovery and Charged Hold now expose player Dodge/Guard/Parry interruption only through their authored `ActionDodgeCancelWindow`; `State.Action.Charging` is descriptive state rather than a Dodge exemption. Bow owns dynamic Charging, scoped CancelWindow/RateWindow listeners, and cleanup, while a Charged Hold preserves only a window that was already valid when `Montage_Pause` occurs. Dodge recovery RateWindow and continuous re-trigger chaining remain the separate unstarted Slice B.
+
 ## Technology
 
 - Unreal Engine 5.8
@@ -49,5 +51,7 @@ The user owns compilation, PIE validation, packaging, and commit approval unless
 PolyQuest 是一个以 UE 5.8、C++ 与 GAS 为核心的新风格化单机动作 RPG 项目。首个敌人的完整战斗闭环与武器/AI 战斗体系已原生落地：输入意图路由、连段轻击、体力耗竭与恢复、Root Motion 闪避、短按/长按蓄力攻击、冲刺/跳跃/冲刺攻击、共享武器轨迹命中与 GAS 解析、首个敌人的 Sight/StateTree/近战循环（含攻击 Profile/触及/冷却）、终态死亡与布娃娃表现、蓄力伤害受击硬直与安全打断、敌人韧性削韧与延后姿态破坏、玩家方向性格挡与破防、Q 键定时弹反（经敌人韧性路径反制）、通知时序的敌人霸体、战斗 Notify 归属与命名审计、Light/Charged/Sprint Attack 的作者化 Montage 速率窗口、直接绑定 GameplayAbility 类的主手/双手/空手装备系统、按精确 Handle 激活的 `1-4` 战技与首个 `GA_Skill_Whirlwind`、世界武器拾取与原子掉落交换、静态网格体刀刃轨迹 Socket 标定、副手盾牌复合防御、普通敌人加权攻击集、敌人静态武器几何绑定与摄像机碰撞忽略保护、冷却重定位、距离感知加权近战接近与攻击执行、跨阶段武器与战斗架构健康与精简审查门（`TODO-03H1`），以及玩家弓箭的目标辅助与有限追踪（`TODO-03B-2`）。用户已确认各阶段的本地 `PolyQuestEditor` 自动化测试矩阵与 Standalone 视觉路由。GA、GE、Montage、AnimBP、Blueprint、输入、DataAsset 和地图等作者化资产仍是本地高频 WIP，因此聚焦的源码/配置提交不宣称可以从干净检出完整复现这些夹具。
 
 `TODO-03B-2` 已完成：双手 Bow 在 Draw/Hold/Release 期间以角色中心高度平面上的鼠标指针维持水平朝向；Release 时只在当前视口及 6% 边缘外扩内选择一次合规敌对目标，并把弱目标和制导标量快照交给 Projectile。箭先沿指针方向直飞，之后才按作者化时长、转向速度和总转角有限追踪；总转角大于 90 度时允许当前休闲向的回头追踪。目标在 Release 后离开屏幕不会触发换追或取消，投射物原有碰撞、单次 GameplayEffect 命中投递和生命周期所有权保持不变。
+
+`TODO-01C3` 的 Slice A 已完成：Bow 的 Draw/Hold/Release/Recovery 与 Charged Hold 仅在作者化 `ActionDodgeCancelWindow` 中开放 Dodge/Guard/Parry 打断，`State.Action.Charging` 仅表示状态，不再是 Dodge 豁免。Bow 自己拥有动态 Charging、作用域内的 CancelWindow/RateWindow 监听与清理；Charged Hold 只会保留在 `Montage_Pause` 前已经合法打开的窗口。Dodge Recovery 的 RateWindow 与连续重激活仍属于尚未开始的 Slice B。
 
 旧 `Test` 项目保留为独立的 UE 5.7 FSM 参考基线；PolyQuest 会按已验证的玩法合同重新实现功能，而不是直接搬运旧 FSM 和资产。

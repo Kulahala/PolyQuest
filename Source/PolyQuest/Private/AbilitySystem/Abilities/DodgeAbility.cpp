@@ -33,7 +33,6 @@ UDodgeAbility::UDodgeAbility()
 	SprintAttackAbilityTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Attack.Sprint")), false);
 	MeleeSkillAbilityTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Skill.Melee")), false);
 	AttackingStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Action.Attacking")), false);
-	ChargingStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Action.Charging")), false);
 	DodgeCancelableStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Action.CanCancel.Dodge")), false);
 	InvulnerabilityBeginEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Dodge.Invulnerability.Begin")), false);
 	InvulnerabilityEndEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Dodge.Invulnerability.End")), false);
@@ -61,8 +60,7 @@ bool UDodgeAbility::CanActivateAbility(
 
 	const bool bIsAttacking = AttackingStateTag.IsValid() && AbilitySystemComponent->HasMatchingGameplayTag(AttackingStateTag);
 	const bool bCanCancelAttack = DodgeCancelableStateTag.IsValid() && AbilitySystemComponent->HasMatchingGameplayTag(DodgeCancelableStateTag);
-	const bool bIsCharging = ChargingStateTag.IsValid() && AbilitySystemComponent->HasMatchingGameplayTag(ChargingStateTag);
-	return !bIsAttacking || bCanCancelAttack || bIsCharging;
+	return !bIsAttacking || bCanCancelAttack;
 }
 
 void UDodgeAbility::ActivateAbility(
@@ -84,7 +82,7 @@ void UDodgeAbility::ActivateAbility(
 	if (!AbilitySystemComponent || !PlayerCharacter || !AnimInstance || !DodgeMontage || !CostGameplayEffectClass
 		|| !StaminaRegenDelayGameplayEffectClass || !InvulnerabilityGameplayEffectClass || !PrimaryAttackAbilityTag.IsValid()
 		|| !LightAttackAbilityTag.IsValid() || !ChargedAttackAbilityTag.IsValid() || !SprintAttackAbilityTag.IsValid() || !MeleeSkillAbilityTag.IsValid()
-		|| !AttackingStateTag.IsValid() || !ChargingStateTag.IsValid() || !DodgeCancelableStateTag.IsValid() || !InvulnerabilityBeginEventTag.IsValid() || !InvulnerabilityEndEventTag.IsValid())
+		|| !AttackingStateTag.IsValid() || !DodgeCancelableStateTag.IsValid() || !InvulnerabilityBeginEventTag.IsValid() || !InvulnerabilityEndEventTag.IsValid())
 	{
 		UE_LOG(LogPolyQuest, Warning, TEXT("Dodge activation aborted for '%s': ASC, player, AnimInstance, montage, cost, regeneration delay, invulnerability effect, and required tags are required."), *GetNameSafe(PlayerCharacter));
 		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
@@ -114,15 +112,17 @@ void UDodgeAbility::ActivateAbility(
 	BoundAnimInstance->OnMontageEnded.AddDynamic(this, &UDodgeAbility::OnActiveMontageEnded);
 
 	const bool bCanCancelAttack = AbilitySystemComponent->HasMatchingGameplayTag(DodgeCancelableStateTag);
-	const bool bWasCharging = AbilitySystemComponent->HasMatchingGameplayTag(ChargingStateTag);
-	const bool bShouldCancelMeleeSkill = bCanCancelAttack && MeleeSkillAbilityTag.IsValid();
 	FGameplayTagContainer AbilityTagsToCancel;
 	AbilityTagsToCancel.AddTag(PrimaryAttackAbilityTag);
-	if (bCanCancelAttack || bWasCharging)
+	if (bCanCancelAttack)
 	{
 		AbilityTagsToCancel.AddTag(LightAttackAbilityTag);
 		AbilityTagsToCancel.AddTag(ChargedAttackAbilityTag);
 		AbilityTagsToCancel.AddTag(SprintAttackAbilityTag);
+		if (MeleeSkillAbilityTag.IsValid())
+		{
+			AbilityTagsToCancel.AddTag(MeleeSkillAbilityTag);
+		}
 	}
 	AbilitySystemComponent->CancelAbilities(&AbilityTagsToCancel, nullptr, this);
 
@@ -146,13 +146,6 @@ void UDodgeAbility::ActivateAbility(
 		UE_LOG(LogPolyQuest, Warning, TEXT("Dodge activation aborted for '%s': montage '%s' did not start."), *GetNameSafe(PlayerCharacter), *GetNameSafe(DodgeMontage));
 		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
 		return;
-	}
-
-	if (bShouldCancelMeleeSkill)
-	{
-		FGameplayTagContainer SkillCancelTags;
-		SkillCancelTags.AddTag(MeleeSkillAbilityTag);
-		AbilitySystemComponent->CancelAbilities(&SkillCancelTags, nullptr, this);
 	}
 
 	PlayerCharacter->CancelActiveGuardAfterConfirmedAction(false);
@@ -276,6 +269,35 @@ void UDodgeAbility::ClearInvulnerabilityEffect()
 bool UDodgeAbility::IsGameplayEventFromActiveMontage(const FGameplayEventData& Payload) const
 {
 	const AActor* AvatarActor = GetAvatarActorFromActorInfo();
-	return !bEndAbilityRequested && ActiveMontage && AvatarActor && Payload.Instigator == AvatarActor && Payload.Target == AvatarActor
-		&& Payload.OptionalObject.Get() == ActiveMontage.Get();
+	if (bEndAbilityRequested || !ActiveMontage || !AvatarActor || Payload.Instigator != AvatarActor || Payload.Target != AvatarActor)
+	{
+		return false;
+	}
+
+	const UObject* PayloadObject = Payload.OptionalObject.Get();
+	if (!PayloadObject)
+	{
+		return false;
+	}
+
+	if (PayloadObject == ActiveMontage.Get())
+	{
+		return true;
+	}
+
+	if (const UAnimSequenceBase* Sequence = Cast<UAnimSequenceBase>(PayloadObject))
+	{
+		for (const FSlotAnimationTrack& Track : ActiveMontage->SlotAnimTracks)
+		{
+			for (const FAnimSegment& Segment : Track.AnimTrack.AnimSegments)
+			{
+				if (Segment.GetAnimReference() == Sequence)
+				{
+					return true;
+				}
+			}
+		}
+	}
+
+	return false;
 }

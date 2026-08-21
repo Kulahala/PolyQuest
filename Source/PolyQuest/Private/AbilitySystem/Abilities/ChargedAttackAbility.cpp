@@ -95,6 +95,7 @@ void UChargedAttackAbility::ActivateAbility(
 	bDodgeCancelable = false;
 	bChargingStateApplied = false;
 	bMontagePausedAtHoldReady = false;
+	bHoldCancelWindowLatchedAcrossPause = false;
 	bReleaseStarted = false;
 	bRateWindowApplied = false;
 	DamageMultiplier = 1.0f;
@@ -208,6 +209,7 @@ void UChargedAttackAbility::EndAbility(
 	}
 
 	bEndAbilityRequested = true;
+	bHoldCancelWindowLatchedAcrossPause = false;
 	SetCharging(false);
 	SetDodgeCancelable(false);
 	CloseTraceWindow();
@@ -316,8 +318,9 @@ void UChargedAttackAbility::OnHoldReady(FGameplayEventData Payload)
 		return;
 	}
 
-	BoundAnimInstance->Montage_Pause(ActiveMontage.Get());
+	bHoldCancelWindowLatchedAcrossPause = bDodgeCancelable;
 	bMontagePausedAtHoldReady = true;
+	BoundAnimInstance->Montage_Pause(ActiveMontage.Get());
 }
 
 void UChargedAttackAbility::OnTraceWindowBegin(FGameplayEventData Payload)
@@ -354,7 +357,7 @@ void UChargedAttackAbility::OnInputCanceled(FGameplayEventData Payload)
 
 void UChargedAttackAbility::OnDodgeCancelWindowBegin(FGameplayEventData Payload)
 {
-	if (bReleaseStarted && IsGameplayEventFromActiveMontage(Payload))
+	if (IsGameplayEventFromActiveMontage(Payload))
 	{
 		SetDodgeCancelable(true);
 	}
@@ -362,10 +365,18 @@ void UChargedAttackAbility::OnDodgeCancelWindowBegin(FGameplayEventData Payload)
 
 void UChargedAttackAbility::OnDodgeCancelWindowEnd(FGameplayEventData Payload)
 {
-	if (IsGameplayEventFromActiveMontage(Payload))
+	if (!IsGameplayEventFromActiveMontage(Payload))
 	{
-		SetDodgeCancelable(false);
+		return;
 	}
+
+	if (bMontagePausedAtHoldReady && !bReleaseStarted && bHoldCancelWindowLatchedAcrossPause)
+	{
+		return;
+	}
+
+	bHoldCancelWindowLatchedAcrossPause = false;
+	SetDodgeCancelable(false);
 }
 
 void UChargedAttackAbility::BeginRelease(float HeldDuration)
@@ -424,8 +435,37 @@ void UChargedAttackAbility::EndFromMontage(bool bWasCancelled)
 bool UChargedAttackAbility::IsGameplayEventFromActiveMontage(const FGameplayEventData& Payload) const
 {
 	const AActor* AvatarActor = GetAvatarActorFromActorInfo();
-	return !bEndAbilityRequested && ActiveMontage && AvatarActor && Payload.Instigator == AvatarActor && Payload.Target == AvatarActor
-		&& Payload.OptionalObject.Get() == ActiveMontage.Get();
+	if (bEndAbilityRequested || !ActiveMontage || !AvatarActor || Payload.Instigator != AvatarActor || Payload.Target != AvatarActor)
+	{
+		return false;
+	}
+
+	const UObject* PayloadObject = Payload.OptionalObject.Get();
+	if (!PayloadObject)
+	{
+		return false;
+	}
+
+	if (PayloadObject == ActiveMontage.Get())
+	{
+		return true;
+	}
+
+	if (const UAnimSequenceBase* Sequence = Cast<UAnimSequenceBase>(PayloadObject))
+	{
+		for (const FSlotAnimationTrack& Track : ActiveMontage->SlotAnimTracks)
+		{
+			for (const FAnimSegment& Segment : Track.AnimTrack.AnimSegments)
+			{
+				if (Segment.GetAnimReference() == Sequence)
+				{
+					return true;
+				}
+			}
+		}
+	}
+
+	return false;
 }
 
 bool UChargedAttackAbility::IsPrimaryAttackInputEvent(const FGameplayEventData& Payload) const

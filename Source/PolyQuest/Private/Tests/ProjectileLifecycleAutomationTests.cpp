@@ -9,6 +9,7 @@
 #include "AbilitySystem/Abilities/PrimaryAttackAbility.h"
 #include "AbilitySystem/CharacterAttributeSet.h"
 #include "Animation/AnimMontage.h"
+#include "Animation/AnimComposite.h"
 #include "Character/Player/PlayerCharacter.h"
 #include "Character/Enemy/EnemyCharacter.h"
 #include "Combat/Equipment/BowWeaponDefinition.h"
@@ -511,13 +512,14 @@ bool FProjectileLifecycleAutomationTest::RunTest(const FString& Parameters)
 				TestFalse(TEXT("TryActivateAbility fails when PrimaryAttack input is not held"),
 					ASC->TryActivateAbility(BowSpecHandle));
 
-				// 5.2 Ability Tags contain Ability.Attack.Primary and State.Action.Charging
+				// 5.2 Ability Tags contain Ability.Attack.Primary and do not statically carry State.Action.Charging
 				const UBowDrawFireAbility* BowCDO = UBowDrawFireAbility::StaticClass()->GetDefaultObject<UBowDrawFireAbility>();
 				TestNotNull(TEXT("Bow ability CDO exists"), BowCDO);
 				if (BowCDO)
 				{
 					TestTrue(TEXT("Bow CDO carries Ability.Attack.Primary tag"), BowCDO->AbilityTags.HasTagExact(TagAbilityPrimaryAttack));
-					TestTrue(TEXT("Bow CDO carries State.Action.Charging in ActivationOwnedTags"), BowCDO->GetTestActivationOwnedTags().HasTagExact(TagCharging));
+					TestFalse(TEXT("Bow CDO does not carry State.Action.Charging in AbilityTags"), BowCDO->AbilityTags.HasTagExact(TagCharging));
+					TestFalse(TEXT("Bow CDO does not carry State.Action.Charging in ActivationOwnedTags"), BowCDO->GetTestActivationOwnedTags().HasTagExact(TagCharging));
 				}
 
 				// 5.3 Unified Avatar Identity Validation for Events
@@ -533,6 +535,20 @@ bool FProjectileLifecycleAutomationTest::RunTest(const FString& Parameters)
 				{
 					UAnimMontage* MockMontage = NewObject<UAnimMontage>(GetTransientPackage(), TEXT("Test_MockBowMontage"));
 					UAnimMontage* WrongMontage = NewObject<UAnimMontage>(GetTransientPackage(), TEXT("Test_WrongMontage"));
+					UAnimComposite* InnerSequence = NewObject<UAnimComposite>(GetTransientPackage(), TEXT("Test_BowInnerSequence"));
+					UAnimComposite* ForeignSequence = NewObject<UAnimComposite>(GetTransientPackage(), TEXT("Test_BowForeignSequence"));
+
+					FSlotAnimationTrack SlotTrack;
+					SlotTrack.SlotName = FName(TEXT("DefaultSlot"));
+					FAnimSegment Segment;
+					Segment.SetAnimReference(InnerSequence);
+					Segment.StartPos = 0.0f;
+					Segment.AnimStartTime = 0.0f;
+					Segment.AnimEndTime = 1.0f;
+					Segment.AnimPlayRate = 1.0f;
+					SlotTrack.AnimTrack.AnimSegments.Add(Segment);
+					MockMontage->SlotAnimTracks.Add(SlotTrack);
+
 					BowAbility->SetTestBowMontage(MockMontage);
 
 					// --- 5.3a DrawReady Event Gates ---
@@ -576,7 +592,24 @@ bool FProjectileLifecycleAutomationTest::RunTest(const FString& Parameters)
 					BowAbility->TestOnDrawReadyEvent(WrongMontageEvent);
 					TestEqual(TEXT("DrawReady with wrong Montage does not advance BowState"), BowAbility->GetTestBowState(), (uint8)1 /* Drawing */);
 
-					// Valid Identity & Montage: successfully advances Drawing -> Holding
+					// Foreign Sequence not in Montage: must not advance state
+					FGameplayEventData ForeignSequenceEvent;
+					ForeignSequenceEvent.Instigator = Player;
+					ForeignSequenceEvent.Target = Player;
+					ForeignSequenceEvent.OptionalObject = ForeignSequence;
+					BowAbility->TestOnDrawReadyEvent(ForeignSequenceEvent);
+					TestEqual(TEXT("DrawReady with foreign Sequence does not advance BowState"), BowAbility->GetTestBowState(), (uint8)1 /* Drawing */);
+
+					// Valid Montage Inner Sequence: successfully advances Drawing -> Holding
+					FGameplayEventData ValidInnerSequenceEvent;
+					ValidInnerSequenceEvent.Instigator = Player;
+					ValidInnerSequenceEvent.Target = Player;
+					ValidInnerSequenceEvent.OptionalObject = InnerSequence;
+					BowAbility->TestOnDrawReadyEvent(ValidInnerSequenceEvent);
+					TestEqual(TEXT("DrawReady with Montage inner Sequence advances to Holding"), BowAbility->GetTestBowState(), (uint8)2 /* Holding */);
+
+					// Valid Direct Montage: successfully advances Drawing -> Holding
+					BowAbility->SetTestBowStateDrawing();
 					FGameplayEventData ValidDrawReadyEvent;
 					ValidDrawReadyEvent.Instigator = Player;
 					ValidDrawReadyEvent.Target = Player;
@@ -629,6 +662,21 @@ bool FProjectileLifecycleAutomationTest::RunTest(const FString& Parameters)
 					WrongIdentityReleaseAnimEvent.OptionalObject = MockMontage;
 					BowAbility->TestOnReleaseAnimEvent(WrongIdentityReleaseAnimEvent);
 					TestFalse(TEXT("Release event with wrong identity does not spawn projectile"), BowAbility->GetTestSpawnedProjectile());
+
+					// In Releasing state but with foreign Sequence: rejected by identity gate
+					FGameplayEventData ForeignSeqReleaseAnimEvent;
+					ForeignSeqReleaseAnimEvent.Instigator = Player;
+					ForeignSeqReleaseAnimEvent.Target = Player;
+					ForeignSeqReleaseAnimEvent.OptionalObject = ForeignSequence;
+					BowAbility->TestOnReleaseAnimEvent(ForeignSeqReleaseAnimEvent);
+					TestFalse(TEXT("Release event with foreign Sequence rejected by gate"), BowAbility->Test_IsGameplayEventFromActiveMontage(ForeignSeqReleaseAnimEvent));
+
+					// In Releasing state with valid Montage Inner Sequence: accepted by identity gate
+					FGameplayEventData ValidInnerSeqReleaseAnimEvent;
+					ValidInnerSeqReleaseAnimEvent.Instigator = Player;
+					ValidInnerSeqReleaseAnimEvent.Target = Player;
+					ValidInnerSeqReleaseAnimEvent.OptionalObject = InnerSequence;
+					TestTrue(TEXT("Release event with Montage inner Sequence accepted by gate"), BowAbility->Test_IsGameplayEventFromActiveMontage(ValidInnerSeqReleaseAnimEvent));
 				}
 			}
 

@@ -43,6 +43,13 @@ public:
 		bool bReplicateEndAbility,
 		bool bWasCancelled) override;
 
+#if WITH_DEV_AUTOMATION_TESTS
+	const FGameplayTagContainer& GetTestActivationOwnedTags() const { return ActivationOwnedTags; }
+	const FGameplayTagContainer& GetTestActivationBlockedTags() const { return ActivationBlockedTags; }
+	FGameplayTag GetTestDodgeCancelableStateTag() const { return DodgeCancelableStateTag; }
+	FGameplayTag GetTestAttackingStateTag() const { return AttackingStateTag; }
+#endif
+
 protected:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Dodge")
 	TObjectPtr<UAnimMontage> DodgeMontage;
@@ -72,7 +79,6 @@ private:
 	FGameplayTag SprintAttackAbilityTag;
 	FGameplayTag MeleeSkillAbilityTag;
 	FGameplayTag AttackingStateTag;
-	FGameplayTag ChargingStateTag;
 	FGameplayTag DodgeCancelableStateTag;
 	FGameplayTag InvulnerabilityBeginEventTag;
 	FGameplayTag InvulnerabilityEndEventTag;

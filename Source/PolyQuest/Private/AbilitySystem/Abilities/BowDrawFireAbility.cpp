@@ -22,7 +22,6 @@ UBowDrawFireAbility::UBowDrawFireAbility()
 
 	const FGameplayTag PrimaryAttackAbilityTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Attack.Primary")), false);
 	const FGameplayTag AttackingStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Action.Attacking")), false);
-	const FGameplayTag ChargingStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Action.Charging")), false);
 	const FGameplayTag MovementBlockTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Input.Block.Movement")), false);
 	const FGameplayTag JumpBlockTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Input.Block.Jump")), false);
 
@@ -33,10 +32,6 @@ UBowDrawFireAbility::UBowDrawFireAbility()
 	if (AttackingStateTag.IsValid())
 	{
 		AbilityTags.AddTag(AttackingStateTag);
-	}
-	if (ChargingStateTag.IsValid())
-	{
-		AbilityTags.AddTag(ChargingStateTag);
 	}
 
 	ActivationBlockedTags.AddTag(FGameplayTag::RequestGameplayTag(FName(TEXT("State.Status.Dead")), false));
@@ -50,10 +45,6 @@ UBowDrawFireAbility::UBowDrawFireAbility()
 	if (AttackingStateTag.IsValid())
 	{
 		ActivationOwnedTags.AddTag(AttackingStateTag);
-	}
-	if (ChargingStateTag.IsValid())
-	{
-		ActivationOwnedTags.AddTag(ChargingStateTag);
 	}
 	if (MovementBlockTag.IsValid())
 	{
@@ -69,6 +60,13 @@ UBowDrawFireAbility::UBowDrawFireAbility()
 	ReleaseEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Attack.Bow.Release")), false);
 	InputReleasedEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Input.Released")), false);
 	InputCanceledEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Input.Canceled")), false);
+	DodgeCancelWindowBeginEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Action.CancelWindow.Dodge.Begin")), false);
+	DodgeCancelWindowEndEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Action.CancelWindow.Dodge.End")), false);
+	RateWindowBeginEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Action.RateWindow.Begin")), false);
+	RateWindowEndEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Action.RateWindow.End")), false);
+	DodgeCancelableStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Action.CanCancel.Dodge")), false);
+	DefenseCancelableStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Action.CanCancel.Defense")), false);
+	ChargingStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Action.Charging")), false);
 }
 
 bool UBowDrawFireAbility::CanActivateAbility(
@@ -89,8 +87,7 @@ bool UBowDrawFireAbility::CanActivateAbility(
 		return false;
 	}
 
-	const FGameplayTag PrimaryInputTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Input.PrimaryAttack")), false);
-	if (!PrimaryInputTag.IsValid() || !PlayerCharacter->IsCombatInputHeld(PrimaryInputTag))
+	if (!PrimaryAttackInputTag.IsValid() || !PlayerCharacter->IsCombatInputHeld(PrimaryAttackInputTag))
 	{
 		return false;
 	}
@@ -113,6 +110,9 @@ void UBowDrawFireAbility::ActivateAbility(
 {
 	// 1. Reset transient runtime state first before any early return/failure branch
 	bEndAbilityInProgress = false;
+	bDodgeCancelable = false;
+	bChargingApplied = false;
+	bRateWindowApplied = false;
 	bSpawnedProjectile = false;
 	bReleaseRequested = false;
 	BowState = EBowState::Inactive;
@@ -129,7 +129,11 @@ void UBowDrawFireAbility::ActivateAbility(
 
 	// 2. Validate required gameplay tags
 	if (!PrimaryAttackInputTag.IsValid() || !DrawReadyEventTag.IsValid() || !ReleaseEventTag.IsValid()
-		|| !InputReleasedEventTag.IsValid() || !InputCanceledEventTag.IsValid())
+		|| !InputReleasedEventTag.IsValid() || !InputCanceledEventTag.IsValid()
+		|| !DodgeCancelWindowBeginEventTag.IsValid() || !DodgeCancelWindowEndEventTag.IsValid()
+		|| !RateWindowBeginEventTag.IsValid() || !RateWindowEndEventTag.IsValid()
+		|| !DodgeCancelableStateTag.IsValid() || !DefenseCancelableStateTag.IsValid()
+		|| !ChargingStateTag.IsValid())
 	{
 		UE_LOG(LogPolyQuest, Warning, TEXT("UBowDrawFireAbility on '%s' failed activation: missing required gameplay tags."), *GetNameSafe(PlayerCharacter));
 		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
@@ -177,8 +181,13 @@ void UBowDrawFireAbility::ActivateAbility(
 	WaitReleaseTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, ReleaseEventTag);
 	WaitInputReleasedTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, InputReleasedEventTag);
 	WaitInputCanceledTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, InputCanceledEventTag);
+	DodgeCancelWindowBeginTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, DodgeCancelWindowBeginEventTag);
+	DodgeCancelWindowEndTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, DodgeCancelWindowEndEventTag);
+	RateWindowBeginTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, RateWindowBeginEventTag);
+	RateWindowEndTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, RateWindowEndEventTag);
 
-	if (!MontageTask || !WaitDrawReadyTask || !WaitReleaseTask || !WaitInputReleasedTask || !WaitInputCanceledTask)
+	if (!MontageTask || !WaitDrawReadyTask || !WaitReleaseTask || !WaitInputReleasedTask || !WaitInputCanceledTask
+		|| !DodgeCancelWindowBeginTask || !DodgeCancelWindowEndTask || !RateWindowBeginTask || !RateWindowEndTask)
 	{
 		UE_LOG(LogPolyQuest, Warning, TEXT("UBowDrawFireAbility on '%s' failed to create required ability tasks."), *GetNameSafe(PlayerCharacter));
 		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
@@ -202,8 +211,25 @@ void UBowDrawFireAbility::ActivateAbility(
 	WaitInputCanceledTask->EventReceived.AddDynamic(this, &UBowDrawFireAbility::OnInputCanceled);
 	WaitInputCanceledTask->ReadyForActivation();
 
+	DodgeCancelWindowBeginTask->EventReceived.AddDynamic(this, &UBowDrawFireAbility::OnDodgeCancelWindowBegin);
+	DodgeCancelWindowBeginTask->ReadyForActivation();
+
+	DodgeCancelWindowEndTask->EventReceived.AddDynamic(this, &UBowDrawFireAbility::OnDodgeCancelWindowEnd);
+	DodgeCancelWindowEndTask->ReadyForActivation();
+
+	RateWindowBeginTask->EventReceived.AddDynamic(this, &UBowDrawFireAbility::OnRateWindowBegin);
+	RateWindowBeginTask->ReadyForActivation();
+
+	RateWindowEndTask->EventReceived.AddDynamic(this, &UBowDrawFireAbility::OnRateWindowEnd);
+	RateWindowEndTask->ReadyForActivation();
+
 	PlayerCharacter->RegisterBowAimRequester(this);
 	MontageTask->ReadyForActivation();
+
+	if (bEndAbilityInProgress)
+	{
+		return;
+	}
 
 	UAnimInstance* AnimInstance = ActorInfo ? ActorInfo->GetAnimInstance() : nullptr;
 	if (!AnimInstance || !AnimInstance->Montage_IsActive(BowMontage))
@@ -213,6 +239,7 @@ void UBowDrawFireAbility::ActivateAbility(
 		return;
 	}
 
+	SetCharging(true);
 	BowState = EBowState::Drawing;
 	bReleaseRequested = false;
 }
@@ -225,12 +252,7 @@ bool UBowDrawFireAbility::IsValidAvatarEventPayload(const FGameplayEventData& Pa
 
 void UBowDrawFireAbility::OnDrawReadyEvent(FGameplayEventData Payload)
 {
-	if (bEndAbilityInProgress || BowState != EBowState::Drawing || Payload.OptionalObject != BowMontage)
-	{
-		return;
-	}
-
-	if (!IsValidAvatarEventPayload(Payload))
+	if (BowState != EBowState::Drawing || !IsGameplayEventFromActiveMontage(Payload))
 	{
 		return;
 	}
@@ -299,6 +321,7 @@ void UBowDrawFireAbility::TriggerRelease()
 		return;
 	}
 
+	SetCharging(false);
 	BowState = EBowState::Releasing;
 
 	if (!ReleaseSectionName.IsNone())
@@ -309,12 +332,7 @@ void UBowDrawFireAbility::TriggerRelease()
 
 void UBowDrawFireAbility::OnReleaseAnimEvent(FGameplayEventData Payload)
 {
-	if (bEndAbilityInProgress || BowState != EBowState::Releasing || bSpawnedProjectile || Payload.OptionalObject != BowMontage)
-	{
-		return;
-	}
-
-	if (!IsValidAvatarEventPayload(Payload))
+	if (BowState != EBowState::Releasing || bSpawnedProjectile || !IsGameplayEventFromActiveMontage(Payload))
 	{
 		return;
 	}
@@ -475,6 +493,10 @@ void UBowDrawFireAbility::EndAbility(
 	}
 	bEndAbilityInProgress = true;
 
+	SetCharging(false);
+	SetDodgeCancelable(false);
+	RestoreBaselineMontageRate();
+
 	if (APlayerCharacter* PlayerCharacter = Cast<APlayerCharacter>(GetAvatarActorFromActorInfo()))
 	{
 		PlayerCharacter->UnregisterBowAimRequester(this);
@@ -510,6 +532,30 @@ void UBowDrawFireAbility::EndAbility(
 		WaitInputCanceledTask = nullptr;
 	}
 
+	if (DodgeCancelWindowBeginTask)
+	{
+		DodgeCancelWindowBeginTask->EndTask();
+		DodgeCancelWindowBeginTask = nullptr;
+	}
+
+	if (DodgeCancelWindowEndTask)
+	{
+		DodgeCancelWindowEndTask->EndTask();
+		DodgeCancelWindowEndTask = nullptr;
+	}
+
+	if (RateWindowBeginTask)
+	{
+		RateWindowBeginTask->EndTask();
+		RateWindowBeginTask = nullptr;
+	}
+
+	if (RateWindowEndTask)
+	{
+		RateWindowEndTask->EndTask();
+		RateWindowEndTask = nullptr;
+	}
+
 	if (BowMontage && ActorInfo && ActorInfo->AbilitySystemComponent.IsValid())
 	{
 		MontageStop(0.1f);
@@ -520,4 +566,173 @@ void UBowDrawFireAbility::EndAbility(
 	bSpawnedProjectile = false;
 
 	Super::EndAbility(Handle, ActorInfo, ActivationInfo, bReplicateEndAbility, bWasCancelled);
+}
+
+bool UBowDrawFireAbility::IsGameplayEventFromActiveMontage(const FGameplayEventData& Payload) const
+{
+	const AActor* AvatarActor = GetAvatarActorFromActorInfo();
+	if (bEndAbilityInProgress || !BowMontage || !AvatarActor || Payload.Instigator != AvatarActor || Payload.Target != AvatarActor)
+	{
+		return false;
+	}
+
+	const UObject* PayloadObject = Payload.OptionalObject.Get();
+	if (!PayloadObject)
+	{
+		return false;
+	}
+
+	if (PayloadObject == BowMontage.Get())
+	{
+		return true;
+	}
+
+	if (const UAnimSequenceBase* Sequence = Cast<UAnimSequenceBase>(PayloadObject))
+	{
+		for (const FSlotAnimationTrack& Track : BowMontage->SlotAnimTracks)
+		{
+			for (const FAnimSegment& Segment : Track.AnimTrack.AnimSegments)
+			{
+				if (Segment.GetAnimReference() == Sequence)
+				{
+					return true;
+				}
+			}
+		}
+	}
+
+	return false;
+}
+
+void UBowDrawFireAbility::OnDodgeCancelWindowBegin(FGameplayEventData Payload)
+{
+	if (IsGameplayEventFromActiveMontage(Payload))
+	{
+		SetDodgeCancelable(true);
+	}
+}
+
+void UBowDrawFireAbility::OnDodgeCancelWindowEnd(FGameplayEventData Payload)
+{
+	if (IsGameplayEventFromActiveMontage(Payload))
+	{
+		SetDodgeCancelable(false);
+	}
+}
+
+void UBowDrawFireAbility::OnRateWindowBegin(FGameplayEventData Payload)
+{
+	if (bRateWindowApplied || !IsGameplayEventFromActiveMontage(Payload) || Payload.EventMagnitude <= 0.0f)
+	{
+		return;
+	}
+
+	UAnimInstance* AnimInstance = CurrentActorInfo ? CurrentActorInfo->GetAnimInstance() : nullptr;
+	if (AnimInstance && BowMontage && AnimInstance->Montage_IsActive(BowMontage.Get()))
+	{
+		AnimInstance->Montage_SetPlayRate(BowMontage.Get(), Payload.EventMagnitude);
+		bRateWindowApplied = true;
+	}
+}
+
+void UBowDrawFireAbility::OnRateWindowEnd(FGameplayEventData Payload)
+{
+	if (!IsGameplayEventFromActiveMontage(Payload))
+	{
+		return;
+	}
+
+	RestoreBaselineMontageRate();
+}
+
+void UBowDrawFireAbility::RestoreBaselineMontageRate()
+{
+	if (!bRateWindowApplied)
+	{
+		return;
+	}
+
+	bRateWindowApplied = false;
+	UAnimInstance* AnimInstance = CurrentActorInfo ? CurrentActorInfo->GetAnimInstance() : nullptr;
+	if (AnimInstance && BowMontage && AnimInstance->Montage_IsActive(BowMontage.Get()))
+	{
+		AnimInstance->Montage_SetPlayRate(BowMontage.Get(), 1.0f);
+	}
+}
+
+void UBowDrawFireAbility::SetCharging(bool bShouldCharge)
+{
+	if (bShouldCharge)
+	{
+		if (bEndAbilityInProgress || bChargingApplied)
+		{
+			return;
+		}
+
+		if (UAbilitySystemComponent* AbilitySystemComponent = GetAbilitySystemComponentFromActorInfo())
+		{
+			if (ChargingStateTag.IsValid())
+			{
+				AbilitySystemComponent->AddLooseGameplayTag(ChargingStateTag);
+				bChargingApplied = true;
+			}
+		}
+		return;
+	}
+
+	if (!bChargingApplied)
+	{
+		return;
+	}
+
+	if (UAbilitySystemComponent* AbilitySystemComponent = GetAbilitySystemComponentFromActorInfo())
+	{
+		if (ChargingStateTag.IsValid())
+		{
+			AbilitySystemComponent->RemoveLooseGameplayTag(ChargingStateTag);
+		}
+	}
+
+	bChargingApplied = false;
+}
+
+void UBowDrawFireAbility::SetDodgeCancelable(bool bShouldBeCancelable)
+{
+	if (bShouldBeCancelable)
+	{
+		if (bEndAbilityInProgress || bDodgeCancelable)
+		{
+			return;
+		}
+
+		UAbilitySystemComponent* AbilitySystemComponent = GetAbilitySystemComponentFromActorInfo();
+		if (!AbilitySystemComponent || !DodgeCancelableStateTag.IsValid() || !DefenseCancelableStateTag.IsValid())
+		{
+			return;
+		}
+
+		AbilitySystemComponent->AddLooseGameplayTag(DodgeCancelableStateTag);
+		AbilitySystemComponent->AddLooseGameplayTag(DefenseCancelableStateTag);
+		bDodgeCancelable = true;
+		return;
+	}
+
+	if (!bDodgeCancelable)
+	{
+		return;
+	}
+
+	if (UAbilitySystemComponent* AbilitySystemComponent = GetAbilitySystemComponentFromActorInfo())
+	{
+		if (DodgeCancelableStateTag.IsValid())
+		{
+			AbilitySystemComponent->RemoveLooseGameplayTag(DodgeCancelableStateTag);
+		}
+		if (DefenseCancelableStateTag.IsValid())
+		{
+			AbilitySystemComponent->RemoveLooseGameplayTag(DefenseCancelableStateTag);
+		}
+	}
+
+	bDodgeCancelable = false;
 }

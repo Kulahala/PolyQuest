@@ -134,6 +134,7 @@ private:
 	bool bDodgeCancelable = false;
 	bool bChargingStateApplied = false;
 	bool bMontagePausedAtHoldReady = false;
+	bool bHoldCancelWindowLatchedAcrossPause = false;
 	bool bReleaseStarted = false;
 	bool bRateWindowApplied = false;
 	bool bEndAbilityRequested = false;
@@ -178,4 +179,24 @@ private:
 	void SetCharging(bool bShouldCharge);
 	void SetDodgeCancelable(bool bShouldBeCancelable);
 	void RestoreBaselineMontageRate();
+
+#if WITH_DEV_AUTOMATION_TESTS
+public:
+	void SetTestCurrentActorInfo(const FGameplayAbilityActorInfo* InActorInfo) { CurrentActorInfo = InActorInfo; }
+	void Test_SetBoundMontageForTest(UAnimMontage* Montage) { ActiveMontage = Montage; }
+	void Test_OnDodgeCancelWindowBegin(const FGameplayEventData& Payload) { OnDodgeCancelWindowBegin(Payload); }
+	void Test_OnDodgeCancelWindowEnd(const FGameplayEventData& Payload) { OnDodgeCancelWindowEnd(Payload); }
+	void Test_SimulateHoldReady()
+	{
+		bHoldCancelWindowLatchedAcrossPause = bDodgeCancelable;
+		bMontagePausedAtHoldReady = true;
+	}
+	void Test_BeginRelease(float HeldDuration)
+	{
+		bReleaseStarted = true;
+		bMontagePausedAtHoldReady = false;
+	}
+	bool Test_IsHoldCancelWindowLatched() const { return bHoldCancelWindowLatchedAcrossPause; }
+	bool Test_IsMontagePausedAtHoldReady() const { return bMontagePausedAtHoldReady; }
+#endif
 };
