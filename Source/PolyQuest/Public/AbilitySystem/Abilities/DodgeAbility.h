@@ -48,6 +48,20 @@ public:
 	const FGameplayTagContainer& GetTestActivationBlockedTags() const { return ActivationBlockedTags; }
 	FGameplayTag GetTestDodgeCancelableStateTag() const { return DodgeCancelableStateTag; }
 	FGameplayTag GetTestAttackingStateTag() const { return AttackingStateTag; }
+	FGameplayTag GetTestDodgingStateTag() const { return DodgingStateTag; }
+	bool GetTestDodgeCancelable() const { return bDodgeCancelable; }
+	bool GetTestRateWindowApplied() const { return bRateWindowApplied; }
+	bool GetTestRetriggerInstancedAbility() const { return bRetriggerInstancedAbility; }
+	void SetTestActiveMontage(UAnimMontage* Montage) { ActiveMontage = Montage; }
+	void SetTestBoundAnimInstance(UAnimInstance* AnimInstance) { BoundAnimInstance = AnimInstance; }
+	void SetTestCurrentActorInfo(const FGameplayAbilityActorInfo* InActorInfo) { CurrentActorInfo = InActorInfo; }
+	void TestOnCancelWindowBegin(const FGameplayEventData& Payload) { OnCancelWindowBegin(Payload); }
+	void TestOnCancelWindowEnd(const FGameplayEventData& Payload) { OnCancelWindowEnd(Payload); }
+	void TestOnRateWindowBegin(const FGameplayEventData& Payload) { OnRateWindowBegin(Payload); }
+	void TestOnRateWindowEnd(const FGameplayEventData& Payload) { OnRateWindowEnd(Payload); }
+	void TestSetDodgeCancelable(bool bShouldCancel) { SetDodgeCancelable(bShouldCancel); }
+	void TestRestoreBaselineMontageRate() { RestoreBaselineMontageRate(); }
+	bool Test_IsGameplayEventFromActiveMontage(const FGameplayEventData& Payload) const { return IsGameplayEventFromActiveMontage(Payload); }
 #endif
 
 protected:
@@ -68,6 +82,18 @@ private:
 	TObjectPtr<UAbilityTask_WaitGameplayEvent> InvulnerabilityEndTask;
 
 	UPROPERTY(Transient)
+	TObjectPtr<UAbilityTask_WaitGameplayEvent> CancelBeginTask;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UAbilityTask_WaitGameplayEvent> CancelEndTask;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UAbilityTask_WaitGameplayEvent> RateBeginTask;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UAbilityTask_WaitGameplayEvent> RateEndTask;
+
+	UPROPERTY(Transient)
 	TObjectPtr<UAnimInstance> BoundAnimInstance;
 
 	UPROPERTY(Transient)
@@ -79,14 +105,27 @@ private:
 	FGameplayTag SprintAttackAbilityTag;
 	FGameplayTag MeleeSkillAbilityTag;
 	FGameplayTag AttackingStateTag;
+	FGameplayTag DodgingStateTag;
 	FGameplayTag DodgeCancelableStateTag;
 	FGameplayTag InvulnerabilityBeginEventTag;
 	FGameplayTag InvulnerabilityEndEventTag;
+	FGameplayTag CancelWindowBeginEventTag;
+	FGameplayTag CancelWindowEndEventTag;
+	FGameplayTag RateWindowBeginEventTag;
+	FGameplayTag RateWindowEndEventTag;
 	FActiveGameplayEffectHandle InvulnerabilityEffectHandle;
 	bool bEndAbilityRequested = false;
+	bool bDodgeCancelable = false;
+	bool bRateWindowApplied = false;
 
 	UFUNCTION()
-	void OnActiveMontageEnded(UAnimMontage* Montage, bool bInterrupted);
+	void OnMontageCompleted();
+
+	UFUNCTION()
+	void OnMontageInterrupted();
+
+	UFUNCTION()
+	void OnMontageCancelled();
 
 	UFUNCTION()
 	void OnInvulnerabilityBegin(FGameplayEventData Payload);
@@ -94,7 +133,21 @@ private:
 	UFUNCTION()
 	void OnInvulnerabilityEnd(FGameplayEventData Payload);
 
+	UFUNCTION()
+	void OnCancelWindowBegin(FGameplayEventData Payload);
+
+	UFUNCTION()
+	void OnCancelWindowEnd(FGameplayEventData Payload);
+
+	UFUNCTION()
+	void OnRateWindowBegin(FGameplayEventData Payload);
+
+	UFUNCTION()
+	void OnRateWindowEnd(FGameplayEventData Payload);
+
 	void EndFromMontage(bool bWasCancelled);
 	void ClearInvulnerabilityEffect();
+	void SetDodgeCancelable(bool bShouldCancel);
+	void RestoreBaselineMontageRate();
 	bool IsGameplayEventFromActiveMontage(const FGameplayEventData& Payload) const;
 };

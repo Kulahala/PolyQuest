@@ -93,13 +93,15 @@ bool FPlayerActionWindowAutomationTest::RunTest(const FString& Parameters)
 		TestFalse(TEXT("Bow CDO does NOT statically carry State.Action.Charging in ActivationOwnedTags"), BowCDO->GetTestActivationOwnedTags().HasTagExact(TagCharging));
 	}
 
-	// 1.2 Dodge CDO Tag Contract: has Ability.Dodge, blocks Dodging (Slice A), but does not have Charging blocker
+	// 1.2 Dodge CDO Tag Contract (Slice B): has Ability.Dodge, retrigger enabled, NO Dodging self-blocker, Dodging in OwnedTags
 	const UDodgeAbility* DodgeCDO = UDodgeAbility::StaticClass()->GetDefaultObject<UDodgeAbility>();
 	TestNotNull(TEXT("Dodge CDO exists"), DodgeCDO);
 	if (DodgeCDO)
 	{
 		TestTrue(TEXT("Dodge CDO carries Ability.Dodge tag"), DodgeCDO->AbilityTags.HasTagExact(TagAbilityDodge));
-		TestTrue(TEXT("Dodge CDO has State.Action.Dodging in ActivationBlockedTags in Slice A"), DodgeCDO->GetTestActivationBlockedTags().HasTagExact(TagDodging));
+		TestTrue(TEXT("Dodge CDO has bRetriggerInstancedAbility enabled"), DodgeCDO->GetTestRetriggerInstancedAbility());
+		TestFalse(TEXT("Dodge CDO does NOT have State.Action.Dodging in ActivationBlockedTags in Slice B"), DodgeCDO->GetTestActivationBlockedTags().HasTagExact(TagDodging));
+		TestTrue(TEXT("Dodge CDO carries State.Action.Dodging in ActivationOwnedTags"), DodgeCDO->GetTestActivationOwnedTags().HasTagExact(TagDodging));
 		TestFalse(TEXT("Dodge CDO does NOT carry State.Action.Charging in ActivationBlockedTags"), DodgeCDO->GetTestActivationBlockedTags().HasTagExact(TagCharging));
 	}
 
@@ -134,7 +136,7 @@ bool FPlayerActionWindowAutomationTest::RunTest(const FString& Parameters)
 	ASC->SetNumericAttributeBase(UCharacterAttributeSet::GetMaxHealthAttribute(), 100.0f);
 
 	// -------------------------------------------------------------------------
-	// SECTION 3: Dodge Activation Exemption Revocation (Charging does not permit Dodge)
+	// SECTION 3: Dodge Activation & Retrigger Preflight Gates (Attacking & Dodging)
 	// -------------------------------------------------------------------------
 	FGameplayAbilitySpec DodgeSpec(UDodgeAbility::StaticClass(), 1, INDEX_NONE, Player);
 	const FGameplayAbilitySpecHandle DodgeSpecHandle = ASC->GiveAbility(DodgeSpec);
@@ -152,13 +154,29 @@ bool FPlayerActionWindowAutomationTest::RunTest(const FString& Parameters)
 
 	// 3.3 Attacking with CanCancel.Dodge -> Dodge allowed
 	ASC->AddLooseGameplayTag(TagCanCancelDodge);
-	TestTrue(TEXT("Dodge CanActivateAbility is ACCEPTED when CanCancel.Dodge is present"),
+	TestTrue(TEXT("Dodge CanActivateAbility is ACCEPTED when CanCancel.Dodge is present while Attacking"),
 		DodgeInstance->CanActivateAbility(DodgeSpecHandle, ASC->AbilityActorInfo.Get()));
 
-	// Cleanup test tags
 	ASC->RemoveLooseGameplayTag(TagAttacking);
 	ASC->RemoveLooseGameplayTag(TagCharging);
 	ASC->RemoveLooseGameplayTag(TagCanCancelDodge);
+
+	// 3.4 Dodging with NO CanCancel.Dodge -> Dodge rejected (cannot restart dodge without recovery window)
+	ASC->AddLooseGameplayTag(TagDodging);
+	TestFalse(TEXT("Dodge CanActivateAbility rejected while Dodging without CanCancel.Dodge"),
+		DodgeInstance->CanActivateAbility(DodgeSpecHandle, ASC->AbilityActorInfo.Get()));
+
+	// 3.5 Dodging with CanCancel.Dodge -> Dodge allowed (retrigger allowed during recovery cancel window)
+	ASC->AddLooseGameplayTag(TagCanCancelDodge);
+	TestTrue(TEXT("Dodge CanActivateAbility is ACCEPTED when CanCancel.Dodge is present while Dodging"),
+		DodgeInstance->CanActivateAbility(DodgeSpecHandle, ASC->AbilityActorInfo.Get()));
+
+	ASC->RemoveLooseGameplayTag(TagDodging);
+	ASC->RemoveLooseGameplayTag(TagCanCancelDodge);
+
+	// 3.6 Neither Attacking nor Dodging -> Normal Dodge allowed
+	TestTrue(TEXT("Dodge CanActivateAbility is ACCEPTED when neither Attacking nor Dodging"),
+		DodgeInstance->CanActivateAbility(DodgeSpecHandle, ASC->AbilityActorInfo.Get()));
 
 	// -------------------------------------------------------------------------
 	// SECTION 4: Bow Dynamic Charging Lifecycle
@@ -463,6 +481,211 @@ bool FPlayerActionWindowAutomationTest::RunTest(const FString& Parameters)
 			TestFalse(TEXT("EndAbility clears latch"), ChargedAbility->Test_IsHoldCancelWindowLatched());
 			TestFalse(TEXT("EndAbility removes CanCancel.Dodge"), ASC->HasMatchingGameplayTag(TagCanCancelDodge));
 			TestFalse(TEXT("EndAbility removes CanCancel.Defense"), ASC->HasMatchingGameplayTag(TagCanCancelDefense));
+		}
+	}
+
+	// -------------------------------------------------------------------------
+	// SECTION 9: Dodge Cancel Window & Rate Window Lifecycle (Slice B)
+	// -------------------------------------------------------------------------
+	UDodgeAbility* DodgeAbility = NewObject<UDodgeAbility>(Player, TEXT("Test_DodgeLifecycleAbilityInstance"));
+	TestNotNull(TEXT("Created DodgeAbility instance for lifecycle testing"), DodgeAbility);
+	if (DodgeAbility)
+	{
+		DodgeAbility->SetTestCurrentActorInfo(ASC->AbilityActorInfo.Get());
+
+		UAnimMontage* ValidDodgeMontage = NewObject<UAnimMontage>(GetTransientPackage(), TEXT("Test_ValidDodgeMontage"));
+		UAnimMontage* WrongDodgeMontage = NewObject<UAnimMontage>(GetTransientPackage(), TEXT("Test_WrongDodgeMontage"));
+		UAnimComposite* InnerDodgeSequence = NewObject<UAnimComposite>(GetTransientPackage(), TEXT("Test_DodgeInnerSequence"));
+		UAnimComposite* ForeignDodgeSequence = NewObject<UAnimComposite>(GetTransientPackage(), TEXT("Test_DodgeForeignSequence"));
+
+		FSlotAnimationTrack SlotTrack;
+		SlotTrack.SlotName = FName(TEXT("DefaultSlot"));
+		FAnimSegment Segment;
+		Segment.SetAnimReference(InnerDodgeSequence);
+		Segment.StartPos = 0.0f;
+		Segment.AnimStartTime = 0.0f;
+		Segment.AnimEndTime = 1.0f;
+		Segment.AnimPlayRate = 1.0f;
+		SlotTrack.AnimTrack.AnimSegments.Add(Segment);
+		ValidDodgeMontage->SlotAnimTracks.Add(SlotTrack);
+
+		DodgeAbility->SetTestActiveMontage(ValidDodgeMontage);
+
+		// 9.1 Invalid Avatar Payload -> Rejected
+		{
+			FGameplayEventData BadAvatarPayload;
+			BadAvatarPayload.EventTag = TagCancelWindowBegin;
+			BadAvatarPayload.Instigator = nullptr;
+			BadAvatarPayload.Target = nullptr;
+			BadAvatarPayload.OptionalObject = ValidDodgeMontage;
+
+			DodgeAbility->TestOnCancelWindowBegin(BadAvatarPayload);
+			TestFalse(TEXT("Bad Avatar payload does not activate DodgeCancelable on Dodge"), DodgeAbility->GetTestDodgeCancelable());
+			TestFalse(TEXT("Bad Avatar payload does not add CanCancel.Dodge tag to ASC"), ASC->HasMatchingGameplayTag(TagCanCancelDodge));
+		}
+
+		// 9.2 Wrong Montage Payload -> Rejected
+		{
+			FGameplayEventData WrongMontagePayload;
+			WrongMontagePayload.EventTag = TagCancelWindowBegin;
+			WrongMontagePayload.Instigator = Player;
+			WrongMontagePayload.Target = Player;
+			WrongMontagePayload.OptionalObject = WrongDodgeMontage;
+
+			DodgeAbility->TestOnCancelWindowBegin(WrongMontagePayload);
+			TestFalse(TEXT("Wrong Montage payload does not activate DodgeCancelable on Dodge"), DodgeAbility->GetTestDodgeCancelable());
+			TestFalse(TEXT("Wrong Montage payload does not add CanCancel.Dodge tag to ASC"), ASC->HasMatchingGameplayTag(TagCanCancelDodge));
+		}
+
+		// 9.3 Foreign Sequence Payload -> Rejected
+		{
+			FGameplayEventData ForeignSeqPayload;
+			ForeignSeqPayload.EventTag = TagCancelWindowBegin;
+			ForeignSeqPayload.Instigator = Player;
+			ForeignSeqPayload.Target = Player;
+			ForeignSeqPayload.OptionalObject = ForeignDodgeSequence;
+
+			DodgeAbility->TestOnCancelWindowBegin(ForeignSeqPayload);
+			TestFalse(TEXT("Foreign Sequence payload does not activate DodgeCancelable on Dodge"), DodgeAbility->GetTestDodgeCancelable());
+			TestFalse(TEXT("Foreign Sequence payload does not add CanCancel.Dodge tag to ASC"), ASC->HasMatchingGameplayTag(TagCanCancelDodge));
+		}
+
+		// 9.4 Valid Inner Sequence Begin Payload -> Grants CanCancel.Dodge ONLY (NOT CanCancel.Defense)
+		{
+			FGameplayEventData InnerSeqBeginPayload;
+			InnerSeqBeginPayload.EventTag = TagCancelWindowBegin;
+			InnerSeqBeginPayload.Instigator = Player;
+			InnerSeqBeginPayload.Target = Player;
+			InnerSeqBeginPayload.OptionalObject = InnerDodgeSequence;
+
+			DodgeAbility->TestOnCancelWindowBegin(InnerSeqBeginPayload);
+			TestTrue(TEXT("Inner Sequence payload activates DodgeCancelable on Dodge"), DodgeAbility->GetTestDodgeCancelable());
+			TestTrue(TEXT("Inner Sequence payload adds CanCancel.Dodge tag to ASC"), ASC->HasMatchingGameplayTag(TagCanCancelDodge));
+			TestFalse(TEXT("Dodge CancelWindow does NOT add CanCancel.Defense to ASC"), ASC->HasMatchingGameplayTag(TagCanCancelDefense));
+
+			// Idempotent duplicate Begin
+			DodgeAbility->TestOnCancelWindowBegin(InnerSeqBeginPayload);
+			TestTrue(TEXT("Duplicate Begin maintains DodgeCancelable on Dodge"), DodgeAbility->GetTestDodgeCancelable());
+		}
+
+		// 9.5 Foreign Sequence End Payload -> Does not close window
+		{
+			FGameplayEventData ForeignSeqEndPayload;
+			ForeignSeqEndPayload.EventTag = TagCancelWindowEnd;
+			ForeignSeqEndPayload.Instigator = Player;
+			ForeignSeqEndPayload.Target = Player;
+			ForeignSeqEndPayload.OptionalObject = ForeignDodgeSequence;
+
+			DodgeAbility->TestOnCancelWindowEnd(ForeignSeqEndPayload);
+			TestTrue(TEXT("Foreign Sequence End does not close active cancel window on Dodge"), DodgeAbility->GetTestDodgeCancelable());
+			TestTrue(TEXT("CanCancel.Dodge remains active on ASC"), ASC->HasMatchingGameplayTag(TagCanCancelDodge));
+		}
+
+		// 9.6 Valid Inner Sequence End Payload -> Closes window and removes tag
+		{
+			FGameplayEventData InnerSeqEndPayload;
+			InnerSeqEndPayload.EventTag = TagCancelWindowEnd;
+			InnerSeqEndPayload.Instigator = Player;
+			InnerSeqEndPayload.Target = Player;
+			InnerSeqEndPayload.OptionalObject = InnerDodgeSequence;
+
+			DodgeAbility->TestOnCancelWindowEnd(InnerSeqEndPayload);
+			TestFalse(TEXT("Valid Inner Sequence End deactivates DodgeCancelable on Dodge"), DodgeAbility->GetTestDodgeCancelable());
+			TestFalse(TEXT("Valid Inner Sequence End removes CanCancel.Dodge from ASC"), ASC->HasMatchingGameplayTag(TagCanCancelDodge));
+		}
+
+		// 9.7 Rate Window Lifecycle
+		{
+			// Invalid Rate <= 0.0 -> Rejected
+			FGameplayEventData NonPositiveRatePayload;
+			NonPositiveRatePayload.EventTag = TagRateWindowBegin;
+			NonPositiveRatePayload.Instigator = Player;
+			NonPositiveRatePayload.Target = Player;
+			NonPositiveRatePayload.OptionalObject = InnerDodgeSequence;
+			NonPositiveRatePayload.EventMagnitude = 0.0f;
+
+			DodgeAbility->TestOnRateWindowBegin(NonPositiveRatePayload);
+			TestFalse(TEXT("Rate window with magnitude <= 0 is rejected"), DodgeAbility->GetTestRateWindowApplied());
+
+			// Foreign Sequence Rate Begin -> Rejected
+			FGameplayEventData ForeignRatePayload;
+			ForeignRatePayload.EventTag = TagRateWindowBegin;
+			ForeignRatePayload.Instigator = Player;
+			ForeignRatePayload.Target = Player;
+			ForeignRatePayload.OptionalObject = ForeignDodgeSequence;
+			ForeignRatePayload.EventMagnitude = 1.5f;
+
+			DodgeAbility->TestOnRateWindowBegin(ForeignRatePayload);
+			TestFalse(TEXT("Rate window with foreign Sequence is rejected"), DodgeAbility->GetTestRateWindowApplied());
+
+			// Foreign Sequence Rate End -> Rejected
+			FGameplayEventData ForeignRateEndPayload;
+			ForeignRateEndPayload.EventTag = TagRateWindowEnd;
+			ForeignRateEndPayload.Instigator = Player;
+			ForeignRateEndPayload.Target = Player;
+			ForeignRateEndPayload.OptionalObject = ForeignDodgeSequence;
+
+			DodgeAbility->TestOnRateWindowEnd(ForeignRateEndPayload);
+
+			// Valid Rate End restores baseline
+			DodgeAbility->TestRestoreBaselineMontageRate();
+			TestFalse(TEXT("Restore baseline clears rate window flag"), DodgeAbility->GetTestRateWindowApplied());
+		}
+
+		// 9.8 EndAbility cleanup removes CanCancel.Dodge and clears rate state
+		{
+			FGameplayEventData InnerSeqBeginPayload;
+			InnerSeqBeginPayload.EventTag = TagCancelWindowBegin;
+			InnerSeqBeginPayload.Instigator = Player;
+			InnerSeqBeginPayload.Target = Player;
+			InnerSeqBeginPayload.OptionalObject = InnerDodgeSequence;
+
+			DodgeAbility->TestOnCancelWindowBegin(InnerSeqBeginPayload);
+			TestTrue(TEXT("CanCancel.Dodge granted before EndAbility"), ASC->HasMatchingGameplayTag(TagCanCancelDodge));
+
+			DodgeAbility->EndAbility(DodgeAbility->GetCurrentAbilitySpecHandle(), ASC->AbilityActorInfo.Get(), DodgeAbility->GetCurrentActivationInfo(), true, true);
+			TestFalse(TEXT("EndAbility removes CanCancel.Dodge"), ASC->HasMatchingGameplayTag(TagCanCancelDodge));
+			TestFalse(TEXT("EndAbility clears DodgeCancelable"), DodgeAbility->GetTestDodgeCancelable());
+			TestFalse(TEXT("EndAbility clears RateWindowApplied"), DodgeAbility->GetTestRateWindowApplied());
+		}
+
+		// 9.9 Continuous Retrigger Tag Lifecycle:
+		// Old instance in recovery CancelWindow -> Old EndAbility cleans CanCancel.Dodge ->
+		// New instance starts up in Dodging state -> Second rapid Dodge request during early startup MUST BE REJECTED.
+		UDodgeAbility* RetriggerDodgeAbility = NewObject<UDodgeAbility>(Player, TEXT("Test_DodgeRetriggerAbilityInstance"));
+		TestNotNull(TEXT("Created RetriggerDodgeAbility instance"), RetriggerDodgeAbility);
+		if (RetriggerDodgeAbility)
+		{
+			RetriggerDodgeAbility->SetTestCurrentActorInfo(ASC->AbilityActorInfo.Get());
+			RetriggerDodgeAbility->SetTestActiveMontage(ValidDodgeMontage);
+
+			FGameplayEventData InnerSeqBeginPayload;
+			InnerSeqBeginPayload.EventTag = TagCancelWindowBegin;
+			InnerSeqBeginPayload.Instigator = Player;
+			InnerSeqBeginPayload.Target = Player;
+			InnerSeqBeginPayload.OptionalObject = InnerDodgeSequence;
+
+			// Step A: Old instance enters recovery CancelWindow
+			RetriggerDodgeAbility->TestOnCancelWindowBegin(InnerSeqBeginPayload);
+			TestTrue(TEXT("Old dodge has DodgeCancelable active"), RetriggerDodgeAbility->GetTestDodgeCancelable());
+			TestTrue(TEXT("ASC has CanCancel.Dodge tag during old dodge recovery"), ASC->HasMatchingGameplayTag(TagCanCancelDodge));
+
+			// Step B: Retrigger occurs: Old EndAbility runs
+			RetriggerDodgeAbility->EndAbility(DodgeSpecHandle, ASC->AbilityActorInfo.Get(), RetriggerDodgeAbility->GetCurrentActivationInfo(), true, false);
+			TestFalse(TEXT("Old dodge EndAbility cleared bDodgeCancelable"), RetriggerDodgeAbility->GetTestDodgeCancelable());
+			TestFalse(TEXT("Old dodge EndAbility removed CanCancel.Dodge from ASC"), ASC->HasMatchingGameplayTag(TagCanCancelDodge));
+
+			// Step C: New dodge instance starts up (Dodging is active on ASC, no CanCancel.Dodge)
+			ASC->AddLooseGameplayTag(TagDodging);
+			TestTrue(TEXT("ASC has State.Action.Dodging on startup of second dodge"), ASC->HasMatchingGameplayTag(TagDodging));
+			TestFalse(TEXT("ASC does NOT have CanCancel.Dodge tag on startup of second dodge"), ASC->HasMatchingGameplayTag(TagCanCancelDodge));
+
+			// Step D: Second rapid request while in early startup phase of second dodge -> MUST BE REJECTED
+			const bool bCanActivateSecondRapid = DodgeCDO->CanActivateAbility(DodgeSpecHandle, ASC->AbilityActorInfo.Get());
+			TestFalse(TEXT("Second rapid Dodge request during startup phase MUST BE REJECTED"), bCanActivateSecondRapid);
+
+			// Step E: Clean up loose dodging tag
+			ASC->RemoveLooseGameplayTag(TagDodging);
 		}
 	}
 
