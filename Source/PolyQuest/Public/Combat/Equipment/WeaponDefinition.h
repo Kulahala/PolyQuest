@@ -22,6 +22,17 @@ enum class EWeaponHandSlot : uint8
 	OffHand
 };
 
+/** The authored locomotion presentation mode for a weapon family or weapon composition. */
+UENUM(BlueprintType)
+enum class EWeaponLocomotionMode : uint8
+{
+	Default,
+	LightSword,
+	HeavySword,
+	SwordShield,
+	Bow
+};
+
 /**
  * The authored base of every player equipment item: hand-slot occupancy,
  * display attachment, combat-action candidate ability classes, the default
@@ -40,6 +51,10 @@ public:
 	/** Which hand slot this item occupies when equipped. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Slot")
 	EWeaponHandSlot HandSlot = EWeaponHandSlot::MainHandOneHanded;
+
+	/** Base locomotion mode authored on this weapon definition. Default for unarmed and generic weapons. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Locomotion")
+	EWeaponLocomotionMode LocomotionMode = EWeaponLocomotionMode::Default;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Display")
 	TObjectPtr<UStaticMesh> WeaponMesh;
@@ -85,6 +100,22 @@ inline bool UWeaponDefinition::IsValidWeaponDefinition(FString& OutReason) const
 	if (AttachSocketName.IsNone())
 	{
 		OutReason = TEXT("AttachSocketName is not set.");
+		return false;
+	}
+
+	if (LocomotionMode != EWeaponLocomotionMode::Default
+		&& LocomotionMode != EWeaponLocomotionMode::LightSword
+		&& LocomotionMode != EWeaponLocomotionMode::HeavySword
+		&& LocomotionMode != EWeaponLocomotionMode::Bow)
+	{
+		if (LocomotionMode == EWeaponLocomotionMode::SwordShield)
+		{
+			OutReason = TEXT("Base LocomotionMode cannot be SwordShield (SwordShield is reserved for OffHand composition).");
+		}
+		else
+		{
+			OutReason = TEXT("LocomotionMode contains an invalid enum value.");
+		}
 		return false;
 	}
 

@@ -13,12 +13,19 @@ UBowWeaponDefinition::UBowWeaponDefinition()
 	HandSlot = EWeaponHandSlot::MainHandTwoHanded;
 	AttachSocketName = TEXT("Bow_L");
 	LaunchSocketName = TEXT("Socket_Arrow");
+	LocomotionMode = EWeaponLocomotionMode::Bow;
 }
 
 bool UBowWeaponDefinition::IsValidWeaponDefinition(FString& OutReason) const
 {
 	if (!Super::IsValidWeaponDefinition(OutReason))
 	{
+		return false;
+	}
+
+	if (LocomotionMode != EWeaponLocomotionMode::Bow)
+	{
+		OutReason = TEXT("Bow weapon definition must have LocomotionMode set to Bow.");
 		return false;
 	}
 

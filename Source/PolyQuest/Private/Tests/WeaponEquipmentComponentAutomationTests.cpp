@@ -4,15 +4,18 @@
 
 #include "AbilitySystemComponent.h"
 #include "Abilities/GameplayAbility.h"
+#include "AbilitySystem/Abilities/BowDrawFireAbility.h"
 #include "AbilitySystem/Abilities/PrimaryAttackAbility.h"
 #include "AbilitySystem/Abilities/PlayerGuardAbility.h"
 #include "AbilitySystem/Abilities/PlayerGuardBreakAbility.h"
 #include "AbilitySystem/Abilities/PlayerParryAbility.h"
 #include "Character/Player/PlayerCharacter.h"
 #include "Combat/Input/CombatLoadoutDefinition.h"
+#include "Combat/Equipment/BowWeaponDefinition.h"
 #include "Combat/Equipment/DefenseProfileDefinition.h"
 #include "Combat/Equipment/MeleeWeaponDefinition.h"
 #include "Combat/Equipment/OffHandWeaponDefinition.h"
+#include "Combat/Equipment/ProjectileDefinition.h"
 #include "Combat/Equipment/WeaponEquipmentComponent.h"
 #include "Combat/Equipment/WorldWeaponPickup.h"
 #include "Components/SkeletalMeshComponent.h"
@@ -25,6 +28,7 @@
 #include "Engine/StaticMeshSocket.h"
 #include "Engine/World.h"
 #include "EngineUtils.h"
+#include "Tests/TestProjectileDamageGE.h"
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FWeaponEquipmentComponentTransactionMatrixTest, "PolyQuest.Equipment.TransactionMatrix", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 
@@ -94,6 +98,7 @@ bool FWeaponEquipmentComponentTransactionMatrixTest::RunTest(const FString& Para
 	// Create test definitions
 	UMeleeWeaponDefinition* SwordDef = NewObject<UMeleeWeaponDefinition>(GetTransientPackage(), TEXT("Test_Sword"));
 	SwordDef->HandSlot = EWeaponHandSlot::MainHandOneHanded;
+	SwordDef->LocomotionMode = EWeaponLocomotionMode::LightSword;
 	SwordDef->AttachSocketName = TEXT("Weapon_R");
 	SwordDef->WeaponMesh = SwordMesh;
 	SwordDef->BladeBaseSocketName = SocketNameTraceBase;
@@ -110,6 +115,7 @@ bool FWeaponEquipmentComponentTransactionMatrixTest::RunTest(const FString& Para
 
 	UMeleeWeaponDefinition* TwoHandedDef = NewObject<UMeleeWeaponDefinition>(GetTransientPackage(), TEXT("Test_TwoHanded"));
 	TwoHandedDef->HandSlot = EWeaponHandSlot::MainHandTwoHanded;
+	TwoHandedDef->LocomotionMode = EWeaponLocomotionMode::Default;
 	TwoHandedDef->AttachSocketName = TEXT("Weapon_R");
 	TwoHandedDef->WeaponMesh = SwordMesh;
 	TwoHandedDef->BladeBaseSocketName = SocketNameTraceBase;
@@ -126,6 +132,7 @@ bool FWeaponEquipmentComponentTransactionMatrixTest::RunTest(const FString& Para
 
 	UMeleeWeaponDefinition* UnarmedDef = NewObject<UMeleeWeaponDefinition>(GetTransientPackage(), TEXT("Test_Unarmed"));
 	UnarmedDef->HandSlot = EWeaponHandSlot::MainHandOneHanded;
+	UnarmedDef->LocomotionMode = EWeaponLocomotionMode::Default;
 	UnarmedDef->AttachSocketName = TEXT("Weapon_R");
 	UnarmedDef->WeaponMesh = nullptr;
 	UnarmedDef->bUseOwnerMeshSocketForTrace = true;
@@ -136,6 +143,9 @@ bool FWeaponEquipmentComponentTransactionMatrixTest::RunTest(const FString& Para
 
 	UOffHandWeaponDefinition* ShieldDef = NewObject<UOffHandWeaponDefinition>(GetTransientPackage(), TEXT("Test_Shield"));
 	ShieldDef->HandSlot = EWeaponHandSlot::OffHand;
+	ShieldDef->LocomotionMode = EWeaponLocomotionMode::Default;
+	ShieldDef->RequiredMainHandLocomotionMode = EWeaponLocomotionMode::LightSword;
+	ShieldDef->CompositionLocomotionMode = EWeaponLocomotionMode::SwordShield;
 	ShieldDef->AttachSocketName = TEXT("Weapon_L");
 	ShieldDef->WeaponMesh = ShieldMesh;
 
@@ -597,6 +607,7 @@ bool FWeaponEquipmentComponentTransactionMatrixTest::RunTest(const FString& Para
 		// In Section 12, use a sword definition whose prepared actions do not conflict with shield base grants
 		UMeleeWeaponDefinition* SwordForShieldDef = NewObject<UMeleeWeaponDefinition>(GetTransientPackage(), TEXT("Test_SwordForShield"));
 		SwordForShieldDef->HandSlot = EWeaponHandSlot::MainHandOneHanded;
+		SwordForShieldDef->LocomotionMode = EWeaponLocomotionMode::LightSword;
 		SwordForShieldDef->AttachSocketName = TEXT("Weapon_R");
 		SwordForShieldDef->WeaponMesh = SwordMesh;
 		SwordForShieldDef->BladeBaseSocketName = SocketNameTraceBase;
@@ -608,6 +619,9 @@ bool FWeaponEquipmentComponentTransactionMatrixTest::RunTest(const FString& Para
 
 		UOffHandWeaponDefinition* ShieldWithProfileDef = NewObject<UOffHandWeaponDefinition>(GetTransientPackage(), TEXT("Test_ShieldWithProfile"));
 		ShieldWithProfileDef->HandSlot = EWeaponHandSlot::OffHand;
+		ShieldWithProfileDef->LocomotionMode = EWeaponLocomotionMode::Default;
+		ShieldWithProfileDef->RequiredMainHandLocomotionMode = EWeaponLocomotionMode::LightSword;
+		ShieldWithProfileDef->CompositionLocomotionMode = EWeaponLocomotionMode::SwordShield;
 		ShieldWithProfileDef->AttachSocketName = TEXT("Weapon_L");
 		ShieldWithProfileDef->WeaponMesh = ShieldMesh;
 		ShieldWithProfileDef->DefenseProfile = ValidShieldProfile;
@@ -661,6 +675,9 @@ bool FWeaponEquipmentComponentTransactionMatrixTest::RunTest(const FString& Para
 
 		UOffHandWeaponDefinition* InvalidProfileShield = NewObject<UOffHandWeaponDefinition>(GetTransientPackage(), TEXT("Test_InvalidProfileShield"));
 		InvalidProfileShield->HandSlot = EWeaponHandSlot::OffHand;
+		InvalidProfileShield->LocomotionMode = EWeaponLocomotionMode::Default;
+		InvalidProfileShield->RequiredMainHandLocomotionMode = EWeaponLocomotionMode::LightSword;
+		InvalidProfileShield->CompositionLocomotionMode = EWeaponLocomotionMode::SwordShield;
 		InvalidProfileShield->AttachSocketName = TEXT("Weapon_L");
 		InvalidProfileShield->WeaponMesh = ShieldMesh;
 		InvalidProfileShield->DefenseProfile = InvalidTagProfile;
@@ -681,6 +698,9 @@ bool FWeaponEquipmentComponentTransactionMatrixTest::RunTest(const FString& Para
 
 		UOffHandWeaponDefinition* SameActionShield = NewObject<UOffHandWeaponDefinition>(GetTransientPackage(), TEXT("Test_SameActionShield"));
 		SameActionShield->HandSlot = EWeaponHandSlot::OffHand;
+		SameActionShield->LocomotionMode = EWeaponLocomotionMode::Default;
+		SameActionShield->RequiredMainHandLocomotionMode = EWeaponLocomotionMode::LightSword;
+		SameActionShield->CompositionLocomotionMode = EWeaponLocomotionMode::SwordShield;
 		SameActionShield->AttachSocketName = TEXT("Weapon_L");
 		SameActionShield->WeaponMesh = ShieldMesh;
 		SameActionShield->DefenseProfile = ValidShieldProfile;
@@ -751,6 +771,244 @@ bool FWeaponEquipmentComponentTransactionMatrixTest::RunTest(const FString& Para
 		GuardCDO->AbilityTags.AddTag(TagGenericGuard);
 		ParryCDO->AbilityTags.RemoveTag(TagShieldParry);
 		ParryCDO->AbilityTags.AddTag(TagGenericParry);
+	}
+
+	// -------------------------------------------------------------------------
+	// 13. Test Locomotion Mode Resolution, Data Preflight & Non-Drift Rollback
+	// -------------------------------------------------------------------------
+	{
+		// 13.1 Authoring & Data Preflight Fail-Closed Checks
+		{
+			// Base definition rejecting SwordShield as base LocomotionMode
+			UMeleeWeaponDefinition* BadBaseDef = NewObject<UMeleeWeaponDefinition>(GetTransientPackage(), TEXT("Test_BadBaseDef"));
+			BadBaseDef->HandSlot = EWeaponHandSlot::MainHandOneHanded;
+			BadBaseDef->AttachSocketName = TEXT("Weapon_R");
+			BadBaseDef->WeaponMesh = SwordMesh;
+			BadBaseDef->BladeBaseSocketName = SocketNameTraceBase;
+			BadBaseDef->BladeTipSocketName = SocketNameTraceTip;
+			BadBaseDef->AssociatedLoadout = SwordLoadout;
+			BadBaseDef->BaseGrantedActions.Add(UPrimaryAttackAbility::StaticClass());
+			BadBaseDef->LocomotionMode = EWeaponLocomotionMode::SwordShield;
+
+			FString BaseReason;
+			TestFalse(TEXT("Base weapon definition rejects LocomotionMode == SwordShield"), BadBaseDef->IsValidWeaponDefinition(BaseReason));
+			TestTrue(TEXT("Reason explains SwordShield is reserved for OffHand composition"), BaseReason.Contains(TEXT("SwordShield")));
+
+			BadBaseDef->LocomotionMode = static_cast<EWeaponLocomotionMode>(199);
+			TestFalse(TEXT("Base weapon definition rejects out-of-range enum value"), BadBaseDef->IsValidWeaponDefinition(BaseReason));
+
+			// OffHand definition rejecting half-configurations and invalid composition modes
+			UOffHandWeaponDefinition* BadOffHandDef = NewObject<UOffHandWeaponDefinition>(GetTransientPackage(), TEXT("Test_BadOffHandDef"));
+			BadOffHandDef->HandSlot = EWeaponHandSlot::OffHand;
+			BadOffHandDef->AttachSocketName = TEXT("Weapon_L");
+			BadOffHandDef->WeaponMesh = ShieldMesh;
+
+			// Half-config 1: Required set, Composition Default
+			BadOffHandDef->RequiredMainHandLocomotionMode = EWeaponLocomotionMode::LightSword;
+			BadOffHandDef->CompositionLocomotionMode = EWeaponLocomotionMode::Default;
+			FString OffHandReason;
+			TestFalse(TEXT("OffHand definition rejects Required set with Composition Default"), BadOffHandDef->IsValidWeaponDefinition(OffHandReason));
+
+			// Half-config 2: Required Default, Composition set
+			BadOffHandDef->RequiredMainHandLocomotionMode = EWeaponLocomotionMode::Default;
+			BadOffHandDef->CompositionLocomotionMode = EWeaponLocomotionMode::SwordShield;
+			TestFalse(TEXT("OffHand definition rejects Required Default with Composition set"), BadOffHandDef->IsValidWeaponDefinition(OffHandReason));
+
+			// Invalid Required mode (e.g. SwordShield as required)
+			BadOffHandDef->RequiredMainHandLocomotionMode = EWeaponLocomotionMode::SwordShield;
+			BadOffHandDef->CompositionLocomotionMode = EWeaponLocomotionMode::SwordShield;
+			TestFalse(TEXT("OffHand definition rejects RequiredMainHandLocomotionMode == SwordShield"), BadOffHandDef->IsValidWeaponDefinition(OffHandReason));
+
+			// Invalid Composition mode (e.g. Bow)
+			BadOffHandDef->RequiredMainHandLocomotionMode = EWeaponLocomotionMode::LightSword;
+			BadOffHandDef->CompositionLocomotionMode = EWeaponLocomotionMode::Bow;
+			TestFalse(TEXT("OffHand definition rejects CompositionLocomotionMode == Bow"), BadOffHandDef->IsValidWeaponDefinition(OffHandReason));
+
+			// Invalid Base LocomotionMode on OffHand (must be Default)
+			BadOffHandDef->RequiredMainHandLocomotionMode = EWeaponLocomotionMode::Default;
+			BadOffHandDef->CompositionLocomotionMode = EWeaponLocomotionMode::Default;
+			BadOffHandDef->LocomotionMode = EWeaponLocomotionMode::LightSword;
+			TestFalse(TEXT("OffHand definition rejects non-Default base LocomotionMode"), BadOffHandDef->IsValidWeaponDefinition(OffHandReason));
+			BadOffHandDef->LocomotionMode = EWeaponLocomotionMode::Default;
+
+			// Valid: both Default (no override)
+			BadOffHandDef->RequiredMainHandLocomotionMode = EWeaponLocomotionMode::Default;
+			BadOffHandDef->CompositionLocomotionMode = EWeaponLocomotionMode::Default;
+			TestTrue(TEXT("OffHand definition accepts both modes as Default (no override)"), BadOffHandDef->IsValidWeaponDefinition(OffHandReason));
+
+			// Valid: LightSword + SwordShield
+			BadOffHandDef->RequiredMainHandLocomotionMode = EWeaponLocomotionMode::LightSword;
+			BadOffHandDef->CompositionLocomotionMode = EWeaponLocomotionMode::SwordShield;
+			TestTrue(TEXT("OffHand definition accepts LightSword -> SwordShield composition"), BadOffHandDef->IsValidWeaponDefinition(OffHandReason));
+		}
+
+		// 13.2 Transient Bow Fixture Validation
+		UStaticMesh* TransientBowMesh = NewObject<UStaticMesh>(GetTransientPackage(), TEXT("Test_TransBowMesh13"));
+		const FName SocketNameBowLaunch(TEXT("Socket_Bow_Launch"));
+		UStaticMeshSocket* LaunchSocket = NewObject<UStaticMeshSocket>(TransientBowMesh);
+		LaunchSocket->SocketName = SocketNameBowLaunch;
+		LaunchSocket->RelativeLocation = FVector(0.0f, 0.0f, 20.0f);
+		TransientBowMesh->AddSocket(LaunchSocket);
+
+		UProjectileDefinition* TransBowProjDef = NewObject<UProjectileDefinition>(GetTransientPackage(), TEXT("Test_TransBowProjDef13"));
+		TransBowProjDef->InitialSpeed = 3000.0f;
+		TransBowProjDef->MaxSpeed = 3000.0f;
+		TransBowProjDef->LifespanSeconds = 5.0f;
+		TransBowProjDef->CollisionRadius = 12.0f;
+		TransBowProjDef->DamageGameplayEffectClass = UTestProjectileDamageGE::StaticClass();
+
+		UCombatLoadoutDefinition* BowLoadout = NewObject<UCombatLoadoutDefinition>(GetTransientPackage(), TEXT("Test_BowLoadout13"));
+		BowLoadout->AddTestInputAbilityRoute(TagInputPrimaryAttack, TagAbilityPrimaryAttack);
+
+		UBowWeaponDefinition* BowDef = NewObject<UBowWeaponDefinition>(GetTransientPackage(), TEXT("Test_BowDef13"));
+		TestEqual(TEXT("BowDef default LocomotionMode is Bow"), BowDef->LocomotionMode, EWeaponLocomotionMode::Bow);
+		BowDef->HandSlot = EWeaponHandSlot::MainHandTwoHanded;
+		BowDef->AttachSocketName = TEXT("Bow_L");
+		BowDef->WeaponMesh = TransientBowMesh;
+		BowDef->LaunchSocketName = SocketNameBowLaunch;
+		BowDef->DefaultProjectileDefinition = TransBowProjDef;
+		BowDef->AssociatedLoadout = BowLoadout;
+		BowDef->BaseGrantedActions.Add(UBowDrawFireAbility::StaticClass());
+
+		FString BowValidationReason;
+		TestTrue(TEXT("Transient BowDef passes IsValidWeaponDefinition"), BowDef->IsValidWeaponDefinition(BowValidationReason));
+
+		BowDef->LocomotionMode = EWeaponLocomotionMode::Default;
+		TestFalse(TEXT("BowDef rejects LocomotionMode != Bow"), BowDef->IsValidWeaponDefinition(BowValidationReason));
+		BowDef->LocomotionMode = EWeaponLocomotionMode::Bow;
+
+		// 13.3 Locomotion Mode Resolution Across Transaction Matrix
+		// 13.3.1 Initial clean state -> Default
+		// First equip TwoHandedDef via world pickup to clear any lingering OffHand from previous sections
+		AWorldWeaponPickup* TwoHandedResetPickup = World->SpawnActor<AWorldWeaponPickup>();
+		TwoHandedResetPickup->SetActorLocation(FVector(50.0f, 0.0f, 0.0f));
+		TwoHandedResetPickup->SetWeaponDefinition(TwoHandedDef);
+		TestTrue(TEXT("Equip TwoHanded pickup to clear OffHand"), EquipmentComp->TryEquipWorldPickup(TwoHandedResetPickup));
+		TestNull(TEXT("OffHand is cleared after TwoHanded reset"), EquipmentComp->GetCurrentOffHandWeapon());
+
+		// Now equip Unarmed to establish clean Unarmed baseline (Main=Unarmed, OffHand=null)
+		AWorldWeaponPickup* UnarmedCleanupPickup = World->SpawnActor<AWorldWeaponPickup>();
+		UnarmedCleanupPickup->SetActorLocation(FVector(50.0f, 0.0f, 0.0f));
+		UnarmedCleanupPickup->SetWeaponDefinition(UnarmedDef);
+		TestTrue(TEXT("Equip Unarmed to establish baseline"), EquipmentComp->TryEquipWorldPickup(UnarmedCleanupPickup));
+		TestEqual(TEXT("Unarmed equipped resolves LocomotionMode to Default"), EquipmentComp->GetResolvedLocomotionMode(), EWeaponLocomotionMode::Default);
+		TestNull(TEXT("OffHand remains null with Unarmed baseline"), EquipmentComp->GetCurrentOffHandWeapon());
+
+		// 13.3.2 Equip Sword -> LightSword
+		AWorldWeaponPickup* SwordPickup13 = World->SpawnActor<AWorldWeaponPickup>();
+		SwordPickup13->SetActorLocation(FVector(50.0f, 0.0f, 0.0f));
+		SwordPickup13->SetWeaponDefinition(SwordDef);
+		TestTrue(TEXT("Equip Sword pickup succeeds"), EquipmentComp->TryEquipWorldPickup(SwordPickup13));
+		TestEqual(TEXT("Sword equipped resolves LocomotionMode to LightSword"), EquipmentComp->GetResolvedLocomotionMode(), EWeaponLocomotionMode::LightSword);
+
+		// 13.3.3 Equip Shield while holding Sword -> SwordShield
+		AWorldWeaponPickup* ShieldPickup13 = World->SpawnActor<AWorldWeaponPickup>();
+		ShieldPickup13->SetActorLocation(FVector(50.0f, 0.0f, 0.0f));
+		ShieldPickup13->SetWeaponDefinition(ShieldDef);
+		TestTrue(TEXT("Equip Shield pickup succeeds"), EquipmentComp->TryEquipWorldPickup(ShieldPickup13));
+		TestEqual(TEXT("Sword + Shield resolves LocomotionMode to SwordShield"), EquipmentComp->GetResolvedLocomotionMode(), EWeaponLocomotionMode::SwordShield);
+
+		// 13.3.4 Equip Bow via world pickup -> Bow (OffHand cleared atomically)
+		AWorldWeaponPickup* BowPickup13 = World->SpawnActor<AWorldWeaponPickup>();
+		BowPickup13->SetActorLocation(FVector(50.0f, 0.0f, 0.0f));
+		BowPickup13->SetWeaponDefinition(BowDef);
+		TestTrue(TEXT("Equip Bow pickup replaces Sword + Shield atomically"), EquipmentComp->TryEquipWorldPickup(BowPickup13));
+		TestEqual(TEXT("Bow equipped resolves LocomotionMode to Bow"), EquipmentComp->GetResolvedLocomotionMode(), EWeaponLocomotionMode::Bow);
+		TestNull(TEXT("OffHand is null when Bow is equipped"), EquipmentComp->GetCurrentOffHandWeapon());
+
+		// 13.3.5 TwoHanded (Bow) -> Shield normalization -> Unarmed + Shield resolves to Default (NOT SwordShield)
+		AWorldWeaponPickup* NormShieldPickup = World->SpawnActor<AWorldWeaponPickup>();
+		NormShieldPickup->SetActorLocation(FVector(50.0f, 0.0f, 0.0f));
+		NormShieldPickup->SetWeaponDefinition(ShieldDef);
+		TestTrue(TEXT("TwoHanded -> Shield normalization succeeds"), EquipmentComp->TryEquipWorldPickup(NormShieldPickup));
+		TestEqual(TEXT("Main hand is Unarmed fallback"), EquipmentComp->GetCurrentMainHandWeapon(), Cast<UWeaponDefinition>(UnarmedDef));
+		TestEqual(TEXT("Off hand is Shield"), EquipmentComp->GetCurrentOffHandWeapon(), Cast<UWeaponDefinition>(ShieldDef));
+		TestEqual(TEXT("Unarmed + Shield resolves LocomotionMode to Default (not SwordShield)"), EquipmentComp->GetResolvedLocomotionMode(), EWeaponLocomotionMode::Default);
+
+		// 13.3.6 HeavySword main hand (LocomotionMode == HeavySword)
+		TwoHandedDef->LocomotionMode = EWeaponLocomotionMode::HeavySword;
+		AWorldWeaponPickup* TwoHandedPickup13 = World->SpawnActor<AWorldWeaponPickup>();
+		TwoHandedPickup13->SetActorLocation(FVector(50.0f, 0.0f, 0.0f));
+		TwoHandedPickup13->SetWeaponDefinition(TwoHandedDef);
+		TestTrue(TEXT("Equip HeavySword TwoHanded pickup succeeds"), EquipmentComp->TryEquipWorldPickup(TwoHandedPickup13));
+		TestEqual(TEXT("HeavySword resolves LocomotionMode to HeavySword"), EquipmentComp->GetResolvedLocomotionMode(), EWeaponLocomotionMode::HeavySword);
+		TwoHandedDef->LocomotionMode = EWeaponLocomotionMode::Default;
+
+		// 13.4 Rollback and Mode Non-Drift Verification
+		// Transition to { SwordDef, ShieldDef }
+		AWorldWeaponPickup* SetupSword = World->SpawnActor<AWorldWeaponPickup>();
+		SetupSword->SetActorLocation(FVector(50.0f, 0.0f, 0.0f));
+		SetupSword->SetWeaponDefinition(SwordDef);
+		TestTrue(TEXT("Setup Sword succeeds"), EquipmentComp->TryEquipWorldPickup(SetupSword));
+
+		AWorldWeaponPickup* SetupShield = World->SpawnActor<AWorldWeaponPickup>();
+		SetupShield->SetActorLocation(FVector(50.0f, 0.0f, 0.0f));
+		SetupShield->SetWeaponDefinition(ShieldDef);
+		TestTrue(TEXT("Setup Shield succeeds"), EquipmentComp->TryEquipWorldPickup(SetupShield));
+		TestEqual(TEXT("Pre-rollback mode is SwordShield"), EquipmentComp->GetResolvedLocomotionMode(), EWeaponLocomotionMode::SwordShield);
+
+		// 13.4.1 Injected Apply Failure Rollback from { Sword, Shield } -> Bow
+		EquipmentComp->SetInjectApplyFailureOnce(true);
+		AWorldWeaponPickup* FailApplyBow = World->SpawnActor<AWorldWeaponPickup>();
+		FailApplyBow->SetActorLocation(FVector(50.0f, 0.0f, 0.0f));
+		FailApplyBow->SetWeaponDefinition(BowDef);
+		TestFalse(TEXT("Injected apply failure causes TryEquipWorldPickup(Bow) to fail"), EquipmentComp->TryEquipWorldPickup(FailApplyBow));
+		TestEqual(TEXT("Main hand restored to SwordDef after Apply failure"), EquipmentComp->GetCurrentMainHandWeapon(), Cast<UWeaponDefinition>(SwordDef));
+		TestEqual(TEXT("Off hand restored to ShieldDef after Apply failure"), EquipmentComp->GetCurrentOffHandWeapon(), Cast<UWeaponDefinition>(ShieldDef));
+		TestEqual(TEXT("LocomotionMode restored to SwordShield after Apply failure (no drift)"), EquipmentComp->GetResolvedLocomotionMode(), EWeaponLocomotionMode::SwordShield);
+		if (FailApplyBow && !FailApplyBow->IsActorBeingDestroyed())
+		{
+			FailApplyBow->Destroy();
+		}
+
+		// 13.4.2 Injected Drop Failure Rollback from { Sword, Shield } -> Bow
+		EquipmentComp->SetInjectDropFailureOnce(true);
+		AWorldWeaponPickup* FailDropBow = World->SpawnActor<AWorldWeaponPickup>();
+		FailDropBow->SetActorLocation(FVector(50.0f, 0.0f, 0.0f));
+		FailDropBow->SetWeaponDefinition(BowDef);
+		TestFalse(TEXT("Injected drop failure causes TryEquipWorldPickup(Bow) to fail"), EquipmentComp->TryEquipWorldPickup(FailDropBow));
+		TestEqual(TEXT("Main hand restored to SwordDef after Drop failure"), EquipmentComp->GetCurrentMainHandWeapon(), Cast<UWeaponDefinition>(SwordDef));
+		TestEqual(TEXT("Off hand restored to ShieldDef after Drop failure"), EquipmentComp->GetCurrentOffHandWeapon(), Cast<UWeaponDefinition>(ShieldDef));
+		TestEqual(TEXT("LocomotionMode restored to SwordShield after Drop failure (no drift)"), EquipmentComp->GetResolvedLocomotionMode(), EWeaponLocomotionMode::SwordShield);
+		if (FailDropBow && !FailDropBow->IsActorBeingDestroyed())
+		{
+			FailDropBow->Destroy();
+		}
+
+		// 13.4.3 Injected Apply Failure Rollback from single Sword (LightSword) -> Bow
+		AWorldWeaponPickup* ClearOffHandForSword = World->SpawnActor<AWorldWeaponPickup>();
+		ClearOffHandForSword->SetActorLocation(FVector(50.0f, 0.0f, 0.0f));
+		ClearOffHandForSword->SetWeaponDefinition(TwoHandedDef);
+		TestTrue(TEXT("Equip TwoHanded to clear OffHand before single Sword test"), EquipmentComp->TryEquipWorldPickup(ClearOffHandForSword));
+
+		AWorldWeaponPickup* SingleSwordPickup = World->SpawnActor<AWorldWeaponPickup>();
+		SingleSwordPickup->SetActorLocation(FVector(50.0f, 0.0f, 0.0f));
+		SingleSwordPickup->SetWeaponDefinition(SwordDef);
+		TestTrue(TEXT("Equip single Sword succeeds"), EquipmentComp->TryEquipWorldPickup(SingleSwordPickup));
+		TestEqual(TEXT("Single Sword main hand is SwordDef"), EquipmentComp->GetCurrentMainHandWeapon(), Cast<UWeaponDefinition>(SwordDef));
+		TestNull(TEXT("Single Sword off hand is null"), EquipmentComp->GetCurrentOffHandWeapon());
+		TestEqual(TEXT("Single Sword LocomotionMode is LightSword"), EquipmentComp->GetResolvedLocomotionMode(), EWeaponLocomotionMode::LightSword);
+
+		EquipmentComp->SetInjectApplyFailureOnce(true);
+		AWorldWeaponPickup* FailApplyBowSingle = World->SpawnActor<AWorldWeaponPickup>();
+		FailApplyBowSingle->SetActorLocation(FVector(50.0f, 0.0f, 0.0f));
+		FailApplyBowSingle->SetWeaponDefinition(BowDef);
+		TestFalse(TEXT("Injected apply failure causes swap from single Sword to fail"), EquipmentComp->TryEquipWorldPickup(FailApplyBowSingle));
+		TestEqual(TEXT("Main hand remains SwordDef"), EquipmentComp->GetCurrentMainHandWeapon(), Cast<UWeaponDefinition>(SwordDef));
+		TestNull(TEXT("Off hand remains null"), EquipmentComp->GetCurrentOffHandWeapon());
+		TestEqual(TEXT("LocomotionMode remains LightSword after rollback with no drift"), EquipmentComp->GetResolvedLocomotionMode(), EWeaponLocomotionMode::LightSword);
+		if (FailApplyBowSingle && !FailApplyBowSingle->IsActorBeingDestroyed())
+		{
+			FailApplyBowSingle->Destroy();
+		}
+
+		// Clean up dropped pickups in Section 13
+		TArray<AWorldWeaponPickup*> Drops13;
+		GetWorldDroppedPickups(Drops13);
+		for (AWorldWeaponPickup* Drop : Drops13)
+		{
+			Drop->Destroy();
+		}
 	}
 
 	Player->Destroy();

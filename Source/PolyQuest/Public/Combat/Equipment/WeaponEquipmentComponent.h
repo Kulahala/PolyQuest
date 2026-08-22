@@ -4,6 +4,7 @@
 #include "Components/ActorComponent.h"
 #include "GameplayAbilitySpecHandle.h"
 #include "GameplayTagContainer.h"
+#include "Combat/Equipment/WeaponDefinition.h"
 #include "WeaponEquipmentComponent.generated.h"
 
 class UGameplayAbility;
@@ -31,6 +32,13 @@ public:
 	static constexpr int32 PreparedSlotCount = 4;
 
 	UWeaponEquipmentComponent();
+
+	/**
+	 * Resolves the active locomotion presentation mode for the currently equipped weapons
+	 * to one of Default, LightSword, HeavySword, SwordShield, or Bow without internal caching or state mutation.
+	 */
+	UFUNCTION(BlueprintPure, Category = "Combat|Equipment")
+	EWeaponLocomotionMode GetResolvedLocomotionMode() const;
 
 	/**
 	 * Atomically swaps the definition's hand slot: full composition preflight

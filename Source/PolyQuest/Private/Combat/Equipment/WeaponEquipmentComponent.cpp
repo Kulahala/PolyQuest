@@ -4,6 +4,7 @@
 #include "Abilities/GameplayAbility.h"
 #include "Character/Player/PlayerCharacter.h"
 #include "Combat/Equipment/MeleeWeaponDefinition.h"
+#include "Combat/Equipment/OffHandWeaponDefinition.h"
 #include "Combat/Equipment/WeaponDefinition.h"
 #include "Combat/Equipment/WorldWeaponPickup.h"
 #include "Combat/Input/CombatLoadoutDefinition.h"
@@ -33,6 +34,39 @@ UWeaponEquipmentComponent::UWeaponEquipmentComponent()
 	PreparedSlotClasses.SetNum(PreparedSlotCount);
 	PreparedSlotHandles = TArray<FGameplayAbilitySpecHandle>();
 	PreparedSlotHandles.SetNum(PreparedSlotCount);
+}
+
+EWeaponLocomotionMode UWeaponEquipmentComponent::GetResolvedLocomotionMode() const
+{
+	if (!CurrentMainHandWeapon)
+	{
+		return EWeaponLocomotionMode::Default;
+	}
+
+	EWeaponLocomotionMode BaseMode = CurrentMainHandWeapon->LocomotionMode;
+	if (BaseMode != EWeaponLocomotionMode::Default
+		&& BaseMode != EWeaponLocomotionMode::LightSword
+		&& BaseMode != EWeaponLocomotionMode::HeavySword
+		&& BaseMode != EWeaponLocomotionMode::Bow)
+	{
+		BaseMode = EWeaponLocomotionMode::Default;
+	}
+
+	if (CurrentOffHandWeapon)
+	{
+		const UOffHandWeaponDefinition* OffHandDef = Cast<UOffHandWeaponDefinition>(CurrentOffHandWeapon.Get());
+		if (OffHandDef
+			&& OffHandDef->RequiredMainHandLocomotionMode == EWeaponLocomotionMode::LightSword
+			&& OffHandDef->CompositionLocomotionMode == EWeaponLocomotionMode::SwordShield)
+		{
+			if (BaseMode == EWeaponLocomotionMode::LightSword)
+			{
+				return EWeaponLocomotionMode::SwordShield;
+			}
+		}
+	}
+
+	return BaseMode;
 }
 
 bool UWeaponEquipmentComponent::TryGetEquippedMainHandDisplaySocketTransform(FName SocketName, FTransform& OutTransform) const
