@@ -64,6 +64,9 @@ void AEnemyCharacter::EndPlay(const EEndPlayReason::Type EndPlayReason)
 	}
 	PendingStanceBreakTimerHandle.Invalidate();
 	bStanceBreakDispatchPending = false;
+	bLaunchStanceBreakDeferralActive = false;
+	bPendingDeferredStanceBreak = false;
+	ActivePoiseBreakingEffectSpec = nullptr;
 	UnbindDeathEvents();
 	Super::EndPlay(EndPlayReason);
 }
@@ -182,10 +185,14 @@ void AEnemyCharacter::OnHealthAttributeChanged(const FOnAttributeChangeData& Cha
 	}
 
 	const bool bIsStunned = StunnedStateTag.IsValid() && CharacterASC->HasMatchingGameplayTag(StunnedStateTag);
-	if (IsDead() || bIsStunned || IsPoiseBroken())
+	if (IsDead() || bIsStunned)
 	{
+		ActivePoiseBreakingEffectSpec = nullptr;
 		return;
 	}
+
+	const bool bIsSameSpecPoiseBreak = (ActivePoiseBreakingEffectSpec != nullptr && &ChangeData.GEModData->EffectSpec == ActivePoiseBreakingEffectSpec);
+	ActivePoiseBreakingEffectSpec = nullptr;
 
 	FGameplayTagContainer AssetTags;
 	ChangeData.GEModData->EffectSpec.GetAllAssetTags(AssetTags);
@@ -196,6 +203,15 @@ void AEnemyCharacter::OnHealthAttributeChanged(const FOnAttributeChangeData& Cha
 		UE_LOG(LogPolyQuest, Warning, TEXT("Enemy '%s' received invalid multi-tier hit reaction tags from effect '%s'; skipping reaction event."),
 			*GetNameSafe(this), *GetNameSafe(ChangeData.GEModData->EffectSpec.Def));
 		return;
+	}
+
+	if (IsPoiseBroken())
+	{
+		const bool bAllowSameSpecLaunch = (bIsSameSpecPoiseBreak && ReactionTier == EHitReactionTier::Launch);
+		if (!bAllowSameSpecLaunch)
+		{
+			return;
+		}
 	}
 
 	FGameplayTag TargetEventTag;
@@ -231,17 +247,104 @@ void AEnemyCharacter::OnHealthAttributeChanged(const FOnAttributeChangeData& Cha
 	CharacterASC->HandleGameplayEvent(TargetEventTag, &ReactionEventData);
 }
 
+void AEnemyCharacter::BeginLaunchStanceBreakDeferral()
+{
+	bLaunchStanceBreakDeferralActive = true;
+
+	if (UWorld* World = GetWorld())
+	{
+		if (PendingStanceBreakTimerHandle.IsValid())
+		{
+			World->GetTimerManager().ClearTimer(PendingStanceBreakTimerHandle);
+		}
+	}
+	PendingStanceBreakTimerHandle.Invalidate();
+	bStanceBreakDispatchPending = false;
+	ActivePoiseBreakingEffectSpec = nullptr;
+
+	if (IsPoiseBroken())
+	{
+		bPendingDeferredStanceBreak = true;
+	}
+}
+
+void AEnemyCharacter::CompleteLaunchStanceBreakDeferral()
+{
+	const bool bHadPendingStanceBreak = bPendingDeferredStanceBreak;
+	bPendingDeferredStanceBreak = false;
+	bLaunchStanceBreakDeferralActive = false;
+	ActivePoiseBreakingEffectSpec = nullptr;
+
+	if (bHadPendingStanceBreak)
+	{
+		TryDispatchStanceBreak();
+	}
+}
+
+void AEnemyCharacter::AbortLaunchStanceBreakDeferral()
+{
+	const bool bHadPendingStanceBreak = bPendingDeferredStanceBreak;
+	bPendingDeferredStanceBreak = false;
+	bLaunchStanceBreakDeferralActive = false;
+	ActivePoiseBreakingEffectSpec = nullptr;
+
+	if (bHadPendingStanceBreak && HasAuthority() && !bDeathTeardownStarted && !IsDead() && !IsActorBeingDestroyed() && IsPoiseBroken())
+	{
+		RestorePoiseToMax();
+	}
+}
+
 void AEnemyCharacter::OnPoiseAttributeChanged(const FOnAttributeChangeData& ChangeData)
 {
-	if (!HasAuthority() || bDeathTeardownStarted || IsDead() || ChangeData.NewValue >= ChangeData.OldValue)
+	if (!HasAuthority() || bDeathTeardownStarted || IsDead())
+	{
+		ActivePoiseBreakingEffectSpec = nullptr;
+		return;
+	}
+
+	if (FMath::IsNearlyEqual(ChangeData.NewValue, ChangeData.OldValue))
 	{
 		return;
 	}
 
-	ClearPoiseRecovery();
 	if (ChangeData.NewValue > 0.0f)
 	{
-		StartPoiseRecovery();
+		ActivePoiseBreakingEffectSpec = nullptr;
+		if (bLaunchStanceBreakDeferralActive)
+		{
+			bPendingDeferredStanceBreak = false;
+		}
+
+		if (UWorld* World = GetWorld())
+		{
+			if (PendingStanceBreakTimerHandle.IsValid())
+			{
+				World->GetTimerManager().ClearTimer(PendingStanceBreakTimerHandle);
+			}
+		}
+		PendingStanceBreakTimerHandle.Invalidate();
+		bStanceBreakDispatchPending = false;
+
+		if (ChangeData.NewValue < ChangeData.OldValue)
+		{
+			ClearPoiseRecovery();
+			StartPoiseRecovery();
+		}
+		return;
+	}
+
+	if (ChangeData.NewValue >= ChangeData.OldValue)
+	{
+		ActivePoiseBreakingEffectSpec = nullptr;
+		return;
+	}
+
+	ClearPoiseRecovery();
+
+	if (bLaunchStanceBreakDeferralActive)
+	{
+		ActivePoiseBreakingEffectSpec = nullptr;
+		bPendingDeferredStanceBreak = true;
 		return;
 	}
 
@@ -249,14 +352,18 @@ void AEnemyCharacter::OnPoiseAttributeChanged(const FOnAttributeChangeData& Chan
 	if (!CharacterASC || CharacterASC->GetNumericAttribute(UCharacterAttributeSet::GetHealthAttribute()) <= 0.0f
 		|| !StanceBreakEventTag.IsValid() || bStanceBreakDispatchPending)
 	{
+		ActivePoiseBreakingEffectSpec = nullptr;
 		return;
 	}
 
 	UWorld* World = GetWorld();
 	if (!World)
 	{
+		ActivePoiseBreakingEffectSpec = nullptr;
 		return;
 	}
+
+	ActivePoiseBreakingEffectSpec = ChangeData.GEModData ? &ChangeData.GEModData->EffectSpec : nullptr;
 
 	bStanceBreakDispatchPending = true;
 	PendingStanceBreakTimerHandle = World->GetTimerManager().SetTimerForNextTick(this, &AEnemyCharacter::DispatchPendingStanceBreak);
@@ -264,14 +371,26 @@ void AEnemyCharacter::OnPoiseAttributeChanged(const FOnAttributeChangeData& Chan
 
 void AEnemyCharacter::DispatchPendingStanceBreak()
 {
-	bStanceBreakDispatchPending = false;
+	ActivePoiseBreakingEffectSpec = nullptr;
+	if (UWorld* World = GetWorld())
+	{
+		if (PendingStanceBreakTimerHandle.IsValid())
+		{
+			World->GetTimerManager().ClearTimer(PendingStanceBreakTimerHandle);
+		}
+	}
 	PendingStanceBreakTimerHandle.Invalidate();
+	bStanceBreakDispatchPending = false;
+	TryDispatchStanceBreak();
+}
 
+bool AEnemyCharacter::TryDispatchStanceBreak()
+{
 	UAbilitySystemComponent* CharacterASC = GetAbilitySystemComponent();
 	if (!HasAuthority() || bDeathTeardownStarted || IsDead() || IsActorBeingDestroyed() || !CharacterASC
 		|| CharacterASC->GetNumericAttribute(UCharacterAttributeSet::GetHealthAttribute()) <= 0.0f || !IsPoiseBroken())
 	{
-		return;
+		return false;
 	}
 
 	if (!HasValidPoiseRecoveryConfiguration())
@@ -281,7 +400,7 @@ void AEnemyCharacter::DispatchPendingStanceBreak()
 			UE_LOG(LogPolyQuest, Warning, TEXT("Enemy '%s' cannot dispatch Stance Break: Poise recovery configuration is invalid."), *GetNameSafe(this));
 			bHasLoggedInvalidPoiseRecoveryConfiguration = true;
 		}
-		return;
+		return false;
 	}
 
 	FGameplayEventData StanceBreakEventData;
@@ -297,7 +416,10 @@ void AEnemyCharacter::DispatchPendingStanceBreak()
 		{
 			UE_LOG(LogPolyQuest, Warning, TEXT("Enemy '%s' could not restore Poise after a rejected Stance Break event; verify the recovery GameplayEffect modifies Poise with Data.Poise.Recovery."), *GetNameSafe(this));
 		}
+		return false;
 	}
+
+	return true;
 }
 
 void AEnemyCharacter::StartPoiseRecovery()
@@ -446,6 +568,9 @@ void AEnemyCharacter::HandleDeath()
 	}
 	PendingStanceBreakTimerHandle.Invalidate();
 	bStanceBreakDispatchPending = false;
+	bLaunchStanceBreakDeferralActive = false;
+	bPendingDeferredStanceBreak = false;
+	ActivePoiseBreakingEffectSpec = nullptr;
 	// A Dead Tag granted by any legal source becomes terminal in C2; revival is out of scope.
 	CharacterASC->SetLooseGameplayTagCount(DeadStateTag, 1);
 	CharacterASC->SetNumericAttributeBase(UCharacterAttributeSet::GetHealthAttribute(), 0.0f);

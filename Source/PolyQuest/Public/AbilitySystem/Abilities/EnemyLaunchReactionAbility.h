@@ -58,6 +58,8 @@ public:
 	const FVector& GetImpactDirectionSnapshot() const { return ImpactDirectionSnapshot; }
 	float GetLaunchHorizontalSpeed() const { return LaunchHorizontalSpeed; }
 	float GetLaunchVerticalSpeed() const { return LaunchVerticalSpeed; }
+	bool GetTestLandingRecoveryCompletedNaturally() const { return bLandingRecoveryCompletedNaturally; }
+	void SetTestLandingRecoveryCompletedNaturally(bool bValue) { bLandingRecoveryCompletedNaturally = bValue; }
 #endif
 
 private:
@@ -118,6 +120,7 @@ private:
 	bool bLedgeSettingModified = false;
 	bool bMovementModeDelegateBound = false;
 	bool bEndAbilityRequested = false;
+	bool bLandingRecoveryCompletedNaturally = false;
 
 	UFUNCTION()
 	void OnLaunchCommitEventReceived(FGameplayEventData Payload);

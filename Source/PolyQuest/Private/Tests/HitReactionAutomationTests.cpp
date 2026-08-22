@@ -24,6 +24,7 @@
 #include "GameplayEffect.h"
 #include "GameplayEffectTypes.h"
 #include "GameplayTagContainer.h"
+#include "Tests/TestPoiseRecoveryGE.h"
 #include "Tests/TestProjectileDamageGE.h"
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FHitReactionAutomationTest, "PolyQuest.Combat.HitReaction", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
@@ -1036,6 +1037,481 @@ bool FHitReactionAutomationTest::RunTest(const FString& Parameters)
 			TestEqual(TEXT("Already Dead Enemy sent NO additional reaction event"), EnemySmallEventCount, 1);
 			TestEqual(TEXT("Enemy Big count remains 1 after hit to dead enemy"), EnemyBigEventCount, 1);
 			TestEqual(TEXT("Enemy Launch count remains 1 after hit to dead enemy"), EnemyLaunchEventCount, 1);
+		}
+	}
+
+	// -------------------------------------------------------------------------
+	// SECTION 6: Landing-Deferred Enemy Stance Break Lifecycle (TODO-02C3H)
+	// -------------------------------------------------------------------------
+	{
+		AEnemyCharacter* DeferralEnemy = World->SpawnActor<AEnemyCharacter>(AEnemyCharacter::StaticClass(), FVector(300.0f, 0.0f, 0.0f), FRotator::ZeroRotator, SpawnParams);
+		TestNotNull(TEXT("DeferralEnemy spawned successfully"), DeferralEnemy);
+		if (DeferralEnemy)
+		{
+			DeferralEnemy->DispatchBeginPlay();
+			DeferralEnemy->SetTestPoiseRecoveryGameplayEffectClass(UTestPoiseRecoveryGE::StaticClass());
+
+			UAbilitySystemComponent* DeferralASC = DeferralEnemy->GetAbilitySystemComponent();
+			TestNotNull(TEXT("DeferralEnemy ASC valid"), DeferralASC);
+
+			if (DeferralASC)
+			{
+				const FGameplayTag TagStanceBreakEvent = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Reaction.Enemy.StanceBreak")), false);
+				TestTrue(TEXT("Tag Event.Reaction.Enemy.StanceBreak is valid"), TagStanceBreakEvent.IsValid());
+
+				int32 DeferralStanceBreakCount = 0;
+				FDelegateHandle StanceBreakDelegateHandle = DeferralASC->GenericGameplayEventCallbacks.FindOrAdd(TagStanceBreakEvent).AddLambda(
+					[&DeferralStanceBreakCount](const FGameplayEventData* Payload)
+					{
+						if (Payload)
+						{
+							DeferralStanceBreakCount++;
+						}
+					});
+
+				int32 LaunchEventCount = 0;
+				FDelegateHandle LaunchDelegateHandle = DeferralASC->GenericGameplayEventCallbacks.FindOrAdd(TagEventEnemyLaunch).AddLambda(
+					[&LaunchEventCount](const FGameplayEventData* Payload)
+					{
+						if (Payload)
+						{
+							LaunchEventCount++;
+						}
+					});
+
+				auto ResetEnemyState = [&]()
+				{
+					DeferralASC->SetNumericAttributeBase(UCharacterAttributeSet::GetHealthAttribute(), 100.0f);
+					DeferralASC->SetNumericAttributeBase(UCharacterAttributeSet::GetMaxHealthAttribute(), 100.0f);
+					DeferralASC->SetNumericAttributeBase(UCharacterAttributeSet::GetPoiseAttribute(), 100.0f);
+					DeferralASC->SetNumericAttributeBase(UCharacterAttributeSet::GetMaxPoiseAttribute(), 100.0f);
+				};
+
+				// 6.1 Ordinary Poise=0 (outside launch): schedules next-tick timer and dispatches Stance Break
+				{
+					ResetEnemyState();
+					DeferralStanceBreakCount = 0;
+					LaunchEventCount = 0;
+
+					// Reduce Poise to 0
+					DeferralASC->SetNumericAttributeBase(UCharacterAttributeSet::GetPoiseAttribute(), 0.0f);
+					TestTrue(TEXT("6.1: Ordinary Poise=0 schedules next-tick timer"), DeferralEnemy->HasPendingStanceBreakTimer());
+					TestFalse(TEXT("6.1: Launch deferral is not active"), DeferralEnemy->IsLaunchStanceBreakDeferralActive());
+					TestFalse(TEXT("6.1: Pending deferred intent is false"), DeferralEnemy->HasPendingDeferredStanceBreak());
+					TestEqual(TEXT("6.1: Stance break event count is 0 before dispatch"), DeferralStanceBreakCount, 0);
+
+					// Dispatch the pending timer
+					DeferralEnemy->DispatchTestPendingStanceBreak();
+					TestEqual(TEXT("6.1: Exactly 1 Stance Break event dispatched by ordinary timer"), DeferralStanceBreakCount, 1);
+					TestFalse(TEXT("6.1: Timer flag cleared after dispatch"), DeferralEnemy->HasPendingStanceBreakTimer());
+				}
+
+				// 6.2 Order 1: Poise reaches 0 BEFORE Launch starts -> Begin clears timer & records deferred intent
+				{
+					ResetEnemyState();
+					DeferralStanceBreakCount = 0;
+					LaunchEventCount = 0;
+
+					// 1. Poise reaches 0 -> timer created
+					DeferralASC->SetNumericAttributeBase(UCharacterAttributeSet::GetPoiseAttribute(), 0.0f);
+					TestTrue(TEXT("6.2: Timer created before launch starts"), DeferralEnemy->HasPendingStanceBreakTimer());
+
+					// 2. Launch starts (Takeoff Montage active) -> Begin called
+					DeferralEnemy->BeginLaunchStanceBreakDeferral();
+					TestFalse(TEXT("6.2: Begin cleared the ordinary next-tick timer"), DeferralEnemy->HasPendingStanceBreakTimer());
+					TestTrue(TEXT("6.2: Launch deferral is now active"), DeferralEnemy->IsLaunchStanceBreakDeferralActive());
+					TestTrue(TEXT("6.2: Deferred stance break intent is recorded"), DeferralEnemy->HasPendingDeferredStanceBreak());
+					TestEqual(TEXT("6.2: No Stance Break event emitted during Launch setup/flight"), DeferralStanceBreakCount, 0);
+
+					// 3. Natural Landing Recovery completes
+					DeferralEnemy->CompleteLaunchStanceBreakDeferral();
+					TestEqual(TEXT("6.2: Natural completion emitted exactly 1 Stance Break event"), DeferralStanceBreakCount, 1);
+					TestFalse(TEXT("6.2: Deferral active cleared"), DeferralEnemy->IsLaunchStanceBreakDeferralActive());
+					TestFalse(TEXT("6.2: Deferred intent cleared"), DeferralEnemy->HasPendingDeferredStanceBreak());
+				}
+
+				// 6.3 Order 2: Launch starts BEFORE Poise reaches 0 -> Poise=0 callback records intent directly without timer
+				{
+					ResetEnemyState();
+					DeferralStanceBreakCount = 0;
+					LaunchEventCount = 0;
+
+					// 1. Launch starts
+					DeferralEnemy->BeginLaunchStanceBreakDeferral();
+					TestTrue(TEXT("6.3: Launch deferral is active"), DeferralEnemy->IsLaunchStanceBreakDeferralActive());
+					TestFalse(TEXT("6.3: No pending deferred intent yet"), DeferralEnemy->HasPendingDeferredStanceBreak());
+					TestFalse(TEXT("6.3: No ordinary timer created"), DeferralEnemy->HasPendingStanceBreakTimer());
+
+					// 2. Damage applied during launch reduces Poise to 0
+					DeferralASC->SetNumericAttributeBase(UCharacterAttributeSet::GetPoiseAttribute(), 0.0f);
+					TestTrue(TEXT("6.3: Deferred intent recorded by Poise attribute change"), DeferralEnemy->HasPendingDeferredStanceBreak());
+					TestFalse(TEXT("6.3: Ordinary timer was NOT created while launch deferral is active"), DeferralEnemy->HasPendingStanceBreakTimer());
+					TestEqual(TEXT("6.3: No Stance Break event emitted during flight"), DeferralStanceBreakCount, 0);
+
+					// 3. Natural Landing Recovery completes
+					DeferralEnemy->CompleteLaunchStanceBreakDeferral();
+					TestEqual(TEXT("6.3: Natural completion emitted exactly 1 Stance Break event"), DeferralStanceBreakCount, 1);
+					TestFalse(TEXT("6.3: Deferral active cleared"), DeferralEnemy->IsLaunchStanceBreakDeferralActive());
+					TestFalse(TEXT("6.3: Deferred intent cleared"), DeferralEnemy->HasPendingDeferredStanceBreak());
+				}
+
+				// 6.4 Duplicate Begin / Complete calls are idempotent and do NOT duplicate events
+				{
+					ResetEnemyState();
+					DeferralStanceBreakCount = 0;
+					LaunchEventCount = 0;
+
+					DeferralEnemy->BeginLaunchStanceBreakDeferral();
+					DeferralASC->SetNumericAttributeBase(UCharacterAttributeSet::GetPoiseAttribute(), 0.0f);
+					TestTrue(TEXT("6.4: Deferred intent set"), DeferralEnemy->HasPendingDeferredStanceBreak());
+
+					// Duplicate Begin
+					DeferralEnemy->BeginLaunchStanceBreakDeferral();
+					TestTrue(TEXT("6.4: Deferred intent remains true after duplicate Begin"), DeferralEnemy->HasPendingDeferredStanceBreak());
+					TestFalse(TEXT("6.4: No ordinary timer created after duplicate Begin"), DeferralEnemy->HasPendingStanceBreakTimer());
+
+					// Complete once
+					DeferralEnemy->CompleteLaunchStanceBreakDeferral();
+					TestEqual(TEXT("6.4: First Complete emits 1 event"), DeferralStanceBreakCount, 1);
+
+					// Duplicate Complete
+					DeferralEnemy->CompleteLaunchStanceBreakDeferral();
+					TestEqual(TEXT("6.4: Duplicate Complete does NOT emit another event"), DeferralStanceBreakCount, 1);
+				}
+
+				// 6.5 Poise recovery during flight clears deferred intent
+				{
+					ResetEnemyState();
+					DeferralStanceBreakCount = 0;
+					LaunchEventCount = 0;
+
+					DeferralEnemy->BeginLaunchStanceBreakDeferral();
+					DeferralASC->SetNumericAttributeBase(UCharacterAttributeSet::GetPoiseAttribute(), 0.0f);
+					TestTrue(TEXT("6.5: Deferred intent set at zero Poise"), DeferralEnemy->HasPendingDeferredStanceBreak());
+
+					// Poise restored to positive during flight
+					DeferralASC->SetNumericAttributeBase(UCharacterAttributeSet::GetPoiseAttribute(), 50.0f);
+					TestFalse(TEXT("6.5: Positive Poise transition cleared deferred intent"), DeferralEnemy->HasPendingDeferredStanceBreak());
+
+					// Natural completion
+					DeferralEnemy->CompleteLaunchStanceBreakDeferral();
+					TestEqual(TEXT("6.5: No Stance Break emitted when Poise recovered during flight"), DeferralStanceBreakCount, 0);
+				}
+
+				// 6.6 AbortLaunchStanceBreakDeferral restores Poise to max and emits no Stance Break
+				{
+					ResetEnemyState();
+					DeferralStanceBreakCount = 0;
+					LaunchEventCount = 0;
+
+					DeferralEnemy->BeginLaunchStanceBreakDeferral();
+					DeferralASC->SetNumericAttributeBase(UCharacterAttributeSet::GetPoiseAttribute(), 0.0f);
+					TestTrue(TEXT("6.6: Deferred intent set"), DeferralEnemy->HasPendingDeferredStanceBreak());
+
+					// Abort (e.g. premature falling, interrupted, cancelled)
+					DeferralEnemy->AbortLaunchStanceBreakDeferral();
+					TestEqual(TEXT("6.6: Abort emits NO Stance Break event"), DeferralStanceBreakCount, 0);
+					TestFalse(TEXT("6.6: Deferral active cleared after Abort"), DeferralEnemy->IsLaunchStanceBreakDeferralActive());
+					TestFalse(TEXT("6.6: Deferred intent cleared after Abort"), DeferralEnemy->HasPendingDeferredStanceBreak());
+					TestEqual(TEXT("6.6: Abort restored Poise to MaxPoise (100.0)"),
+						DeferralASC->GetNumericAttribute(UCharacterAttributeSet::GetPoiseAttribute()), 100.0f);
+				}
+
+				// 6.7 Death and EndPlay clear deferral without recovery or late Stance Break
+				{
+					AEnemyCharacter* DeathEnemy = World->SpawnActor<AEnemyCharacter>(AEnemyCharacter::StaticClass(), FVector(400.0f, 0.0f, 0.0f), FRotator::ZeroRotator, SpawnParams);
+					TestNotNull(TEXT("6.7: DeathEnemy spawned successfully"), DeathEnemy);
+					if (DeathEnemy)
+					{
+						DeathEnemy->DispatchBeginPlay();
+						DeathEnemy->SetTestPoiseRecoveryGameplayEffectClass(UTestPoiseRecoveryGE::StaticClass());
+
+						UAbilitySystemComponent* DeathASC = DeathEnemy->GetAbilitySystemComponent();
+						TestNotNull(TEXT("6.7: DeathEnemy ASC valid"), DeathASC);
+						if (DeathASC)
+						{
+							int32 DeathStanceBreakCount = 0;
+							FDelegateHandle DeathStanceBreakHandle = DeathASC->GenericGameplayEventCallbacks.FindOrAdd(TagStanceBreakEvent).AddLambda(
+								[&DeathStanceBreakCount](const FGameplayEventData* Payload)
+								{
+									if (Payload)
+									{
+										DeathStanceBreakCount++;
+									}
+								});
+
+							DeathASC->SetNumericAttributeBase(UCharacterAttributeSet::GetHealthAttribute(), 100.0f);
+							DeathASC->SetNumericAttributeBase(UCharacterAttributeSet::GetMaxHealthAttribute(), 100.0f);
+							DeathASC->SetNumericAttributeBase(UCharacterAttributeSet::GetPoiseAttribute(), 100.0f);
+							DeathASC->SetNumericAttributeBase(UCharacterAttributeSet::GetMaxPoiseAttribute(), 100.0f);
+
+							DeathEnemy->BeginLaunchStanceBreakDeferral();
+							DeathASC->SetNumericAttributeBase(UCharacterAttributeSet::GetPoiseAttribute(), 0.0f);
+							TestTrue(TEXT("6.7: Deferred intent set"), DeathEnemy->HasPendingDeferredStanceBreak());
+
+							// Simulate Death
+							DeathASC->AddLooseGameplayTag(TagDead);
+							TestTrue(TEXT("6.7: Enemy is dead"), DeathEnemy->IsDead());
+							TestFalse(TEXT("6.7: Death cleared deferred intent"), DeathEnemy->HasPendingDeferredStanceBreak());
+							TestFalse(TEXT("6.7: Death cleared deferral active"), DeathEnemy->IsLaunchStanceBreakDeferralActive());
+
+							// Late complete attempt
+							DeathEnemy->CompleteLaunchStanceBreakDeferral();
+							TestEqual(TEXT("6.7: No late Stance Break event after death"), DeathStanceBreakCount, 0);
+
+							DeathASC->GenericGameplayEventCallbacks.FindOrAdd(TagStanceBreakEvent).Remove(DeathStanceBreakHandle);
+						}
+
+						DeathEnemy->Destroy();
+					}
+				}
+
+				// 6.8 Launch that never activated does not pollute ordinary Poise route
+				{
+					ResetEnemyState();
+					DeferralStanceBreakCount = 0;
+					LaunchEventCount = 0;
+
+					// Poise goes to 0
+					DeferralASC->SetNumericAttributeBase(UCharacterAttributeSet::GetPoiseAttribute(), 0.0f);
+					TestTrue(TEXT("6.8: Ordinary timer created"), DeferralEnemy->HasPendingStanceBreakTimer());
+
+					// If an ability attempted to activate but failed before Takeoff montage (so Begin was never called, only Abort called)
+					DeferralEnemy->AbortLaunchStanceBreakDeferral();
+					TestTrue(TEXT("6.8: Ordinary timer remains scheduled after no-op Abort"), DeferralEnemy->HasPendingStanceBreakTimer());
+
+					// Ordinary timer can still dispatch normally
+					DeferralEnemy->DispatchTestPendingStanceBreak();
+					TestEqual(TEXT("6.8: Ordinary Stance Break dispatched successfully"), DeferralStanceBreakCount, 1);
+				}
+
+				// 6.9 State.Action.HitReacting must be absent during dispatch on natural completion
+				{
+					ResetEnemyState();
+					DeferralStanceBreakCount = 0;
+					LaunchEventCount = 0;
+
+					DeferralEnemy->BeginLaunchStanceBreakDeferral();
+					DeferralASC->SetNumericAttributeBase(UCharacterAttributeSet::GetPoiseAttribute(), 0.0f);
+
+					// Launch ability would add HitReacting while active, and remove it in Super::EndAbility before calling Complete
+					DeferralASC->AddLooseGameplayTag(TagHitReacting);
+					TestTrue(TEXT("6.9: HitReacting present during flight"), DeferralASC->HasMatchingGameplayTag(TagHitReacting));
+
+					// Super::EndAbility() removes HitReacting
+					DeferralASC->RemoveLooseGameplayTag(TagHitReacting);
+					TestFalse(TEXT("6.9: HitReacting is absent before Complete is called"), DeferralASC->HasMatchingGameplayTag(TagHitReacting));
+
+					DeferralEnemy->CompleteLaunchStanceBreakDeferral();
+					TestEqual(TEXT("6.9: Exactly 1 Stance Break dispatched when HitReacting is absent"), DeferralStanceBreakCount, 1);
+				}
+
+				// 6.10 Real GameplayEffect Spec transaction with Modifier Ordering (P1 Coverage)
+				// 6.10a: Single GE with Poise modifier first (index 0), Health modifier second (index 1)
+				{
+					ResetEnemyState();
+					DeferralStanceBreakCount = 0;
+					LaunchEventCount = 0;
+
+					// Apply UTestLaunchDamageGE_PoiseFirst (Poise -100 at index 0, Health -25 at index 1)
+					FGameplayEffectContextHandle Context = DeferralASC->MakeEffectContext();
+					Context.AddInstigator(DeferralEnemy, DeferralEnemy);
+					FGameplayEffectSpecHandle SpecHandle = DeferralASC->MakeOutgoingSpec(UTestLaunchDamageGE_PoiseFirst::StaticClass(), 1, Context);
+					TestTrue(TEXT("6.10a: SpecHandle valid"), SpecHandle.IsValid() && SpecHandle.Data.IsValid());
+					if (SpecHandle.IsValid() && SpecHandle.Data.IsValid())
+					{
+						FGameplayTagContainer LaunchTags;
+						LaunchTags.AddTag(TagDataLaunch);
+						SpecHandle.Data->AppendDynamicAssetTags(LaunchTags);
+
+						TestTrue(TEXT("6.10a: ApplyGameplayEffectSpecToSelf succeeded"),
+							DeferralASC->ApplyGameplayEffectSpecToSelf(*SpecHandle.Data.Get()).WasSuccessfullyApplied());
+
+						// Verify Poise reached 0 and Health reached 75
+						TestEqual(TEXT("6.10a: Poise reached 0"), DeferralASC->GetNumericAttribute(UCharacterAttributeSet::GetPoiseAttribute()), 0.0f);
+						TestEqual(TEXT("6.10a: Health reached 75"), DeferralASC->GetNumericAttribute(UCharacterAttributeSet::GetHealthAttribute()), 75.0f);
+
+						// Verify Launch event WAS dispatched because Poise was broken in the SAME GE transaction
+						TestEqual(TEXT("6.10a: Launch reaction event dispatched"), LaunchEventCount, 1);
+
+						// Simulate Launch ability start
+						DeferralEnemy->BeginLaunchStanceBreakDeferral();
+						TestFalse(TEXT("6.10a: Ordinary next-tick timer cleared by Begin"), DeferralEnemy->HasPendingStanceBreakTimer());
+						TestTrue(TEXT("6.10a: Deferred stance break intent recorded"), DeferralEnemy->HasPendingDeferredStanceBreak());
+
+						// Simulate natural LandingRecovery completion
+						DeferralEnemy->CompleteLaunchStanceBreakDeferral();
+						TestEqual(TEXT("6.10a: Exactly 1 Stance Break dispatched on landing"), DeferralStanceBreakCount, 1);
+					}
+				}
+
+				// 6.10b: Single GE with Health modifier first (index 0), Poise modifier second (index 1)
+				{
+					ResetEnemyState();
+					DeferralStanceBreakCount = 0;
+					LaunchEventCount = 0;
+
+					// Apply UTestLaunchDamageGE_HealthFirst (Health -25 at index 0, Poise -100 at index 1)
+					FGameplayEffectContextHandle Context = DeferralASC->MakeEffectContext();
+					Context.AddInstigator(DeferralEnemy, DeferralEnemy);
+					FGameplayEffectSpecHandle SpecHandle = DeferralASC->MakeOutgoingSpec(UTestLaunchDamageGE_HealthFirst::StaticClass(), 1, Context);
+					TestTrue(TEXT("6.10b: SpecHandle valid"), SpecHandle.IsValid() && SpecHandle.Data.IsValid());
+					if (SpecHandle.IsValid() && SpecHandle.Data.IsValid())
+					{
+						FGameplayTagContainer LaunchTags;
+						LaunchTags.AddTag(TagDataLaunch);
+						SpecHandle.Data->AppendDynamicAssetTags(LaunchTags);
+
+						TestTrue(TEXT("6.10b: ApplyGameplayEffectSpecToSelf succeeded"),
+							DeferralASC->ApplyGameplayEffectSpecToSelf(*SpecHandle.Data.Get()).WasSuccessfullyApplied());
+
+						TestEqual(TEXT("6.10b: Poise reached 0"), DeferralASC->GetNumericAttribute(UCharacterAttributeSet::GetPoiseAttribute()), 0.0f);
+						TestEqual(TEXT("6.10b: Health reached 75"), DeferralASC->GetNumericAttribute(UCharacterAttributeSet::GetHealthAttribute()), 75.0f);
+						TestEqual(TEXT("6.10b: Launch reaction event dispatched"), LaunchEventCount, 1);
+
+						DeferralEnemy->BeginLaunchStanceBreakDeferral();
+						TestFalse(TEXT("6.10b: Ordinary next-tick timer cleared by Begin"), DeferralEnemy->HasPendingStanceBreakTimer());
+						TestTrue(TEXT("6.10b: Deferred stance break intent recorded"), DeferralEnemy->HasPendingDeferredStanceBreak());
+
+						DeferralEnemy->CompleteLaunchStanceBreakDeferral();
+						TestEqual(TEXT("6.10b: Exactly 1 Stance Break dispatched on landing"), DeferralStanceBreakCount, 1);
+					}
+				}
+
+				// 6.10c Negative Test: Enemy ALREADY at Poise=0 receives subsequent Health-only Launch hit
+				// -> Launch is REJECTED, ordinary pending timer is preserved, exactly 1 ordinary Stance Break
+				{
+					ResetEnemyState();
+					DeferralStanceBreakCount = 0;
+					LaunchEventCount = 0;
+
+					// 1. Initial hit reduces Poise to 0 (ordinary poise break)
+					DeferralASC->SetNumericAttributeBase(UCharacterAttributeSet::GetPoiseAttribute(), 0.0f);
+					TestTrue(TEXT("6.10c: Ordinary timer created for poise break"), DeferralEnemy->HasPendingStanceBreakTimer());
+
+					// 2. Subsequent Health-only Launch effect arrives while Poise is already broken
+					FGameplayEffectContextHandle Context = DeferralASC->MakeEffectContext();
+					Context.AddInstigator(DeferralEnemy, DeferralEnemy);
+					FGameplayEffectSpecHandle SpecHandle = DeferralASC->MakeOutgoingSpec(UTestProjectileDamageGE::StaticClass(), 1, Context);
+					TestTrue(TEXT("6.10c: SpecHandle valid"), SpecHandle.IsValid() && SpecHandle.Data.IsValid());
+					if (SpecHandle.IsValid() && SpecHandle.Data.IsValid())
+					{
+						FGameplayTagContainer LaunchTags;
+						LaunchTags.AddTag(TagDataLaunch);
+						SpecHandle.Data->AppendDynamicAssetTags(LaunchTags);
+
+						TestTrue(TEXT("6.10c: ApplyGameplayEffectSpecToSelf succeeded"),
+							DeferralASC->ApplyGameplayEffectSpecToSelf(*SpecHandle.Data.Get()).WasSuccessfullyApplied());
+
+						// Health took damage
+						TestEqual(TEXT("6.10c: Health took damage to 75"), DeferralASC->GetNumericAttribute(UCharacterAttributeSet::GetHealthAttribute()), 75.0f);
+
+						// Assert Launch event is 0 (REJECTED because poise was already broken from prior hit)
+						TestEqual(TEXT("6.10c: Launch event REJECTED on already poise-broken enemy"), LaunchEventCount, 0);
+
+						// Assert ordinary timer was NOT cancelled by the rejected Launch
+						TestTrue(TEXT("6.10c: Ordinary next-tick timer remains intact"), DeferralEnemy->HasPendingStanceBreakTimer());
+						TestFalse(TEXT("6.10c: Launch deferral was NOT activated"), DeferralEnemy->IsLaunchStanceBreakDeferralActive());
+						TestFalse(TEXT("6.10c: No deferred stance break intent recorded"), DeferralEnemy->HasPendingDeferredStanceBreak());
+
+						// Ordinary timer dispatches exactly 1 Stance Break
+						DeferralEnemy->DispatchTestPendingStanceBreak();
+						TestEqual(TEXT("6.10c: Exactly 1 ordinary Stance Break dispatched"), DeferralStanceBreakCount, 1);
+					}
+				}
+
+				// 6.10d Real Poise-only GE: Poise break schedules ordinary timer, separate Health-only Launch is rejected
+				{
+					ResetEnemyState();
+					DeferralStanceBreakCount = 0;
+					LaunchEventCount = 0;
+
+					// 1. Apply real UTestPoiseDamageOnlyGE (reduces Poise to 0 without Health damage)
+					FGameplayEffectContextHandle Context = DeferralASC->MakeEffectContext();
+					Context.AddInstigator(DeferralEnemy, DeferralEnemy);
+					FGameplayEffectSpecHandle PoiseSpecHandle = DeferralASC->MakeOutgoingSpec(UTestPoiseDamageOnlyGE::StaticClass(), 1, Context);
+					TestTrue(TEXT("6.10d: PoiseSpecHandle valid"), PoiseSpecHandle.IsValid() && PoiseSpecHandle.Data.IsValid());
+					if (PoiseSpecHandle.IsValid() && PoiseSpecHandle.Data.IsValid())
+					{
+						TestTrue(TEXT("6.10d: PoiseDamageOnlyGE applied"),
+							DeferralASC->ApplyGameplayEffectSpecToSelf(*PoiseSpecHandle.Data.Get()).WasSuccessfullyApplied());
+
+						TestEqual(TEXT("6.10d: Poise reached 0"), DeferralASC->GetNumericAttribute(UCharacterAttributeSet::GetPoiseAttribute()), 0.0f);
+						TestTrue(TEXT("6.10d: Ordinary timer scheduled for Poise-only break"), DeferralEnemy->HasPendingStanceBreakTimer());
+
+						// 2. Subsequent separate Health-only Launch effect applied while timer is scheduled
+						FGameplayEffectSpecHandle LaunchSpecHandle = DeferralASC->MakeOutgoingSpec(UTestProjectileDamageGE::StaticClass(), 1, Context);
+						if (LaunchSpecHandle.IsValid() && LaunchSpecHandle.Data.IsValid())
+						{
+							FGameplayTagContainer LaunchTags;
+							LaunchTags.AddTag(TagDataLaunch);
+							LaunchSpecHandle.Data->AppendDynamicAssetTags(LaunchTags);
+
+							TestTrue(TEXT("6.10d: Health-only Launch GE applied"),
+								DeferralASC->ApplyGameplayEffectSpecToSelf(*LaunchSpecHandle.Data.Get()).WasSuccessfullyApplied());
+
+							// Launch MUST be rejected because ActivePoiseBreakingEffectSpec belongs to PoiseSpec, NOT LaunchSpec
+							TestEqual(TEXT("6.10d: Health-only Launch rejected against different Poise-break spec"), LaunchEventCount, 0);
+							TestTrue(TEXT("6.10d: Ordinary timer was NOT cancelled by rejected Launch"), DeferralEnemy->HasPendingStanceBreakTimer());
+							TestFalse(TEXT("6.10d: Launch deferral was NOT activated"), DeferralEnemy->IsLaunchStanceBreakDeferralActive());
+						}
+
+						// 3. Dispatch the ordinary timer, which clears ActivePoiseBreakingEffectSpec and emits Stance Break
+						DeferralEnemy->DispatchTestPendingStanceBreak();
+						TestEqual(TEXT("6.10d: Exactly 1 Stance Break event dispatched by timer"), DeferralStanceBreakCount, 1);
+						TestFalse(TEXT("6.10d: Timer cleared"), DeferralEnemy->HasPendingStanceBreakTimer());
+					}
+				}
+
+				// 6.11 Synthetic UEnemyLaunchReactionAbility EndAbility Bridge Test (P3 Coverage)
+				{
+					ResetEnemyState();
+					DeferralStanceBreakCount = 0;
+					LaunchEventCount = 0;
+
+					UEnemyLaunchReactionAbility* LaunchAbilityInstance = NewObject<UEnemyLaunchReactionAbility>(DeferralEnemy);
+					TestNotNull(TEXT("6.11: LaunchAbilityInstance created"), LaunchAbilityInstance);
+					if (LaunchAbilityInstance)
+					{
+						FGameplayAbilityActorInfo ActorInfo;
+						ActorInfo.InitFromActor(DeferralEnemy, DeferralEnemy, DeferralASC);
+						FGameplayAbilityActivationInfo ActivationInfo;
+						FGameplayAbilitySpecHandle SpecHandle;
+
+						// 6.11a: Natural LandingRecovery -> triggers CompleteLaunchStanceBreakDeferral
+						DeferralEnemy->BeginLaunchStanceBreakDeferral();
+						DeferralASC->SetNumericAttributeBase(UCharacterAttributeSet::GetPoiseAttribute(), 0.0f);
+						TestTrue(TEXT("6.11a: Intent recorded"), DeferralEnemy->HasPendingDeferredStanceBreak());
+
+						LaunchAbilityInstance->SetTestLandingRecoveryCompletedNaturally(true);
+						LaunchAbilityInstance->EndAbility(SpecHandle, &ActorInfo, ActivationInfo, false, false);
+						TestEqual(TEXT("6.11a: Natural EndAbility called CompleteLaunchStanceBreakDeferral emitting 1 event"), DeferralStanceBreakCount, 1);
+
+						// 6.11b: Interrupted / Aborted EndAbility -> triggers AbortLaunchStanceBreakDeferral
+						ResetEnemyState();
+						DeferralStanceBreakCount = 0;
+						LaunchEventCount = 0;
+						DeferralEnemy->BeginLaunchStanceBreakDeferral();
+						DeferralASC->SetNumericAttributeBase(UCharacterAttributeSet::GetPoiseAttribute(), 0.0f);
+
+						UEnemyLaunchReactionAbility* AbortedAbilityInstance = NewObject<UEnemyLaunchReactionAbility>(DeferralEnemy);
+						TestNotNull(TEXT("6.11b: AbortedAbilityInstance created"), AbortedAbilityInstance);
+						if (AbortedAbilityInstance)
+						{
+							AbortedAbilityInstance->SetTestLandingRecoveryCompletedNaturally(false);
+							AbortedAbilityInstance->EndAbility(SpecHandle, &ActorInfo, ActivationInfo, false, true);
+							TestEqual(TEXT("6.11b: Aborted EndAbility emitted 0 events"), DeferralStanceBreakCount, 0);
+							TestEqual(TEXT("6.11b: Aborted EndAbility restored Poise to 100.0"),
+								DeferralASC->GetNumericAttribute(UCharacterAttributeSet::GetPoiseAttribute()), 100.0f);
+						}
+					}
+				}
+
+				DeferralASC->GenericGameplayEventCallbacks.FindOrAdd(TagStanceBreakEvent).Remove(StanceBreakDelegateHandle);
+				DeferralASC->GenericGameplayEventCallbacks.FindOrAdd(TagEventEnemyLaunch).Remove(LaunchDelegateHandle);
+			}
+
+			DeferralEnemy->Destroy();
 		}
 	}
 

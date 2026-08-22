@@ -9,6 +9,7 @@ class UEnemyAIProfile;
 class UEnemyAttackSet;
 class UGameplayEffect;
 class UAbilitySystemComponent;
+struct FGameplayEffectSpec;
 struct FOnAttributeChangeData;
 
 /**
@@ -34,7 +35,17 @@ public:
 #if WITH_DEV_AUTOMATION_TESTS
 	void SetTestAttackSet(UEnemyAttackSet* InSet) { AttackSet = InSet; }
 	void SetTestAIProfile(UEnemyAIProfile* InProfile) { AIProfile = InProfile; }
+	void SetTestPoiseRecoveryGameplayEffectClass(TSubclassOf<UGameplayEffect> InClass) { PoiseRecoveryGameplayEffectClass = InClass; }
+	bool IsLaunchStanceBreakDeferralActive() const { return bLaunchStanceBreakDeferralActive; }
+	bool HasPendingDeferredStanceBreak() const { return bPendingDeferredStanceBreak; }
+	bool HasPendingStanceBreakTimer() const { return PendingStanceBreakTimerHandle.IsValid() || bStanceBreakDispatchPending; }
+	void DispatchTestPendingStanceBreak() { DispatchPendingStanceBreak(); }
 #endif
+
+	/** Native-only lifecycle hooks for pairing with Launch hit reaction stance break deferral. */
+	void BeginLaunchStanceBreakDeferral();
+	void CompleteLaunchStanceBreakDeferral();
+	void AbortLaunchStanceBreakDeferral();
 
 	/** The ASC-owned terminal tag is the only gameplay source of truth for enemy death. */
 	UFUNCTION(BlueprintPure, Category = "Combat|Enemy")
@@ -63,6 +74,7 @@ private:
 	void HandleDeath();
 	void StartDeathRagdoll();
 	void DispatchPendingStanceBreak();
+	bool TryDispatchStanceBreak();
 	void OnPoiseRecoveryTick();
 	void StartPoiseRecovery();
 	void ClearPoiseRecovery();
@@ -105,5 +117,8 @@ private:
 	bool bDeathTeardownStarted = false;
 	bool bDeathRagdollStarted = false;
 	bool bStanceBreakDispatchPending = false;
+	bool bLaunchStanceBreakDeferralActive = false;
+	bool bPendingDeferredStanceBreak = false;
 	bool bHasLoggedInvalidPoiseRecoveryConfiguration = false;
+	const FGameplayEffectSpec* ActivePoiseBreakingEffectSpec = nullptr;
 };

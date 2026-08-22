@@ -68,6 +68,7 @@ void UEnemyLaunchReactionAbility::ActivateAbility(
 	bCommitHandled = false;
 	bLedgeSettingModified = false;
 	bMovementModeDelegateBound = false;
+	bLandingRecoveryCompletedNaturally = false;
 	CurrentPhase = ELaunchPhase::None;
 	BoundAnimInstance = nullptr;
 	ActiveMontage = nullptr;
@@ -135,6 +136,9 @@ void UEnemyLaunchReactionAbility::ActivateAbility(
 		return;
 	}
 
+	// Begin stance break deferral only after takeoff montage is demonstrably active
+	EnemyCharacter->BeginLaunchStanceBreakDeferral();
+
 	// 3. Snapshot target-local impact direction
 	if (TriggerEventData)
 	{
@@ -172,7 +176,16 @@ void UEnemyLaunchReactionAbility::EndAbility(
 	}
 
 	bEndAbilityRequested = true;
-	AEnemyCharacter* EnemyCharacter = BoundEnemyCharacter.IsValid() ? BoundEnemyCharacter.Get() : Cast<AEnemyCharacter>(GetAvatarActorFromActorInfo());
+	const bool bNaturalCompletion = bLandingRecoveryCompletedNaturally;
+	bLandingRecoveryCompletedNaturally = false;
+
+	TWeakObjectPtr<AEnemyCharacter> LocalEnemyCharacter = BoundEnemyCharacter.IsValid()
+		? BoundEnemyCharacter
+		: (ActorInfo && ActorInfo->AvatarActor.IsValid()
+			? Cast<AEnemyCharacter>(ActorInfo->AvatarActor.Get())
+			: Cast<AEnemyCharacter>(GetAvatarActorFromActorInfo()));
+
+	AEnemyCharacter* EnemyCharacter = LocalEnemyCharacter.Get();
 
 	if (bMovementModeDelegateBound && EnemyCharacter)
 	{
@@ -229,7 +242,24 @@ void UEnemyLaunchReactionAbility::EndAbility(
 
 	BoundEnemyCharacter.Reset();
 	CurrentPhase = ELaunchPhase::None;
+
 	Super::EndAbility(Handle, ActorInfo, ActivationInfo, bReplicateEndAbility, bWasCancelled);
+
+	if (LocalEnemyCharacter.IsValid())
+	{
+		AEnemyCharacter* TargetEnemy = LocalEnemyCharacter.Get();
+		if (TargetEnemy && !TargetEnemy->IsActorBeingDestroyed())
+		{
+			if (bNaturalCompletion)
+			{
+				TargetEnemy->CompleteLaunchStanceBreakDeferral();
+			}
+			else
+			{
+				TargetEnemy->AbortLaunchStanceBreakDeferral();
+			}
+		}
+	}
 }
 
 namespace
@@ -434,6 +464,10 @@ void UEnemyLaunchReactionAbility::OnActiveMontageEnded(UAnimMontage* Montage, bo
 	}
 	else if (CurrentPhase == ELaunchPhase::LandingRecovery && Montage == LandingRecoveryMontage.Get())
 	{
+		if (!bInterrupted)
+		{
+			bLandingRecoveryCompletedNaturally = true;
+		}
 		EndFromMontage(bInterrupted);
 	}
 }
