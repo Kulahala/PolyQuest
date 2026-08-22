@@ -42,6 +42,12 @@ public:
 		bool bReplicateEndAbility,
 		bool bWasCancelled) override;
 
+#if WITH_DEV_AUTOMATION_TESTS
+	const FGameplayTagContainer& GetTestActivationOwnedTags() const { return ActivationOwnedTags; }
+	const FGameplayTagContainer& GetTestActivationBlockedTags() const { return ActivationBlockedTags; }
+	const TArray<FAbilityTriggerData>& GetTestAbilityTriggers() const { return AbilityTriggers; }
+#endif
+
 private:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Enemy|Reaction", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<UAnimMontage> HitReactionMontage;

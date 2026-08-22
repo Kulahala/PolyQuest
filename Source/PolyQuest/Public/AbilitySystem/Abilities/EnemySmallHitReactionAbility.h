@@ -4,24 +4,23 @@
 #include "Abilities/GameplayAbility.h"
 #include "Abilities/GameplayAbilityTypes.h"
 #include "GameplayTagContainer.h"
-#include "EnemyStanceBreakAbility.generated.h"
+#include "EnemySmallHitReactionAbility.generated.h"
 
 class UAbilityTask_PlayMontageAndWait;
 class UAnimInstance;
 class UAnimMontage;
 
 /**
- * Server-authoritative enemy stance break. Poise delivery and event routing
- * stay outside the ability; this ability owns only the authored presentation,
- * interruption, and recovery teardown.
+ * Server-authoritative, non-interrupting enemy small hit reaction.
+ * Plays an additive/overlay montage without blocking movement, AI state, or active attacks.
  */
 UCLASS()
-class POLYQUEST_API UEnemyStanceBreakAbility : public UGameplayAbility
+class POLYQUEST_API UEnemySmallHitReactionAbility : public UGameplayAbility
 {
 	GENERATED_BODY()
 
 public:
-	UEnemyStanceBreakAbility();
+	UEnemySmallHitReactionAbility();
 
 	virtual bool CanActivateAbility(
 		const FGameplayAbilitySpecHandle Handle,
@@ -44,12 +43,14 @@ public:
 		bool bWasCancelled) override;
 
 #if WITH_DEV_AUTOMATION_TESTS
-	const FGameplayTagContainer& GetAbilitiesToCancel() const { return AbilitiesToCancel; }
+	const FGameplayTagContainer& GetTestActivationOwnedTags() const { return ActivationOwnedTags; }
+	const FGameplayTagContainer& GetTestActivationBlockedTags() const { return ActivationBlockedTags; }
+	const TArray<FAbilityTriggerData>& GetTestAbilityTriggers() const { return AbilityTriggers; }
 #endif
 
 private:
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Enemy|Stance Break", meta = (AllowPrivateAccess = "true"))
-	TObjectPtr<UAnimMontage> StanceBreakMontage;
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Enemy|Reaction", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<UAnimMontage> SmallHitReactionMontage;
 
 	UPROPERTY(Transient)
 	TObjectPtr<UAbilityTask_PlayMontageAndWait> MontageTask;
@@ -60,15 +61,11 @@ private:
 	UPROPERTY(Transient)
 	TObjectPtr<UAnimMontage> ActiveMontage;
 
-	FGameplayTag StanceBreakAbilityTag;
-	FGameplayTag StanceBreakEventTag;
+	FGameplayTag SmallHitReactionAbilityTag;
+	FGameplayTag SmallHitReactionEventTag;
+	FGameplayTag SmallHitReactingStateTag;
 	FGameplayTag StunnedStateTag;
-	FGameplayTag HitReactingStateTag;
-	FGameplayTag EnemyMeleeAbilityTag;
-	FGameplayTag EnemyHitReactionAbilityTag;
-	FGameplayTag EnemySmallHitReactionAbilityTag;
-	FGameplayTagContainer AbilitiesToCancel;
-	bool bMovementLockedByStanceBreak = false;
+	FGameplayTag DeadStateTag;
 	bool bEndAbilityRequested = false;
 
 	UFUNCTION()

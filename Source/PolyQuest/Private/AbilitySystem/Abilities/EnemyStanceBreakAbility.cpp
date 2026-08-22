@@ -20,7 +20,8 @@ UEnemyStanceBreakAbility::UEnemyStanceBreakAbility()
 	StunnedStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Status.Stunned")), false);
 	HitReactingStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Action.HitReacting")), false);
 	EnemyMeleeAbilityTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Attack.Enemy.Melee")), false);
-	EnemyHitReactionAbilityTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Reaction.Enemy.Hit")), false);
+	EnemyHitReactionAbilityTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Reaction.Enemy.Big")), false);
+	EnemySmallHitReactionAbilityTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Reaction.Enemy.Small")), false);
 
 	AbilityTags.AddTag(StanceBreakAbilityTag);
 	ActivationOwnedTags.AddTag(StunnedStateTag);
@@ -34,6 +35,7 @@ UEnemyStanceBreakAbility::UEnemyStanceBreakAbility()
 
 	AbilitiesToCancel.AddTag(EnemyMeleeAbilityTag);
 	AbilitiesToCancel.AddTag(EnemyHitReactionAbilityTag);
+	AbilitiesToCancel.AddTag(EnemySmallHitReactionAbilityTag);
 }
 
 bool UEnemyStanceBreakAbility::CanActivateAbility(
@@ -194,7 +196,7 @@ bool UEnemyStanceBreakAbility::ValidateActivationSetup(const FGameplayAbilityAct
 	return CharacterASC && EnemyCharacter && !EnemyCharacter->IsDead() && EnemyCharacter->IsPoiseBroken()
 		&& EnemyCharacter->HasValidPoiseRecoveryConfiguration() && AnimInstance && StanceBreakMontage
 		&& StanceBreakAbilityTag.IsValid() && StanceBreakEventTag.IsValid() && StunnedStateTag.IsValid() && HitReactingStateTag.IsValid()
-		&& EnemyMeleeAbilityTag.IsValid() && EnemyHitReactionAbilityTag.IsValid();
+		&& EnemyMeleeAbilityTag.IsValid() && EnemyHitReactionAbilityTag.IsValid() && EnemySmallHitReactionAbilityTag.IsValid();
 }
 
 void UEnemyStanceBreakAbility::EndFromMontage(bool bWasCancelled)

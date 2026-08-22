@@ -42,6 +42,10 @@ public:
 		bool bReplicateEndAbility,
 		bool bWasCancelled) override;
 
+#if WITH_DEV_AUTOMATION_TESTS
+	const FGameplayTagContainer& GetAbilitiesToCancel() const { return AbilitiesToCancel; }
+#endif
+
 private:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Player|Guard", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<UAnimMontage> GuardBreakMontage;
@@ -61,6 +65,7 @@ private:
 	FGameplayTag DeadStateTag;
 	FGameplayTag GuardAbilityTag;
 	FGameplayTag SprintAbilityTag;
+	FGameplayTag PlayerSmallHitReactionAbilityTag;
 	FGameplayTagContainer AbilitiesToCancel;
 	bool bMovementLockedByGuardBreak = false;
 	bool bEndAbilityRequested = false;

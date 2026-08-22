@@ -22,7 +22,9 @@ class UMeleeWeaponDefinition;
 class UWeaponEquipmentComponent;
 class UAIPerceptionStimuliSourceComponent;
 class USpringArmComponent;
+class AController;
 struct FInputActionValue;
+struct FOnAttributeChangeData;
 
 /**
  * Player-specific camera and input layer built on the shared GAS character.
@@ -32,6 +34,7 @@ class POLYQUEST_API APlayerCharacter : public ABaseCharacter
 {
 	GENERATED_BODY()
 
+public:
 	/** Fixed-world camera boom for the oblique Perspective composition. */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Components", meta=(AllowPrivateAccess="true"))
 	USpringArmComponent* CameraBoom;
@@ -110,6 +113,7 @@ public:
 
 protected:
 	virtual void BeginPlay() override;
+	virtual void PossessedBy(AController* NewController) override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 	virtual void PawnClientRestart() override;
 	virtual void OnMovementModeChanged(EMovementMode PrevMovementMode, uint8 PreviousCustomMode = 0) override;
@@ -308,6 +312,7 @@ private:
 	FGameplayTag StunnedStateTag;
 	FGameplayTag GuardAbilityTag;
 	FGameplayTag ParryAbilityTag;
+	FGameplayTag SmallHitReactionEventTag;
 	FActiveGameplayEffectHandle SprintJumpAirSpeedEffectHandle;
 	FDelegateHandle MovementInputBlockedTagChangedHandle;
 	FDelegateHandle AttackingStateTagChangedHandle;
@@ -316,7 +321,9 @@ private:
 	FDelegateHandle ParryingStateTagChangedHandle;
 	FDelegateHandle DeadStateTagChangedHandle;
 	FDelegateHandle StunnedStateTagChangedHandle;
+	FDelegateHandle HealthAttributeChangedHandle;
 	TWeakObjectPtr<UAbilitySystemComponent> SprintStateBoundAbilitySystemComponent;
+	TWeakObjectPtr<UAbilitySystemComponent> HealthBoundAbilitySystemComponent;
 	FTimerHandle DodgeSprintHoldTimerHandle;
 	FTimerHandle GuardResumeTimerHandle;
 	float DodgeSprintInputPressedTime = 0.0f;
@@ -328,6 +335,10 @@ private:
 	bool bGuardResumeEligibleAfterAttack = false;
 	bool bGuardRequiresReleaseAfterBreak = false;
 	bool bStaminaRegenEffectApplied = false;
+
+	void BindHealthEvents();
+	void UnbindHealthEvents();
+	void OnHealthAttributeChanged(const FOnAttributeChangeData& ChangeData);
 
 	bool TryCalculateMousePlaneIntersection(FVector& OutIntersectionPoint) const;
 	void UpdateBowAimFacing();

@@ -5,6 +5,7 @@
 #include "Abilities/GameplayAbilityTypes.h"
 #include "AbilitySystem/CharacterAttributeSet.h"
 #include "AbilitySystemComponent.h"
+#include "Combat/Reaction/HitReactionClassifier.h"
 #include "Components/CapsuleComponent.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "Engine/World.h"
@@ -20,8 +21,8 @@ AEnemyCharacter::AEnemyCharacter()
 {
 	CombatTeamTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Team.Enemy")), false);
 	DeadStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Status.Dead")), false);
-	HitReactionEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Reaction.Enemy.Hit")), false);
-	InterruptReactionDataTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Data.Reaction.Interrupt")), false);
+	HitReactionEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Reaction.Enemy.Big")), false);
+	SmallHitReactionEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Reaction.Enemy.Small")), false);
 	StanceBreakEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Reaction.Enemy.StanceBreak")), false);
 	PoiseRecoveryDataTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Data.Poise.Recovery")), false);
 	StunnedStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Status.Stunned")), false);
@@ -154,6 +155,11 @@ void AEnemyCharacter::UnbindDeathEvents()
 
 void AEnemyCharacter::OnHealthAttributeChanged(const FOnAttributeChangeData& ChangeData)
 {
+	if (!HasAuthority() || bDeathTeardownStarted || IsActorBeingDestroyed())
+	{
+		return;
+	}
+
 	if (ChangeData.NewValue <= 0.0f)
 	{
 		if (!IsDead())
@@ -163,15 +169,7 @@ void AEnemyCharacter::OnHealthAttributeChanged(const FOnAttributeChangeData& Cha
 		return;
 	}
 
-	if (!HasAuthority() || ChangeData.NewValue >= ChangeData.OldValue || IsDead() || IsPoiseBroken() || !ChangeData.GEModData
-		|| !HitReactionEventTag.IsValid() || !InterruptReactionDataTag.IsValid())
-	{
-		return;
-	}
-
-	FGameplayTagContainer AssetTags;
-	ChangeData.GEModData->EffectSpec.GetAllAssetTags(AssetTags);
-	if (!AssetTags.HasTagExact(InterruptReactionDataTag))
+	if (ChangeData.NewValue >= ChangeData.OldValue || !ChangeData.GEModData)
 	{
 		return;
 	}
@@ -182,12 +180,50 @@ void AEnemyCharacter::OnHealthAttributeChanged(const FOnAttributeChangeData& Cha
 		return;
 	}
 
+	const bool bIsStunned = StunnedStateTag.IsValid() && CharacterASC->HasMatchingGameplayTag(StunnedStateTag);
+	if (IsDead() || bIsStunned || IsPoiseBroken())
+	{
+		return;
+	}
+
+	FGameplayTagContainer AssetTags;
+	ChangeData.GEModData->EffectSpec.GetAllAssetTags(AssetTags);
+
+	const EHitReactionTier ReactionTier = FHitReactionClassifier::ClassifyReactionTier(AssetTags);
+	if (ReactionTier == EHitReactionTier::Invalid)
+	{
+		UE_LOG(LogPolyQuest, Warning, TEXT("Enemy '%s' received invalid multi-tier hit reaction tags from effect '%s'; skipping reaction event."),
+			*GetNameSafe(this), *GetNameSafe(ChangeData.GEModData->EffectSpec.Def));
+		return;
+	}
+
+	FGameplayTag TargetEventTag;
+	if (ReactionTier == EHitReactionTier::Small)
+	{
+		TargetEventTag = SmallHitReactionEventTag;
+	}
+	else if (ReactionTier == EHitReactionTier::Big)
+	{
+		TargetEventTag = HitReactionEventTag;
+	}
+	else
+	{
+		// None, Launch (legal no-ops in C3E)
+		return;
+	}
+
+	if (!TargetEventTag.IsValid())
+	{
+		return;
+	}
+
 	FGameplayEventData ReactionEventData;
-	ReactionEventData.EventTag = HitReactionEventTag;
+	ReactionEventData.EventTag = TargetEventTag;
 	ReactionEventData.Instigator = ChangeData.GEModData->EffectSpec.GetContext().GetInstigator();
 	ReactionEventData.Target = this;
 	ReactionEventData.EventMagnitude = ChangeData.OldValue - ChangeData.NewValue;
-	CharacterASC->HandleGameplayEvent(HitReactionEventTag, &ReactionEventData);
+	ReactionEventData.ContextHandle = ChangeData.GEModData->EffectSpec.GetContext();
+	CharacterASC->HandleGameplayEvent(TargetEventTag, &ReactionEventData);
 }
 
 void AEnemyCharacter::OnPoiseAttributeChanged(const FOnAttributeChangeData& ChangeData)

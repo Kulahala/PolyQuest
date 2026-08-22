@@ -29,6 +29,8 @@
 #include "Combat/Equipment/WeaponEquipmentComponent.h"
 #include "Combat/Equipment/WorldWeaponPickup.h"
 #include "Combat/Input/CombatLoadoutDefinition.h"
+#include "Combat/Reaction/HitReactionClassifier.h"
+#include "GameplayEffectExtension.h"
 #include "PolyQuest.h"
 
 APlayerCharacter::APlayerCharacter()
@@ -60,6 +62,7 @@ APlayerCharacter::APlayerCharacter()
 	StunnedStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Status.Stunned")), false);
 	GuardAbilityTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Defense.Guard")), false);
 	ParryAbilityTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Defense.Parry")), false);
+	SmallHitReactionEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Reaction.Player.Small")), false);
 
 	GetCapsuleComponent()->InitCapsuleSize(42.f, 96.0f);
 
@@ -103,6 +106,7 @@ void APlayerCharacter::BeginPlay()
 	Super::BeginPlay();
 	SetActiveCombatLoadout(InitialCombatLoadout);
 	BindSprintStateEvents();
+	BindHealthEvents();
 
 	if (WeaponEquipment)
 	{
@@ -148,6 +152,13 @@ void APlayerCharacter::BeginPlay()
 	}
 }
 
+void APlayerCharacter::PossessedBy(AController* NewController)
+{
+	Super::PossessedBy(NewController);
+	BindSprintStateEvents();
+	BindHealthEvents();
+}
+
 void APlayerCharacter::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
 	if (SightStimuliSource)
@@ -159,6 +170,7 @@ void APlayerCharacter::EndPlay(const EEndPlayReason::Type EndPlayReason)
 	ClearGuardResumeEligibility();
 	bGuardRequiresReleaseAfterBreak = false;
 	CancelSprintAbility();
+	UnbindHealthEvents();
 	UnbindSprintStateEvents();
 	ClearSprintJumpAirSpeed();
 
@@ -1343,6 +1355,94 @@ void APlayerCharacter::UnbindSprintStateEvents()
 	DeadStateTagChangedHandle.Reset();
 	StunnedStateTagChangedHandle.Reset();
 	SprintStateBoundAbilitySystemComponent.Reset();
+}
+
+void APlayerCharacter::BindHealthEvents()
+{
+	UAbilitySystemComponent* CharacterASC = GetAbilitySystemComponent();
+	if (!CharacterASC || HealthBoundAbilitySystemComponent.Get() == CharacterASC)
+	{
+		return;
+	}
+
+	UnbindHealthEvents();
+	HealthBoundAbilitySystemComponent = CharacterASC;
+	HealthAttributeChangedHandle = CharacterASC->GetGameplayAttributeValueChangeDelegate(UCharacterAttributeSet::GetHealthAttribute())
+		.AddUObject(this, &APlayerCharacter::OnHealthAttributeChanged);
+}
+
+void APlayerCharacter::UnbindHealthEvents()
+{
+	UAbilitySystemComponent* BoundASC = HealthBoundAbilitySystemComponent.Get();
+	if (BoundASC)
+	{
+		if (HealthAttributeChangedHandle.IsValid())
+		{
+			BoundASC->GetGameplayAttributeValueChangeDelegate(UCharacterAttributeSet::GetHealthAttribute())
+				.Remove(HealthAttributeChangedHandle);
+		}
+	}
+
+	HealthAttributeChangedHandle.Reset();
+	HealthBoundAbilitySystemComponent.Reset();
+}
+
+void APlayerCharacter::OnHealthAttributeChanged(const FOnAttributeChangeData& ChangeData)
+{
+	if (!HasAuthority() || IsActorBeingDestroyed())
+	{
+		return;
+	}
+
+	// Lethal check: Player has no death implementation in C3E; simply send no reaction.
+	if (ChangeData.NewValue <= 0.0f)
+	{
+		return;
+	}
+
+	if (ChangeData.NewValue >= ChangeData.OldValue || !ChangeData.GEModData)
+	{
+		return;
+	}
+
+	UAbilitySystemComponent* CharacterASC = GetAbilitySystemComponent();
+	if (!CharacterASC)
+	{
+		return;
+	}
+
+	const bool bIsDead = DeadStateTag.IsValid() && CharacterASC->HasMatchingGameplayTag(DeadStateTag);
+	const bool bIsStunned = StunnedStateTag.IsValid() && CharacterASC->HasMatchingGameplayTag(StunnedStateTag);
+	if (bIsDead || bIsStunned)
+	{
+		return;
+	}
+
+	FGameplayTagContainer AssetTags;
+	ChangeData.GEModData->EffectSpec.GetAllAssetTags(AssetTags);
+
+	const EHitReactionTier ReactionTier = FHitReactionClassifier::ClassifyReactionTier(AssetTags);
+	if (ReactionTier == EHitReactionTier::Invalid)
+	{
+		UE_LOG(LogPolyQuest, Warning, TEXT("Player '%s' received invalid multi-tier hit reaction tags from effect '%s'; skipping reaction event."),
+			*GetNameSafe(this), *GetNameSafe(ChangeData.GEModData->EffectSpec.Def));
+		return;
+	}
+
+	if (ReactionTier == EHitReactionTier::Small)
+	{
+		if (SmallHitReactionEventTag.IsValid())
+		{
+			FGameplayEventData ReactionEventData;
+			ReactionEventData.EventTag = SmallHitReactionEventTag;
+			ReactionEventData.Instigator = ChangeData.GEModData->EffectSpec.GetContext().GetInstigator();
+			ReactionEventData.Target = this;
+			ReactionEventData.EventMagnitude = ChangeData.OldValue - ChangeData.NewValue;
+			ReactionEventData.ContextHandle = ChangeData.GEModData->EffectSpec.GetContext();
+			CharacterASC->HandleGameplayEvent(SmallHitReactionEventTag, &ReactionEventData);
+		}
+	}
+	// Big, Launch, None are legal no-ops for Player in C3E.
 }
 
 void APlayerCharacter::OnSprintRelevantTagChanged(const FGameplayTag Tag, int32 NewCount)
