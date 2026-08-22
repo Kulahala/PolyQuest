@@ -2,9 +2,11 @@
 
 #include "Abilities/Tasks/AbilityTask_PlayMontageAndWait.h"
 #include "AbilitySystemComponent.h"
+#include "AIController.h"
 #include "Animation/AnimInstance.h"
 #include "Animation/AnimMontage.h"
 #include "Character/Enemy/EnemyCharacter.h"
+#include "Combat/Reaction/HitReactionImpactResolver.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "PolyQuest.h"
@@ -20,6 +22,7 @@ UEnemyHitReactionAbility::UEnemyHitReactionAbility()
 	StunnedStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Status.Stunned")), false);
 	HyperArmorStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Status.HyperArmor")), false);
 	EnemyMeleeAbilityTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Attack.Enemy.Melee")), false);
+	EnemySmallHitReactionAbilityTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Reaction.Enemy.Small")), false);
 
 	AbilityTags.AddTag(HitReactionAbilityTag);
 	ActivationOwnedTags.AddTag(HitReactingStateTag);
@@ -33,7 +36,8 @@ UEnemyHitReactionAbility::UEnemyHitReactionAbility()
 	HitReactionTrigger.TriggerSource = EGameplayAbilityTriggerSource::GameplayEvent;
 	AbilityTriggers.Add(HitReactionTrigger);
 
-	EnemyMeleeAbilityTags.AddTag(EnemyMeleeAbilityTag);
+	AbilitiesToCancel.AddTag(EnemyMeleeAbilityTag);
+	AbilitiesToCancel.AddTag(EnemySmallHitReactionAbilityTag);
 }
 
 bool UEnemyHitReactionAbility::CanActivateAbility(
@@ -51,20 +55,25 @@ void UEnemyHitReactionAbility::ActivateAbility(
 	const FGameplayAbilitySpecHandle Handle,
 	const FGameplayAbilityActorInfo* ActorInfo,
 	const FGameplayAbilityActivationInfo ActivationInfo,
-	const FGameplayEventData*)
+	const FGameplayEventData* TriggerEventData)
 {
 	bEndAbilityRequested = false;
-	bMovementLockedByReaction = false;
+	bLedgeSettingModified = false;
+	bMovementModeDelegateBound = false;
 	BoundAnimInstance = nullptr;
 	ActiveMontage = nullptr;
+	BoundEnemyCharacter.Reset();
+	ImpactDirectionSnapshot = FVector::ZeroVector;
 
 	UAbilitySystemComponent* CharacterASC = GetAbilitySystemComponentFromActorInfo();
 	AEnemyCharacter* EnemyCharacter = Cast<AEnemyCharacter>(GetAvatarActorFromActorInfo());
 	USkeletalMeshComponent* SkeletalMesh = EnemyCharacter ? EnemyCharacter->GetMesh() : nullptr;
 	UAnimInstance* AnimInstance = SkeletalMesh ? SkeletalMesh->GetAnimInstance() : nullptr;
-	if (!CharacterASC || !EnemyCharacter || !AnimInstance || !ValidateActivationSetup(ActorInfo))
+	UCharacterMovementComponent* MovementComponent = EnemyCharacter ? EnemyCharacter->GetCharacterMovement() : nullptr;
+
+	if (!CharacterASC || !EnemyCharacter || !AnimInstance || !MovementComponent || !ValidateActivationSetup(ActorInfo))
 	{
-		UE_LOG(LogPolyQuest, Warning, TEXT("Enemy hit reaction activation aborted for '%s': ASC, living enemy, AnimInstance, montage, and required tags are required."), *GetNameSafe(EnemyCharacter));
+		UE_LOG(LogPolyQuest, Warning, TEXT("Enemy hit reaction activation aborted for '%s': ASC, living enemy, AnimInstance, montage, grounded movement, and required tags are required."), *GetNameSafe(EnemyCharacter));
 		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
 		return;
 	}
@@ -86,6 +95,8 @@ void UEnemyHitReactionAbility::ActivateAbility(
 
 	BoundAnimInstance = AnimInstance;
 	ActiveMontage = HitReactionMontage;
+	BoundEnemyCharacter = EnemyCharacter;
+
 	BoundAnimInstance->OnMontageEnded.RemoveDynamic(this, &UEnemyHitReactionAbility::OnActiveMontageEnded);
 	BoundAnimInstance->OnMontageEnded.AddDynamic(this, &UEnemyHitReactionAbility::OnActiveMontageEnded);
 	MontageTask->ReadyForActivation();
@@ -103,15 +114,33 @@ void UEnemyHitReactionAbility::ActivateAbility(
 		return;
 	}
 
-	if (UCharacterMovementComponent* MovementComponent = EnemyCharacter->GetCharacterMovement())
+	// 1. Snapshot target-local impact direction
+	if (TriggerEventData)
 	{
-		MovementComponent->StopMovementImmediately();
-		MovementComponent->DisableMovement();
-		bMovementLockedByReaction = true;
+		ImpactDirectionSnapshot = FHitReactionImpactResolver::ResolveImpactDirection(*TriggerEventData, EnemyCharacter);
 	}
 
-	// Do this only after the reaction is visibly active. Enemy melee owns all of its own teardown.
-	CharacterASC->CancelAbilities(&EnemyMeleeAbilityTags, nullptr, this);
+	// 2. Stop AI navigation movement if available
+	if (AAIController* AIController = EnemyCharacter->GetController<AAIController>())
+	{
+		AIController->StopMovement();
+	}
+
+	// 3. Stop current velocity
+	MovementComponent->StopMovementImmediately();
+
+	// 4. Snapshot and disable ledge walk-off
+	bSavedCanWalkOffLedges = MovementComponent->bCanWalkOffLedges;
+	MovementComponent->bCanWalkOffLedges = false;
+	bLedgeSettingModified = true;
+
+	// 5. Bind MovementModeChangedDelegate for falling teardown
+	EnemyCharacter->MovementModeChangedDelegate.RemoveDynamic(this, &UEnemyHitReactionAbility::OnMovementModeChanged);
+	EnemyCharacter->MovementModeChangedDelegate.AddDynamic(this, &UEnemyHitReactionAbility::OnMovementModeChanged);
+	bMovementModeDelegateBound = true;
+
+	// 6. Cancel enemy melee and small hit reaction after montage is confirmed active
+	CharacterASC->CancelAbilities(&AbilitiesToCancel, nullptr, this);
 }
 
 void UEnemyHitReactionAbility::EndAbility(
@@ -127,7 +156,14 @@ void UEnemyHitReactionAbility::EndAbility(
 	}
 
 	bEndAbilityRequested = true;
-	AEnemyCharacter* EnemyCharacter = Cast<AEnemyCharacter>(GetAvatarActorFromActorInfo());
+	AEnemyCharacter* EnemyCharacter = BoundEnemyCharacter.IsValid() ? BoundEnemyCharacter.Get() : Cast<AEnemyCharacter>(GetAvatarActorFromActorInfo());
+
+	if (bMovementModeDelegateBound && EnemyCharacter)
+	{
+		EnemyCharacter->MovementModeChangedDelegate.RemoveDynamic(this, &UEnemyHitReactionAbility::OnMovementModeChanged);
+		bMovementModeDelegateBound = false;
+	}
+
 	if (BoundAnimInstance)
 	{
 		BoundAnimInstance->OnMontageEnded.RemoveDynamic(this, &UEnemyHitReactionAbility::OnActiveMontageEnded);
@@ -146,19 +182,16 @@ void UEnemyHitReactionAbility::EndAbility(
 
 	ActiveMontage = nullptr;
 
-	const UAbilitySystemComponent* CharacterASC = GetAbilitySystemComponentFromActorInfo();
-	const bool bStanceBreakOwnsStunned = CharacterASC && StunnedStateTag.IsValid()
-		&& CharacterASC->HasMatchingGameplayTag(StunnedStateTag);
-	if (bMovementLockedByReaction && EnemyCharacter && !EnemyCharacter->IsDead() && !EnemyCharacter->IsActorBeingDestroyed()
-		&& !bStanceBreakOwnsStunned)
+	if (bLedgeSettingModified && EnemyCharacter && !EnemyCharacter->IsActorBeingDestroyed())
 	{
 		if (UCharacterMovementComponent* MovementComponent = EnemyCharacter->GetCharacterMovement())
 		{
-			MovementComponent->SetMovementMode(MOVE_Walking);
+			MovementComponent->bCanWalkOffLedges = bSavedCanWalkOffLedges;
 		}
+		bLedgeSettingModified = false;
 	}
-	bMovementLockedByReaction = false;
 
+	BoundEnemyCharacter.Reset();
 	Super::EndAbility(Handle, ActorInfo, ActivationInfo, bReplicateEndAbility, bWasCancelled);
 }
 
@@ -172,16 +205,31 @@ void UEnemyHitReactionAbility::OnActiveMontageEnded(UAnimMontage* Montage, bool 
 	EndFromMontage(bInterrupted);
 }
 
+void UEnemyHitReactionAbility::OnMovementModeChanged(ACharacter* Character, EMovementMode PrevMovementMode, uint8 PreviousCustomMode)
+{
+	if (bEndAbilityRequested)
+	{
+		return;
+	}
+
+	if (Character && Character->GetCharacterMovement() && Character->GetCharacterMovement()->IsFalling())
+	{
+		EndFromMontage(true);
+	}
+}
+
 bool UEnemyHitReactionAbility::ValidateActivationSetup(const FGameplayAbilityActorInfo* ActorInfo) const
 {
 	const UAbilitySystemComponent* CharacterASC = ActorInfo ? ActorInfo->AbilitySystemComponent.Get() : nullptr;
 	const AEnemyCharacter* EnemyCharacter = ActorInfo ? Cast<AEnemyCharacter>(ActorInfo->AvatarActor.Get()) : nullptr;
 	const USkeletalMeshComponent* SkeletalMesh = EnemyCharacter ? EnemyCharacter->GetMesh() : nullptr;
 	const UAnimInstance* AnimInstance = SkeletalMesh ? SkeletalMesh->GetAnimInstance() : nullptr;
+	const UCharacterMovementComponent* MovementComponent = EnemyCharacter ? EnemyCharacter->GetCharacterMovement() : nullptr;
 
 	return CharacterASC && EnemyCharacter && !EnemyCharacter->IsDead() && AnimInstance && HitReactionMontage
+		&& MovementComponent && MovementComponent->IsMovingOnGround()
 		&& HitReactionAbilityTag.IsValid() && HitReactionEventTag.IsValid() && HitReactingStateTag.IsValid() && StunnedStateTag.IsValid() && HyperArmorStateTag.IsValid()
-		&& EnemyMeleeAbilityTag.IsValid();
+		&& EnemyMeleeAbilityTag.IsValid() && EnemySmallHitReactionAbilityTag.IsValid() && AbilitiesToCancel.Num() == 2;
 }
 
 void UEnemyHitReactionAbility::EndFromMontage(bool bWasCancelled)

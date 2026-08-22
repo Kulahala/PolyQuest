@@ -63,6 +63,7 @@ APlayerCharacter::APlayerCharacter()
 	GuardAbilityTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Defense.Guard")), false);
 	ParryAbilityTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Defense.Parry")), false);
 	SmallHitReactionEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Reaction.Player.Small")), false);
+	BigHitReactionEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Reaction.Player.Big")), false);
 
 	GetCapsuleComponent()->InitCapsuleSize(42.f, 96.0f);
 
@@ -1442,7 +1443,20 @@ void APlayerCharacter::OnHealthAttributeChanged(const FOnAttributeChangeData& Ch
 			CharacterASC->HandleGameplayEvent(SmallHitReactionEventTag, &ReactionEventData);
 		}
 	}
-	// Big, Launch, None are legal no-ops for Player in C3E.
+	else if (ReactionTier == EHitReactionTier::Big)
+	{
+		if (BigHitReactionEventTag.IsValid())
+		{
+			FGameplayEventData ReactionEventData;
+			ReactionEventData.EventTag = BigHitReactionEventTag;
+			ReactionEventData.Instigator = ChangeData.GEModData->EffectSpec.GetContext().GetInstigator();
+			ReactionEventData.Target = this;
+			ReactionEventData.EventMagnitude = ChangeData.OldValue - ChangeData.NewValue;
+			ReactionEventData.ContextHandle = ChangeData.GEModData->EffectSpec.GetContext();
+			CharacterASC->HandleGameplayEvent(BigHitReactionEventTag, &ReactionEventData);
+		}
+	}
+	// Launch, None are legal no-ops for Player.
 }
 
 void APlayerCharacter::OnSprintRelevantTagChanged(const FGameplayTag Tag, int32 NewCount)
