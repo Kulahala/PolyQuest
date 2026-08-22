@@ -315,16 +315,27 @@ bool FHitReactionAutomationTest::RunTest(const FString& Parameters)
 						&& Trigger.TriggerSource == EGameplayAbilityTriggerSource::GameplayEvent;
 				}));
 
-			TestEqual(TEXT("PlayerLaunch BlockAbilitiesWithTag has exactly 11 tags"),
-				PlayerLaunchCDO->GetTestBlockAbilitiesWithTag().Num(), 11);
+			const FGameplayTag TagAbilityDodge = FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Dodge")), false);
+			TestTrue(TEXT("Tag Ability.Dodge is valid"), TagAbilityDodge.IsValid());
+
+			TestEqual(TEXT("PlayerLaunch BlockAbilitiesWithTag has exactly 10 tags"),
+				PlayerLaunchCDO->GetTestBlockAbilitiesWithTag().Num(), 10);
 			TestEqual(TEXT("PlayerLaunch AbilitiesToCancel has exactly 11 tags"),
 				PlayerLaunchCDO->GetTestAbilitiesToCancel().Num(), 11);
+
+			TestFalse(TEXT("PlayerLaunch BlockAbilitiesWithTag does NOT contain Ability.Dodge"),
+				PlayerLaunchCDO->GetTestBlockAbilitiesWithTag().HasTagExact(TagAbilityDodge));
+			TestTrue(TEXT("PlayerLaunch AbilitiesToCancel DOES contain Ability.Dodge"),
+				PlayerLaunchCDO->GetTestAbilitiesToCancel().HasTagExact(TagAbilityDodge));
 
 			for (const FName& ActionTagName : ExpectedTargetActionTagNames)
 			{
 				const FGameplayTag ActionTag = FGameplayTag::RequestGameplayTag(ActionTagName, false);
-				TestTrue(FString::Printf(TEXT("PlayerLaunch BlockAbilitiesWithTag contains '%s'"), *ActionTagName.ToString()),
-					PlayerLaunchCDO->GetTestBlockAbilitiesWithTag().HasTagExact(ActionTag));
+				if (ActionTagName != TEXT("Ability.Dodge"))
+				{
+					TestTrue(FString::Printf(TEXT("PlayerLaunch BlockAbilitiesWithTag contains '%s'"), *ActionTagName.ToString()),
+						PlayerLaunchCDO->GetTestBlockAbilitiesWithTag().HasTagExact(ActionTag));
+				}
 				TestTrue(FString::Printf(TEXT("PlayerLaunch AbilitiesToCancel contains '%s'"), *ActionTagName.ToString()),
 					PlayerLaunchCDO->GetTestAbilitiesToCancel().HasTagExact(ActionTag));
 			}

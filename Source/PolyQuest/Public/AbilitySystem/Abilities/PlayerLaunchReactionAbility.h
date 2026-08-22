@@ -59,6 +59,18 @@ public:
 	const FVector& GetImpactDirectionSnapshot() const { return ImpactDirectionSnapshot; }
 	float GetLaunchHorizontalSpeed() const { return LaunchHorizontalSpeed; }
 	float GetLaunchVerticalSpeed() const { return LaunchVerticalSpeed; }
+	FGameplayTag GetTestDodgeCancelableStateTag() const { return DodgeCancelableStateTag; }
+	bool GetTestDodgeCancelable() const { return bDodgeCancelable; }
+	void SetTestLandingRecoveryMontage(UAnimMontage* Montage) { LandingRecoveryMontage = Montage; }
+	void SetTestActiveMontage(UAnimMontage* Montage) { ActiveMontage = Montage; }
+	void SetTestBoundAnimInstance(UAnimInstance* AnimInstance) { BoundAnimInstance = AnimInstance; }
+	void SetTestCurrentPhaseToLandingRecovery() { CurrentPhase = ELaunchPhase::LandingRecovery; }
+	void SetTestCurrentActorInfo(const FGameplayAbilityActorInfo* InActorInfo) { CurrentActorInfo = InActorInfo; }
+	void SetTestBypassAnimInstanceActiveCheck(bool bBypass) { bTestBypassAnimInstanceActiveCheck = bBypass; }
+	void TestOnCancelWindowBegin(const FGameplayEventData& Payload) { OnCancelWindowBegin(Payload); }
+	void TestOnCancelWindowEnd(const FGameplayEventData& Payload) { OnCancelWindowEnd(Payload); }
+	void TestSetDodgeCancelable(bool bShouldCancel) { SetDodgeCancelable(bShouldCancel); }
+	bool Test_IsEventFromLandingRecoveryMontage(const FGameplayEventData& Payload) const { return IsEventFromLandingRecoveryMontage(Payload); }
 #endif
 
 private:
@@ -93,6 +105,12 @@ private:
 	TObjectPtr<UAbilityTask_WaitDelay> FallValidationTask;
 
 	UPROPERTY(Transient)
+	TObjectPtr<UAbilityTask_WaitGameplayEvent> CancelBeginTask;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UAbilityTask_WaitGameplayEvent> CancelEndTask;
+
+	UPROPERTY(Transient)
 	TObjectPtr<UAnimInstance> BoundAnimInstance;
 
 	UPROPERTY(Transient)
@@ -104,6 +122,9 @@ private:
 	FGameplayTag PlayerLaunchReactionAbilityTag;
 	FGameplayTag PlayerLaunchReactionEventTag;
 	FGameplayTag LaunchCommitEventTag;
+	FGameplayTag CancelWindowBeginEventTag;
+	FGameplayTag CancelWindowEndEventTag;
+	FGameplayTag DodgeCancelableStateTag;
 	FGameplayTag HitReactingStateTag;
 	FGameplayTag StunnedStateTag;
 	FGameplayTag DeadStateTag;
@@ -113,10 +134,14 @@ private:
 	FVector ImpactDirectionSnapshot = FVector::ZeroVector;
 	ELaunchPhase CurrentPhase = ELaunchPhase::None;
 	bool bCommitHandled = false;
+	bool bDodgeCancelable = false;
 	bool bSavedCanWalkOffLedges = true;
 	bool bLedgeSettingModified = false;
 	bool bMovementModeDelegateBound = false;
 	bool bEndAbilityRequested = false;
+#if WITH_DEV_AUTOMATION_TESTS
+	bool bTestBypassAnimInstanceActiveCheck = false;
+#endif
 
 	UFUNCTION()
 	void OnLaunchCommitEventReceived(FGameplayEventData Payload);
@@ -130,7 +155,15 @@ private:
 	UFUNCTION()
 	void OnMovementModeChanged(ACharacter* Character, EMovementMode PrevMovementMode, uint8 PreviousCustomMode);
 
+	UFUNCTION()
+	void OnCancelWindowBegin(FGameplayEventData Payload);
+
+	UFUNCTION()
+	void OnCancelWindowEnd(FGameplayEventData Payload);
+
 	bool ValidateActivationSetup(const FGameplayAbilityActorInfo* ActorInfo) const;
 	bool IsEventFromTakeoffMontage(const FGameplayEventData& Payload) const;
+	bool IsEventFromLandingRecoveryMontage(const FGameplayEventData& Payload) const;
+	void SetDodgeCancelable(bool bShouldCancel);
 	void EndFromMontage(bool bWasCancelled);
 };

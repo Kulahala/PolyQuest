@@ -32,8 +32,10 @@ UDodgeAbility::UDodgeAbility()
 	ChargedAttackAbilityTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Attack.Charged")), false);
 	SprintAttackAbilityTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Attack.Sprint")), false);
 	MeleeSkillAbilityTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Skill.Melee")), false);
+	PlayerLaunchReactionAbilityTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Reaction.Player.Launch")), false);
 	AttackingStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Action.Attacking")), false);
 	DodgingStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Action.Dodging")), false);
+	HitReactingStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Action.HitReacting")), false);
 	DodgeCancelableStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Action.CanCancel.Dodge")), false);
 	InvulnerabilityBeginEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Dodge.Invulnerability.Begin")), false);
 	InvulnerabilityEndEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Dodge.Invulnerability.End")), false);
@@ -65,9 +67,10 @@ bool UDodgeAbility::CanActivateAbility(
 
 	const bool bIsAttacking = AttackingStateTag.IsValid() && AbilitySystemComponent->HasMatchingGameplayTag(AttackingStateTag);
 	const bool bIsDodging = DodgingStateTag.IsValid() && AbilitySystemComponent->HasMatchingGameplayTag(DodgingStateTag);
+	const bool bIsHitReacting = HitReactingStateTag.IsValid() && AbilitySystemComponent->HasMatchingGameplayTag(HitReactingStateTag);
 	const bool bCanCancelDodge = DodgeCancelableStateTag.IsValid() && AbilitySystemComponent->HasMatchingGameplayTag(DodgeCancelableStateTag);
 
-	if (bIsAttacking || bIsDodging)
+	if (bIsAttacking || bIsDodging || bIsHitReacting)
 	{
 		return bCanCancelDodge;
 	}
@@ -96,7 +99,8 @@ void UDodgeAbility::ActivateAbility(
 	if (!AbilitySystemComponent || !PlayerCharacter || !AnimInstance || !DodgeMontage || !CostGameplayEffectClass
 		|| !StaminaRegenDelayGameplayEffectClass || !InvulnerabilityGameplayEffectClass || !PrimaryAttackAbilityTag.IsValid()
 		|| !LightAttackAbilityTag.IsValid() || !ChargedAttackAbilityTag.IsValid() || !SprintAttackAbilityTag.IsValid() || !MeleeSkillAbilityTag.IsValid()
-		|| !AttackingStateTag.IsValid() || !DodgingStateTag.IsValid() || !DodgeCancelableStateTag.IsValid()
+		|| !PlayerLaunchReactionAbilityTag.IsValid()
+		|| !AttackingStateTag.IsValid() || !DodgingStateTag.IsValid() || !HitReactingStateTag.IsValid() || !DodgeCancelableStateTag.IsValid()
 		|| !InvulnerabilityBeginEventTag.IsValid() || !InvulnerabilityEndEventTag.IsValid()
 		|| !CancelWindowBeginEventTag.IsValid() || !CancelWindowEndEventTag.IsValid()
 		|| !RateWindowBeginEventTag.IsValid() || !RateWindowEndEventTag.IsValid())
@@ -131,10 +135,10 @@ void UDodgeAbility::ActivateAbility(
 	BoundAnimInstance = AnimInstance;
 	ActiveMontage = DodgeMontage;
 
-	const bool bCanCancelAttack = AbilitySystemComponent->HasMatchingGameplayTag(DodgeCancelableStateTag);
+	const bool bCanCancelAction = AbilitySystemComponent->HasMatchingGameplayTag(DodgeCancelableStateTag);
 	FGameplayTagContainer AbilityTagsToCancel;
 	AbilityTagsToCancel.AddTag(PrimaryAttackAbilityTag);
-	if (bCanCancelAttack)
+	if (bCanCancelAction)
 	{
 		AbilityTagsToCancel.AddTag(LightAttackAbilityTag);
 		AbilityTagsToCancel.AddTag(ChargedAttackAbilityTag);
@@ -142,6 +146,10 @@ void UDodgeAbility::ActivateAbility(
 		if (MeleeSkillAbilityTag.IsValid())
 		{
 			AbilityTagsToCancel.AddTag(MeleeSkillAbilityTag);
+		}
+		if (PlayerLaunchReactionAbilityTag.IsValid())
+		{
+			AbilityTagsToCancel.AddTag(PlayerLaunchReactionAbilityTag);
 		}
 	}
 	AbilitySystemComponent->CancelAbilities(&AbilityTagsToCancel, nullptr, this);

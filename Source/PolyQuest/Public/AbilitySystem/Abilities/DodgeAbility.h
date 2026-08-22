@@ -49,6 +49,8 @@ public:
 	FGameplayTag GetTestDodgeCancelableStateTag() const { return DodgeCancelableStateTag; }
 	FGameplayTag GetTestAttackingStateTag() const { return AttackingStateTag; }
 	FGameplayTag GetTestDodgingStateTag() const { return DodgingStateTag; }
+	FGameplayTag GetTestHitReactingStateTag() const { return HitReactingStateTag; }
+	FGameplayTag GetTestPlayerLaunchReactionAbilityTag() const { return PlayerLaunchReactionAbilityTag; }
 	bool GetTestDodgeCancelable() const { return bDodgeCancelable; }
 	bool GetTestRateWindowApplied() const { return bRateWindowApplied; }
 	bool GetTestRetriggerInstancedAbility() const { return bRetriggerInstancedAbility; }
@@ -104,8 +106,10 @@ private:
 	FGameplayTag ChargedAttackAbilityTag;
 	FGameplayTag SprintAttackAbilityTag;
 	FGameplayTag MeleeSkillAbilityTag;
+	FGameplayTag PlayerLaunchReactionAbilityTag;
 	FGameplayTag AttackingStateTag;
 	FGameplayTag DodgingStateTag;
+	FGameplayTag HitReactingStateTag;
 	FGameplayTag DodgeCancelableStateTag;
 	FGameplayTag InvulnerabilityBeginEventTag;
 	FGameplayTag InvulnerabilityEndEventTag;

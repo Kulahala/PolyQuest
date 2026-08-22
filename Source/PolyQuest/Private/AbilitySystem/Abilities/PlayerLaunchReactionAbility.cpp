@@ -22,6 +22,9 @@ UPlayerLaunchReactionAbility::UPlayerLaunchReactionAbility()
 	PlayerLaunchReactionAbilityTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Reaction.Player.Launch")), false);
 	PlayerLaunchReactionEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Reaction.Player.Launch")), false);
 	LaunchCommitEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Reaction.Launch.Commit")), false);
+	CancelWindowBeginEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Action.CancelWindow.Dodge.Begin")), false);
+	CancelWindowEndEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Action.CancelWindow.Dodge.End")), false);
+	DodgeCancelableStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Action.CanCancel.Dodge")), false);
 	HitReactingStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Action.HitReacting")), false);
 	StunnedStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Status.Stunned")), false);
 	DeadStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Status.Dead")), false);
@@ -59,7 +62,10 @@ UPlayerLaunchReactionAbility::UPlayerLaunchReactionAbility()
 	for (const FName& TagName : TargetActionTagNames)
 	{
 		const FGameplayTag Tag = FGameplayTag::RequestGameplayTag(TagName, false);
-		BlockAbilitiesWithTag.AddTag(Tag);
+		if (TagName != TEXT("Ability.Dodge"))
+		{
+			BlockAbilitiesWithTag.AddTag(Tag);
+		}
 		AbilitiesToCancel.AddTag(Tag);
 	}
 }
@@ -83,6 +89,7 @@ void UPlayerLaunchReactionAbility::ActivateAbility(
 {
 	bEndAbilityRequested = false;
 	bCommitHandled = false;
+	bDodgeCancelable = false;
 	bLedgeSettingModified = false;
 	bMovementModeDelegateBound = false;
 	CurrentPhase = ELaunchPhase::None;
@@ -104,16 +111,25 @@ void UPlayerLaunchReactionAbility::ActivateAbility(
 		return;
 	}
 
-	// 1. Create and activate commit event listener before starting takeoff montage
+	// 1. Create and activate commit and cancel event listeners before starting takeoff montage
 	CommitEventTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, LaunchCommitEventTag, nullptr, false, false);
-	if (!CommitEventTask)
+	CancelBeginTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, CancelWindowBeginEventTag, nullptr, false, true);
+	CancelEndTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, CancelWindowEndEventTag, nullptr, false, true);
+
+	if (!CommitEventTask || !CancelBeginTask || !CancelEndTask)
 	{
-		UE_LOG(LogPolyQuest, Warning, TEXT("Player launch reaction activation aborted for '%s': failed to create commit event task."), *GetNameSafe(PlayerCharacter));
+		UE_LOG(LogPolyQuest, Warning, TEXT("Player launch reaction activation aborted for '%s': failed to create event tasks."), *GetNameSafe(PlayerCharacter));
 		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
 		return;
 	}
+
 	CommitEventTask->EventReceived.AddDynamic(this, &UPlayerLaunchReactionAbility::OnLaunchCommitEventReceived);
+	CancelBeginTask->EventReceived.AddDynamic(this, &UPlayerLaunchReactionAbility::OnCancelWindowBegin);
+	CancelEndTask->EventReceived.AddDynamic(this, &UPlayerLaunchReactionAbility::OnCancelWindowEnd);
+
 	CommitEventTask->ReadyForActivation();
+	CancelBeginTask->ReadyForActivation();
+	CancelEndTask->ReadyForActivation();
 
 	// 2. Create takeoff montage task
 	MontageTask = UAbilityTask_PlayMontageAndWait::CreatePlayMontageAndWaitProxy(this, NAME_None, TakeoffMontage);
@@ -191,6 +207,8 @@ void UPlayerLaunchReactionAbility::EndAbility(
 		bMovementModeDelegateBound = false;
 	}
 
+	SetDodgeCancelable(false);
+
 	if (BoundAnimInstance)
 	{
 		BoundAnimInstance->OnMontageEnded.RemoveDynamic(this, &UPlayerLaunchReactionAbility::OnActiveMontageEnded);
@@ -213,6 +231,18 @@ void UPlayerLaunchReactionAbility::EndAbility(
 	{
 		CommitEventTask->EndTask();
 		CommitEventTask = nullptr;
+	}
+
+	if (CancelBeginTask)
+	{
+		CancelBeginTask->EndTask();
+		CancelBeginTask = nullptr;
+	}
+
+	if (CancelEndTask)
+	{
+		CancelEndTask->EndTask();
+		CancelEndTask = nullptr;
 	}
 
 	if (MontageTask)
@@ -464,8 +494,9 @@ bool UPlayerLaunchReactionAbility::ValidateActivationSetup(const FGameplayAbilit
 		&& LaunchHorizontalSpeed > 0.0f && FMath::IsFinite(LaunchHorizontalSpeed)
 		&& LaunchVerticalSpeed > 0.0f && FMath::IsFinite(LaunchVerticalSpeed)
 		&& PlayerLaunchReactionAbilityTag.IsValid() && PlayerLaunchReactionEventTag.IsValid() && LaunchCommitEventTag.IsValid()
+		&& CancelWindowBeginEventTag.IsValid() && CancelWindowEndEventTag.IsValid() && DodgeCancelableStateTag.IsValid()
 		&& HitReactingStateTag.IsValid() && StunnedStateTag.IsValid() && DeadStateTag.IsValid() && HyperArmorStateTag.IsValid()
-		&& BlockAbilitiesWithTag.Num() == 11 && AbilitiesToCancel.Num() == 11;
+		&& BlockAbilitiesWithTag.Num() == 10 && AbilitiesToCancel.Num() == 11;
 }
 
 bool UPlayerLaunchReactionAbility::IsEventFromTakeoffMontage(const FGameplayEventData& Payload) const
@@ -502,6 +533,106 @@ bool UPlayerLaunchReactionAbility::IsEventFromTakeoffMontage(const FGameplayEven
 	}
 
 	return false;
+}
+
+bool UPlayerLaunchReactionAbility::IsEventFromLandingRecoveryMontage(const FGameplayEventData& Payload) const
+{
+	const AActor* AvatarActor = GetAvatarActorFromActorInfo();
+	if (bEndAbilityRequested || !LandingRecoveryMontage || !AvatarActor || Payload.Instigator != AvatarActor || Payload.Target != AvatarActor)
+	{
+		return false;
+	}
+
+#if WITH_DEV_AUTOMATION_TESTS
+	if (bTestBypassAnimInstanceActiveCheck)
+	{
+		// Bypass AnimInstance active check for isolated automation test cases
+	}
+	else
+#endif
+	{
+		if (!BoundAnimInstance || !BoundAnimInstance->Montage_IsActive(LandingRecoveryMontage.Get()))
+		{
+			return false;
+		}
+	}
+
+	const UObject* PayloadObject = Payload.OptionalObject.Get();
+	if (!PayloadObject)
+	{
+		return false;
+	}
+
+	if (PayloadObject == LandingRecoveryMontage.Get())
+	{
+		return true;
+	}
+
+	if (const UAnimSequenceBase* Sequence = Cast<UAnimSequenceBase>(PayloadObject))
+	{
+		for (const FSlotAnimationTrack& Track : LandingRecoveryMontage->SlotAnimTracks)
+		{
+			for (const FAnimSegment& Segment : Track.AnimTrack.AnimSegments)
+			{
+				if (Segment.GetAnimReference() == Sequence)
+				{
+					return true;
+				}
+			}
+		}
+	}
+
+	return false;
+}
+
+void UPlayerLaunchReactionAbility::OnCancelWindowBegin(FGameplayEventData Payload)
+{
+	if (bEndAbilityRequested || CurrentPhase != ELaunchPhase::LandingRecovery || !IsEventFromLandingRecoveryMontage(Payload))
+	{
+		return;
+	}
+
+	SetDodgeCancelable(true);
+}
+
+void UPlayerLaunchReactionAbility::OnCancelWindowEnd(FGameplayEventData Payload)
+{
+	if (bEndAbilityRequested || CurrentPhase != ELaunchPhase::LandingRecovery || !IsEventFromLandingRecoveryMontage(Payload))
+	{
+		return;
+	}
+
+	SetDodgeCancelable(false);
+}
+
+void UPlayerLaunchReactionAbility::SetDodgeCancelable(bool bShouldCancel)
+{
+	if (bDodgeCancelable == bShouldCancel)
+	{
+		return;
+	}
+
+	UAbilitySystemComponent* CharacterASC = GetAbilitySystemComponentFromActorInfo();
+	if (!CharacterASC)
+	{
+		return;
+	}
+
+	bDodgeCancelable = bShouldCancel;
+	if (bDodgeCancelable)
+	{
+		if (DodgeCancelableStateTag.IsValid())
+		{
+			CharacterASC->AddLooseGameplayTag(DodgeCancelableStateTag);
+		}
+	}
+	else
+	{
+		if (DodgeCancelableStateTag.IsValid())
+		{
+			CharacterASC->RemoveLooseGameplayTag(DodgeCancelableStateTag);
+		}
+	}
 }
 
 void UPlayerLaunchReactionAbility::EndFromMontage(bool bWasCancelled)
