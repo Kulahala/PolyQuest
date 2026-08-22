@@ -1,109 +1,153 @@
-# TODO-02C3F: Big Hit Interruption And Grounded Root Motion Knockback v1
+# TODO-02C3G: Launch, Airborne, And Landing Reaction v1
 
 ## Plan State
 
-- Status: completed and validated on 2026-08-23.
-- Baseline: `7365248` (`[Feature] 受击层级分类与轻受击反应 (Hit Reaction Tiers And Small Reactions)`).
-- Objective: complete the Player and Enemy `Data.Reaction.Big` route with full action interruption, one Montage-owned grounded Root Motion knockback, collision/ledge safety, and deterministic Player Big PIE coverage without implementing Launch or eight-direction presentation.
+- Status: Completed native C3G implementation, lifecycle repair, strict review, and documentation closeout. The user reports Automation success and focused PIE success after the paused-pose, airborne-watchdog, and landing-brake repair. `gpt-5.6-luna / xhigh` remains unavailable, so the second strict pass is a Main adversarial fallback rather than an independent Reviewer result. Mutable authored Content remains outside the source/config/document commit.
+- Baseline: 88cf64d ([Feature] 完成地面大受击与根运动硬直 / Grounded Big Hit Reactions).
+- Objective: upgrade the legal-but-no-op Data.Reaction.Launch tier into one authoritative Player/Enemy lifecycle: authored takeoff, real airborne CharacterMovement, actual landing, landing recovery, and deterministic cleanup. This is a vertical slice above C3E/C3F, not a rewrite of Small or Big.
+- Current Content/**, maps, imported assets, input assets, and project-setting WIP are user-owned and outside this stage. Preserve them unless the user later explicitly approves a stable asset closure.
 
 ~~~text
 Outer: ue-stage-workflow
 Primary: ue5-cpp-gameplay
-Support: ue5-blueprint-workflow, ue5-debug-validation
-Route reason: C3F extends target-side GAS Big dispatch, native GameplayAbility cleanup, player input blocking, Root Motion ownership, and user-authored enemy attack fixtures.
+Support: ue5-debug-validation, ue5-blueprint-workflow
+Route reason: C3G extends native GAS event dispatch, GameplayAbility lifecycle cleanup, CharacterMovement flight/landing ownership, one AnimNotify event bridge, and user-authored Montage/AnimBP/GE/AttackProfile configuration.
 ~~~
 
 ~~~text
 Plan explorers: 0
 Implementation executors: 1 (Gemini, user-coordinated bounded executor)
 Complex Executor: none
-Main parallel work: inspect the implementation/self-review, perform fresh and adversarial review, close documentation, stage, and commit.
-Reason: Gameplay Tags, Health dispatch, Ability lifecycle, player input gating, and CharacterMovement Root Motion are one coupled contract. No parallel writer may split them.
+Main parallel work: 复核实现、解释验证、fresh/adversarial review、文档收尾与提交。
+Reason: Launch has one coupled target-side GAS, CharacterMovement, montage, and cleanup lifecycle. Parallel writers would split that lifecycle and increase stale delegate/tag risk; Gemini receives one explicit bounded handoff and Main retains architecture, final review, documentation, staging, and commit ownership.
 ~~~
 
 ## Locked Product Contract
 
-1. `Data.Reaction.Big` is a non-lethal, grounded, full-body interruption for both Player and Enemy. It starts only when the target is alive, not Stunned, not Hyper Armor, not already Big-reacting, and `CharacterMovement` is moving on ground. Damage still applies when Big is rejected.
-2. Big starts its Montage first. Native GAS applies its `ActivationOwnedTags` and `BlockAbilitiesWithTag` for the Big ability lifetime as part of activation; a startup failure must immediately remove those normal GAS-owned tags through `EndAbility()`. The irreversible mutations -- `CancelAbilities`, current-velocity stop, ledge-rule override, controller/path stop, and MovementMode delegate binding -- may occur only after `Montage_IsActive()` confirms the authored montage has started. Montage/task startup failure cancels no pre-existing action and changes no CharacterMovement setting.
-3. The Big Montage is the sole displacement owner. It contains planar, local-space backward Root Motion only: no `AddImpulse`, `LaunchCharacter`, `FRootMotionSource`, Motion Warping, `DisableMovement()`, vertical translation, or root rotation. C3F deliberately accepts that side/back hits still move relative to the target's current facing.
-4. After confirmed montage start, Big snapshots `UCharacterMovementComponent::bCanWalkOffLedges`, temporarily sets it to `false`, and binds the CharacterMovement `MovementModeChangedDelegate`. CharacterMovement and Capsule collision own wall/ledge truncation; no corrective teleport or secondary force is allowed. If the new mode is `MOVE_Falling`, the delegate enters the same guarded `EndAbility()` teardown path. Teardown removes the exact delegate before restoring the saved ledge value, and restores nothing that the ability did not first override. Launch owns all intentional airborne motion later.
-5. A successful Guard/Parry or Dodge invulnerability consumes the contact before Health damage and never reaches Big. Once a Player Health Big is accepted, it force-cancels Light, Charged, Sprint Attack, melee Skill, Primary arbitration/Bow, Dodge, Sprint, Jump, Guard, Parry, and Player Small. `Ability.Attack.Primary` covers both `UPrimaryAttackAbility` and `UBowDrawFireAbility` because both own that exact tag.
-6. `State.Action.HitReacting` becomes the shared active-Big state on each target's own ASC. Stance Break and Guard Break remain higher-priority Stunned routes and cancel their target's Big. A new Big while Big is already active is rejected; it does not restart, refresh, or stack.
-7. On successful Big activation, a pure helper snapshots a target-local planar direction that always means `target -> attacker`: use the finite, non-zero Effect Context `FHitResult::ImpactNormal` first, then fall back to finite, non-zero `InstigatorLocation - TargetLocation`. It projects to XY, normalizes, converts through the target actor rotation, and returns `FVector::ZeroVector` for every invalid/missing/zero input. C3F does not use this snapshot to align Root Motion or select animations; an invalid snapshot must never suppress the fixed-local Big montage. It is the single future source for eight-direction Small/Big presentation.
+1. Data.Reaction.Launch is a real, non-lethal launch reaction for both Player and Enemy. A valid Launch damage effect changes Health first; a rejected reaction never rolls back damage.
+2. C3G uses CharacterMovement as the sole source of capsule displacement from launch through landing; authored Root Motion never owns C3G movement:
+   - AM_LaunchTakeoff uses the selected A_KnockDown_Begin_RootMotion_Sword performance only as a full-body pose source. Configure the project-owned launch asset or a user-owned derivative so it extracts no Root Motion and locks its root; do not modify the imported original merely to change this setting.
+   - UAnimNotify_ReactionLaunchCommit sits on the first clearly airborne horizontal pose. Commit pauses, rather than stops, AM_LaunchTakeoff at that pose, then calls ACharacter::LaunchCharacter(LaunchVelocity, true, true). A paused montage produces no further Root Motion delta while preserving the horizontal visual pose.
+   - UCharacterMovementComponent exclusively owns the complete physical arc: departure velocity, MOVE_Falling, gravity, collision, walls, slopes, ledges, and landing. The template upright Falling loop must not become visible during a successful Launch because the paused full-body Takeoff pose remains active.
+   - Actual ground contact stops the paused Takeoff presentation and starts AM_LaunchLandingRecovery from its prone opening pose. LandingRecovery is in-place for C3G: it contributes no extracted Root Motion translation or rotation.
+3. Default tuning is horizontal 450.0 cm/s and vertical 550.0 cm/s. C3F FHitReactionImpactResolver snapshots target-to-attacker; Launch negates it to move away from the attacker. Invalid, zero, NaN, or infinite direction/tuning fails closed and never creates a substitute random launch.
+4. The private lifecycle phases are Takeoff -> AwaitingAirborne -> Airborne (paused Takeoff pose held) -> LandingRecovery. Both GAs own the existing State.Action.HitReacting. Do not add a competing State.Action.Launching tag.
+5. Launch starts only from ground. It rejects Dead, Stunned, Hyper Armor, and existing State.Action.HitReacting (therefore active Big or Launch). It may cancel active Small. Damage still applies when reaction activation is rejected. C3G has no air-combo escalation, Small-to-Big override, or Big-to-Launch override.
+6. Player Launch uses the C3F Player Big action matrix. After confirmed Takeoff startup it blocks/cancels Ability.Attack.Primary, Ability.Attack.Light, Ability.Attack.Charged, Ability.Attack.Sprint, Ability.Skill.Melee, Ability.Dodge, Ability.Movement.Sprint, Ability.Movement.Jump, Ability.Defense.Guard, Ability.Defense.Parry, and Ability.Reaction.Player.Small. Ability.Attack.Primary still covers primary melee arbitration and Bow.
+7. Player LandingRecovery is not cancelable in C3G. TODO-01C4: Player Reaction Recovery Cancel Windows is the accepted future owner for an authored Dodge cancel window, normal Dodge stamina cost, and no cancellation when stamina is insufficient.
+8. A Launch damage GE carries exactly Data.Reaction.Launch. It must not also carry Data.Reaction.Small, Data.Reaction.Big, or Data.Poise.*. Landing-deferred Stance/Guard Break is out of scope and cannot occur through a C3G Launch GE.
+9. Enemy death keeps existing C2 ragdoll / CancelAllAbilities precedence. Player terminal death stays TODO-03D; C3G only verifies that an existing Dead tag blocks new Launch.
 
-## Native Implementation
+## Native Runtime Plan
 
-### Tags, dispatch, and impact snapshot
+### Tags, health dispatch, and pure velocity
 
-- Add `Ability.Reaction.Player.Big` and `Event.Reaction.Player.Big` to `Config/Tags/PolyQuestGameplayTags.ini`. After the confirmed Unarmed Charged asset migration and zero-reference scan, retire `Data.Reaction.Interrupt`, `Ability.Reaction.Enemy.Hit`, and `Event.Reaction.Enemy.Hit`; do not change `Data.Reaction.Small` / `Data.Reaction.Launch` behavior.
-- Add `FHitReactionImpactResolver` under `Combat/Reaction/`. It is a non-reflected static helper that resolves target-local planar attacker direction from `FGameplayEventData`: first valid Effect Context hit normal, then valid Instigator-to-Target planar fallback, otherwise invalid/zero. It owns no Actor, ASC, state, logging, or asset lookup.
-- Extend `APlayerCharacter::OnHealthAttributeChanged` so `EHitReactionTier::Big` dispatches `Event.Reaction.Player.Big`; retain C3E's health/dead/stunned/invalid filters and all Launch/None behavior. Enemy Big dispatch remains unchanged.
+- Register:
+  - Ability.Reaction.Player.Launch
+  - Ability.Reaction.Enemy.Launch
+  - Event.Reaction.Player.Launch
+  - Event.Reaction.Enemy.Launch
+  - Event.Reaction.Launch.Commit
+- Retain Data.Reaction.Launch as the classifier input. Do not rename/retire C3F Small/Big tags or State.Action.HitReacting.
+- Extend FHitReactionImpactResolver with this pure, testable interface: static bool TryBuildLaunchVelocity(const FVector& LocalAttackerDirection, float TargetYaw, float HorizontalSpeed, float VerticalSpeed, FVector& OutLaunchVelocity). Reset OutLaunchVelocity to ZeroVector before validation; planarize/normalize LocalAttackerDirection; reject zero or non-finite XY, non-finite TargetYaw, non-finite/non-positive HorizontalSpeed, and non-finite/non-positive VerticalSpeed. C3G deliberately rejects a zero horizontal speed: this tier is an away-from-attacker launch, not a vertical-only lift. Build world velocity from FRotator(0.0f, TargetYaw, 0.0f).RotateVector(-LocalAttackerDirection) * HorizontalSpeed with Z = VerticalSpeed. Return failure rather than logging, accessing an Actor/ASC/World, querying a DataAsset, or causing gameplay side effects.
+- Extend APlayerCharacter::OnHealthAttributeChanged and AEnemyCharacter::OnHealthAttributeChanged so EHitReactionTier::Launch sends its target-specific Gameplay Event with the existing instigator, target, damage magnitude, and Effect Context. Preserve the current authority, healing/null GEModData, lethal, Dead, Stunned, Invalid, and Enemy Poise-Broken filters. Hyper Armor must not yield an accepted Launch lifecycle through the GA activation guard.
 
-### Player Big ability
+### Separate Player/Enemy Launch GAs and Commit Notify
 
-- Add `UPlayerBigHitReactionAbility` as an `InstancedPerActor`, `ServerOnly` native GA with one authored `BigHitReactionMontage` property and the existing one-delegate / one-`EndAbility()` teardown style.
-- It owns `State.Action.HitReacting`, `State.Input.Block.Movement`, and `State.Input.Block.Jump`; it blocks activation while Dead, Stunned, Hyper Armor, already Big-reacting, or airborne.
-- Its `BlockAbilitiesWithTag` and `AbilitiesToCancel` contain exactly the same action set: `Ability.Attack.Primary`, `Ability.Attack.Light`, `Ability.Attack.Charged`, `Ability.Attack.Sprint`, `Ability.Skill.Melee`, `Ability.Dodge`, `Ability.Movement.Sprint`, `Ability.Movement.Jump`, `Ability.Defense.Guard`, `Ability.Defense.Parry`, and `Ability.Reaction.Player.Small`. The former blocks new activation for the Big ability lifetime; the latter is invoked only after confirmed Montage start. Do not edit every existing Player action GA.
-- After confirmed Montage playback, cache the optional direction snapshot, stop current velocity, snapshot/disable ledge walk-off, bind the MovementMode delegate, and let Montage Root Motion drive the capsule. Every completion, interruption, `MOVE_Falling` transition, cancellation, death/teardown, and invalid runtime path removes delegates/tasks, stops only this Montage, restores the prior ledge setting only when owned, and drops owned tags. The delegate must be identity-safe and cannot re-enter cleanup after teardown begins.
+- Add matching Public/Private pairs:
+  - UPlayerLaunchReactionAbility
+  - UEnemyLaunchReactionAbility
+  - UAnimNotify_ReactionLaunchCommit
+- Both GAs are InstancedPerActor, ServerOnly, and Gameplay Event-triggered. Expose only authored Takeoff Montage, LandingRecovery Montage, and finite launch-speed defaults for derived GA Blueprints. Do not add a generic reaction base class or reaction DataAsset: Player input and Enemy AI cancellation differ materially.
+- Create, bind, and ReadyForActivation the UAbilityTask_WaitGameplayEvent for Event.Reaction.Launch.Commit before ReadyForActivation starts the Takeoff Montage task. This follows the existing Bow pattern and prevents a first-frame/very-short Takeoff Notify from being lost.
+- UAnimNotify_ReactionLaunchCommit follows the existing Animation/Combat event bridge: it sends owner as Instigator/Target and the callback Animation (UAnimSequenceBase) as OptionalObject. An active Launch GA must not require OptionalObject == TakeoffMontage, because Slot playback commonly supplies a sequence rather than the UAnimMontage object. It accepts Commit only when avatar identity matches, that sequence is the active Takeoff Montage itself or belongs to one of its Slot tracks, phase is Takeoff, Commit has not run, ASC/avatar/MovementComponent are valid, and TryBuildLaunchVelocity succeeds. Stale, duplicate, or wrong-montage events are ignored or converge through guarded cleanup without launching.
+- Before confirmed Takeoff playback, only normal GAS activation state may change. CancelAbilities, Player input blocking, StopMovementImmediately, Enemy AI StopMovement, movement delegate binding, and ledge-rule override occur only after Montage_IsActive() confirms Takeoff started. Failed task/startup cannot cancel the old action or mutate CharacterMovement.
+- At accepted Commit, set the commit/phase guard, pause the active Takeoff montage at its authored airborne pose, retain its montage task and active-montage identity, transition to AwaitingAirborne, and call LaunchCharacter(..., true, true). MovementModeChanged is the fast path into MOVE_Falling; a UAbilityTask_WaitDelay(0.10f) watchdog ends once only if a valid Falling transition has not occurred after the pending launch can be consumed. Do not EndTask, Montage_Stop, clear ActiveMontage, change the global RootMotionMode, or otherwise continue Takeoff playback at Commit. OnActiveMontageEnded must identity-check the phase-local expected montage, then end only for a Takeoff end before Commit or for the active LandingRecovery end. A paused Takeoff remains owned and must be ignored while AwaitingAirborne/Airborne; a stale/mismatched Montage is always ignored. Failure to enter Falling never forces MOVE_Walking.
 
-### Enemy Big migration
+### Airborne, landing, and teardown
 
-- Keep `UEnemyHitReactionAbility` and `GA_EnemyHitReaction` names for serialized asset compatibility. Replace its in-place `DisableMovement()` path with the same grounded Root Motion ownership: only after confirmed Montage start, call `AAIController::StopMovement()` when available and `StopMovementImmediately()`, preserve `MOVE_Walking`, snapshot/disable ledge walk-off, bind the MovementMode delegate, cache the optional direction snapshot, and restore only state owned by this ability. Remove `bMovementLockedByReaction`, `DisableMovement()`, and the old end-path `SetMovementMode(MOVE_Walking)`; StateTree resumes its normal decisions after `State.Action.HitReacting` is removed.
-- Continue cancelling Enemy Melee only after Montage start; additionally cancel Enemy Small. Existing StateTree/AI `State.Action.HitReacting` waiting remains the only AI recovery route, so no new StateTree state or controller framework is added.
-- `UPlayerGuardBreakAbility` adds a named `PlayerBigHitReactionAbilityTag` to its cancellation container. Its preflight must require that tag to be valid and the container to contain exactly nine unique entries (the current eight plus Player Big); update the CDO test accordingly. `UEnemyStanceBreakAbility` already cancels Enemy Big and remains otherwise unchanged.
+- Bind one identity-safe, phase-aware MovementModeChangedDelegate only after confirmed Takeoff:
+  - AwaitingAirborne accepts the confirmed transition to MOVE_Falling and enters Airborne.
+  - Airborne starts LandingRecovery only after actual grounded contact.
+  - LandingRecovery ends if movement returns to Falling; it never forces the character back to ground.
+- On actual grounding, set the LandingRecovery phase, call StopMovementImmediately() once to clear residual landing velocity, then explicitly stop the paused Takeoff montage and end its old montage task; only then clear the old ActiveMontage, create the LandingRecovery task, and start the prone-to-standing montage. This ordering makes the expected old Takeoff end broadcast stale and therefore harmless while preventing high-speed ground bounce from aborting LandingRecovery. LandingRecovery must pass startup confirmation and use no extracted Root Motion. Existing scoped ledge-state cleanup may remain only when the implementation actually changes it; it must never become a substitute movement source.
+- EndAbility is the one convergence path for natural LandingRecovery completion, Takeoff interruption before Commit, missing/stale Commit, failed Falling validation, task/delegate callbacks, runtime death/teardown, and renewed fall in recovery. It removes all tasks, OnMontageEnded bindings, and movement delegates; stops only its own active montage; clears phase-local references; and restores only its owned ledge override.
+- During flight and abnormal teardown after Commit, code must never manually SetMovementMode(MOVE_Walking), teleport, or apply a second force. The confirmed-ground LandingRecovery transition alone may clear residual velocity once before its in-place recovery montage; CharacterMovement otherwise decides final motion and collision response.
+- C3G forbids C3G Montage Root Motion extraction, global AnimInstance RootMotionMode switches, DisableMovement(), AddImpulse, FRootMotionSource, Motion Warping, manual Tick flight, forced Walking, and persisted movement-mode overrides.
 
-## User-Owned Authoring Gate
+### Player/Enemy priority and cancellation
 
-1. Confirm the shared Player/Goblin Skeleton route. Reuse the existing Enemy Big montage only if it has valid planar backward Root Motion; otherwise author one compatible shared Big montage. It must have Root Motion enabled, no Z translation, no root rotation, and use the established full-body reaction Slot.
-2. Set both AnimBPs to `Root Motion from Montages Only` for this route. Do not alter the C3E Small `ReactionOverlay` layer.
-3. Create `GA_PlayerBigHitReaction` from `UPlayerBigHitReactionAbility`, assign the Big Montage, and add it to `BP_Player` StartupAbilities. Keep the Enemy Big GA on the same compatible montage.
-4. Copy the ordinary enemy damage GE into a separate Big GE with identical numeric damage/guard values but exactly `Data.Reaction.Big`, not `Data.Reaction.Small`.
-5. Create one dedicated enemy Big AttackProfile and a deterministic Scene01 test AttackSet containing that profile; assign it only to a focused test Goblin so the ordinary enemy Small route remains available for regression.
+- Player Launch owns State.Action.HitReacting, State.Input.Block.Movement, and State.Input.Block.Jump. Its BlockAbilitiesWithTag and post-startup AbilitiesToCancel use the same eleven-tag C3F Player Big matrix.
+- Enemy Launch owns State.Action.HitReacting, stops current path movement only after Takeoff starts, calls StopMovementImmediately(), and cancels Enemy Melee plus Enemy Small. Existing StateTree State.Action.HitReacting waiting remains the only AI pause/recovery route; do not add a StateTree state, behavior tree, controller framework, or MoveTo workaround.
+- UPlayerGuardBreakAbility gains named PlayerLaunchReactionAbilityTag in AbilitiesToCancel. Its validity preflight and CDO test require exactly ten unique entries: C3F's nine plus Player Launch.
+- UEnemyStanceBreakAbility gains named EnemyLaunchReactionAbilityTag in AbilitiesToCancel. Its validation and CDO test require four unique entries: Enemy Melee, Enemy Big, Enemy Small, and Enemy Launch. Guard Break/Stance Break stay higher priority and cancel active Launch instead of queueing a reaction.
+
+## User-Owned Editor And Asset Gate
+
+Gemini must not manually modify .uasset/.umap files, import/reparent/retarget assets, start the Editor, compile, run UBT, stage, or commit.
+
+1. Create two full-body reaction Montages compatible with the shared Player/Goblin skeleton route:
+   - AM_LaunchTakeoff: use A_KnockDown_Begin_RootMotion_Sword only as visual performance. It must output no extracted Root Motion and use root lock; place UAnimNotify_ReactionLaunchCommit on its first convincing horizontal airborne pose. The current preview suggests roughly 0.24 seconds, but use the first visually confirmed departure frame rather than a fixed timestamp.
+   - AM_LaunchLandingRecovery: use A_KnockDown_End_Sword directly from its prone opening pose. It starts only after physical landing and must be in-place, with no extracted Root Motion translation or rotation. Do not add AS_Land or A_KnockDown_Loop_Sword to C3G.
+2. Use the established full-body reaction Slot and Root Motion from Montages Only. Keep C3E Small's ReactionOverlay unchanged. During C3G flight the paused full-body Takeoff montage, not the template upright Falling loop, must own the mesh pose.
+3. Create GA_PlayerLaunchReaction and GA_EnemyLaunchReaction from the native classes, assign both Montages and finite speeds, and add them to the respective StartupAbilities. C++ must not assume an asset path.
+4. Replace the current Player whirlwind/skill test Damage GE with a dedicated Launch GE carrying exactly Data.Reaction.Launch. Add a dedicated Enemy Launch UEnemyAttackProfile and matching Launch GE, then place it only in a focused deterministic Scene01 fixture; preserve ordinary Small/Big regression fixtures.
+5. Read back the configured Montage/GA/GE/AttackProfile references before PIE. Mutable assets remain user-owned WIP unless the user explicitly includes them in a later commit closure.
 
 ## Approved Native Surface
 
-- `Config/Tags/PolyQuestGameplayTags.ini`: `Ability.Reaction.Player.Big` and `Event.Reaction.Player.Big` additions plus the zero-reference retirement of `Data.Reaction.Interrupt`, `Ability.Reaction.Enemy.Hit`, and `Event.Reaction.Enemy.Hit`.
-- New `Source/PolyQuest/Public|Private/Combat/Reaction/HitReactionImpactResolver.*` and `Source/PolyQuest/Public|Private/AbilitySystem/Abilities/PlayerBigHitReactionAbility.*`.
-- Existing `Source/PolyQuest/Public|Private/AbilitySystem/Abilities/EnemyHitReactionAbility.*`, `PlayerGuardBreakAbility.*`, `Source/PolyQuest/Public|Private/Character/Player/PlayerCharacter.*`, and `Source/PolyQuest/Private/Tests/HitReactionAutomationTests.cpp`.
-- No `APlayerCharacter::OnMovementModeChanged` special case, StateTree asset/code change, CharacterMovement subclass, Build.cs change, or asset-file edit is in the native executor scope.
+- Config/Tags/PolyQuestGameplayTags.ini.
+- New Source/PolyQuest/Public|Private/AbilitySystem/Abilities/PlayerLaunchReactionAbility.*.
+- New Source/PolyQuest/Public|Private/AbilitySystem/Abilities/EnemyLaunchReactionAbility.*.
+- New Source/PolyQuest/Public|Private/Animation/Combat/AnimNotify_ReactionLaunchCommit.*.
+- Existing Source/PolyQuest/Public|Private/Combat/Reaction/HitReactionImpactResolver.*.
+- Existing Source/PolyQuest/Public|Private/Character/Player/PlayerCharacter.*, Source/PolyQuest/Public|Private/Character/Enemy/EnemyCharacter.*, Source/PolyQuest/Public|Private/AbilitySystem/Abilities/PlayerGuardBreakAbility.*, Source/PolyQuest/Public|Private/AbilitySystem/Abilities/EnemyStanceBreakAbility.*, and Source/PolyQuest/Private/Tests/HitReactionAutomationTests.cpp.
+- Test-only CDO inspection accessors are allowed only when required for automation. No Build.cs change, CharacterMovement subclass, generic framework, StateTree asset/code change, Player death implementation, source asset path, or manual asset-file edit is approved.
 
-## Automation And Validation
+## Validation Matrix
 
-### Native automation
+### Native/static and automation
 
-- Extend `PolyQuest.Combat.HitReaction` to prove Player Big event dispatch, retained Enemy Big dispatch, Player/Enemy Big CDO tags, Player cancellation/blocking containers, Guard Break's Player Big entry and exact nine-entry preflight contract, Stance Break precedence, and no regression in Small/Launch/Invalid behavior.
-- Add pure `FHitReactionImpactResolver` coverage for `ImpactNormal` priority, target-to-attacker direction consistency with the Instigator fallback, non-finite/zero failure, and target-local conversion. The helper's invalid result must not suppress C3F's fixed-local Root Motion Big.
-- Keep the existing C3E dead, stunned, Poise-broken, Hyper Armor, and lethal no-event cases; add grounded-vs-airborne Big acceptance coverage where a controlled native fixture can prove it without authored assets.
-- Run `PolyQuest.Combat.HitReaction` plus the existing Player ActionWindows, Enemy AttackSetSelection, Enemy CombatSpacing, Equipment TransactionMatrix, Melee TraceSourceGeometry, Projectile Lifecycle, and Projectile TargetAssist suites. Expected negative-fixture warnings remain warnings.
+- Before user compile/PIE, inspect changed direct callers/callees, tag requests, task/delegate bindings, and cleanup branches; run git diff --check.
+- Extend PolyQuest.Combat.HitReaction for:
+  - Launch classification and Player/Enemy Launch event dispatch without regressing None/Small/Big/Invalid;
+  - Player/Enemy Launch CDO policy, ability/event tags, triggers, owned/blocked tags, Player's eleven-tag matrix, and Enemy Melee/Small boundary;
+  - Guard Break's ten-entry and Stance Break's four-entry Launch-inclusive containers;
+  - TryBuildLaunchVelocity attacker-away direction, target yaw conversion, finite scaling, zero vector, NaN/Inf, invalid rotation, and invalid speed failure;
+  - Commit Notify contract: registered event tag, optional Animation/Slot identity policy, source-order requirement that the Commit listener is active before Takeoff playback, and the static lifecycle rule that Commit pauses/retains Takeoff rather than stopping/ending it; actual pose continuity remains a PIE gate;
+  - rejection/no accepted Launch lifecycle for Dead, Stunned, Hyper Armor, Enemy Poise-Broken, lethal, and multi-tier Invalid effects; plus Small cancellation where a controlled native fixture can prove it.
+- Source/static tests do not prove root-lock authoring, paused-pose continuity, flight collision, or asset playback. Those are PIE gates.
+- Re-run PolyQuest.Player.ActionWindows, PolyQuest.Enemy.AttackSetSelection, PolyQuest.Enemy.CombatSpacing, PolyQuest.Equipment.TransactionMatrix, PolyQuest.Melee.TraceSourceGeometry, PolyQuest.Projectile.Lifecycle, and PolyQuest.Combat.HitReaction. Expected negative-fixture warnings remain warnings.
 
-### User compile and PIE gate
+### User compile and Scene01 PIE
 
-1. Manually compile `PolyQuestEditor`.
-2. In Scene01, verify the dedicated Enemy Big test Goblin sends Player Big: current combat action ends, movement/jump/input actions stay blocked during the full-body Root Motion montage, collision/ledge stops prevent falling, and all input returns after completion. Force a safe loss of ground while Big is active: Big must end once, remove all tags/input locks, and restore the pre-existing ledge setting without changing the movement mode manually.
-3. Verify Player Charged Big against Enemy: Enemy Melee cancels after Big visibly starts, AI issues no new attack/reposition while `State.Action.HitReacting` exists, and resumes normally after cleanup.
-4. Verify normal Enemy Small and Player Light Small still overlay without interruption; Guard/Parry/Dodge invulnerability still prevent Health Big; Stance Break/Guard Break preempt Big; repeated Big does not stack.
-5. Verify a Big hit while Player is Falling only reduces Health and creates no Montage, Big tag, displacement, or stale input lock. Record the accepted temporary side/back visual limitation: local backward Root Motion is not impact-aligned until a later directional presentation slice.
+1. Manually compile PolyQuestEditor and report the result.
+2. Player Launch skill hits Goblin: confirm Takeoff, true departure at Commit, CharacterMovement gravity/collision arc, horizontal paused Takeoff pose throughout flight with no frame of template upright Falling, prone-to-standing LandingRecovery only after ground contact, and AI recovery after cleanup.
+3. Focused Enemy Launch AttackProfile hits Player with the same ordering and returns movement/jump/combat input only after LandingRecovery. Confirm no Player Dodge CancelWindow in C3G.
+4. Test wall, slope, ledge, uneven ground, early interrupted Takeoff, renewed fall during recovery, and Enemy death in flight. No duplicate launch, stale State.Action.HitReacting, stale input block, stuck AI pause, forced Walking, or residual ledge setting is allowed.
+5. Reconfirm Small overlay, grounded Big Root Motion, Guard/Parry/Dodge contact resolution, Stance/Guard Break precedence, Bow/primary cancellation, and that each Launch GE has no Poise or second reaction tier tag.
 
-## Explicit Non-Goals And Closeout
+## Gemini Review And Execution Handoff
 
-- No eight-direction selection, direction DataAsset, Small direction work, Launch, airborne trajectory, landing, generic reaction base, weapon-specific reaction tables, Motion Warping, root-motion source, damage balancing, or new AI framework.
-- No change to existing player death/terminal-action debt, Guard/Parry resolution, Dodge invulnerability semantics, Poise formula, projectile delivery, or ordinary enemy attack-selection rules.
-- After user-confirmed compile, automation, PIE, Gemini self-review, Main fresh review, and Main adversarial fallback while Luna remains unavailable, update `ARCHITECTURE.md`, `README.md`, `ROADMAP.md`, and this plan. `ROADMAP.md` must record the accepted non-directional Big limitation and its closure trigger: eight compatible directional assets plus focused direction visual validation.
-- The eventual commit includes only approved C++/tag/test/document changes. It excludes all `Content/**`, `.uasset`, `.umap`, Blueprints, Montages, AnimBPs, DataAssets, Scene01, input assets, `.zcode/**`, `PolyQuest.uproject`, and unrelated user WIP.
+- Absolute cwd: E:\GameDevelop\PolyQuest.
+- Baseline: 88cf64d plus the actual current source/config; preserve all unrelated user WIP.
+- Route: ue-stage-workflow outer lifecycle; ue5-cpp-gameplay primary; ue5-debug-validation and ue5-blueprint-workflow support only for validation/Editor checklist.
+- Execution order for the current visual-contract amendment: inspect the already-written Player/Enemy Launch GAs -> replace only Commit Stop/EndTask behavior with phase-safe Takeoff Pause/retention -> explicitly stop the paused Takeoff before LandingRecovery -> update focused static/automation coverage as justified -> static diff review -> hand user the exact root-lock, compile, and PIE checklist. Do not rewrite completed tags, dispatch, cancellation, velocity, or test work without evidence.
+- Non-goals: no third airborne animation asset in C3G, eight-direction reactions, targeting, damage balance, knockback redesign, generic reaction inheritance, manual flight Tick, physics impulse, Player death, queued post-landing Stance/Guard Break, C3G recovery Dodge cancellation, StateTree redesign, asset migration, global RootMotionMode change, or unrelated cleanup/refactor.
+- Prohibited: no Editor mutation/startup, no UBT/Rider build, no compile/PIE claim, no staging/commit, no git add -A, no destructive Git command, and no change outside approved native surface without user approval.
+- Required evidence: changed-file list; compile-safe static reasoning for every task/delegate/tag contract; git diff --check; user-supplied compile/automation/PIE evidence; and strict implementation self-review. Gemini's self-review is not an independent fresh review.
+- Stop and report rather than guessing when Montage/Slot/AnimBP/GA/GE/AttackProfile authoring is missing, a public tag cannot be registered, source conflicts with this plan, or a user-owned asset choice changes the contract.
 
-## Execution And Review Gates
+## Explicit Non-Goals, Debt, And Closeout
 
-1. Gemini reads this accepted plan and the live source, then implements only the Approved Native Surface. It may add the two exact tags, but must not change other tag taxonomy, assets, StateTree, input routing, Build.cs, documentation, staging, or commits.
-2. The user owns the Big Root Motion Montage, AnimBP root-motion mode, Player Big GA/StartupAbility, Big Damage GE, dedicated Enemy Big AttackProfile/AttackSet, Scene01 fixture, manual `PolyQuestEditor` compile, Automation run, and PIE/visual evidence. No executor manually edits `.uasset` or `.umap`, imports/retargets assets, launches Editor, runs UBT, or claims those results.
-3. Before handoff, Gemini runs scoped source/static checks permitted by its environment, performs a two-pass implementation self-review (normal plus adversarial), and reports changed paths, exact static evidence, unverified gates, known limitations, and any required user authoring action. Its self-review is not an independent fresh review.
-4. Main performs a fresh defect-first review after the user reports compile/Automation/PIE results. With `gpt-5.6-luna` unavailable, the second required pass is explicitly a Main adversarial fallback. Documentation closeout and a scoped commit require the user to request them after those gates pass.
+- C3G does not add eight-direction Small/Big/Launch selection, a direction DataAsset, weapon-specific reaction tables, homing/projectiles, RootMotionSource, Motion Warping, ragdoll replacement, movement/network framework, damage/stamina tuning, or a new AI system.
+- TODO-01C4 is the accepted future owner of Player LandingRecovery Dodge cancel windows. It must later define authored windows, normal Dodge stamina cost, same-montage identity checks, and no-cancel behavior with insufficient stamina.
+- `TODO-02C3H: Landing-Deferred Stance And Guard Break Resolution v1` is the accepted future owner of combined Launch/Poise or Launch/Guard outcomes. C3G Launch GEs carry no `Data.Poise.*`, so current C3G cannot produce a mid-air break.
+- Before C3G documentation closeout or commit, compare accepted plan, user compile/PIE evidence, review findings, and unresolved debt with ROADMAP.md. Record every real unresolved validation gap or accepted follow-up there with owner and concrete closure trigger; do not mark C3G done until its gates have evidence.
 
 ## Closeout Record
 
-- **Native implementation:** Added `UPlayerBigHitReactionAbility` and `FHitReactionImpactResolver`; Player Health Big now dispatches `Event.Reaction.Player.Big`. `UEnemyHitReactionAbility` now shares grounded Root Motion ownership rather than disabling movement, and both Big abilities bind Falling cleanup only after a valid Montage starts.
-- **Priority and cleanup:** Player Big blocks/cancels the approved combat matrix, including `Ability.Attack.Primary` for Bow and Primary arbitration. Guard Break now cancels Player Big through its validated nine-tag container; Stance Break remains the higher-priority Enemy route. Enemy AI continues to wait on `State.Action.HitReacting`.
-- **Legacy Tag closure:** The user migrated `GE_Unarmed_ChargedAttack_Unarmed_Damage` from `Data.Reaction.Interrupt` to `Data.Reaction.Big`. Rider offline asset scans confirmed zero remaining legacy Interrupt/Enemy.Hit references before the three old config tags were removed. Automation now asserts conflicting ImpactNormal/fallback priority plus `NaN` and `Inf` fail-closed behavior.
-- **User-confirmed validation:** `PolyQuest.Combat.HitReaction` Automation completed with `Success`; its null Loadout, invalid AttackSet/Poise, invalid multi-tier, and missing ragdoll fixture messages are expected negative-path logs. The user confirmed Scene01 PIE for Player/Enemy Big behavior and the migrated Unarmed Charged Big route.
-- **Review:** Main fresh review found the stale Unarmed Charged `Interrupt` P2 and resolver-test P3 gap; both were remediated. `gpt-5.6-luna / xhigh` was unavailable, so the second review pass was a Main adversarial fallback. `code-review-graph` transport was unavailable; direct source, CodeGraph, Rider lint, asset tag queries, and diff checks supplied the static evidence.
-- **Debt handoff:** Big currently uses authored local-backward Root Motion independent of hit angle. `ROADMAP.md` records `TODO-07B` as the owner: close only after eight compatible directional Small/Big assets, an accepted bounded selector, and focused Player/Enemy visual validation.
-- **Commit boundary:** Include only approved native source, `Config/Tags/PolyQuestGameplayTags.ini`, focused automation, and synchronized documentation. Exclude all `Content/**`, `.uasset`, `.umap`, Blueprints, Montages, AnimBPs, DataAssets, Scene01, input assets, `.zcode/**`, `PolyQuest.uproject`, `AGENTS.md`, and unrelated user WIP.
+- User evidence: Automation success and focused PIE success after the final airborne-pose, `0.10s` watchdog, and landing-brake repair. No separate compile log is claimed here.
+- Static evidence: direct source/caller/callee/tag review, Rider error-level lint with no findings, and `git diff --check` pass. `code-review-graph` was unavailable because both review calls returned `Transport closed`; direct source review is the coverage fallback.
+- Strict review: Main normal review and Main adversarial fallback found no P0-P2. The Notify comment, previous plan status, watchdog timing, and landing-brake wording were synchronized in this closeout.
+- Deferred contracts: `TODO-01C4` owns Player LandingRecovery Dodge cancel windows; `TODO-02C3H` owns landing-deferred Stance/Guard Break; `TODO-07B` owns position-relative eight-direction Small/Big presentation. None is implemented by C3G.

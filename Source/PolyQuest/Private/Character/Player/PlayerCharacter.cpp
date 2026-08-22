@@ -64,6 +64,7 @@ APlayerCharacter::APlayerCharacter()
 	ParryAbilityTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Defense.Parry")), false);
 	SmallHitReactionEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Reaction.Player.Small")), false);
 	BigHitReactionEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Reaction.Player.Big")), false);
+	LaunchReactionEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Reaction.Player.Launch")), false);
 
 	GetCapsuleComponent()->InitCapsuleSize(42.f, 96.0f);
 
@@ -1456,7 +1457,20 @@ void APlayerCharacter::OnHealthAttributeChanged(const FOnAttributeChangeData& Ch
 			CharacterASC->HandleGameplayEvent(BigHitReactionEventTag, &ReactionEventData);
 		}
 	}
-	// Launch, None are legal no-ops for Player.
+	else if (ReactionTier == EHitReactionTier::Launch)
+	{
+		if (LaunchReactionEventTag.IsValid())
+		{
+			FGameplayEventData ReactionEventData;
+			ReactionEventData.EventTag = LaunchReactionEventTag;
+			ReactionEventData.Instigator = ChangeData.GEModData->EffectSpec.GetContext().GetInstigator();
+			ReactionEventData.Target = this;
+			ReactionEventData.EventMagnitude = ChangeData.OldValue - ChangeData.NewValue;
+			ReactionEventData.ContextHandle = ChangeData.GEModData->EffectSpec.GetContext();
+			CharacterASC->HandleGameplayEvent(LaunchReactionEventTag, &ReactionEventData);
+		}
+	}
+	// None is a legal no-op for Player.
 }
 
 void APlayerCharacter::OnSprintRelevantTagChanged(const FGameplayTag Tag, int32 NewCount)

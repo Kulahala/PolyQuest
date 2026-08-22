@@ -92,6 +92,7 @@ private:
 	FGameplayTag DeadStateTag;
 	FGameplayTag HitReactionEventTag;
 	FGameplayTag SmallHitReactionEventTag;
+	FGameplayTag LaunchReactionEventTag;
 	FGameplayTag StanceBreakEventTag;
 	FGameplayTag PoiseRecoveryDataTag;
 	FGameplayTag StunnedStateTag;

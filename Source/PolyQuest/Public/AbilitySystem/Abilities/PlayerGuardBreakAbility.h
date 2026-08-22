@@ -67,6 +67,7 @@ private:
 	FGameplayTag SprintAbilityTag;
 	FGameplayTag PlayerSmallHitReactionAbilityTag;
 	FGameplayTag PlayerBigHitReactionAbilityTag;
+	FGameplayTag PlayerLaunchReactionAbilityTag;
 	FGameplayTagContainer AbilitiesToCancel;
 	bool bMovementLockedByGuardBreak = false;
 	bool bEndAbilityRequested = false;

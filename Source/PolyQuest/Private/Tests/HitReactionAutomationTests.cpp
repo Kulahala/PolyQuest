@@ -6,12 +6,15 @@
 #include "Abilities/GameplayAbility.h"
 #include "Abilities/GameplayAbilityTypes.h"
 #include "AbilitySystem/Abilities/EnemyHitReactionAbility.h"
+#include "AbilitySystem/Abilities/EnemyLaunchReactionAbility.h"
 #include "AbilitySystem/Abilities/EnemySmallHitReactionAbility.h"
 #include "AbilitySystem/Abilities/EnemyStanceBreakAbility.h"
 #include "AbilitySystem/Abilities/PlayerBigHitReactionAbility.h"
 #include "AbilitySystem/Abilities/PlayerGuardBreakAbility.h"
+#include "AbilitySystem/Abilities/PlayerLaunchReactionAbility.h"
 #include "AbilitySystem/Abilities/PlayerSmallHitReactionAbility.h"
 #include "AbilitySystem/CharacterAttributeSet.h"
+#include "Animation/Combat/AnimNotify_ReactionLaunchCommit.h"
 #include "Character/Enemy/EnemyCharacter.h"
 #include "Character/Player/PlayerCharacter.h"
 #include "Combat/Reaction/HitReactionClassifier.h"
@@ -128,10 +131,15 @@ bool FHitReactionAutomationTest::RunTest(const FString& Parameters)
 	const FGameplayTag TagEventPlayerSmall = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Reaction.Player.Small")), false);
 	const FGameplayTag TagAbilityPlayerBig = FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Reaction.Player.Big")), false);
 	const FGameplayTag TagEventPlayerBig = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Reaction.Player.Big")), false);
+	const FGameplayTag TagAbilityPlayerLaunch = FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Reaction.Player.Launch")), false);
+	const FGameplayTag TagEventPlayerLaunch = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Reaction.Player.Launch")), false);
 	const FGameplayTag TagAbilityEnemySmall = FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Reaction.Enemy.Small")), false);
 	const FGameplayTag TagEventEnemySmall = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Reaction.Enemy.Small")), false);
 	const FGameplayTag TagAbilityEnemyBig = FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Reaction.Enemy.Big")), false);
 	const FGameplayTag TagEventEnemyBig = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Reaction.Enemy.Big")), false);
+	const FGameplayTag TagAbilityEnemyLaunch = FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Reaction.Enemy.Launch")), false);
+	const FGameplayTag TagEventEnemyLaunch = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Reaction.Enemy.Launch")), false);
+	const FGameplayTag TagEventLaunchCommit = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Reaction.Launch.Commit")), false);
 	const FGameplayTag TagSmallHitReacting = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Action.SmallHitReacting")), false);
 	const FGameplayTag TagHitReacting = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Action.HitReacting")), false);
 	const FGameplayTag TagDead = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Status.Dead")), false);
@@ -145,10 +153,15 @@ bool FHitReactionAutomationTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("Tag Event.Reaction.Player.Small is valid"), TagEventPlayerSmall.IsValid());
 	TestTrue(TEXT("Tag Ability.Reaction.Player.Big is valid"), TagAbilityPlayerBig.IsValid());
 	TestTrue(TEXT("Tag Event.Reaction.Player.Big is valid"), TagEventPlayerBig.IsValid());
+	TestTrue(TEXT("Tag Ability.Reaction.Player.Launch is valid"), TagAbilityPlayerLaunch.IsValid());
+	TestTrue(TEXT("Tag Event.Reaction.Player.Launch is valid"), TagEventPlayerLaunch.IsValid());
 	TestTrue(TEXT("Tag Ability.Reaction.Enemy.Small is valid"), TagAbilityEnemySmall.IsValid());
 	TestTrue(TEXT("Tag Event.Reaction.Enemy.Small is valid"), TagEventEnemySmall.IsValid());
 	TestTrue(TEXT("Tag Ability.Reaction.Enemy.Big is valid"), TagAbilityEnemyBig.IsValid());
 	TestTrue(TEXT("Tag Event.Reaction.Enemy.Big is valid"), TagEventEnemyBig.IsValid());
+	TestTrue(TEXT("Tag Ability.Reaction.Enemy.Launch is valid"), TagAbilityEnemyLaunch.IsValid());
+	TestTrue(TEXT("Tag Event.Reaction.Enemy.Launch is valid"), TagEventEnemyLaunch.IsValid());
+	TestTrue(TEXT("Tag Event.Reaction.Launch.Commit is valid"), TagEventLaunchCommit.IsValid());
 	TestTrue(TEXT("Tag State.Action.SmallHitReacting is valid"), TagSmallHitReacting.IsValid());
 	TestTrue(TEXT("Tag State.Action.HitReacting is valid"), TagHitReacting.IsValid());
 
@@ -197,6 +210,20 @@ bool FHitReactionAutomationTest::RunTest(const FString& Parameters)
 		}
 	}
 
+	const TArray<FName> ExpectedTargetActionTagNames = {
+		TEXT("Ability.Attack.Primary"),
+		TEXT("Ability.Attack.Light"),
+		TEXT("Ability.Attack.Charged"),
+		TEXT("Ability.Attack.Sprint"),
+		TEXT("Ability.Skill.Melee"),
+		TEXT("Ability.Dodge"),
+		TEXT("Ability.Movement.Sprint"),
+		TEXT("Ability.Movement.Jump"),
+		TEXT("Ability.Defense.Guard"),
+		TEXT("Ability.Defense.Parry"),
+		TEXT("Ability.Reaction.Player.Small")
+	};
+
 	// 2.2 UPlayerBigHitReactionAbility CDO checks
 	{
 		const UPlayerBigHitReactionAbility* PlayerBigCDO = UPlayerBigHitReactionAbility::StaticClass()->GetDefaultObject<UPlayerBigHitReactionAbility>();
@@ -234,19 +261,6 @@ bool FHitReactionAutomationTest::RunTest(const FString& Parameters)
 				}));
 
 			// BlockAbilitiesWithTag and AbilitiesToCancel must match exactly 11 tags
-			const TArray<FName> ExpectedTargetActionTagNames = {
-				TEXT("Ability.Attack.Primary"),
-				TEXT("Ability.Attack.Light"),
-				TEXT("Ability.Attack.Charged"),
-				TEXT("Ability.Attack.Sprint"),
-				TEXT("Ability.Skill.Melee"),
-				TEXT("Ability.Dodge"),
-				TEXT("Ability.Movement.Sprint"),
-				TEXT("Ability.Movement.Jump"),
-				TEXT("Ability.Defense.Guard"),
-				TEXT("Ability.Defense.Parry"),
-				TEXT("Ability.Reaction.Player.Small")
-			};
 
 			TestEqual(TEXT("PlayerBig BlockAbilitiesWithTag has exactly 11 tags"),
 				PlayerBigCDO->GetTestBlockAbilitiesWithTag().Num(), 11);
@@ -262,6 +276,61 @@ bool FHitReactionAutomationTest::RunTest(const FString& Parameters)
 				TestTrue(FString::Printf(TEXT("PlayerBig AbilitiesToCancel contains '%s'"), *ActionTagName.ToString()),
 					PlayerBigCDO->GetTestAbilitiesToCancel().HasTagExact(ActionTag));
 			}
+		}
+	}
+
+	// 2.2b UPlayerLaunchReactionAbility CDO checks
+	{
+		const UPlayerLaunchReactionAbility* PlayerLaunchCDO = UPlayerLaunchReactionAbility::StaticClass()->GetDefaultObject<UPlayerLaunchReactionAbility>();
+		TestNotNull(TEXT("UPlayerLaunchReactionAbility CDO exists"), PlayerLaunchCDO);
+		if (PlayerLaunchCDO)
+		{
+			TestEqual(TEXT("PlayerLaunch instancing is InstancedPerActor"),
+				PlayerLaunchCDO->GetInstancingPolicy(), EGameplayAbilityInstancingPolicy::InstancedPerActor);
+			TestEqual(TEXT("PlayerLaunch net execution is ServerOnly"),
+				PlayerLaunchCDO->GetNetExecutionPolicy(), EGameplayAbilityNetExecutionPolicy::ServerOnly);
+
+			TestTrue(TEXT("PlayerLaunch CDO has AbilityTags Ability.Reaction.Player.Launch"),
+				PlayerLaunchCDO->AbilityTags.HasTagExact(TagAbilityPlayerLaunch));
+			TestTrue(TEXT("PlayerLaunch CDO owns State.Action.HitReacting"),
+				PlayerLaunchCDO->GetTestActivationOwnedTags().HasTagExact(TagHitReacting));
+			TestTrue(TEXT("PlayerLaunch CDO owns State.Input.Block.Movement"),
+				PlayerLaunchCDO->GetTestActivationOwnedTags().HasTagExact(TagBlockMovement));
+			TestTrue(TEXT("PlayerLaunch CDO owns State.Input.Block.Jump"),
+				PlayerLaunchCDO->GetTestActivationOwnedTags().HasTagExact(TagBlockJump));
+
+			TestTrue(TEXT("PlayerLaunch CDO blocked by State.Status.Dead"),
+				PlayerLaunchCDO->GetTestActivationBlockedTags().HasTagExact(TagDead));
+			TestTrue(TEXT("PlayerLaunch CDO blocked by State.Status.Stunned"),
+				PlayerLaunchCDO->GetTestActivationBlockedTags().HasTagExact(TagStunned));
+			TestTrue(TEXT("PlayerLaunch CDO blocked by State.Status.HyperArmor"),
+				PlayerLaunchCDO->GetTestActivationBlockedTags().HasTagExact(TagHyperArmor));
+			TestTrue(TEXT("PlayerLaunch CDO blocked by State.Action.HitReacting"),
+				PlayerLaunchCDO->GetTestActivationBlockedTags().HasTagExact(TagHitReacting));
+
+			TestTrue(TEXT("PlayerLaunch CDO triggers on Event.Reaction.Player.Launch"),
+				PlayerLaunchCDO->GetTestAbilityTriggers().ContainsByPredicate([&TagEventPlayerLaunch](const FAbilityTriggerData& Trigger)
+				{
+					return Trigger.TriggerTag == TagEventPlayerLaunch
+						&& Trigger.TriggerSource == EGameplayAbilityTriggerSource::GameplayEvent;
+				}));
+
+			TestEqual(TEXT("PlayerLaunch BlockAbilitiesWithTag has exactly 11 tags"),
+				PlayerLaunchCDO->GetTestBlockAbilitiesWithTag().Num(), 11);
+			TestEqual(TEXT("PlayerLaunch AbilitiesToCancel has exactly 11 tags"),
+				PlayerLaunchCDO->GetTestAbilitiesToCancel().Num(), 11);
+
+			for (const FName& ActionTagName : ExpectedTargetActionTagNames)
+			{
+				const FGameplayTag ActionTag = FGameplayTag::RequestGameplayTag(ActionTagName, false);
+				TestTrue(FString::Printf(TEXT("PlayerLaunch BlockAbilitiesWithTag contains '%s'"), *ActionTagName.ToString()),
+					PlayerLaunchCDO->GetTestBlockAbilitiesWithTag().HasTagExact(ActionTag));
+				TestTrue(FString::Printf(TEXT("PlayerLaunch AbilitiesToCancel contains '%s'"), *ActionTagName.ToString()),
+					PlayerLaunchCDO->GetTestAbilitiesToCancel().HasTagExact(ActionTag));
+			}
+
+			TestEqual(TEXT("PlayerLaunch default horizontal speed is 450.0"), PlayerLaunchCDO->GetLaunchHorizontalSpeed(), 450.0f);
+			TestEqual(TEXT("PlayerLaunch default vertical speed is 550.0"), PlayerLaunchCDO->GetLaunchVerticalSpeed(), 550.0f);
 		}
 	}
 
@@ -342,6 +411,50 @@ bool FHitReactionAutomationTest::RunTest(const FString& Parameters)
 		}
 	}
 
+	// 2.4b UEnemyLaunchReactionAbility CDO checks
+	{
+		const UEnemyLaunchReactionAbility* EnemyLaunchCDO = UEnemyLaunchReactionAbility::StaticClass()->GetDefaultObject<UEnemyLaunchReactionAbility>();
+		TestNotNull(TEXT("UEnemyLaunchReactionAbility CDO exists"), EnemyLaunchCDO);
+		if (EnemyLaunchCDO)
+		{
+			TestEqual(TEXT("EnemyLaunch instancing is InstancedPerActor"),
+				EnemyLaunchCDO->GetInstancingPolicy(), EGameplayAbilityInstancingPolicy::InstancedPerActor);
+			TestEqual(TEXT("EnemyLaunch net execution is ServerOnly"),
+				EnemyLaunchCDO->GetNetExecutionPolicy(), EGameplayAbilityNetExecutionPolicy::ServerOnly);
+
+			TestTrue(TEXT("EnemyLaunch CDO has AbilityTags Ability.Reaction.Enemy.Launch"),
+				EnemyLaunchCDO->AbilityTags.HasTagExact(TagAbilityEnemyLaunch));
+			TestTrue(TEXT("EnemyLaunch CDO owns State.Action.HitReacting"),
+				EnemyLaunchCDO->GetTestActivationOwnedTags().HasTagExact(TagHitReacting));
+
+			TestTrue(TEXT("EnemyLaunch CDO blocked by State.Status.Dead"),
+				EnemyLaunchCDO->GetTestActivationBlockedTags().HasTagExact(TagDead));
+			TestTrue(TEXT("EnemyLaunch CDO blocked by State.Status.Stunned"),
+				EnemyLaunchCDO->GetTestActivationBlockedTags().HasTagExact(TagStunned));
+			TestTrue(TEXT("EnemyLaunch CDO blocked by State.Status.HyperArmor"),
+				EnemyLaunchCDO->GetTestActivationBlockedTags().HasTagExact(TagHyperArmor));
+			TestTrue(TEXT("EnemyLaunch CDO blocked by State.Action.HitReacting"),
+				EnemyLaunchCDO->GetTestActivationBlockedTags().HasTagExact(TagHitReacting));
+
+			TestTrue(TEXT("EnemyLaunch CDO triggers on Event.Reaction.Enemy.Launch"),
+				EnemyLaunchCDO->GetTestAbilityTriggers().ContainsByPredicate([&TagEventEnemyLaunch](const FAbilityTriggerData& Trigger)
+				{
+					return Trigger.TriggerTag == TagEventEnemyLaunch
+						&& Trigger.TriggerSource == EGameplayAbilityTriggerSource::GameplayEvent;
+				}));
+
+			TestTrue(TEXT("EnemyLaunch CDO cancels EnemyMelee"),
+				EnemyLaunchCDO->GetTestAbilitiesToCancel().HasTagExact(TagEnemyMelee));
+			TestTrue(TEXT("EnemyLaunch CDO cancels EnemySmall"),
+				EnemyLaunchCDO->GetTestAbilitiesToCancel().HasTagExact(TagAbilityEnemySmall));
+			TestEqual(TEXT("EnemyLaunch CDO AbilitiesToCancel has exactly 2 tags"),
+				EnemyLaunchCDO->GetTestAbilitiesToCancel().Num(), 2);
+
+			TestEqual(TEXT("EnemyLaunch default horizontal speed is 450.0"), EnemyLaunchCDO->GetLaunchHorizontalSpeed(), 450.0f);
+			TestEqual(TEXT("EnemyLaunch default vertical speed is 550.0"), EnemyLaunchCDO->GetLaunchVerticalSpeed(), 550.0f);
+		}
+	}
+
 	// 2.5 Cancellation matrix on Stance Break & Guard Break
 	{
 		const UEnemyStanceBreakAbility* StanceBreakCDO = UEnemyStanceBreakAbility::StaticClass()->GetDefaultObject<UEnemyStanceBreakAbility>();
@@ -354,6 +467,10 @@ bool FHitReactionAutomationTest::RunTest(const FString& Parameters)
 				StanceBreakCDO->GetAbilitiesToCancel().HasTagExact(TagAbilityEnemyBig));
 			TestTrue(TEXT("StanceBreak cancels EnemySmall (Ability.Reaction.Enemy.Small)"),
 				StanceBreakCDO->GetAbilitiesToCancel().HasTagExact(TagAbilityEnemySmall));
+			TestTrue(TEXT("StanceBreak cancels EnemyLaunch (Ability.Reaction.Enemy.Launch)"),
+				StanceBreakCDO->GetAbilitiesToCancel().HasTagExact(TagAbilityEnemyLaunch));
+			TestEqual(TEXT("StanceBreak AbilitiesToCancel has exactly 4 tags"),
+				StanceBreakCDO->GetAbilitiesToCancel().Num(), 4);
 		}
 
 		const UPlayerGuardBreakAbility* GuardBreakCDO = UPlayerGuardBreakAbility::StaticClass()->GetDefaultObject<UPlayerGuardBreakAbility>();
@@ -364,10 +481,23 @@ bool FHitReactionAutomationTest::RunTest(const FString& Parameters)
 				GuardBreakCDO->GetAbilitiesToCancel().HasTagExact(TagAbilityPlayerSmall));
 			TestTrue(TEXT("GuardBreak cancels PlayerBig (Ability.Reaction.Player.Big)"),
 				GuardBreakCDO->GetAbilitiesToCancel().HasTagExact(TagAbilityPlayerBig));
+			TestTrue(TEXT("GuardBreak cancels PlayerLaunch (Ability.Reaction.Player.Launch)"),
+				GuardBreakCDO->GetAbilitiesToCancel().HasTagExact(TagAbilityPlayerLaunch));
 			TestTrue(TEXT("GuardBreak cancels Guard (Ability.Defense.Guard)"),
 				GuardBreakCDO->GetAbilitiesToCancel().HasTagExact(FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Defense.Guard")), false)));
-			TestEqual(TEXT("GuardBreak AbilitiesToCancel has exactly 9 tags"),
-				GuardBreakCDO->GetAbilitiesToCancel().Num(), 9);
+			TestEqual(TEXT("GuardBreak AbilitiesToCancel has exactly 10 tags"),
+				GuardBreakCDO->GetAbilitiesToCancel().Num(), 10);
+		}
+	}
+
+	// 2.6 UAnimNotify_ReactionLaunchCommit CDO check
+	{
+		const UAnimNotify_ReactionLaunchCommit* CommitNotifyCDO = UAnimNotify_ReactionLaunchCommit::StaticClass()->GetDefaultObject<UAnimNotify_ReactionLaunchCommit>();
+		TestNotNull(TEXT("UAnimNotify_ReactionLaunchCommit CDO exists"), CommitNotifyCDO);
+		if (CommitNotifyCDO)
+		{
+			TestEqual(TEXT("Commit Notify Name is 'Reaction Launch Commit'"),
+				CommitNotifyCDO->GetNotifyName(), FString(TEXT("Reaction Launch Commit")));
 		}
 	}
 
@@ -426,20 +556,31 @@ bool FHitReactionAutomationTest::RunTest(const FString& Parameters)
 		Player->SetActorLocation(FVector(0.0f, 0.0f, 0.0f));
 		Player->SetActorRotation(FRotator(0.0f, 0.0f, 0.0f));
 
-		// 4.1 ImpactNormal priority over Fallback: Hit in front (+X) with Instigator conflicting on right (+Y) -> strictly resolves to Front (+X)
+		// 4.1 Instigator priority over ImpactNormal: Instigator on right (+Y) with conflicting ImpactNormal in front (+X) -> strictly resolves to Right (+Y)
 		Player->SetActorLocation(FVector(0.0f, 0.0f, 0.0f));
 		Player->SetActorRotation(FRotator(0.0f, 0.0f, 0.0f));
-		Enemy->SetActorLocation(FVector(0.0f, 100.0f, 0.0f)); // Conflicting fallback position (Right)
+		Enemy->SetActorLocation(FVector(0.0f, 100.0f, 0.0f)); // Instigator position (Right +Y)
 
 		FHitResult FrontHit;
-		FrontHit.ImpactNormal = FVector(1.0f, 0.0f, 0.0f); // ImpactNormal in Front (+X)
+		FrontHit.ImpactNormal = FVector(1.0f, 0.0f, 0.0f); // Conflicting ImpactNormal in Front (+X)
 		FGameplayEffectContext* ContextFront = new FGameplayEffectContext();
 		ContextFront->AddHitResult(FrontHit, true);
 		FGameplayEffectContextHandle ContextFrontHandle(ContextFront);
 
-		const FVector DirFront = FHitReactionImpactResolver::ResolveImpactDirectionFromContext(ContextFrontHandle, Enemy, Player);
-		TestTrue(TEXT("ImpactNormal (+X) strictly overrides conflicting Instigator fallback (+Y) to resolve Target-local Front (+X)"),
-			DirFront.Equals(FVector(1.0f, 0.0f, 0.0f), 0.001f));
+		const FVector DirInstigatorPriority = FHitReactionImpactResolver::ResolveImpactDirectionFromContext(ContextFrontHandle, Enemy, Player);
+		TestTrue(TEXT("Valid Instigator planar offset (+Y) strictly overrides conflicting ImpactNormal (+X) to resolve Target-local Right (+Y)"),
+			DirInstigatorPriority.Equals(FVector(0.0f, 1.0f, 0.0f), 0.001f));
+
+		// 4.1b Fallback to ImpactNormal when Instigator is null
+		const FVector DirImpactNormalFallbackNull = FHitReactionImpactResolver::ResolveImpactDirectionFromContext(ContextFrontHandle, nullptr, Player);
+		TestTrue(TEXT("ImpactNormal (+X) is used as fallback when Instigator is null"),
+			DirImpactNormalFallbackNull.Equals(FVector(1.0f, 0.0f, 0.0f), 0.001f));
+
+		// 4.1c Fallback to ImpactNormal when Instigator is coincident with Target
+		Enemy->SetActorLocation(FVector(0.0f, 0.0f, 0.0f)); // Coincident with Player
+		const FVector DirImpactNormalFallbackCoincident = FHitReactionImpactResolver::ResolveImpactDirectionFromContext(ContextFrontHandle, Enemy, Player);
+		TestTrue(TEXT("ImpactNormal (+X) is used as fallback when Instigator is coincident with Target"),
+			DirImpactNormalFallbackCoincident.Equals(FVector(1.0f, 0.0f, 0.0f), 0.001f));
 
 		// 4.2 Target rotated Yaw = 90 deg, HitNormal = (0, 1, 0) (world +Y -> in front of rotated player)
 		Player->SetActorRotation(FRotator(0.0f, 90.0f, 0.0f));
@@ -465,25 +606,25 @@ bool FHitReactionAutomationTest::RunTest(const FString& Parameters)
 		TestTrue(TEXT("Slanted ImpactNormal projects to planar (+X)"),
 			DirSlanted.Equals(FVector(1.0f, 0.0f, 0.0f), 0.001f));
 
-		// 4.4 Fallback: InstigatorLocation - TargetLocation when HitResult has zero normal
+		// 4.4 InstigatorLocation - TargetLocation (Front +X)
 		Player->SetActorLocation(FVector(0.0f, 0.0f, 0.0f));
 		Player->SetActorRotation(FRotator(0.0f, 0.0f, 0.0f));
 		Enemy->SetActorLocation(FVector(100.0f, 0.0f, 0.0f)); // Enemy in front of Player
 
 		FGameplayEffectContextHandle EmptyContext;
-		const FVector DirFallbackFront = FHitReactionImpactResolver::ResolveImpactDirectionFromContext(EmptyContext, Enemy, Player);
-		TestTrue(TEXT("Fallback Instigator-Target in front resolves to Target-local Front (+X)"),
-			DirFallbackFront.Equals(FVector(1.0f, 0.0f, 0.0f), 0.001f));
+		const FVector DirInstigatorFront = FHitReactionImpactResolver::ResolveImpactDirectionFromContext(EmptyContext, Enemy, Player);
+		TestTrue(TEXT("Instigator-Target in front resolves to Target-local Front (+X)"),
+			DirInstigatorFront.Equals(FVector(1.0f, 0.0f, 0.0f), 0.001f));
 
-		// 4.5 Fallback with Enemy on Player's right (+Y)
+		// 4.5 Instigator with Enemy on Player's right (+Y)
 		Enemy->SetActorLocation(FVector(0.0f, 100.0f, 0.0f));
-		const FVector DirFallbackRight = FHitReactionImpactResolver::ResolveImpactDirectionFromContext(EmptyContext, Enemy, Player);
-		TestTrue(TEXT("Fallback Instigator-Target on right resolves to Target-local Right (+Y)"),
-			DirFallbackRight.Equals(FVector(0.0f, 1.0f, 0.0f), 0.001f));
+		const FVector DirInstigatorRight = FHitReactionImpactResolver::ResolveImpactDirectionFromContext(EmptyContext, Enemy, Player);
+		TestTrue(TEXT("Instigator-Target on right resolves to Target-local Right (+Y)"),
+			DirInstigatorRight.Equals(FVector(0.0f, 1.0f, 0.0f), 0.001f));
 
-		// 4.6 Direction consistency: ImpactNormal and Fallback produce identical Target -> Attacker direction
-		TestTrue(TEXT("ImpactNormal and Fallback produce identical forward direction"),
-			DirFront.Equals(DirFallbackFront, 0.001f));
+		// 4.6 Direction consistency: ImpactNormal and Instigator produce identical Target -> Attacker direction
+		TestTrue(TEXT("ImpactNormal and Instigator produce identical forward direction"),
+			DirImpactNormalFallbackNull.Equals(DirInstigatorFront, 0.001f));
 
 		// 4.7 Fail-Closed on NaN / Inf / Zero length / Null Actor / Null Context
 		FHitResult NanHit;
@@ -512,6 +653,66 @@ bool FHitReactionAutomationTest::RunTest(const FString& Parameters)
 
 		TestTrue(TEXT("Null Target returns ZeroVector"),
 			FHitReactionImpactResolver::ResolveImpactDirectionFromContext(ContextFrontHandle, nullptr, nullptr).IsZero());
+
+		// 4.8 TryBuildLaunchVelocity Pure Function Tests
+		{
+			FVector OutVel = FVector::ZeroVector;
+
+			// 4.8a Front attacker (1, 0, 0) with Yaw=0 -> Launch away = (-1, 0, 0) * 450, Z = 550
+			TestTrue(TEXT("TryBuildLaunchVelocity succeeds for front attacker at Yaw=0"),
+				FHitReactionImpactResolver::TryBuildLaunchVelocity(FVector(1.0f, 0.0f, 0.0f), 0.0f, 450.0f, 550.0f, OutVel));
+			TestTrue(TEXT("Front attacker at Yaw=0 produces velocity (-450, 0, 550)"),
+				OutVel.Equals(FVector(-450.0f, 0.0f, 550.0f), 0.01f));
+
+			// 4.8b Front attacker (1, 0, 0) with Yaw=90 -> World away direction = (0, -1, 0)
+			TestTrue(TEXT("TryBuildLaunchVelocity succeeds for front attacker at Yaw=90"),
+				FHitReactionImpactResolver::TryBuildLaunchVelocity(FVector(1.0f, 0.0f, 0.0f), 90.0f, 450.0f, 550.0f, OutVel));
+			TestTrue(TEXT("Front attacker at Yaw=90 produces velocity (0, -450, 550)"),
+				OutVel.Equals(FVector(0.0f, -450.0f, 550.0f), 0.01f));
+
+			// 4.8c Back attacker (-1, 0, 0) with Yaw=0 -> Launch away = (+1, 0, 0) * 450, Z = 550
+			TestTrue(TEXT("TryBuildLaunchVelocity succeeds for back attacker at Yaw=0"),
+				FHitReactionImpactResolver::TryBuildLaunchVelocity(FVector(-1.0f, 0.0f, 0.0f), 0.0f, 450.0f, 550.0f, OutVel));
+			TestTrue(TEXT("Back attacker at Yaw=0 produces velocity (+450, 0, 550)"),
+				OutVel.Equals(FVector(450.0f, 0.0f, 550.0f), 0.01f));
+
+			// 4.8d Non-unit vector with non-zero Z -> planarized and normalized
+			TestTrue(TEXT("TryBuildLaunchVelocity succeeds for unnormalized vector with Z component"),
+				FHitReactionImpactResolver::TryBuildLaunchVelocity(FVector(10.0f, 0.0f, 50.0f), 0.0f, 450.0f, 550.0f, OutVel));
+			TestTrue(TEXT("Unnormalized vector produces correct normalized velocity (-450, 0, 550)"),
+				OutVel.Equals(FVector(-450.0f, 0.0f, 550.0f), 0.01f));
+
+			// 4.8e Fail-Closed: Zero direction vector
+			TestFalse(TEXT("Zero direction returns false"),
+				FHitReactionImpactResolver::TryBuildLaunchVelocity(FVector::ZeroVector, 0.0f, 450.0f, 550.0f, OutVel));
+			TestTrue(TEXT("Zero direction resets OutVelocity to ZeroVector"), OutVel.IsZero());
+
+			// 4.8f Fail-Closed: NaN direction
+			TestFalse(TEXT("NaN direction returns false"),
+				FHitReactionImpactResolver::TryBuildLaunchVelocity(FVector(NAN, 0.0f, 0.0f), 0.0f, 450.0f, 550.0f, OutVel));
+			TestTrue(TEXT("NaN direction resets OutVelocity to ZeroVector"), OutVel.IsZero());
+
+			// 4.8g Fail-Closed: NaN Yaw
+			TestFalse(TEXT("NaN Yaw returns false"),
+				FHitReactionImpactResolver::TryBuildLaunchVelocity(FVector(1.0f, 0.0f, 0.0f), NAN, 450.0f, 550.0f, OutVel));
+			TestTrue(TEXT("NaN Yaw resets OutVelocity to ZeroVector"), OutVel.IsZero());
+
+			// 4.8h Fail-Closed: Zero / negative / non-finite HorizontalSpeed
+			TestFalse(TEXT("Zero HorizontalSpeed returns false"),
+				FHitReactionImpactResolver::TryBuildLaunchVelocity(FVector(1.0f, 0.0f, 0.0f), 0.0f, 0.0f, 550.0f, OutVel));
+			TestFalse(TEXT("Negative HorizontalSpeed returns false"),
+				FHitReactionImpactResolver::TryBuildLaunchVelocity(FVector(1.0f, 0.0f, 0.0f), 0.0f, -450.0f, 550.0f, OutVel));
+			TestFalse(TEXT("NaN HorizontalSpeed returns false"),
+				FHitReactionImpactResolver::TryBuildLaunchVelocity(FVector(1.0f, 0.0f, 0.0f), 0.0f, NAN, 550.0f, OutVel));
+
+			// 4.8i Fail-Closed: Zero / negative / non-finite VerticalSpeed
+			TestFalse(TEXT("Zero VerticalSpeed returns false"),
+				FHitReactionImpactResolver::TryBuildLaunchVelocity(FVector(1.0f, 0.0f, 0.0f), 0.0f, 450.0f, 0.0f, OutVel));
+			TestFalse(TEXT("Negative VerticalSpeed returns false"),
+				FHitReactionImpactResolver::TryBuildLaunchVelocity(FVector(1.0f, 0.0f, 0.0f), 0.0f, 450.0f, -550.0f, OutVel));
+			TestFalse(TEXT("NaN VerticalSpeed returns false"),
+				FHitReactionImpactResolver::TryBuildLaunchVelocity(FVector(1.0f, 0.0f, 0.0f), 0.0f, 450.0f, NAN, OutVel));
+		}
 	}
 
 	// -------------------------------------------------------------------------
@@ -549,10 +750,13 @@ bool FHitReactionAutomationTest::RunTest(const FString& Parameters)
 
 			int32 PlayerSmallEventCount = 0;
 			int32 PlayerBigEventCount = 0;
+			int32 PlayerLaunchEventCount = 0;
 			float LastSmallMagnitude = 0.0f;
 			float LastBigMagnitude = 0.0f;
+			float LastLaunchMagnitude = 0.0f;
 			const AActor* LastSmallInstigator = nullptr;
 			const AActor* LastBigInstigator = nullptr;
+			const AActor* LastLaunchInstigator = nullptr;
 
 			PlayerASC->GenericGameplayEventCallbacks.FindOrAdd(TagEventPlayerSmall).AddLambda(
 				[&PlayerSmallEventCount, &LastSmallMagnitude, &LastSmallInstigator](const FGameplayEventData* Payload)
@@ -576,6 +780,17 @@ bool FHitReactionAutomationTest::RunTest(const FString& Parameters)
 					}
 				});
 
+			PlayerASC->GenericGameplayEventCallbacks.FindOrAdd(TagEventPlayerLaunch).AddLambda(
+				[&PlayerLaunchEventCount, &LastLaunchMagnitude, &LastLaunchInstigator](const FGameplayEventData* Payload)
+				{
+					if (Payload)
+					{
+						PlayerLaunchEventCount++;
+						LastLaunchMagnitude = Payload->EventMagnitude;
+						LastLaunchInstigator = Payload->Instigator.Get();
+					}
+				});
+
 			// 5.1a Apply Damage GE with Data.Reaction.Small -> dispatches Event.Reaction.Player.Small
 			FGameplayTagContainer SmallTags;
 			SmallTags.AddTag(TagDataSmall);
@@ -585,6 +800,7 @@ bool FHitReactionAutomationTest::RunTest(const FString& Parameters)
 			TestEqual(TEXT("Player Small EventMagnitude is 25.0"), LastSmallMagnitude, 25.0f);
 			TestEqual(TEXT("Player Small Instigator is Player"), LastSmallInstigator, (const AActor*)Player);
 			TestEqual(TEXT("Player Big count is 0 after Small GE"), PlayerBigEventCount, 0);
+			TestEqual(TEXT("Player Launch count is 0 after Small GE"), PlayerLaunchEventCount, 0);
 
 			// Restore Health to 100 for non-lethal branch isolation
 			PlayerASC->SetNumericAttributeBase(UCharacterAttributeSet::GetHealthAttribute(), 100.0f);
@@ -598,17 +814,21 @@ bool FHitReactionAutomationTest::RunTest(const FString& Parameters)
 			TestEqual(TEXT("Player Big EventMagnitude is 25.0"), LastBigMagnitude, 25.0f);
 			TestEqual(TEXT("Player Big Instigator is Player"), LastBigInstigator, (const AActor*)Player);
 			TestEqual(TEXT("Player Small count remains 1 after Big GE"), PlayerSmallEventCount, 1);
+			TestEqual(TEXT("Player Launch count remains 0 after Big GE"), PlayerLaunchEventCount, 0);
 
 			// Restore Health to 100
 			PlayerASC->SetNumericAttributeBase(UCharacterAttributeSet::GetHealthAttribute(), 100.0f);
 
-			// 5.1c Apply Damage GE with Data.Reaction.Launch -> Player Launch is legal no-op
+			// 5.1c Apply Damage GE with Data.Reaction.Launch -> dispatches Event.Reaction.Player.Launch
 			FGameplayTagContainer LaunchTags;
 			LaunchTags.AddTag(TagDataLaunch);
 			TestTrue(TEXT("Damage GE with Data.Reaction.Launch applied to Player"),
 				ApplyDamageWithTags(PlayerASC, PlayerASC, Player, LaunchTags));
-			TestEqual(TEXT("Player received NO additional reaction event for Launch"),
-				PlayerSmallEventCount + PlayerBigEventCount, 2);
+			TestEqual(TEXT("Player received 1 Launch reaction event"), PlayerLaunchEventCount, 1);
+			TestEqual(TEXT("Player Launch EventMagnitude is 25.0"), LastLaunchMagnitude, 25.0f);
+			TestEqual(TEXT("Player Launch Instigator is Player"), LastLaunchInstigator, (const AActor*)Player);
+			TestEqual(TEXT("Player Small count remains 1 after Launch GE"), PlayerSmallEventCount, 1);
+			TestEqual(TEXT("Player Big count remains 1 after Launch GE"), PlayerBigEventCount, 1);
 
 			// Restore Health to 100
 			PlayerASC->SetNumericAttributeBase(UCharacterAttributeSet::GetHealthAttribute(), 100.0f);
@@ -618,7 +838,7 @@ bool FHitReactionAutomationTest::RunTest(const FString& Parameters)
 			TestTrue(TEXT("Damage GE with 0 reaction tags applied to Player"),
 				ApplyDamageWithTags(PlayerASC, PlayerASC, Player, NoReactionTags));
 			TestEqual(TEXT("Player received NO reaction event for unclassified GE"),
-				PlayerSmallEventCount + PlayerBigEventCount, 2);
+				PlayerSmallEventCount + PlayerBigEventCount + PlayerLaunchEventCount, 3);
 
 			// Restore Health to 100
 			PlayerASC->SetNumericAttributeBase(UCharacterAttributeSet::GetHealthAttribute(), 100.0f);
@@ -630,7 +850,7 @@ bool FHitReactionAutomationTest::RunTest(const FString& Parameters)
 			TestTrue(TEXT("Damage GE with invalid multi-tier tags applied to Player"),
 				ApplyDamageWithTags(PlayerASC, PlayerASC, Player, InvalidTags));
 			TestEqual(TEXT("Player received NO reaction event for invalid multi-tier GE"),
-				PlayerSmallEventCount + PlayerBigEventCount, 2);
+				PlayerSmallEventCount + PlayerBigEventCount + PlayerLaunchEventCount, 3);
 
 			// Restore Health to 100
 			PlayerASC->SetNumericAttributeBase(UCharacterAttributeSet::GetHealthAttribute(), 100.0f);
@@ -679,7 +899,9 @@ bool FHitReactionAutomationTest::RunTest(const FString& Parameters)
 
 			int32 EnemySmallEventCount = 0;
 			int32 EnemyBigEventCount = 0;
+			int32 EnemyLaunchEventCount = 0;
 			float LastEnemyEventMagnitude = 0.0f;
+			float LastEnemyLaunchMagnitude = 0.0f;
 
 			EnemyASC->GenericGameplayEventCallbacks.FindOrAdd(TagEventEnemySmall).AddLambda(
 				[&EnemySmallEventCount, &LastEnemyEventMagnitude](const FGameplayEventData* Payload)
@@ -701,6 +923,16 @@ bool FHitReactionAutomationTest::RunTest(const FString& Parameters)
 					}
 				});
 
+			EnemyASC->GenericGameplayEventCallbacks.FindOrAdd(TagEventEnemyLaunch).AddLambda(
+				[&EnemyLaunchEventCount, &LastEnemyLaunchMagnitude](const FGameplayEventData* Payload)
+				{
+					if (Payload)
+					{
+						EnemyLaunchEventCount++;
+						LastEnemyLaunchMagnitude = Payload->EventMagnitude;
+					}
+				});
+
 			// 5.2a Apply Damage GE with Data.Reaction.Small -> dispatches Event.Reaction.Enemy.Small
 			FGameplayTagContainer SmallTags;
 			SmallTags.AddTag(TagDataSmall);
@@ -709,6 +941,7 @@ bool FHitReactionAutomationTest::RunTest(const FString& Parameters)
 			TestEqual(TEXT("Enemy received 1 Small reaction event"), EnemySmallEventCount, 1);
 			TestEqual(TEXT("Enemy Small EventMagnitude is 25.0"), LastEnemyEventMagnitude, 25.0f);
 			TestEqual(TEXT("Enemy Big count is 0"), EnemyBigEventCount, 0);
+			TestEqual(TEXT("Enemy Launch count is 0"), EnemyLaunchEventCount, 0);
 
 			// Restore Health to 100 for non-lethal branch isolation
 			EnemyASC->SetNumericAttributeBase(UCharacterAttributeSet::GetHealthAttribute(), 100.0f);
@@ -720,16 +953,21 @@ bool FHitReactionAutomationTest::RunTest(const FString& Parameters)
 				ApplyDamageWithTags(EnemyASC, EnemyASC, Enemy, BigTags));
 			TestEqual(TEXT("Enemy received 1 Big reaction event"), EnemyBigEventCount, 1);
 			TestEqual(TEXT("Enemy Big EventMagnitude is 25.0"), LastEnemyEventMagnitude, 25.0f);
+			TestEqual(TEXT("Enemy Small count remains 1 after Big GE"), EnemySmallEventCount, 1);
+			TestEqual(TEXT("Enemy Launch count remains 0 after Big GE"), EnemyLaunchEventCount, 0);
 
 			// Restore Health to 100
 			EnemyASC->SetNumericAttributeBase(UCharacterAttributeSet::GetHealthAttribute(), 100.0f);
 
-			// 5.2c Apply Damage GE with Data.Reaction.Launch -> Enemy Launch is legal no-op
+			// 5.2c Apply Damage GE with Data.Reaction.Launch -> dispatches Event.Reaction.Enemy.Launch
 			FGameplayTagContainer LaunchTags;
 			LaunchTags.AddTag(TagDataLaunch);
 			TestTrue(TEXT("Damage GE with Data.Reaction.Launch applied to Enemy"),
 				ApplyDamageWithTags(EnemyASC, EnemyASC, Enemy, LaunchTags));
-			TestEqual(TEXT("Enemy received NO additional event for Launch"), EnemySmallEventCount + EnemyBigEventCount, 2);
+			TestEqual(TEXT("Enemy received 1 Launch reaction event"), EnemyLaunchEventCount, 1);
+			TestEqual(TEXT("Enemy Launch EventMagnitude is 25.0"), LastEnemyLaunchMagnitude, 25.0f);
+			TestEqual(TEXT("Enemy Small count remains 1 after Launch GE"), EnemySmallEventCount, 1);
+			TestEqual(TEXT("Enemy Big count remains 1 after Launch GE"), EnemyBigEventCount, 1);
 
 			// Restore Health to 100
 			EnemyASC->SetNumericAttributeBase(UCharacterAttributeSet::GetHealthAttribute(), 100.0f);
@@ -738,7 +976,7 @@ bool FHitReactionAutomationTest::RunTest(const FString& Parameters)
 			FGameplayTagContainer NoReactionTags;
 			TestTrue(TEXT("Damage GE with 0 reaction tags applied to Enemy"),
 				ApplyDamageWithTags(EnemyASC, EnemyASC, Enemy, NoReactionTags));
-			TestEqual(TEXT("Enemy received NO event for unclassified GE"), EnemySmallEventCount + EnemyBigEventCount, 2);
+			TestEqual(TEXT("Enemy received NO event for unclassified GE"), EnemySmallEventCount + EnemyBigEventCount + EnemyLaunchEventCount, 3);
 
 			// Restore Health to 100
 			EnemyASC->SetNumericAttributeBase(UCharacterAttributeSet::GetHealthAttribute(), 100.0f);
@@ -749,7 +987,7 @@ bool FHitReactionAutomationTest::RunTest(const FString& Parameters)
 			InvalidTags.AddTag(TagDataBig);
 			TestTrue(TEXT("Damage GE with invalid multi-tier tags applied to Enemy"),
 				ApplyDamageWithTags(EnemyASC, EnemyASC, Enemy, InvalidTags));
-			TestEqual(TEXT("Enemy received NO event for invalid multi-tier GE"), EnemySmallEventCount + EnemyBigEventCount, 2);
+			TestEqual(TEXT("Enemy received NO event for invalid multi-tier GE"), EnemySmallEventCount + EnemyBigEventCount + EnemyLaunchEventCount, 3);
 
 			// Restore Health to 100
 			EnemyASC->SetNumericAttributeBase(UCharacterAttributeSet::GetHealthAttribute(), 100.0f);
@@ -779,12 +1017,14 @@ bool FHitReactionAutomationTest::RunTest(const FString& Parameters)
 			TestTrue(TEXT("Enemy is dead after lethal health depletion"), Enemy->IsDead());
 			TestEqual(TEXT("Lethal damage sent NO additional reaction event"), EnemySmallEventCount, 1);
 			TestEqual(TEXT("Enemy Big count remains 1"), EnemyBigEventCount, 1);
+			TestEqual(TEXT("Enemy Launch count remains 1"), EnemyLaunchEventCount, 1);
 
 			// 5.2i Apply Damage GE when Enemy is already dead -> blocked, no reaction event
 			TestTrue(TEXT("Damage GE applied while Enemy is already dead"),
 				ApplyDamageWithTags(EnemyASC, EnemyASC, Enemy, SmallTags));
 			TestEqual(TEXT("Already Dead Enemy sent NO additional reaction event"), EnemySmallEventCount, 1);
 			TestEqual(TEXT("Enemy Big count remains 1 after hit to dead enemy"), EnemyBigEventCount, 1);
+			TestEqual(TEXT("Enemy Launch count remains 1 after hit to dead enemy"), EnemyLaunchEventCount, 1);
 		}
 	}
 

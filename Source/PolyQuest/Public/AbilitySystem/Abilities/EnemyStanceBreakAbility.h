@@ -67,6 +67,7 @@ private:
 	FGameplayTag EnemyMeleeAbilityTag;
 	FGameplayTag EnemyHitReactionAbilityTag;
 	FGameplayTag EnemySmallHitReactionAbilityTag;
+	FGameplayTag EnemyLaunchReactionAbilityTag;
 	FGameplayTagContainer AbilitiesToCancel;
 	bool bMovementLockedByStanceBreak = false;
 	bool bEndAbilityRequested = false;

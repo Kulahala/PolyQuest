@@ -314,6 +314,7 @@ private:
 	FGameplayTag ParryAbilityTag;
 	FGameplayTag SmallHitReactionEventTag;
 	FGameplayTag BigHitReactionEventTag;
+	FGameplayTag LaunchReactionEventTag;
 	FActiveGameplayEffectHandle SprintJumpAirSpeedEffectHandle;
 	FDelegateHandle MovementInputBlockedTagChangedHandle;
 	FDelegateHandle AttackingStateTagChangedHandle;

@@ -24,6 +24,7 @@ UPlayerGuardBreakAbility::UPlayerGuardBreakAbility()
 	SprintAbilityTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Movement.Sprint")), false);
 	PlayerSmallHitReactionAbilityTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Reaction.Player.Small")), false);
 	PlayerBigHitReactionAbilityTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Reaction.Player.Big")), false);
+	PlayerLaunchReactionAbilityTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Reaction.Player.Launch")), false);
 
 	AbilityTags.AddTag(GuardBreakAbilityTag);
 	ActivationOwnedTags.AddTag(StunnedStateTag);
@@ -39,6 +40,7 @@ UPlayerGuardBreakAbility::UPlayerGuardBreakAbility()
 	AbilitiesToCancel.AddTag(SprintAbilityTag);
 	AbilitiesToCancel.AddTag(PlayerSmallHitReactionAbilityTag);
 	AbilitiesToCancel.AddTag(PlayerBigHitReactionAbilityTag);
+	AbilitiesToCancel.AddTag(PlayerLaunchReactionAbilityTag);
 	AbilitiesToCancel.AddTag(FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Attack.Primary")), false));
 	AbilitiesToCancel.AddTag(FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Attack.Light")), false));
 	AbilitiesToCancel.AddTag(FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Attack.Charged")), false));
@@ -190,7 +192,7 @@ bool UPlayerGuardBreakAbility::ValidateActivationSetup(const FGameplayAbilityAct
 		&& CharacterASC->GetNumericAttribute(UCharacterAttributeSet::GetStaminaAttribute()) <= 0.0f
 		&& GuardBreakAbilityTag.IsValid() && GuardBreakEventTag.IsValid() && StunnedStateTag.IsValid() && DeadStateTag.IsValid()
 		&& GuardAbilityTag.IsValid() && SprintAbilityTag.IsValid() && PlayerSmallHitReactionAbilityTag.IsValid()
-		&& PlayerBigHitReactionAbilityTag.IsValid() && AbilitiesToCancel.Num() == 9;
+		&& PlayerBigHitReactionAbilityTag.IsValid() && PlayerLaunchReactionAbilityTag.IsValid() && AbilitiesToCancel.Num() == 10;
 }
 
 void UPlayerGuardBreakAbility::EndFromMontage(bool bWasCancelled)

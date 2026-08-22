@@ -23,6 +23,7 @@ AEnemyCharacter::AEnemyCharacter()
 	DeadStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Status.Dead")), false);
 	HitReactionEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Reaction.Enemy.Big")), false);
 	SmallHitReactionEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Reaction.Enemy.Small")), false);
+	LaunchReactionEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Reaction.Enemy.Launch")), false);
 	StanceBreakEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Reaction.Enemy.StanceBreak")), false);
 	PoiseRecoveryDataTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Data.Poise.Recovery")), false);
 	StunnedStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Status.Stunned")), false);
@@ -206,9 +207,13 @@ void AEnemyCharacter::OnHealthAttributeChanged(const FOnAttributeChangeData& Cha
 	{
 		TargetEventTag = HitReactionEventTag;
 	}
+	else if (ReactionTier == EHitReactionTier::Launch)
+	{
+		TargetEventTag = LaunchReactionEventTag;
+	}
 	else
 	{
-		// None, Launch (legal no-ops in C3E)
+		// None
 		return;
 	}
 
