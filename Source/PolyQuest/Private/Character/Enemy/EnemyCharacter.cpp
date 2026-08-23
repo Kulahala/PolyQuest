@@ -45,6 +45,15 @@ AEnemyCharacter::AEnemyCharacter()
 	EnemyHealthBarWidgetComponent->SetDrawSize(FVector2D(160.0f, 20.0f));
 }
 
+#if WITH_DEV_AUTOMATION_TESTS
+void AEnemyCharacter::ConfigureTestPassiveStartupFixture(TSubclassOf<UGameplayEffect> InPoiseRecoveryGameplayEffectClass)
+{
+	AutoPossessAI = EAutoPossessAI::Disabled;
+	bUseRagdollOnDeath = false;
+	PoiseRecoveryGameplayEffectClass = InPoiseRecoveryGameplayEffectClass;
+}
+#endif
+
 void AEnemyCharacter::BeginPlay()
 {
 	if (!DeadStateTag.IsValid())

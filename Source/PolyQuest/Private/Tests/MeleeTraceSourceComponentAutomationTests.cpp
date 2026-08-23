@@ -14,6 +14,7 @@
 #include "Engine/StaticMesh.h"
 #include "Engine/StaticMeshSocket.h"
 #include "Engine/World.h"
+#include "Tests/CombatAutomationFixture.h"
 #include "UObject/Package.h"
 #include "UObject/UnrealType.h"
 
@@ -359,19 +360,24 @@ bool FMeleeTraceSourceGeometryTest::RunTest(const FString& Parameters)
 
 	// 4. Test DisableFixedWeaponDisplayCollision and Camera collision policy on BaseCharacter via FinishSpawning lifecycle
 	{
-		FActorSpawnParameters SpawnParams;
-		SpawnParams.bDeferConstruction = true;
-		AEnemyCharacter* TestCharacter = World->SpawnActor<AEnemyCharacter>(AEnemyCharacter::StaticClass(), FVector::ZeroVector, FRotator::ZeroRotator, SpawnParams);
+		UStaticMeshComponent* FixedWeaponDisplay = nullptr;
+		AEnemyCharacter* TestCharacter = FCombatAutomationFixture::SpawnPassiveEnemy(
+			World,
+			FTransform::Identity,
+			[&FixedWeaponDisplay](AEnemyCharacter& InCharacter)
+			{
+				FixedWeaponDisplay = NewObject<UStaticMeshComponent>(&InCharacter, TEXT("WeaponMesh"));
+				FixedWeaponDisplay->RegisterComponent();
+				FixedWeaponDisplay->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+				FixedWeaponDisplay->SetCollisionResponseToAllChannels(ECR_Block);
+				FixedWeaponDisplay->SetGenerateOverlapEvents(true);
+			});
 		TestNotNull(TEXT("TestCharacter spawned successfully"), TestCharacter);
-
-		UStaticMeshComponent* FixedWeaponDisplay = NewObject<UStaticMeshComponent>(TestCharacter, TEXT("WeaponMesh"));
-		FixedWeaponDisplay->RegisterComponent();
-		FixedWeaponDisplay->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
-		FixedWeaponDisplay->SetCollisionResponseToAllChannels(ECR_Block);
-		FixedWeaponDisplay->SetGenerateOverlapEvents(true);
-
-		TestCharacter->FinishSpawning(FTransform::Identity);
-		TestCharacter->DispatchBeginPlay();
+		TestNotNull(TEXT("Fixed weapon display created before BeginPlay"), FixedWeaponDisplay);
+		if (!TestCharacter || !FixedWeaponDisplay)
+		{
+			return false;
+		}
 
 		TestEqual(TEXT("CapsuleComponent ignores Camera channel"), TestCharacter->GetCapsuleComponent()->GetCollisionResponseToChannel(ECC_Camera), ECR_Ignore);
 		TestEqual(TEXT("Mesh ignores Camera channel"), TestCharacter->GetMesh()->GetCollisionResponseToChannel(ECC_Camera), ECR_Ignore);

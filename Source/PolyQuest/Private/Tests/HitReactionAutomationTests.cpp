@@ -25,6 +25,7 @@
 #include "GameplayEffectTypes.h"
 #include "GameplayTagContainer.h"
 #include "Tests/TestPoiseRecoveryGE.h"
+#include "Tests/CombatAutomationFixture.h"
 #include "Tests/TestProjectileDamageGE.h"
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FHitReactionAutomationTest, "PolyQuest.Combat.HitReaction", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
@@ -540,21 +541,11 @@ bool FHitReactionAutomationTest::RunTest(const FString& Parameters)
 		}
 	} ScopeCleanup{ World };
 
-	FActorSpawnParameters SpawnParams;
-	SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
-	APlayerCharacter* Player = World->SpawnActor<APlayerCharacter>(APlayerCharacter::StaticClass(), FVector::ZeroVector, FRotator::ZeroRotator, SpawnParams);
+	APlayerCharacter* Player = FCombatAutomationFixture::SpawnPlayer(World, FTransform(FRotator::ZeroRotator, FVector::ZeroVector));
 	TestNotNull(TEXT("Player spawned successfully"), Player);
-	if (Player)
-	{
-		Player->DispatchBeginPlay();
-	}
 
-	AEnemyCharacter* Enemy = World->SpawnActor<AEnemyCharacter>(AEnemyCharacter::StaticClass(), FVector(100.0f, 0.0f, 0.0f), FRotator::ZeroRotator, SpawnParams);
+	AEnemyCharacter* Enemy = FCombatAutomationFixture::SpawnPassiveEnemy(World, FTransform(FRotator::ZeroRotator, FVector(100.0f, 0.0f, 0.0f)));
 	TestNotNull(TEXT("Enemy spawned successfully"), Enemy);
-	if (Enemy)
-	{
-		Enemy->DispatchBeginPlay();
-	}
 
 	if (!Player || !Enemy)
 	{
@@ -1044,13 +1035,10 @@ bool FHitReactionAutomationTest::RunTest(const FString& Parameters)
 	// SECTION 6: Landing-Deferred Enemy Stance Break Lifecycle (TODO-02C3H)
 	// -------------------------------------------------------------------------
 	{
-		AEnemyCharacter* DeferralEnemy = World->SpawnActor<AEnemyCharacter>(AEnemyCharacter::StaticClass(), FVector(300.0f, 0.0f, 0.0f), FRotator::ZeroRotator, SpawnParams);
+		AEnemyCharacter* DeferralEnemy = FCombatAutomationFixture::SpawnPassiveEnemy(World, FTransform(FRotator::ZeroRotator, FVector(300.0f, 0.0f, 0.0f)));
 		TestNotNull(TEXT("DeferralEnemy spawned successfully"), DeferralEnemy);
 		if (DeferralEnemy)
 		{
-			DeferralEnemy->DispatchBeginPlay();
-			DeferralEnemy->SetTestPoiseRecoveryGameplayEffectClass(UTestPoiseRecoveryGE::StaticClass());
-
 			UAbilitySystemComponent* DeferralASC = DeferralEnemy->GetAbilitySystemComponent();
 			TestNotNull(TEXT("DeferralEnemy ASC valid"), DeferralASC);
 
@@ -1219,13 +1207,10 @@ bool FHitReactionAutomationTest::RunTest(const FString& Parameters)
 
 				// 6.7 Death and EndPlay clear deferral without recovery or late Stance Break
 				{
-					AEnemyCharacter* DeathEnemy = World->SpawnActor<AEnemyCharacter>(AEnemyCharacter::StaticClass(), FVector(400.0f, 0.0f, 0.0f), FRotator::ZeroRotator, SpawnParams);
+					AEnemyCharacter* DeathEnemy = FCombatAutomationFixture::SpawnPassiveEnemy(World, FTransform(FRotator::ZeroRotator, FVector(400.0f, 0.0f, 0.0f)));
 					TestNotNull(TEXT("6.7: DeathEnemy spawned successfully"), DeathEnemy);
 					if (DeathEnemy)
 					{
-						DeathEnemy->DispatchBeginPlay();
-						DeathEnemy->SetTestPoiseRecoveryGameplayEffectClass(UTestPoiseRecoveryGE::StaticClass());
-
 						UAbilitySystemComponent* DeathASC = DeathEnemy->GetAbilitySystemComponent();
 						TestNotNull(TEXT("6.7: DeathEnemy ASC valid"), DeathASC);
 						if (DeathASC)

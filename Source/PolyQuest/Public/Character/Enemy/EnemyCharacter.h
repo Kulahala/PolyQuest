@@ -38,6 +38,9 @@ public:
 	void SetPlayerLockOnHighlighted(bool bHighlighted);
 
 #if WITH_DEV_AUTOMATION_TESTS
+	/** Configures the passive native Enemy fixture before BeginPlay without inventing AI or ragdoll coverage. */
+	void ConfigureTestPassiveStartupFixture(TSubclassOf<UGameplayEffect> InPoiseRecoveryGameplayEffectClass);
+
 	void SetTestAttackSet(UEnemyAttackSet* InSet) { AttackSet = InSet; }
 	void SetTestAIProfile(UEnemyAIProfile* InProfile) { AIProfile = InProfile; }
 	void SetTestPoiseRecoveryGameplayEffectClass(TSubclassOf<UGameplayEffect> InClass) { PoiseRecoveryGameplayEffectClass = InClass; }

@@ -19,6 +19,7 @@
 #include "GameFramework/RootMotionSource.h"
 #include "GameFramework/SpringArmComponent.h"
 #include "GameplayTagContainer.h"
+#include "Tests/CombatAutomationFixture.h"
 #include "UI/EnemyHealthBarWidget.h"
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FPlayerLockOnAutomationTest, "PolyQuest.Player.LockOn", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
@@ -58,14 +59,14 @@ bool FPlayerLockOnAutomationTest::RunTest(const FString&)
 
 	auto SpawnEnemy = [World](const FName Name, const FVector& Location)
 	{
-		FActorSpawnParameters SpawnParameters;
-		SpawnParameters.Name = Name;
-		AEnemyCharacter* Enemy = World->SpawnActor<AEnemyCharacter>(AEnemyCharacter::StaticClass(), Location, FRotator::ZeroRotator, SpawnParameters);
-		if (Enemy)
-		{
-			Enemy->SetTestCombatTeamTag(FGameplayTag::RequestGameplayTag(FName(TEXT("Team.Enemy")), false));
-			Enemy->DispatchBeginPlay();
-		}
+		AEnemyCharacter* Enemy = FCombatAutomationFixture::SpawnPassiveEnemy(
+			World,
+			FTransform(FRotator::ZeroRotator, Location),
+			[Name](AEnemyCharacter& InEnemy)
+			{
+				InEnemy.Rename(*Name.ToString());
+				InEnemy.SetTestCombatTeamTag(FGameplayTag::RequestGameplayTag(FName(TEXT("Team.Enemy")), false));
+			});
 		return Enemy;
 	};
 
@@ -147,15 +148,20 @@ bool FPlayerLockOnAutomationTest::RunTest(const FString&)
 	// SECTION 2: Player-owned target lifecycle, highlight handoff, and facing
 	// -------------------------------------------------------------------------
 	{
-		APlayerCharacter* Player = World->SpawnActor<APlayerCharacter>(APlayerCharacter::StaticClass(), FVector(0.0f, 0.0f, 100.0f), FRotator::ZeroRotator);
+		APlayerCharacter* Player = FCombatAutomationFixture::SpawnPlayer(
+			World,
+			FTransform(FRotator::ZeroRotator, FVector(0.0f, 0.0f, 100.0f)),
+			[](APlayerCharacter& InPlayer)
+			{
+				InPlayer.SetTestCombatTeamTag(FGameplayTag::RequestGameplayTag(FName(TEXT("Team.Player")), false));
+			});
 		APlayerController* PlayerController = World->SpawnActor<APlayerController>();
 		TestNotNull(TEXT("Player spawned for lock lifecycle"), Player);
 		TestNotNull(TEXT("PlayerController spawned for lock lifecycle"), PlayerController);
 
 		if (Player && PlayerController && EnemyRight && EnemyBottom && EnemyTie)
 		{
-			Player->SetTestCombatTeamTag(FGameplayTag::RequestGameplayTag(FName(TEXT("Team.Player")), false));
-			Player->DispatchBeginPlay();
+			TestTrue(TEXT("Player fixture applied its persistent Stamina regen effect"), Player->HasTestStaminaRegenEffectApplied());
 			PlayerController->Possess(Player);
 
 			UEnemyHealthBarWidget* RightWidget = NewObject<UEnemyHealthBarWidget>(EnemyRight);

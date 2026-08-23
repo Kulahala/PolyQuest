@@ -15,6 +15,7 @@
 #include "Engine/World.h"
 #include "GameFramework/ProjectileMovementComponent.h"
 #include "GameplayTagContainer.h"
+#include "Tests/CombatAutomationFixture.h"
 #include "Tests/TestProjectileDamageGE.h"
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FProjectileTargetAssistAutomationTest, "PolyQuest.Projectile.TargetAssist", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
@@ -49,6 +50,15 @@ bool FProjectileTargetAssistAutomationTest::RunTest(const FString& Parameters)
 	const FGameplayTag TagInvulnerable = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Status.Invulnerable")), false);
 	const FGameplayTag TagTeamPlayer = FGameplayTag::RequestGameplayTag(FName(TEXT("Team.Player")), false);
 	const FGameplayTag TagTeamEnemy = FGameplayTag::RequestGameplayTag(FName(TEXT("Team.Enemy")), false);
+
+	auto SpawnPlayerFixture = [World]()
+	{
+		return FCombatAutomationFixture::SpawnPlayer(World);
+	};
+	auto SpawnEnemyFixture = [World]()
+	{
+		return FCombatAutomationFixture::SpawnPassiveEnemy(World);
+	};
 
 	// -------------------------------------------------------------------------
 	// SECTION 1: UProjectileDefinition TargetAssist & LimitedHoming Validation
@@ -155,8 +165,8 @@ bool FProjectileTargetAssistAutomationTest::RunTest(const FString& Parameters)
 	// SECTION 2: Aim Point & Candidate Qualification Gates
 	// -------------------------------------------------------------------------
 	{
-		APlayerCharacter* Player = World->SpawnActor<APlayerCharacter>();
-		AEnemyCharacter* Enemy = World->SpawnActor<AEnemyCharacter>();
+		APlayerCharacter* Player = SpawnPlayerFixture();
+		AEnemyCharacter* Enemy = SpawnEnemyFixture();
 		TestNotNull(TEXT("Player spawned"), Player);
 		TestNotNull(TEXT("Enemy spawned"), Enemy);
 
@@ -166,9 +176,6 @@ bool FProjectileTargetAssistAutomationTest::RunTest(const FString& Parameters)
 			Enemy->SetActorLocation(FVector(500.0f, 0.0f, 100.0f));
 			Player->SetTestCombatTeamTag(TagTeamPlayer);
 			Enemy->SetTestCombatTeamTag(TagTeamEnemy);
-			Player->DispatchBeginPlay();
-			Enemy->DispatchBeginPlay();
-
 			UAbilitySystemComponent* PlayerASC = Player->GetAbilitySystemComponent();
 			UAbilitySystemComponent* EnemyASC = Enemy->GetAbilitySystemComponent();
 
@@ -185,11 +192,10 @@ bool FProjectileTargetAssistAutomationTest::RunTest(const FString& Parameters)
 			TestFalse(TEXT("Self is rejected as candidate"), FCombatProjectileTargeting::IsValidTargetCandidate(Player, PlayerASC, Player));
 
 			// 2.4 Friendly is rejected
-			APlayerCharacter* Friendly = World->SpawnActor<APlayerCharacter>();
+			APlayerCharacter* Friendly = SpawnPlayerFixture();
 			if (Friendly)
 			{
 				Friendly->SetTestCombatTeamTag(TagTeamPlayer);
-				Friendly->DispatchBeginPlay();
 				TestFalse(TEXT("Friendly player is rejected as candidate"), FCombatProjectileTargeting::IsValidTargetCandidate(Player, PlayerASC, Friendly));
 				Friendly->Destroy();
 			}
@@ -218,10 +224,9 @@ bool FProjectileTargetAssistAutomationTest::RunTest(const FString& Parameters)
 	// SECTION 3: TryFindBestTargetCandidate & Sorting Gates
 	// -------------------------------------------------------------------------
 	{
-		APlayerCharacter* Player = World->SpawnActor<APlayerCharacter>();
+		APlayerCharacter* Player = SpawnPlayerFixture();
 		Player->SetActorLocation(FVector(0.0f, 0.0f, 100.0f));
 		Player->SetTestCombatTeamTag(TagTeamPlayer);
-		Player->DispatchBeginPlay();
 
 		UAbilitySystemComponent* PlayerASC = Player->GetAbilitySystemComponent();
 
@@ -237,10 +242,9 @@ bool FProjectileTargetAssistAutomationTest::RunTest(const FString& Parameters)
 		const FVector AimDirection = FVector(1.0f, 0.0f, 0.0f); // Looking +X
 
 		// 3.1 Enemy beyond MaxHorizontalDistance (2000cm) -> rejected
-		AEnemyCharacter* FarEnemy = World->SpawnActor<AEnemyCharacter>();
+		AEnemyCharacter* FarEnemy = SpawnEnemyFixture();
 		FarEnemy->SetActorLocation(FVector(2000.0f, 0.0f, 100.0f));
 		FarEnemy->SetTestCombatTeamTag(TagTeamEnemy);
-		FarEnemy->DispatchBeginPlay();
 
 		FCombatProjectileTargetCandidate CandidateResult;
 		TestFalse(TEXT("Enemy beyond max distance is not selected"),
@@ -250,10 +254,9 @@ bool FProjectileTargetAssistAutomationTest::RunTest(const FString& Parameters)
 
 		// 3.2 Enemy beyond MaxAngleDegrees (e.g. 60 deg off forward) -> rejected
 		// +X forward, 60 deg angle: X = 500 * cos(60) = 250, Y = 500 * sin(60) = 433
-		AEnemyCharacter* WideAngleEnemy = World->SpawnActor<AEnemyCharacter>();
+		AEnemyCharacter* WideAngleEnemy = SpawnEnemyFixture();
 		WideAngleEnemy->SetActorLocation(FVector(250.0f, 433.0f, 100.0f));
 		WideAngleEnemy->SetTestCombatTeamTag(TagTeamEnemy);
-		WideAngleEnemy->DispatchBeginPlay();
 
 		TestFalse(TEXT("Enemy beyond max angle (60 deg) is not selected"),
 			FCombatProjectileTargeting::TryFindBestTargetCandidate(World, Player, PlayerASC, LaunchLocation, AimDirection, Filter, CandidateResult));
@@ -261,10 +264,9 @@ bool FProjectileTargetAssistAutomationTest::RunTest(const FString& Parameters)
 		WideAngleEnemy->Destroy();
 
 		// 3.3 Enemy beyond MaxHeightDelta (300cm above) -> rejected
-		AEnemyCharacter* HighEnemy = World->SpawnActor<AEnemyCharacter>();
+		AEnemyCharacter* HighEnemy = SpawnEnemyFixture();
 		HighEnemy->SetActorLocation(FVector(500.0f, 0.0f, 450.0f));
 		HighEnemy->SetTestCombatTeamTag(TagTeamEnemy);
-		HighEnemy->DispatchBeginPlay();
 
 		TestFalse(TEXT("Enemy beyond max height delta is not selected"),
 			FCombatProjectileTargeting::TryFindBestTargetCandidate(World, Player, PlayerASC, LaunchLocation, AimDirection, Filter, CandidateResult));
@@ -272,17 +274,15 @@ bool FProjectileTargetAssistAutomationTest::RunTest(const FString& Parameters)
 		HighEnemy->Destroy();
 
 		// 3.4 Sorting: Tie-break prefers smaller angle
-		AEnemyCharacter* EnemySmallAngle = World->SpawnActor<AEnemyCharacter>();
+		AEnemyCharacter* EnemySmallAngle = SpawnEnemyFixture();
 		EnemySmallAngle->Rename(TEXT("Enemy_SmallAngle"));
 		EnemySmallAngle->SetActorLocation(FVector(600.0f, 50.0f, 100.0f)); // ~4.76 deg
 		EnemySmallAngle->SetTestCombatTeamTag(TagTeamEnemy);
-		EnemySmallAngle->DispatchBeginPlay();
 
-		AEnemyCharacter* EnemyLargeAngle = World->SpawnActor<AEnemyCharacter>();
+		AEnemyCharacter* EnemyLargeAngle = SpawnEnemyFixture();
 		EnemyLargeAngle->Rename(TEXT("Enemy_LargeAngle"));
 		EnemyLargeAngle->SetActorLocation(FVector(300.0f, 100.0f, 100.0f)); // ~18.43 deg, closer distance
 		EnemyLargeAngle->SetTestCombatTeamTag(TagTeamEnemy);
-		EnemyLargeAngle->DispatchBeginPlay();
 
 		TestTrue(TEXT("Candidate found among two enemies"),
 			FCombatProjectileTargeting::TryFindBestTargetCandidate(World, Player, PlayerASC, LaunchLocation, AimDirection, Filter, CandidateResult));
@@ -293,17 +293,15 @@ bool FProjectileTargetAssistAutomationTest::RunTest(const FString& Parameters)
 		EnemyLargeAngle->Destroy();
 
 		// 3.5 Sorting: Tie-break when angles equal prefers closer distance
-		AEnemyCharacter* EnemyClose = World->SpawnActor<AEnemyCharacter>();
+		AEnemyCharacter* EnemyClose = SpawnEnemyFixture();
 		EnemyClose->Rename(TEXT("Enemy_Close"));
 		EnemyClose->SetActorLocation(FVector(400.0f, 0.0f, 100.0f)); // 0 deg, 400cm
 		EnemyClose->SetTestCombatTeamTag(TagTeamEnemy);
-		EnemyClose->DispatchBeginPlay();
 
-		AEnemyCharacter* EnemyFar = World->SpawnActor<AEnemyCharacter>();
+		AEnemyCharacter* EnemyFar = SpawnEnemyFixture();
 		EnemyFar->Rename(TEXT("Enemy_Far"));
 		EnemyFar->SetActorLocation(FVector(800.0f, 0.0f, 100.0f)); // 0 deg, 800cm
 		EnemyFar->SetTestCombatTeamTag(TagTeamEnemy);
-		EnemyFar->DispatchBeginPlay();
 
 		TestTrue(TEXT("Candidate found for distance tie-break"),
 			FCombatProjectileTargeting::TryFindBestTargetCandidate(World, Player, PlayerASC, LaunchLocation, AimDirection, Filter, CandidateResult));
@@ -314,10 +312,9 @@ bool FProjectileTargetAssistAutomationTest::RunTest(const FString& Parameters)
 		EnemyFar->Destroy();
 
 		// 3.6 Screen Viewport Projection Filtering
-		AEnemyCharacter* ScreenEnemy = World->SpawnActor<AEnemyCharacter>();
+		AEnemyCharacter* ScreenEnemy = SpawnEnemyFixture();
 		ScreenEnemy->SetActorLocation(FVector(500.0f, 0.0f, 100.0f));
 		ScreenEnemy->SetTestCombatTeamTag(TagTeamEnemy);
-		ScreenEnemy->DispatchBeginPlay();
 
 		// 3.6.1 In-screen projection -> selected
 		FCombatProjectileTargetFilter InScreenFilter;
@@ -420,14 +417,12 @@ bool FProjectileTargetAssistAutomationTest::RunTest(const FString& Parameters)
 	// SECTION 5: ACombatProjectile Limited Homing Dynamics & Straight-Flight Abort
 	// -------------------------------------------------------------------------
 	{
-		APlayerCharacter* Player = World->SpawnActor<APlayerCharacter>();
-		AEnemyCharacter* Enemy = World->SpawnActor<AEnemyCharacter>();
+		APlayerCharacter* Player = SpawnPlayerFixture();
+		AEnemyCharacter* Enemy = SpawnEnemyFixture();
 		Player->SetActorLocation(FVector(0.0f, 0.0f, 100.0f));
 		Enemy->SetActorLocation(FVector(800.0f, 200.0f, 100.0f));
 		Player->SetTestCombatTeamTag(TagTeamPlayer);
 		Enemy->SetTestCombatTeamTag(TagTeamEnemy);
-		Player->DispatchBeginPlay();
-		Enemy->DispatchBeginPlay();
 
 		UProjectileDefinition* HomingDef = NewObject<UProjectileDefinition>(GetTransientPackage(), TEXT("Test_HomingDef"));
 		HomingDef->InitialSpeed = 3000.0f;

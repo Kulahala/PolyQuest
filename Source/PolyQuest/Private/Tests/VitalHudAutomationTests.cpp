@@ -15,6 +15,7 @@
 #include "Engine/Engine.h"
 #include "Engine/World.h"
 #include "Framework/PolyQuestPlayerController.h"
+#include "Tests/CombatAutomationFixture.h"
 #include "UI/EnemyHealthBarWidget.h"
 #include "UI/PlayerVitalHUDWidget.h"
 
@@ -222,13 +223,11 @@ bool FVitalHudAutomationTest::RunTest(const FString&)
 
 	// 3.1 Enemy UI binding, visual update and unbinding
 	{
-		AEnemyCharacter* Enemy = World->SpawnActor<AEnemyCharacter>();
+		AEnemyCharacter* Enemy = FCombatAutomationFixture::SpawnPassiveEnemy(World);
 		TestNotNull(TEXT("Enemy character spawned in test world"), Enemy);
 
 		if (Enemy)
 		{
-			Enemy->DispatchBeginPlay();
-
 			// Headless environment: GetUserWidgetObject() is null, weak reference is safely null
 			TestNull(TEXT("Headless enemy widget instance is safely null"), Enemy->GetTestHealthBarWidget());
 			TestTrue(TEXT("Enemy bound UI health attribute delegates"), Enemy->HasBoundUIHealthDelegates());
@@ -284,22 +283,16 @@ bool FVitalHudAutomationTest::RunTest(const FString&)
 			PC->DispatchBeginPlay();
 		}
 
-		APlayerCharacter* PlayerPawn1 = World->SpawnActor<APlayerCharacter>();
+		APlayerCharacter* PlayerPawn1 = FCombatAutomationFixture::SpawnPlayer(World);
 		TestNotNull(TEXT("Player Pawn 1 spawned in test world"), PlayerPawn1);
-		if (PlayerPawn1)
-		{
-			PlayerPawn1->DispatchBeginPlay();
-		}
 
-		APlayerCharacter* PlayerPawn2 = World->SpawnActor<APlayerCharacter>();
+		APlayerCharacter* PlayerPawn2 = FCombatAutomationFixture::SpawnPlayer(World);
 		TestNotNull(TEXT("Player Pawn 2 spawned in test world"), PlayerPawn2);
-		if (PlayerPawn2)
-		{
-			PlayerPawn2->DispatchBeginPlay();
-		}
 
 		if (PC && PlayerPawn1 && PlayerPawn2)
 		{
+			TestTrue(TEXT("Player Pawn 1 fixture applied its persistent Stamina regen effect"), PlayerPawn1->HasTestStaminaRegenEffectApplied());
+			TestTrue(TEXT("Player Pawn 2 fixture applied its persistent Stamina regen effect"), PlayerPawn2->HasTestStaminaRegenEffectApplied());
 			PC->SetTestPlayerVitalHUDClass(UPlayerVitalHUDWidget::StaticClass());
 
 			// EnsureHUDCreated idempotency

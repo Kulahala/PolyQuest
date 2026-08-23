@@ -270,6 +270,13 @@ public:
 	FORCEINLINE UCameraComponent* GetFollowCamera() const { return FollowCamera; }
 
 #if WITH_DEV_AUTOMATION_TESTS
+	/** Configures all authored startup inputs as one pre-BeginPlay native fixture operation. */
+	void ConfigureTestStartupFixture(
+		UCombatLoadoutDefinition* InInitialCombatLoadout,
+		UMeleeWeaponDefinition* InDefaultEquippedWeapon,
+		TSubclassOf<UGameplayEffect> InStaminaRegenGameplayEffectClass);
+	bool HasTestStaminaRegenEffectApplied() const { return bStaminaRegenEffectApplied; }
+
 	void SetTestLockedTarget(AEnemyCharacter* InTarget) { SetLockedTarget(InTarget); }
 	void SetTestCurrentMoveInput(const FVector2D& InInput) { CurrentMoveInput = InInput; }
 	bool TriggerTestAcquireLockOnTarget() { return TryAcquireLockOnTarget(); }

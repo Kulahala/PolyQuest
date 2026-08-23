@@ -161,6 +161,18 @@ void APlayerCharacter::BeginPlay()
 	}
 }
 
+#if WITH_DEV_AUTOMATION_TESTS
+void APlayerCharacter::ConfigureTestStartupFixture(
+	UCombatLoadoutDefinition* InInitialCombatLoadout,
+	UMeleeWeaponDefinition* InDefaultEquippedWeapon,
+	TSubclassOf<UGameplayEffect> InStaminaRegenGameplayEffectClass)
+{
+	InitialCombatLoadout = InInitialCombatLoadout;
+	DefaultEquippedWeapon = InDefaultEquippedWeapon;
+	StaminaRegenGameplayEffectClass = InStaminaRegenGameplayEffectClass;
+}
+#endif
+
 void APlayerCharacter::PossessedBy(AController* NewController)
 {
 	Super::PossessedBy(NewController);

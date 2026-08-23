@@ -32,6 +32,7 @@
 #include "GameFramework/ProjectileMovementComponent.h"
 #include "GameplayEffect.h"
 #include "GameplayTagContainer.h"
+#include "Tests/CombatAutomationFixture.h"
 #include "Tests/TestProjectileDamageGE.h"
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FProjectileLifecycleAutomationTest, "PolyQuest.Projectile.Lifecycle", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
@@ -309,8 +310,8 @@ bool FProjectileLifecycleAutomationTest::RunTest(const FString& Parameters)
 	// SECTION 4: FCombatProjectileHitResolver GAS Delivery & Observable Effect
 	// -------------------------------------------------------------------------
 	{
-		APlayerCharacter* PlayerSource = World->SpawnActor<APlayerCharacter>();
-		AEnemyCharacter* EnemyTarget = World->SpawnActor<AEnemyCharacter>();
+		APlayerCharacter* PlayerSource = FCombatAutomationFixture::SpawnPlayer(World);
+		AEnemyCharacter* EnemyTarget = FCombatAutomationFixture::SpawnPassiveEnemy(World);
 		TestNotNull(TEXT("Player source spawned"), PlayerSource);
 		TestNotNull(TEXT("Enemy target spawned"), EnemyTarget);
 
@@ -320,9 +321,6 @@ bool FProjectileLifecycleAutomationTest::RunTest(const FString& Parameters)
 			EnemyTarget->SetActorLocation(FVector(200.0f, 0.0f, 50.0f));
 			PlayerSource->SetTestCombatTeamTag(TagTeamPlayer);
 			EnemyTarget->SetTestCombatTeamTag(TagTeamEnemy);
-			PlayerSource->DispatchBeginPlay();
-			EnemyTarget->DispatchBeginPlay();
-
 			UAbilitySystemComponent* SourceASC = PlayerSource->GetAbilitySystemComponent();
 			UAbilitySystemComponent* TargetASC = EnemyTarget->GetAbilitySystemComponent();
 
@@ -362,11 +360,10 @@ bool FProjectileLifecycleAutomationTest::RunTest(const FString& Parameters)
 			TestFalse(TEXT("HitResolver rejects hit against self"), FCombatProjectileHitResolver::TryResolveHit(SelfRequest));
 
 			// 4.3 Same-team hit rejection & projectile ignore behavior
-			APlayerCharacter* FriendlyPlayer = World->SpawnActor<APlayerCharacter>();
+			APlayerCharacter* FriendlyPlayer = FCombatAutomationFixture::SpawnPlayer(World);
 			if (FriendlyPlayer)
 			{
 				FriendlyPlayer->SetTestCombatTeamTag(TagTeamPlayer);
-				FriendlyPlayer->DispatchBeginPlay();
 				FCombatProjectileHitRequest TeamRequest = ValidRequest;
 				TeamRequest.HitResult = FHitResult(FriendlyPlayer, nullptr, FriendlyPlayer->GetActorLocation(), FVector::UpVector);
 				TestFalse(TEXT("HitResolver rejects hit against same team"), FCombatProjectileHitResolver::TryResolveHit(TeamRequest));
@@ -421,12 +418,11 @@ bool FProjectileLifecycleAutomationTest::RunTest(const FString& Parameters)
 			SourceASC->RemoveLooseGameplayTag(TagDead);
 
 			// 4.7 End-to-end projectile overlap hit delivery relies on internal GE snapshot, NOT post-launch Definition
-			AEnemyCharacter* FreshEnemyTarget = World->SpawnActor<AEnemyCharacter>();
+			AEnemyCharacter* FreshEnemyTarget = FCombatAutomationFixture::SpawnPassiveEnemy(World);
 			if (FreshEnemyTarget)
 			{
 				FreshEnemyTarget->SetActorLocation(FVector(200.0f, 0.0f, 50.0f));
 				FreshEnemyTarget->SetTestCombatTeamTag(TagTeamEnemy);
-				FreshEnemyTarget->DispatchBeginPlay();
 
 				UAbilitySystemComponent* FreshTargetASC = FreshEnemyTarget->GetAbilitySystemComponent();
 				TestNotNull(TEXT("Fresh enemy target ASC exists"), FreshTargetASC);
@@ -486,8 +482,8 @@ bool FProjectileLifecycleAutomationTest::RunTest(const FString& Parameters)
 	// SECTION 5: UBowDrawFireAbility Lifecycle, Identity Gate & Event Validation
 	// -------------------------------------------------------------------------
 	{
-		APlayerCharacter* Player = World->SpawnActor<APlayerCharacter>();
-		APlayerCharacter* OtherActor = World->SpawnActor<APlayerCharacter>();
+		APlayerCharacter* Player = FCombatAutomationFixture::SpawnPlayer(World);
+		APlayerCharacter* OtherActor = FCombatAutomationFixture::SpawnPlayer(World);
 		TestNotNull(TEXT("Player character spawned for ability tests"), Player);
 		TestNotNull(TEXT("Other character spawned for ability tests"), OtherActor);
 
@@ -495,8 +491,6 @@ bool FProjectileLifecycleAutomationTest::RunTest(const FString& Parameters)
 		{
 			Player->SetTestCombatTeamTag(TagTeamPlayer);
 			OtherActor->SetTestCombatTeamTag(TagTeamPlayer);
-			Player->DispatchBeginPlay();
-			OtherActor->DispatchBeginPlay();
 			UAbilitySystemComponent* ASC = Player->GetAbilitySystemComponent();
 			TestNotNull(TEXT("Player ASC exists"), ASC);
 
@@ -694,10 +688,10 @@ bool FProjectileLifecycleAutomationTest::RunTest(const FString& Parameters)
 	// SECTION 6: Bow Release Locked-Target Preference
 	// -------------------------------------------------------------------------
 	{
-		APlayerCharacter* Player = World->SpawnActor<APlayerCharacter>(APlayerCharacter::StaticClass(), FVector(0.0f, 0.0f, 100.0f), FRotator::ZeroRotator);
+		APlayerCharacter* Player = FCombatAutomationFixture::SpawnPlayer(World, FTransform(FRotator::ZeroRotator, FVector(0.0f, 0.0f, 100.0f)));
 		APlayerController* PlayerController = World->SpawnActor<APlayerController>();
-		AEnemyCharacter* LockedEnemy = World->SpawnActor<AEnemyCharacter>(AEnemyCharacter::StaticClass(), FVector(600.0f, 600.0f, 100.0f), FRotator::ZeroRotator);
-		AEnemyCharacter* AutomaticEnemy = World->SpawnActor<AEnemyCharacter>(AEnemyCharacter::StaticClass(), FVector(800.0f, 0.0f, 100.0f), FRotator::ZeroRotator);
+		AEnemyCharacter* LockedEnemy = FCombatAutomationFixture::SpawnPassiveEnemy(World, FTransform(FRotator::ZeroRotator, FVector(600.0f, 600.0f, 100.0f)));
+		AEnemyCharacter* AutomaticEnemy = FCombatAutomationFixture::SpawnPassiveEnemy(World, FTransform(FRotator::ZeroRotator, FVector(800.0f, 0.0f, 100.0f)));
 		TestNotNull(TEXT("B3 Player spawned"), Player);
 		TestNotNull(TEXT("B3 PlayerController spawned"), PlayerController);
 		TestNotNull(TEXT("B3 locked Enemy spawned"), LockedEnemy);
@@ -718,9 +712,7 @@ bool FProjectileLifecycleAutomationTest::RunTest(const FString& Parameters)
 			Player->SetTestCombatTeamTag(TagTeamPlayer);
 			LockedEnemy->SetTestCombatTeamTag(TagTeamEnemy);
 			AutomaticEnemy->SetTestCombatTeamTag(TagTeamEnemy);
-			Player->DispatchBeginPlay();
-			LockedEnemy->DispatchBeginPlay();
-			AutomaticEnemy->DispatchBeginPlay();
+			TestTrue(TEXT("B3 Player fixture applied its persistent Stamina regen effect"), Player->HasTestStaminaRegenEffectApplied());
 			PlayerController->Possess(Player);
 
 			UAbilitySystemComponent* PlayerASC = Player->GetAbilitySystemComponent();
