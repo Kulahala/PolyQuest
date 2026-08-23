@@ -29,4 +29,5 @@ public:
 	static int32 FindNearestToCursor(const TArray<FPlayerLockOnCandidate>& Candidates, const FVector2D& CursorScreenPosition);
 	static int32 FindTargetIndex(const TArray<FPlayerLockOnCandidate>& Candidates, const AEnemyCharacter* TargetActor);
 	static int32 FindCycledTargetIndex(const TArray<FPlayerLockOnCandidate>& Candidates, const AEnemyCharacter* CurrentTarget, int32 Direction);
+	static int32 FindClockwiseSuccessorIndex(const TArray<FPlayerLockOnCandidate>& Candidates, const FPlayerLockOnCandidate& AnchorCandidate);
 };

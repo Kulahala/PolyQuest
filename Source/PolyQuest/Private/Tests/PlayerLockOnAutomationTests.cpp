@@ -6,6 +6,7 @@
 
 #include <limits>
 
+#include "Camera/CameraComponent.h"
 #include "AbilitySystemComponent.h"
 #include "Character/Enemy/EnemyCharacter.h"
 #include "Character/Player/PlayerCharacter.h"
@@ -13,7 +14,9 @@
 #include "Components/Image.h"
 #include "Engine/Engine.h"
 #include "Engine/World.h"
+#include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/PlayerController.h"
+#include "GameFramework/RootMotionSource.h"
 #include "GameFramework/SpringArmComponent.h"
 #include "GameplayTagContainer.h"
 #include "UI/EnemyHealthBarWidget.h"
@@ -122,6 +125,11 @@ bool FPlayerLockOnAutomationTest::RunTest(const FString&)
 		TestEqual(TEXT("Positive cycle advances clockwise"), FPlayerLockOnTargeting::FindCycledTargetIndex(Candidates, EnemyRight, 1), 1);
 		TestEqual(TEXT("Negative cycle advances counter-clockwise"), FPlayerLockOnTargeting::FindCycledTargetIndex(Candidates, EnemyRight, -1), 3);
 		TestEqual(TEXT("No lock has no cycle destination"), FPlayerLockOnTargeting::FindCycledTargetIndex(Candidates, nullptr, 1), INDEX_NONE);
+		TestEqual(TEXT("Death successor advances from its cached clockwise anchor"), FPlayerLockOnTargeting::FindClockwiseSuccessorIndex(Candidates, Candidates[0]), 1);
+		TestEqual(TEXT("Death successor wraps after the final clockwise candidate"), FPlayerLockOnTargeting::FindClockwiseSuccessorIndex(Candidates, Candidates[3]), 0);
+		FPlayerLockOnCandidate InvalidDeathAnchor = Candidates[0];
+		InvalidDeathAnchor.ClockwiseAngleRadians = std::numeric_limits<float>::quiet_NaN();
+		TestEqual(TEXT("Death successor rejects a non-finite cached anchor"), FPlayerLockOnTargeting::FindClockwiseSuccessorIndex(Candidates, InvalidDeathAnchor), INDEX_NONE);
 
 		TestEqual(TEXT("Mouse-nearest selection chooses closest valid candidate"), FPlayerLockOnTargeting::FindNearestToCursor(Candidates, FVector2D(970.0f, 720.0f)), 1);
 
@@ -131,6 +139,8 @@ bool FPlayerLockOnAutomationTest::RunTest(const FString&)
 		FPlayerLockOnTargeting::SortClockwise(TieCandidates);
 		TestEqual(TEXT("Exact cycle tie falls back to stable key"), TieCandidates[0].TargetActor.Get(), EnemyRight);
 		TestEqual(TEXT("Exact cursor-distance tie falls back to stable key"), FPlayerLockOnTargeting::FindNearestToCursor(TieCandidates, FVector2D(960.0f, 540.0f)), 0);
+		TestEqual(TEXT("Death successor honors stable-key ordering for an equal-angle anchor"), FPlayerLockOnTargeting::FindClockwiseSuccessorIndex(TieCandidates, TieCandidates[0]), 1);
+		TestEqual(TEXT("Death successor rejects an empty candidate list"), FPlayerLockOnTargeting::FindClockwiseSuccessorIndex(TArray<FPlayerLockOnCandidate>(), TieCandidates[0]), INDEX_NONE);
 	}
 
 	// -------------------------------------------------------------------------
@@ -150,14 +160,19 @@ bool FPlayerLockOnAutomationTest::RunTest(const FString&)
 
 			UEnemyHealthBarWidget* RightWidget = NewObject<UEnemyHealthBarWidget>(EnemyRight);
 			UEnemyHealthBarWidget* BottomWidget = NewObject<UEnemyHealthBarWidget>(EnemyBottom);
+			UEnemyHealthBarWidget* TieWidget = NewObject<UEnemyHealthBarWidget>(EnemyTie);
 			UImage* RightHighlight = NewObject<UImage>(RightWidget);
 			UImage* BottomHighlight = NewObject<UImage>(BottomWidget);
+			UImage* TieHighlight = NewObject<UImage>(TieWidget);
 			RightHighlight->SetVisibility(ESlateVisibility::Collapsed);
 			BottomHighlight->SetVisibility(ESlateVisibility::Collapsed);
+			TieHighlight->SetVisibility(ESlateVisibility::Collapsed);
 			RightWidget->SetTestTargetHighlightImage(RightHighlight);
 			BottomWidget->SetTestTargetHighlightImage(BottomHighlight);
+			TieWidget->SetTestTargetHighlightImage(TieHighlight);
 			EnemyRight->SetTestHealthBarWidget(RightWidget);
 			EnemyBottom->SetTestHealthBarWidget(BottomWidget);
+			EnemyTie->SetTestHealthBarWidget(TieWidget);
 
 			Player->SetTestLockOnProjectionHook([](const FVector& WorldPoint, FVector2D& OutScreenPosition, FVector2D& OutViewportSize)
 			{
@@ -206,19 +221,53 @@ bool FPlayerLockOnAutomationTest::RunTest(const FString&)
 
 			const FGameplayTag DeadTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Status.Dead")), false);
 			const FGameplayTag InvulnerableTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Status.Invulnerable")), false);
-			if (UAbilitySystemComponent* BottomAsc = EnemyBottom->GetAbilitySystemComponent())
+			Player->SetTestLockedTarget(EnemyTie);
+			TestTrue(TEXT("The death handoff fixture caches the current target screen candidate"), Player->TriggerTestValidateCurrentLockedTarget());
+			if (UAbilitySystemComponent* TieAsc = EnemyTie->GetAbilitySystemComponent())
 			{
-				BottomAsc->AddLooseGameplayTag(DeadTag);
-				TestFalse(TEXT("A dead target clears without replacing it"), Player->TriggerTestValidateCurrentLockedTarget());
-				TestNull(TEXT("Dead target does not auto-retarget to another candidate"), Player->GetLockedTarget());
-				TestEqual(TEXT("Dead target bar highlight is cleared"), BottomHighlight->GetVisibility(), ESlateVisibility::Collapsed);
-				BottomAsc->RemoveLooseGameplayTag(DeadTag);
+				TieAsc->AddLooseGameplayTag(DeadTag);
+				TestTrue(TEXT("A dead target completes one legal replacement attempt"), Player->TriggerTestValidateCurrentLockedTarget());
+				TestEqual(TEXT("A dead target hands off to the next clockwise candidate"), Player->GetLockedTarget(), EnemyBottom);
+				TestEqual(TEXT("Dead target bar highlight is cleared during handoff"), TieHighlight->GetVisibility(), ESlateVisibility::Collapsed);
+				TestEqual(TEXT("Death handoff highlights the replacement target"), BottomHighlight->GetVisibility(), ESlateVisibility::HitTestInvisible);
+				TestTrue(TEXT("The replacement remains locked on later validation without a second handoff"), Player->TriggerTestValidateCurrentLockedTarget());
+				TestEqual(TEXT("Later validation retains the single death replacement"), Player->GetLockedTarget(), EnemyBottom);
+				TieAsc->RemoveLooseGameplayTag(DeadTag);
 
 				Player->SetTestLockedTarget(EnemyBottom);
-				BottomAsc->AddLooseGameplayTag(InvulnerableTag);
-				TestFalse(TEXT("An invulnerable target clears without replacing it"), Player->TriggerTestValidateCurrentLockedTarget());
-				TestNull(TEXT("Invulnerable target does not auto-retarget"), Player->GetLockedTarget());
-				BottomAsc->RemoveLooseGameplayTag(InvulnerableTag);
+				if (UAbilitySystemComponent* BottomAsc = EnemyBottom->GetAbilitySystemComponent())
+				{
+					BottomAsc->AddLooseGameplayTag(InvulnerableTag);
+					TestFalse(TEXT("An invulnerable target clears without replacing it"), Player->TriggerTestValidateCurrentLockedTarget());
+					TestNull(TEXT("Invulnerable target does not auto-retarget"), Player->GetLockedTarget());
+					BottomAsc->RemoveLooseGameplayTag(InvulnerableTag);
+				}
+			}
+
+			if (UAbilitySystemComponent* TopAsc = EnemyTop ? EnemyTop->GetAbilitySystemComponent() : nullptr)
+			{
+				for (AEnemyCharacter* OtherCandidate : { EnemyRight, EnemyBottom, EnemyLeft, EnemyTie })
+				{
+					if (UAbilitySystemComponent* OtherAsc = OtherCandidate ? OtherCandidate->GetAbilitySystemComponent() : nullptr)
+					{
+						OtherAsc->AddLooseGameplayTag(InvulnerableTag);
+					}
+				}
+
+				Player->SetTestLockedTarget(EnemyTop);
+				TestTrue(TEXT("The no-candidate death fixture caches its locked target"), Player->TriggerTestValidateCurrentLockedTarget());
+				TopAsc->AddLooseGameplayTag(DeadTag);
+				TestFalse(TEXT("A dead target clears when no valid clockwise replacement exists"), Player->TriggerTestValidateCurrentLockedTarget());
+				TestNull(TEXT("No-candidate death handoff leaves no lock"), Player->GetLockedTarget());
+				TopAsc->RemoveLooseGameplayTag(DeadTag);
+
+				for (AEnemyCharacter* OtherCandidate : { EnemyRight, EnemyBottom, EnemyLeft, EnemyTie })
+				{
+					if (UAbilitySystemComponent* OtherAsc = OtherCandidate ? OtherCandidate->GetAbilitySystemComponent() : nullptr)
+					{
+						OtherAsc->RemoveLooseGameplayTag(InvulnerableTag);
+					}
+				}
 			}
 
 			Player->SetTestLockedTarget(EnemyRight);
@@ -238,6 +287,85 @@ bool FPlayerLockOnAutomationTest::RunTest(const FString&)
 				OutViewportSize = FVector2D(1920.0f, 1080.0f);
 				return true;
 			});
+			Player->SetTestLockedTarget(EnemyRight);
+			if (UCharacterMovementComponent* MovementComponent = Player->GetCharacterMovement())
+			{
+				MovementComponent->SetMovementMode(MOVE_Walking);
+				Player->SetActorRotation(FRotator(0.0f, 90.0f, 0.0f));
+				Player->Tick(0.1f);
+				TestTrue(TEXT("Locked ordinary locomotion uses the 800 degree-per-second default RotationRate"),
+					FMath::IsNearlyEqual(Player->GetActorRotation().Yaw, 10.0f, 0.01f));
+				TestFalse(TEXT("Locked ordinary locomotion disables movement-facing rotation"), MovementComponent->bOrientRotationToMovement);
+
+				if (UAbilitySystemComponent* PlayerAsc = Player->GetAbilitySystemComponent())
+				{
+					const FGameplayTag SprintTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Movement.Sprinting")), false);
+					const FGameplayTag GuardTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Action.Guarding")), false);
+					const FGameplayTag ParryTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Action.Parrying")), false);
+					const FGameplayTag AttackingTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Action.Attacking")), false);
+					const FGameplayTag DodgeTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Action.Dodging")), false);
+					const FGameplayTag HitReactingTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Action.HitReacting")), false);
+					const FGameplayTag SmallHitReactingTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Action.SmallHitReacting")), false);
+
+					PlayerAsc->AddLooseGameplayTag(GuardTag);
+					Player->SetActorRotation(FRotator(0.0f, 90.0f, 0.0f));
+					Player->Tick(0.2f);
+					TestTrue(TEXT("Locked Guard continuously faces the target"), FMath::IsNearlyZero(FMath::FindDeltaAngleDegrees(Player->GetActorRotation().Yaw, 0.0f)));
+					PlayerAsc->RemoveLooseGameplayTag(GuardTag);
+
+					PlayerAsc->AddLooseGameplayTag(ParryTag);
+					MovementComponent->SetMovementMode(MOVE_None);
+					Player->SetActorRotation(FRotator(0.0f, 90.0f, 0.0f));
+					Player->Tick(0.2f);
+					TestTrue(TEXT("Locked Parry faces the target during its MOVE_None lock"), FMath::IsNearlyZero(FMath::FindDeltaAngleDegrees(Player->GetActorRotation().Yaw, 0.0f)));
+					MovementComponent->SetMovementMode(MOVE_Walking);
+					PlayerAsc->RemoveLooseGameplayTag(ParryTag);
+
+					PlayerAsc->AddLooseGameplayTag(SprintTag);
+					Player->SetActorRotation(FRotator(0.0f, 90.0f, 0.0f));
+					Player->Tick(0.2f);
+					TestTrue(TEXT("Locked Sprint preserves free-run facing"), FMath::IsNearlyZero(FMath::FindDeltaAngleDegrees(Player->GetActorRotation().Yaw, 90.0f)));
+					TestTrue(TEXT("Locked Sprint restores movement-facing rotation"), MovementComponent->bOrientRotationToMovement);
+					PlayerAsc->RemoveLooseGameplayTag(SprintTag);
+					Player->Tick(0.2f);
+					TestTrue(TEXT("Lock-facing resumes after Sprint ends"), FMath::IsNearlyZero(FMath::FindDeltaAngleDegrees(Player->GetActorRotation().Yaw, 0.0f)));
+
+					for (const FGameplayTag& YawOwnerTag : { AttackingTag, DodgeTag, HitReactingTag, SmallHitReactingTag })
+					{
+						PlayerAsc->AddLooseGameplayTag(YawOwnerTag);
+						Player->SetActorRotation(FRotator(0.0f, 90.0f, 0.0f));
+						Player->Tick(0.2f);
+						TestTrue(*FString::Printf(TEXT("Lock Tick does not overwrite %s yaw ownership"), *YawOwnerTag.ToString()),
+							FMath::IsNearlyZero(FMath::FindDeltaAngleDegrees(Player->GetActorRotation().Yaw, 90.0f)));
+						PlayerAsc->RemoveLooseGameplayTag(YawOwnerTag);
+					}
+				}
+
+				TSharedPtr<FRootMotionSource_ConstantForce> RootMotionSource = MakeShared<FRootMotionSource_ConstantForce>();
+				RootMotionSource->InstanceName = TEXT("LockOnAutomationRootMotion");
+				RootMotionSource->Priority = 500;
+				RootMotionSource->Duration = 1.0f;
+				RootMotionSource->AccumulateMode = ERootMotionAccumulateMode::Override;
+				RootMotionSource->Force = FVector(100.0f, 0.0f, 0.0f);
+				const uint16 RootMotionSourceId = MovementComponent->ApplyRootMotionSource(RootMotionSource);
+				TestTrue(TEXT("Transient Root Motion source activates for lock-facing protection"), Player->HasAnyRootMotion());
+				Player->SetActorRotation(FRotator(0.0f, 90.0f, 0.0f));
+				Player->Tick(0.2f);
+				TestTrue(TEXT("Lock Tick does not overwrite active Root Motion yaw"), FMath::IsNearlyZero(FMath::FindDeltaAngleDegrees(Player->GetActorRotation().Yaw, 90.0f)));
+				MovementComponent->RemoveRootMotionSourceByID(RootMotionSourceId);
+
+				UObject* BowRequester = Player->GetFollowCamera();
+				if (TestNotNull(TEXT("Player provides a concrete Bow requester fixture"), BowRequester))
+				{
+					TestTrue(TEXT("Bow requester registers for lock-facing regression coverage"), Player->RegisterBowAimRequester(BowRequester));
+					Player->Tick(0.0f);
+					const float BowYawBeforeLockTick = Player->GetActorRotation().Yaw;
+					Player->Tick(0.2f);
+					TestTrue(TEXT("Lock Tick does not overwrite active Bow aiming yaw"), FMath::IsNearlyZero(FMath::FindDeltaAngleDegrees(Player->GetActorRotation().Yaw, BowYawBeforeLockTick)));
+					Player->UnregisterBowAimRequester(BowRequester);
+				}
+			}
+
 			Player->SetTestLockedTarget(EnemyRight);
 			if (UAbilitySystemComponent* PlayerAsc = Player->GetAbilitySystemComponent())
 			{

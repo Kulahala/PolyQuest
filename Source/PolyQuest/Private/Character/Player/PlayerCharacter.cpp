@@ -63,6 +63,8 @@ APlayerCharacter::APlayerCharacter()
 	DodgingStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Action.Dodging")), false);
 	GuardingStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Action.Guarding")), false);
 	ParryingStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Action.Parrying")), false);
+	HitReactingStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Action.HitReacting")), false);
+	SmallHitReactingStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Action.SmallHitReacting")), false);
 	DeadStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Status.Dead")), false);
 	StunnedStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Status.Stunned")), false);
 	GuardAbilityTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Defense.Guard")), false);
@@ -78,7 +80,7 @@ APlayerCharacter::APlayerCharacter()
 	bUseControllerRotationRoll = false;
 
 	GetCharacterMovement()->bOrientRotationToMovement = true;
-	GetCharacterMovement()->RotationRate = FRotator(0.0f, 500.0f, 0.0f);
+	GetCharacterMovement()->RotationRate = FRotator(0.0f, 800.0f, 0.0f);
 	GetCharacterMovement()->JumpZVelocity = 500.f;
 	GetCharacterMovement()->AirControl = 0.35f;
 	GetCharacterMovement()->MaxWalkSpeed = 500.f;
@@ -1052,19 +1054,28 @@ void APlayerCharacter::Tick(float DeltaSeconds)
 	{
 		// A destroyed target can leave a stale weak pointer without a valid actor to unhighlight.
 		LockedTarget.Reset();
+		LastValidLockedTargetCandidate.Reset();
 	}
 
 	if (ActiveBowAimRequester.IsValid())
 	{
 		UpdateBowAimFacing();
 	}
+
+	UpdateActionFacingRotationMode();
+	UpdateLockedLocomotionFacing(DeltaSeconds);
 }
 
 void APlayerCharacter::HandleLockOnStarted(const FInputActionValue&)
 {
-	if (ValidateCurrentLockedTarget())
+	const ELockOnValidationResult ValidationResult = ValidateCurrentLockedTarget();
+	if (ValidationResult == ELockOnValidationResult::Valid)
 	{
 		ClearLockedTarget();
+		return;
+	}
+	if (ValidationResult == ELockOnValidationResult::RetargetedAfterDeath)
+	{
 		return;
 	}
 
@@ -1074,7 +1085,8 @@ void APlayerCharacter::HandleLockOnStarted(const FInputActionValue&)
 void APlayerCharacter::HandleTargetCycleTriggered(const FInputActionValue& Value)
 {
 	const float AxisValue = Value.Get<float>();
-	if (!FMath::IsFinite(AxisValue) || FMath::IsNearlyZero(AxisValue) || !ValidateCurrentLockedTarget())
+	if (!FMath::IsFinite(AxisValue) || FMath::IsNearlyZero(AxisValue)
+		|| ValidateCurrentLockedTarget() != ELockOnValidationResult::Valid)
 	{
 		return;
 	}
@@ -1095,7 +1107,7 @@ void APlayerCharacter::HandleTargetCycleTriggered(const FInputActionValue& Value
 		return;
 	}
 
-	SetLockedTarget(Candidates[NextIndex].TargetActor.Get());
+	SetLockedTarget(Candidates[NextIndex].TargetActor.Get(), &Candidates[NextIndex]);
 }
 
 bool APlayerCharacter::TryAcquireLockOnTarget()
@@ -1130,7 +1142,7 @@ bool APlayerCharacter::TryAcquireLockOnTarget()
 		return false;
 	}
 
-	SetLockedTarget(Candidates[SelectedIndex].TargetActor.Get());
+	SetLockedTarget(Candidates[SelectedIndex].TargetActor.Get(), &Candidates[SelectedIndex]);
 	return LockedTarget.IsValid();
 }
 
@@ -1255,27 +1267,103 @@ bool APlayerCharacter::TryProjectLockOnWorldPoint(
 	return FPlayerLockOnTargeting::IsStrictlyWithinViewport(OutScreenPosition, OutViewportSize);
 }
 
-bool APlayerCharacter::ValidateCurrentLockedTarget()
+APlayerCharacter::ELockOnValidationResult APlayerCharacter::ValidateCurrentLockedTarget()
 {
 	AEnemyCharacter* CurrentTarget = LockedTarget.Get();
 	const APlayerController* PlayerController = Cast<APlayerController>(GetController());
 	const UAbilitySystemComponent* SourceASC = GetAbilitySystemComponent();
-	if (!CurrentTarget || !PlayerController || !SourceASC
-		|| !FCombatProjectileTargeting::IsValidTargetCandidate(this, SourceASC, CurrentTarget))
+	if (!CurrentTarget || !PlayerController || !SourceASC)
 	{
 		ClearLockedTarget();
+		return ELockOnValidationResult::Cleared;
+	}
+	if (DeadStateTag.IsValid() && SourceASC->HasMatchingGameplayTag(DeadStateTag))
+	{
+		ClearLockedTarget();
+		return ELockOnValidationResult::Cleared;
+	}
+
+	if (CurrentTarget->IsDead())
+	{
+		return TryRetargetAfterLockedTargetDeath(CurrentTarget)
+			? ELockOnValidationResult::RetargetedAfterDeath
+			: ELockOnValidationResult::Cleared;
+	}
+
+	if (!FCombatProjectileTargeting::IsValidTargetCandidate(this, SourceASC, CurrentTarget)
+		|| !CacheCurrentLockedTargetCandidate())
+	{
+		ClearLockedTarget();
+		return ELockOnValidationResult::Cleared;
+	}
+
+	return ELockOnValidationResult::Valid;
+}
+
+bool APlayerCharacter::CacheCurrentLockedTargetCandidate()
+{
+	AEnemyCharacter* CurrentTarget = LockedTarget.Get();
+	const APlayerController* PlayerController = Cast<APlayerController>(GetController());
+	if (!CurrentTarget || !PlayerController)
+	{
 		return false;
 	}
 
-	FVector2D ScreenPosition = FVector2D::ZeroVector;
-	FVector2D ViewportSize = FVector2D::ZeroVector;
-	if (!TryProjectLockOnWorldPoint(PlayerController, FCombatProjectileTargeting::GetTargetAimPoint(CurrentTarget), ScreenPosition, ViewportSize))
+	FVector2D PlayerScreenPosition = FVector2D::ZeroVector;
+	FVector2D PlayerViewportSize = FVector2D::ZeroVector;
+	FVector2D TargetScreenPosition = FVector2D::ZeroVector;
+	FVector2D TargetViewportSize = FVector2D::ZeroVector;
+	if (!TryProjectLockOnWorldPoint(PlayerController, FCombatProjectileTargeting::GetTargetAimPoint(this), PlayerScreenPosition, PlayerViewportSize)
+		|| !TryProjectLockOnWorldPoint(PlayerController, FCombatProjectileTargeting::GetTargetAimPoint(CurrentTarget), TargetScreenPosition, TargetViewportSize))
 	{
-		ClearLockedTarget();
 		return false;
 	}
 
+	float ClockwiseAngleRadians = 0.0f;
+	const float PlayerScreenDistanceSquared = FVector2D::DistSquared(TargetScreenPosition, PlayerScreenPosition);
+	if (!FPlayerLockOnTargeting::TryCalculateClockwiseAngle(PlayerScreenPosition, TargetScreenPosition, ClockwiseAngleRadians)
+		|| !FMath::IsFinite(PlayerScreenDistanceSquared))
+	{
+		return false;
+	}
+
+	FPlayerLockOnCandidate Candidate;
+	Candidate.TargetActor = CurrentTarget;
+	Candidate.ScreenPosition = TargetScreenPosition;
+	Candidate.ClockwiseAngleRadians = ClockwiseAngleRadians;
+	Candidate.PlayerScreenDistanceSquared = PlayerScreenDistanceSquared;
+	Candidate.StableKey = CurrentTarget->GetPathName();
+	LastValidLockedTargetCandidate = MoveTemp(Candidate);
 	return true;
+}
+
+bool APlayerCharacter::TryRetargetAfterLockedTargetDeath(AEnemyCharacter* DeadTarget)
+{
+	if (!DeadTarget || !LastValidLockedTargetCandidate.IsSet()
+		|| LastValidLockedTargetCandidate->TargetActor.Get() != DeadTarget)
+	{
+		ClearLockedTarget();
+		return false;
+	}
+
+	TArray<FPlayerLockOnCandidate> Candidates;
+	FVector2D PlayerScreenPosition = FVector2D::ZeroVector;
+	if (!BuildLockOnCandidates(Candidates, PlayerScreenPosition))
+	{
+		ClearLockedTarget();
+		return false;
+	}
+
+	FPlayerLockOnTargeting::SortClockwise(Candidates);
+	const int32 NextIndex = FPlayerLockOnTargeting::FindClockwiseSuccessorIndex(Candidates, LastValidLockedTargetCandidate.GetValue());
+	if (NextIndex == INDEX_NONE)
+	{
+		ClearLockedTarget();
+		return false;
+	}
+
+	SetLockedTarget(Candidates[NextIndex].TargetActor.Get(), &Candidates[NextIndex]);
+	return LockedTarget.IsValid();
 }
 
 bool APlayerCharacter::TryGetLockedTargetDirection(FVector& OutDirection)
@@ -1283,17 +1371,23 @@ bool APlayerCharacter::TryGetLockedTargetDirection(FVector& OutDirection)
 	OutDirection = FVector::ZeroVector;
 
 #if WITH_DEV_AUTOMATION_TESTS
-	if (!bTestBypassLockOnValidation && !ValidateCurrentLockedTarget())
+	if (!bTestBypassLockOnValidation && ValidateCurrentLockedTarget() == ELockOnValidationResult::Cleared)
 	{
 		return false;
 	}
 #else
-	if (!ValidateCurrentLockedTarget())
+	if (ValidateCurrentLockedTarget() == ELockOnValidationResult::Cleared)
 	{
 		return false;
 	}
 #endif
 
+	return TryGetLockedTargetDirectionUnchecked(OutDirection);
+}
+
+bool APlayerCharacter::TryGetLockedTargetDirectionUnchecked(FVector& OutDirection) const
+{
+	OutDirection = FVector::ZeroVector;
 	const AEnemyCharacter* CurrentTarget = LockedTarget.Get();
 	if (!CurrentTarget)
 	{
@@ -1311,10 +1405,19 @@ bool APlayerCharacter::TryGetLockedTargetDirection(FVector& OutDirection)
 	return !OutDirection.IsNearlyZero();
 }
 
-void APlayerCharacter::SetLockedTarget(AEnemyCharacter* NewTarget)
+void APlayerCharacter::SetLockedTarget(AEnemyCharacter* NewTarget, const FPlayerLockOnCandidate* Candidate)
 {
 	if (LockedTarget.Get() == NewTarget)
 	{
+		if (Candidate && Candidate->TargetActor.Get() == NewTarget)
+		{
+			LastValidLockedTargetCandidate = *Candidate;
+		}
+		else
+		{
+			CacheCurrentLockedTargetCandidate();
+		}
+		UpdateActionFacingRotationMode();
 		return;
 	}
 
@@ -1326,6 +1429,15 @@ void APlayerCharacter::SetLockedTarget(AEnemyCharacter* NewTarget)
 
 	LockedTarget = NewTarget;
 	NewTarget->SetPlayerLockOnHighlighted(true);
+	if (Candidate && Candidate->TargetActor.Get() == NewTarget)
+	{
+		LastValidLockedTargetCandidate = *Candidate;
+	}
+	else
+	{
+		CacheCurrentLockedTargetCandidate();
+	}
+	UpdateActionFacingRotationMode();
 }
 
 void APlayerCharacter::ClearLockedTarget()
@@ -1336,6 +1448,8 @@ void APlayerCharacter::ClearLockedTarget()
 	}
 
 	LockedTarget.Reset();
+	LastValidLockedTargetCandidate.Reset();
+	UpdateActionFacingRotationMode();
 }
 
 bool APlayerCharacter::RegisterBowAimRequester(const UObject* Requester)
@@ -1517,7 +1631,75 @@ void APlayerCharacter::UpdateActionFacingRotationMode()
 
 	const bool bIsAttacking = CharacterASC && AttackingStateTag.IsValid() && CharacterASC->HasMatchingGameplayTag(AttackingStateTag);
 	const bool bIsDodging = CharacterASC && DodgingStateTag.IsValid() && CharacterASC->HasMatchingGameplayTag(DodgingStateTag);
-	MovementComponent->bOrientRotationToMovement = !bIsAttacking && !bIsDodging;
+	const bool bIsHitReacting = CharacterASC && HitReactingStateTag.IsValid() && CharacterASC->HasMatchingGameplayTag(HitReactingStateTag);
+	const bool bIsSmallHitReacting = CharacterASC && SmallHitReactingStateTag.IsValid() && CharacterASC->HasMatchingGameplayTag(SmallHitReactingStateTag);
+	const bool bIsDead = CharacterASC && DeadStateTag.IsValid() && CharacterASC->HasMatchingGameplayTag(DeadStateTag);
+	const bool bIsStunned = CharacterASC && StunnedStateTag.IsValid() && CharacterASC->HasMatchingGameplayTag(StunnedStateTag);
+	const bool bActionOwnsRotation = bIsAttacking || bIsDodging || bIsHitReacting || bIsSmallHitReacting
+		|| bIsDead || bIsStunned || HasActiveBowAimRequester() || HasAnyRootMotion();
+	MovementComponent->bOrientRotationToMovement = !bActionOwnsRotation && !CanApplyLockedLocomotionFacing();
+}
+
+bool APlayerCharacter::CanApplyLockedLocomotionFacing() const
+{
+	const AEnemyCharacter* CurrentTarget = LockedTarget.Get();
+	const UAbilitySystemComponent* CharacterASC = GetAbilitySystemComponent();
+	const UCharacterMovementComponent* MovementComponent = GetCharacterMovement();
+	if (!CurrentTarget || !CharacterASC || !MovementComponent || HasActiveSprint() || HasActiveBowAimRequester() || HasAnyRootMotion())
+	{
+		return false;
+	}
+
+	const bool bIsAttacking = AttackingStateTag.IsValid() && CharacterASC->HasMatchingGameplayTag(AttackingStateTag);
+	const bool bIsDodging = DodgingStateTag.IsValid() && CharacterASC->HasMatchingGameplayTag(DodgingStateTag);
+	const bool bIsHitReacting = HitReactingStateTag.IsValid() && CharacterASC->HasMatchingGameplayTag(HitReactingStateTag);
+	const bool bIsSmallHitReacting = SmallHitReactingStateTag.IsValid() && CharacterASC->HasMatchingGameplayTag(SmallHitReactingStateTag);
+	const bool bIsDead = DeadStateTag.IsValid() && CharacterASC->HasMatchingGameplayTag(DeadStateTag);
+	const bool bIsStunned = StunnedStateTag.IsValid() && CharacterASC->HasMatchingGameplayTag(StunnedStateTag);
+	if (bIsAttacking || bIsDodging || bIsHitReacting || bIsSmallHitReacting || bIsDead || bIsStunned)
+	{
+		return false;
+	}
+
+	const bool bIsParrying = ParryingStateTag.IsValid() && CharacterASC->HasMatchingGameplayTag(ParryingStateTag);
+	if (!MovementComponent->IsMovingOnGround() && !(bIsParrying && MovementComponent->MovementMode == MOVE_None))
+	{
+		return false;
+	}
+
+	FVector LockedDirection = FVector::ZeroVector;
+	return TryGetLockedTargetDirectionUnchecked(LockedDirection);
+}
+
+void APlayerCharacter::UpdateLockedLocomotionFacing(const float DeltaSeconds)
+{
+	if (!FMath::IsFinite(DeltaSeconds) || DeltaSeconds <= 0.0f || !CanApplyLockedLocomotionFacing())
+	{
+		return;
+	}
+
+	const UCharacterMovementComponent* MovementComponent = GetCharacterMovement();
+	FVector LockedDirection = FVector::ZeroVector;
+	if (!MovementComponent || !TryGetLockedTargetDirectionUnchecked(LockedDirection))
+	{
+		return;
+	}
+
+	const float RotationRateDegreesPerSecond = MovementComponent->RotationRate.Yaw;
+	if (!FMath::IsFinite(RotationRateDegreesPerSecond) || RotationRateDegreesPerSecond <= 0.0f)
+	{
+		return;
+	}
+
+	const float MaxYawDelta = RotationRateDegreesPerSecond * DeltaSeconds;
+	const float TargetYaw = LockedDirection.Rotation().Yaw;
+	if (!FMath::IsFinite(MaxYawDelta) || !FMath::IsFinite(TargetYaw))
+	{
+		return;
+	}
+
+	const float NewYaw = FMath::FixedTurn(GetActorRotation().Yaw, TargetYaw, MaxYawDelta);
+	SetActorRotation(FRotator(0.0f, NewYaw, 0.0f));
 }
 
 bool APlayerCharacter::IsMovementInputBlocked() const

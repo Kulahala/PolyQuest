@@ -270,13 +270,20 @@ public:
 	void SetTestLockedTarget(AEnemyCharacter* InTarget) { SetLockedTarget(InTarget); }
 	void SetTestCurrentMoveInput(const FVector2D& InInput) { CurrentMoveInput = InInput; }
 	bool TriggerTestAcquireLockOnTarget() { return TryAcquireLockOnTarget(); }
-	bool TriggerTestValidateCurrentLockedTarget() { return ValidateCurrentLockedTarget(); }
+	bool TriggerTestValidateCurrentLockedTarget() { return ValidateCurrentLockedTarget() != ELockOnValidationResult::Cleared; }
 	void SetTestLockOnProjectionHook(TFunction<bool(const FVector&, FVector2D&, FVector2D&)> InHook) { TestLockOnProjectionHook = MoveTemp(InHook); }
 	void SetTestLockOnCursorPosition(const FVector2D& InPosition) { TestLockOnCursorPosition = InPosition; }
 	void SetTestBypassLockOnValidation(const bool bBypass) { bTestBypassLockOnValidation = bBypass; }
 #endif
 
 private:
+	enum class ELockOnValidationResult : uint8
+	{
+		Valid,
+		RetargetedAfterDeath,
+		Cleared
+	};
+
 	void HandlePrimaryAttackStarted(const FInputActionValue& Value);
 	void HandlePrimaryAttackCompleted(const FInputActionValue& Value);
 	void HandlePrimaryAttackCanceled(const FInputActionValue& Value);
@@ -314,12 +321,17 @@ private:
 	void OnSprintRelevantTagChanged(const FGameplayTag Tag, int32 NewCount);
 	void GetCameraPlanarAxes(FVector& OutForwardDirection, FVector& OutRightDirection) const;
 	void UpdateActionFacingRotationMode();
+	bool CanApplyLockedLocomotionFacing() const;
+	void UpdateLockedLocomotionFacing(float DeltaSeconds);
 	bool TryAcquireLockOnTarget();
 	bool BuildLockOnCandidates(TArray<FPlayerLockOnCandidate>& OutCandidates, FVector2D& OutPlayerScreenPosition) const;
 	bool TryProjectLockOnWorldPoint(const APlayerController* PlayerController, const FVector& WorldPoint, FVector2D& OutScreenPosition, FVector2D& OutViewportSize) const;
-	bool ValidateCurrentLockedTarget();
+	ELockOnValidationResult ValidateCurrentLockedTarget();
+	bool CacheCurrentLockedTargetCandidate();
+	bool TryRetargetAfterLockedTargetDeath(AEnemyCharacter* DeadTarget);
 	bool TryGetLockedTargetDirection(FVector& OutDirection);
-	void SetLockedTarget(AEnemyCharacter* NewTarget);
+	bool TryGetLockedTargetDirectionUnchecked(FVector& OutDirection) const;
+	void SetLockedTarget(AEnemyCharacter* NewTarget, const FPlayerLockOnCandidate* Candidate = nullptr);
 	void ClearLockedTarget();
 
 	bool IsMovementInputBlocked() const;
@@ -347,6 +359,8 @@ private:
 	FGameplayTag DodgingStateTag;
 	FGameplayTag GuardingStateTag;
 	FGameplayTag ParryingStateTag;
+	FGameplayTag HitReactingStateTag;
+	FGameplayTag SmallHitReactingStateTag;
 	FGameplayTag DeadStateTag;
 	FGameplayTag StunnedStateTag;
 	FGameplayTag GuardAbilityTag;
@@ -389,6 +403,7 @@ private:
 	FVector LastValidBowAimDirection = FVector::ZeroVector;
 	bool bHasValidBowAimDirection = false;
 	TWeakObjectPtr<AEnemyCharacter> LockedTarget;
+	TOptional<FPlayerLockOnCandidate> LastValidLockedTargetCandidate;
 
 #if WITH_DEV_AUTOMATION_TESTS
 	TFunction<bool(const FVector&, FVector2D&, FVector2D&)> TestLockOnProjectionHook;

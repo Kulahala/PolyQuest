@@ -25,6 +25,17 @@ namespace
 
 		return Left.StableKey.Compare(Right.StableKey, ESearchCase::CaseSensitive) < 0;
 	}
+
+	bool IsValidClockwiseAnchor(const FPlayerLockOnCandidate& Candidate)
+	{
+		return IsFiniteVector2D(Candidate.ScreenPosition)
+			&& FMath::IsFinite(Candidate.ClockwiseAngleRadians)
+			&& Candidate.ClockwiseAngleRadians >= 0.0f
+			&& Candidate.ClockwiseAngleRadians < 2.0f * PI
+			&& FMath::IsFinite(Candidate.PlayerScreenDistanceSquared)
+			&& Candidate.PlayerScreenDistanceSquared >= 0.0f
+			&& !Candidate.StableKey.IsEmpty();
+	}
 }
 
 bool FPlayerLockOnTargeting::IsStrictlyWithinViewport(const FVector2D& ScreenPosition, const FVector2D& ViewportSize)
@@ -142,4 +153,33 @@ int32 FPlayerLockOnTargeting::FindCycledTargetIndex(
 
 	const int32 Step = Direction > 0 ? 1 : -1;
 	return (CurrentIndex + Step + Candidates.Num()) % Candidates.Num();
+}
+
+int32 FPlayerLockOnTargeting::FindClockwiseSuccessorIndex(
+	const TArray<FPlayerLockOnCandidate>& Candidates,
+	const FPlayerLockOnCandidate& AnchorCandidate)
+{
+	if (Candidates.IsEmpty() || !IsValidClockwiseAnchor(AnchorCandidate))
+	{
+		return INDEX_NONE;
+	}
+
+	for (int32 Index = 0; Index < Candidates.Num(); ++Index)
+	{
+		if (const FPlayerLockOnCandidate& Candidate = Candidates[Index]; Candidate.TargetActor.IsValid() && IsValidClockwiseAnchor(Candidate)
+			&& IsCandidateBeforeClockwise(AnchorCandidate, Candidate))
+		{
+			return Index;
+		}
+	}
+
+	for (int32 Index = 0; Index < Candidates.Num(); ++Index)
+	{
+		if (const FPlayerLockOnCandidate& Candidate = Candidates[Index]; Candidate.TargetActor.IsValid() && IsValidClockwiseAnchor(Candidate))
+		{
+			return Index;
+		}
+	}
+
+	return INDEX_NONE;
 }
