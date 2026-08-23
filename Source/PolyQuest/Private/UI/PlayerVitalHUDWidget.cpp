@@ -1,0 +1,115 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "UI/PlayerVitalHUDWidget.h"
+#include "Components/ProgressBar.h"
+#include "Components/TextBlock.h"
+#include "Internationalization/Text.h"
+#include "Math/UnrealMathUtility.h"
+
+void UPlayerVitalHUDWidget::SetHealth(float Current, float Max)
+{
+	float DisplayCurrent = 0.0f;
+	float DisplayMax = 0.0f;
+	float DisplayPercent = 0.0f;
+
+	if (FMath::IsFinite(Current) && FMath::IsFinite(Max) && Max > 0.0f)
+	{
+		DisplayCurrent = FMath::Clamp(Current, 0.0f, Max);
+		DisplayMax = Max;
+		DisplayPercent = FMath::Clamp(DisplayCurrent / DisplayMax, 0.0f, 1.0f);
+	}
+
+	if (HealthProgressBar)
+	{
+		HealthProgressBar->SetPercent(DisplayPercent);
+	}
+
+	if (HealthCurrentText)
+	{
+		const int32 RoundedCurrent = FMath::RoundToInt(DisplayCurrent);
+		HealthCurrentText->SetText(FText::AsNumber(RoundedCurrent));
+	}
+
+	if (HealthMaxText)
+	{
+		const int32 RoundedMax = FMath::RoundToInt(DisplayMax);
+		HealthMaxText->SetText(FText::AsNumber(RoundedMax));
+	}
+}
+
+void UPlayerVitalHUDWidget::SetStamina(float Current, float Max)
+{
+	float DisplayCurrent = 0.0f;
+	float DisplayMax = 0.0f;
+	float DisplayPercent = 0.0f;
+
+	if (FMath::IsFinite(Current) && FMath::IsFinite(Max) && Max > 0.0f)
+	{
+		DisplayCurrent = FMath::Clamp(Current, 0.0f, Max);
+		DisplayMax = Max;
+		DisplayPercent = FMath::Clamp(DisplayCurrent / DisplayMax, 0.0f, 1.0f);
+	}
+
+	if (StaminaProgressBar)
+	{
+		StaminaProgressBar->SetPercent(DisplayPercent);
+	}
+
+	if (StaminaCurrentText)
+	{
+		const int32 RoundedCurrent = FMath::RoundToInt(DisplayCurrent);
+		StaminaCurrentText->SetText(FText::AsNumber(RoundedCurrent));
+	}
+
+	if (StaminaMaxText)
+	{
+		const int32 RoundedMax = FMath::RoundToInt(DisplayMax);
+		StaminaMaxText->SetText(FText::AsNumber(RoundedMax));
+	}
+}
+
+#if WITH_DEV_AUTOMATION_TESTS
+void UPlayerVitalHUDWidget::SetTestHealthWidgets(UProgressBar* InBar, UTextBlock* InCurr, UTextBlock* InMax)
+{
+	HealthProgressBar = InBar;
+	HealthCurrentText = InCurr;
+	HealthMaxText = InMax;
+}
+
+void UPlayerVitalHUDWidget::SetTestStaminaWidgets(UProgressBar* InBar, UTextBlock* InCurr, UTextBlock* InMax)
+{
+	StaminaProgressBar = InBar;
+	StaminaCurrentText = InCurr;
+	StaminaMaxText = InMax;
+}
+
+UProgressBar* UPlayerVitalHUDWidget::GetTestHealthProgressBar() const
+{
+	return HealthProgressBar;
+}
+
+UTextBlock* UPlayerVitalHUDWidget::GetTestHealthCurrentText() const
+{
+	return HealthCurrentText;
+}
+
+UTextBlock* UPlayerVitalHUDWidget::GetTestHealthMaxText() const
+{
+	return HealthMaxText;
+}
+
+UProgressBar* UPlayerVitalHUDWidget::GetTestStaminaProgressBar() const
+{
+	return StaminaProgressBar;
+}
+
+UTextBlock* UPlayerVitalHUDWidget::GetTestStaminaCurrentText() const
+{
+	return StaminaCurrentText;
+}
+
+UTextBlock* UPlayerVitalHUDWidget::GetTestStaminaMaxText() const
+{
+	return StaminaMaxText;
+}
+#endif

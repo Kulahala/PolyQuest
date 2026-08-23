@@ -8,6 +8,7 @@
 #include "Combat/Reaction/HitReactionClassifier.h"
 #include "Components/CapsuleComponent.h"
 #include "Components/SkeletalMeshComponent.h"
+#include "Components/WidgetComponent.h"
 #include "Engine/World.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "GameplayEffect.h"
@@ -16,6 +17,7 @@
 #include "GameplayTagContainer.h"
 #include "PolyQuest.h"
 #include "TimerManager.h"
+#include "UI/EnemyHealthBarWidget.h"
 
 AEnemyCharacter::AEnemyCharacter()
 {
@@ -32,6 +34,15 @@ AEnemyCharacter::AEnemyCharacter()
 	bUseControllerRotationYaw = true;
 
 	GetCharacterMovement()->bOrientRotationToMovement = false;
+
+	EnemyHealthBarWidgetComponent = CreateDefaultSubobject<UWidgetComponent>(TEXT("EnemyHealthBarWidgetComponent"));
+	EnemyHealthBarWidgetComponent->SetupAttachment(RootComponent);
+	EnemyHealthBarWidgetComponent->SetWidgetSpace(EWidgetSpace::Screen);
+	EnemyHealthBarWidgetComponent->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	EnemyHealthBarWidgetComponent->SetGenerateOverlapEvents(false);
+	EnemyHealthBarWidgetComponent->SetPivot(FVector2D(0.5f, 1.0f));
+	EnemyHealthBarWidgetComponent->SetRelativeLocation(FVector(0.0f, 0.0f, 130.0f));
+	EnemyHealthBarWidgetComponent->SetDrawSize(FVector2D(160.0f, 20.0f));
 }
 
 void AEnemyCharacter::BeginPlay()
@@ -43,6 +54,7 @@ void AEnemyCharacter::BeginPlay()
 
 	Super::BeginPlay();
 	BindDeathEvents();
+	BindUIHealthEvents();
 
 	if (!HasValidPoiseRecoveryConfiguration() && !bHasLoggedInvalidPoiseRecoveryConfiguration)
 	{
@@ -67,6 +79,9 @@ void AEnemyCharacter::EndPlay(const EEndPlayReason::Type EndPlayReason)
 	bLaunchStanceBreakDeferralActive = false;
 	bPendingDeferredStanceBreak = false;
 	ActivePoiseBreakingEffectSpec = nullptr;
+	UnbindUIHealthEvents();
+	HideEnemyHealthBar();
+	EnemyHealthBarWidget.Reset();
 	UnbindDeathEvents();
 	Super::EndPlay(EndPlayReason);
 }
@@ -558,6 +573,7 @@ void AEnemyCharacter::HandleDeath()
 	}
 
 	bDeathTeardownStarted = true;
+	HideEnemyHealthBar();
 	ClearPoiseRecovery();
 	if (UWorld* World = GetWorld())
 	{
@@ -619,3 +635,117 @@ void AEnemyCharacter::StartDeathRagdoll()
 	SkeletalMesh->WakeAllRigidBodies();
 	bDeathRagdollStarted = true;
 }
+
+void AEnemyCharacter::BindUIHealthEvents()
+{
+	UAbilitySystemComponent* CharacterASC = GetAbilitySystemComponent();
+	if (!CharacterASC || UIBoundAbilitySystemComponent.Get() == CharacterASC)
+	{
+		return;
+	}
+
+	UnbindUIHealthEvents();
+	UIBoundAbilitySystemComponent = CharacterASC;
+
+	if (EnemyHealthBarWidgetComponent)
+	{
+		if (TSubclassOf<UUserWidget> ConfiguredWidgetClass = EnemyHealthBarWidgetComponent->GetWidgetClass())
+		{
+			if (!ConfiguredWidgetClass->IsChildOf(UEnemyHealthBarWidget::StaticClass()))
+			{
+				if (!bHasLoggedInvalidUIWidgetClass)
+				{
+					UE_LOG(LogPolyQuest, Warning, TEXT("Enemy '%s' has configured WidgetClass '%s' which does not derive from UEnemyHealthBarWidget."),
+						*GetNameSafe(this), *GetNameSafe(ConfiguredWidgetClass));
+					bHasLoggedInvalidUIWidgetClass = true;
+				}
+			}
+			else
+			{
+				if (!EnemyHealthBarWidgetComponent->GetUserWidgetObject())
+				{
+					EnemyHealthBarWidgetComponent->InitWidget();
+				}
+				if (UUserWidget* UserWidget = EnemyHealthBarWidgetComponent->GetUserWidgetObject())
+				{
+					EnemyHealthBarWidget = Cast<UEnemyHealthBarWidget>(UserWidget);
+				}
+			}
+		}
+	}
+
+	UIHealthAttributeChangedHandle = CharacterASC->GetGameplayAttributeValueChangeDelegate(UCharacterAttributeSet::GetHealthAttribute())
+		.AddUObject(this, &AEnemyCharacter::OnUIHealthAttributeChanged);
+	UIMaxHealthAttributeChangedHandle = CharacterASC->GetGameplayAttributeValueChangeDelegate(UCharacterAttributeSet::GetMaxHealthAttribute())
+		.AddUObject(this, &AEnemyCharacter::OnUIMaxHealthAttributeChanged);
+
+	RefreshEnemyHealthBar();
+}
+
+void AEnemyCharacter::UnbindUIHealthEvents()
+{
+	if (UAbilitySystemComponent* BoundASC = UIBoundAbilitySystemComponent.Get())
+	{
+		if (UIHealthAttributeChangedHandle.IsValid())
+		{
+			BoundASC->GetGameplayAttributeValueChangeDelegate(UCharacterAttributeSet::GetHealthAttribute())
+				.Remove(UIHealthAttributeChangedHandle);
+		}
+		if (UIMaxHealthAttributeChangedHandle.IsValid())
+		{
+			BoundASC->GetGameplayAttributeValueChangeDelegate(UCharacterAttributeSet::GetMaxHealthAttribute())
+				.Remove(UIMaxHealthAttributeChangedHandle);
+		}
+	}
+
+	UIHealthAttributeChangedHandle.Reset();
+	UIMaxHealthAttributeChangedHandle.Reset();
+	UIBoundAbilitySystemComponent.Reset();
+}
+
+void AEnemyCharacter::OnUIHealthAttributeChanged(const FOnAttributeChangeData&)
+{
+	RefreshEnemyHealthBar();
+}
+
+void AEnemyCharacter::OnUIMaxHealthAttributeChanged(const FOnAttributeChangeData&)
+{
+	RefreshEnemyHealthBar();
+}
+
+void AEnemyCharacter::RefreshEnemyHealthBar()
+{
+	if (UAbilitySystemComponent* CharacterASC = UIBoundAbilitySystemComponent.Get())
+	{
+		if (EnemyHealthBarWidget.IsValid())
+		{
+			bool bFoundHealth = false;
+			const float CurrentHealth = CharacterASC->GetGameplayAttributeValue(UCharacterAttributeSet::GetHealthAttribute(), bFoundHealth);
+
+			bool bFoundMaxHealth = false;
+			const float MaxHealth = CharacterASC->GetGameplayAttributeValue(UCharacterAttributeSet::GetMaxHealthAttribute(), bFoundMaxHealth);
+
+			EnemyHealthBarWidget->SetHealth(bFoundHealth ? CurrentHealth : 0.0f, bFoundMaxHealth ? MaxHealth : 0.0f);
+		}
+	}
+}
+
+void AEnemyCharacter::HideEnemyHealthBar()
+{
+	if (EnemyHealthBarWidgetComponent)
+	{
+		EnemyHealthBarWidgetComponent->SetVisibility(false, true);
+	}
+}
+
+#if WITH_DEV_AUTOMATION_TESTS
+UEnemyHealthBarWidget* AEnemyCharacter::GetTestHealthBarWidget() const
+{
+	return EnemyHealthBarWidget.Get();
+}
+
+void AEnemyCharacter::SetTestHealthBarWidget(UEnemyHealthBarWidget* InWidget)
+{
+	EnemyHealthBarWidget = InWidget;
+}
+#endif

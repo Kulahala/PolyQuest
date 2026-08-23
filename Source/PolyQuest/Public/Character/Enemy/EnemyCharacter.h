@@ -9,6 +9,8 @@ class UEnemyAIProfile;
 class UEnemyAttackSet;
 class UGameplayEffect;
 class UAbilitySystemComponent;
+class UWidgetComponent;
+class UEnemyHealthBarWidget;
 struct FGameplayEffectSpec;
 struct FOnAttributeChangeData;
 
@@ -40,6 +42,13 @@ public:
 	bool HasPendingDeferredStanceBreak() const { return bPendingDeferredStanceBreak; }
 	bool HasPendingStanceBreakTimer() const { return PendingStanceBreakTimerHandle.IsValid() || bStanceBreakDispatchPending; }
 	void DispatchTestPendingStanceBreak() { DispatchPendingStanceBreak(); }
+	UWidgetComponent* GetTestHealthBarWidgetComponent() const { return EnemyHealthBarWidgetComponent; }
+	UEnemyHealthBarWidget* GetTestHealthBarWidget() const;
+	void SetTestHealthBarWidget(UEnemyHealthBarWidget* InWidget);
+	bool HasBoundUIHealthDelegates() const { return UIHealthAttributeChangedHandle.IsValid() && UIMaxHealthAttributeChangedHandle.IsValid(); }
+	void TriggerTestBindUIHealthEvents() { BindUIHealthEvents(); }
+	void TriggerTestUnbindUIHealthEvents() { UnbindUIHealthEvents(); }
+	void TriggerTestRefreshEnemyHealthBar() { RefreshEnemyHealthBar(); }
 #endif
 
 	/** Native-only lifecycle hooks for pairing with Launch hit reaction stance break deferral. */
@@ -80,6 +89,16 @@ private:
 	void ClearPoiseRecovery();
 	bool ApplyPoiseRecoveryMagnitude(float Magnitude);
 
+	void BindUIHealthEvents();
+	void UnbindUIHealthEvents();
+	void OnUIHealthAttributeChanged(const FOnAttributeChangeData& ChangeData);
+	void OnUIMaxHealthAttributeChanged(const FOnAttributeChangeData& ChangeData);
+	void RefreshEnemyHealthBar();
+	void HideEnemyHealthBar();
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "UI|Enemy", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<UWidgetComponent> EnemyHealthBarWidgetComponent;
+
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Enemy", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<UEnemyAttackSet> AttackSet;
 
@@ -114,11 +133,18 @@ private:
 	TWeakObjectPtr<UAbilitySystemComponent> DeathBoundAbilitySystemComponent;
 	FTimerHandle PoiseRecoveryTimerHandle;
 	FTimerHandle PendingStanceBreakTimerHandle;
+
+	FDelegateHandle UIHealthAttributeChangedHandle;
+	FDelegateHandle UIMaxHealthAttributeChangedHandle;
+	TWeakObjectPtr<UAbilitySystemComponent> UIBoundAbilitySystemComponent;
+	TWeakObjectPtr<UEnemyHealthBarWidget> EnemyHealthBarWidget;
+
 	bool bDeathTeardownStarted = false;
 	bool bDeathRagdollStarted = false;
 	bool bStanceBreakDispatchPending = false;
 	bool bLaunchStanceBreakDeferralActive = false;
 	bool bPendingDeferredStanceBreak = false;
 	bool bHasLoggedInvalidPoiseRecoveryConfiguration = false;
+	bool bHasLoggedInvalidUIWidgetClass = false;
 	const FGameplayEffectSpec* ActivePoiseBreakingEffectSpec = nullptr;
 };
