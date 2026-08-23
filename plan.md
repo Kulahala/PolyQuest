@@ -1,17 +1,17 @@
-# TODO-03H3: Automation Fixture Signal Hygiene v1
+# TODO-03A6B: Shield Guard Locomotion, Pace, And Facing Alignment v1
 
 ## Plan State
 
-- Status: Complete. The user confirmed `PolyQuestEditor` compilation and all ten existing Automation suites through the Editor front-end; H3 has no PIE gate.
-- Baseline: `7381cb7` (`[Fix] 修复自动化夹具日志并完成运行时健康审查`).
-- Objective: remove missing-fixture configuration noise from successful paths in the existing ten native Automation suites. This stage does not change runtime gameplay, GAS failure safeguards, authored assets, Config, log levels, or the test-suite count.
-- Preserve the current uncommitted `ROADMAP.md` H3 scheduling change and all other user-owned WIP. In particular, exclude `Content/**`, Config, maps, Blueprints, Input, AnimBP, GA/GE/Montage assets, `.uproject`, generated output, and `.zcode/`.
+- Status: Complete. The user confirmed the focused authored Guard route and PIE visual result after replacing the conflicting upper-body/full-body composition.
+- Baseline: `c8a30b5` (`[Test] 清理自动化夹具信号噪音 (Automation Fixture Signal Hygiene)`).
+- Objective: close the Shield Guard presentation route over the accepted A6A locomotion baseline without changing Guard gameplay authority. The original fixed-`300` and new-Guard-slot assumptions were rejected by the actual authored result: the existing `0.7` pace is retained, while Shield Guard uses a dedicated full-body locomotion branch.
+- Preserve all current user-owned WIP. The existing untracked Guard GE, Montages, BlendSpace, and modified `ABP_Player_Dungeon` are authoring inputs only; do not overwrite, stage, or commit any `Content/**` asset without later explicit stable-closure approval.
 
 ```text
 Outer: ue-stage-workflow
-Primary: ue5-debug-validation
-Support: ue5-cpp-gameplay
-Route reason: distinguish missing native-fixture configuration signals from intentional negative coverage. The only implementation surface is private Automation construction, test-only configuration, and assertions.
+Primary: ue5-blueprint-workflow
+Support: ue5-debug-validation
+Route reason: the required behavior is an authored GE/Montage/AnimBP closure over already-proven native Guard, Movement, equipment-locomotion, and B2 facing contracts.
 ```
 
 ```text
@@ -19,62 +19,27 @@ Plan explorers: 0
 Implementation executors: 0
 Complex Executor: none
 Main parallel work: none
-Reason: shared Player/Enemy BeginPlay, ASC, equipment, and test lifecycle contracts are Main-only integration territory; no parallel exploration materially reduces risk.
+Reason: Guard, movement, lock-facing, and authored animation layers share one integration contract; user owns Editor authoring and no native implementation slice is necessary.
 ```
 
-## Approved Contract
+## Accepted Runtime And Presentation Contract
 
-1. Add a private `FCombatAutomationFixture` under `Source/PolyQuest/Private/Tests/`. It owns deferred Player/Enemy spawn, pre-`FinishSpawning()` setup, and a one-time BeginPlay guard. It is not runtime or Blueprint API.
-2. Add `UTestStaminaRegenGE`: an `Infinite` test-only GameplayEffect with no numerical modifier, so a native Player fixture gets a valid active regen handle without pretending to test production stamina recovery.
-3. Under `WITH_DEV_AUTOMATION_TESTS`, add only the narrow fixture hooks required to atomically configure Player startup and prove its regen effect applied; configure an empty legal `UCombatLoadoutDefinition`, a transient valid unarmed `UMeleeWeaponDefinition`, the existing Hero mesh and `Weapon_R` socket, and `UTestStaminaRegenGE` before Player BeginPlay.
-4. Under `WITH_DEV_AUTOMATION_TESTS`, add a narrow passive Enemy fixture hook that sets `AutoPossessAI=Disabled`, disables death ragdoll, and supplies `UTestPoiseRecoveryGE` before Enemy BeginPlay. It must not fabricate AttackSet, AIProfile, StateTree, Physics Asset, or Ragdoll coverage.
-5. Migrate direct Player/Enemy `DispatchBeginPlay()` fixture paths only in `HitReactionAutomationTests.cpp`, `MeleeTraceSourceComponentAutomationTests.cpp`, `PlayerLockOnAutomationTests.cpp`, `ProjectileLifecycleAutomationTests.cpp`, `ProjectileTargetAssistAutomationTests.cpp`, and `VitalHudAutomationTests.cpp`. Do not perform cosmetic migrations in the other four suites.
-6. Do not suppress, lower, or reinterpret logs. No `AddExpectedError`, log-category changes, runtime bypasses, new gameplay feature, authored asset, Config edit, or eleventh Automation suite is in scope.
+1. Both `GA_PlayerShieldGuard` and `GA_Guard_Sowrd` retain `UPlayerGuardAbility`, held-input release/cancel, Guard Arc, Stamina cost/recovery, Guard Break, and exact active-GE handle cleanup. `GE_Guard_MoveSpeed` remains the shared pace source, as the existing Infinite, non-periodic `MoveSpeed` multiplier at `0.7`; no `Override = 300` was authored.
+2. Generic Guard remains the C++/GAS category `State.Action.Guarding`. Shield Guard owns the active child `State.Action.Guarding.Shield`, while single-Sword Guard retains the generic parent. Hierarchical GameplayTag matching therefore preserves every existing generic Guard consumer without turning the child tag into an equipment-state signal.
+3. `ABaseCharacter` still writes the resolved `MoveSpeed` Attribute to `CharacterMovement.MaxWalkSpeed`. B2 lock-facing remains the yaw owner: eligible non-Root-Motion Guard faces a valid lock at `800 deg/s`; unlocked Guard remains camera-relative movement-facing; Guard still cancels Sprint.
+4. `ABP_Player_Dungeon` derives `IsShieldGuarding` from ASC matching of the child Shield Guard tag. `ResolvedLocomotionMode` remains the ordinary equipped-family selector and is deliberately not reused as the active Shield Guard condition.
+5. Shield Guard uses the full-body `BS_Shield_Walk_Run`. While `IsShieldGuarding` is true, the existing `DefaultGroup.UpperBody` branch has zero visual weight; single-Sword Guard continues to use that upper-body overlay. This prevents a full-body Shield Block Move from being mixed beneath a second full-body Guard pose at `spine_01`.
+6. `AM_Shield_Guard` remains present for `UPlayerGuardAbility`'s established Montage lifecycle, but its visual contribution is bypassed only during active Shield Guard. `ReactionOverlayGroup.ReactionOverlay` remains downstream. The Root Motion `Anim_SAS_V2_Block_Move_*` assets remain outside this CharacterMovement-driven route.
 
-## Warning Ledger Contract
+## Accepted User-Owned Asset Closure
 
-After the migration, successful paths in the ten-suite matrix must no longer emit incidental warnings for null Player loadout, missing default Player weapon, missing Player stamina regen GE, Enemy invalid AttackSet/AIProfile/Poise recovery, headless Enemy missing Physics Asset ragdoll, or invalid Bow AbilitySpecHandle.
+1. `GA_PlayerShieldGuard` owns `Ability.Defense.Guard.Shield` and `State.Action.Guarding.Shield`; `GA_Guard_Sowrd` remains the generic Guard route.
+2. `ABP_Player_Dungeon` uses the existing cached base locomotion pose for both the base input and `DefaultGroup.UpperBody` source. It gates only the UpperBody blend weight with `IsShieldGuarding`, then leaves the existing Default Slot and Reaction Overlay order intact.
+3. The final visual result is a full-body Shield Guard locomotion pose under B2 lock-facing, without the prior waist twist from a full-body Block Move plus an upper-body Guard overlay. No new Guard BlendSpace, Slot Group, native API, Input action, or generic animation framework was introduced.
 
-The following remain deliberate negative-test signals and must be mapped at closeout rather than suppressed: Equipment preflight/active-swap/rollback, invalid static blade socket or geometry, invalid multi-tier hit-reaction tag, and no Stance Break Ability accepting an event followed by Poise recovery. The Vital HUD headless-null Widget path remains legal, and `No game viewport was found` must not reappear.
+## Validation And Closeout
 
-## Execution Order
-
-1. Read the current Player/Enemy startup paths and the six test callers with CodeGraph/direct source. Verify the fixture injection happens before `FinishSpawning()` even for Worlds already in play.
-2. Add the test-only GE, shared fixture, and minimal Player/Enemy `WITH_DEV_AUTOMATION_TESTS` hooks.
-3. Replace only the six approved direct startup paths, preserving their test-specific setup and negative assertions.
-4. Read the final call chains and use Rider error-level inspection where available, `git diff --check`, and code-review-graph as supplementary impact evidence.
-5. Ask the user to compile `PolyQuestEditor` and run the existing ten suites with raw logs. H3 has no Editor authoring or PIE gate.
-6. After accepted validation, perform Main's single defect-first fresh review, synchronize `README.md`, `ARCHITECTURE.md`, `ROADMAP.md`, and `plan.md`, then wait for explicit commit approval.
-
-## Validation Matrix
-
-- `PolyQuest.Equipment.TransactionMatrix`
-- `PolyQuest.Melee.TraceSourceGeometry`
-- `PolyQuest.Player.ActionWindows`
-- `PolyQuest.Combat.HitReaction`
-- `PolyQuest.Enemy.AttackSetSelection`
-- `PolyQuest.Enemy.CombatSpacing`
-- `PolyQuest.UI.VitalHUD`
-- `PolyQuest.Player.LockOn`
-- `PolyQuest.Projectile.Lifecycle`
-- `PolyQuest.Projectile.TargetAssist`
-
-Acceptance requires that every remaining Warning in these successful runs maps to a named deliberate negative assertion in the H3 warning ledger. Any unclassified successful-path warning blocks H3 closeout.
-
-## Current Validation Record
-
-1. User-confirmed Automation success: `PolyQuest.Equipment.TransactionMatrix`, `PolyQuest.Melee.TraceSourceGeometry`, `PolyQuest.Player.ActionWindows`, `PolyQuest.Combat.HitReaction`, `PolyQuest.Enemy.AttackSetSelection`, `PolyQuest.Enemy.CombatSpacing`, `PolyQuest.UI.VitalHUD`, `PolyQuest.Player.LockOn`, `PolyQuest.Projectile.Lifecycle`, and `PolyQuest.Projectile.TargetAssist`.
-2. H3 success-path fixture noise is absent from the supplied raw logs: null Player Loadout, missing Player weapon or Stamina Regen GE, Enemy invalid AttackSet/AIProfile/Poise configuration, headless Ragdoll Physics Asset, invalid Bow AbilitySpecHandle, and `No game viewport was found`.
-3. Remaining messages map to asserted negative coverage: invalid multi-tier reaction tags; Stance Break rejection with Poise recovery; equipment preflight, active-swap and rollback injections; and invalid/missing static trace geometry.
-4. Main's required single defect-first fresh review found no P0-P2 issue. Rider error-level inspection is clean across all fourteen H3 C++ files and `git diff --check` passes. code-review-graph remains supplemental only because its Unreal Automation/new-file coverage is incomplete.
-5. User-confirmed compilation: the H3 source was compiled into the `PolyQuestEditor` session before the ten Automation runs. H3 has no Editor authoring or PIE validation gate.
-
-## Closeout
-
-1. `TODO-03H3` is complete. `ROADMAP.md` records the durable test-only startup ownership and removes the resolved signal-hygiene debt; its next approved stage is `TODO-03A6B`.
-2. No H3-specific runtime or validation debt remains. The warning ledger deliberately retains only asserted negative paths: invalid reaction tags, rejected Stance Break fallback with Poise restore, equipment preflight/active-swap/rollback, and static Trace fail-closed geometry.
-3. Main's single defect-first fresh review found no P0-P2. code-review-graph was supplemental only because Unreal Automation macro and newly added-file coverage is incomplete; direct source/caller review, Rider error-level inspection, `git diff --check`, user compilation, and the ten-suite matrix are the acceptance evidence.
-
-## Commit Boundary
-
-Default commit scope: the private test fixture, test GE, necessary `WITH_DEV_AUTOMATION_TESTS` header/source surfaces, six migrated Automation files, and the four project documents. Do not stage any user-owned WIP or authored asset/config closure.
+1. User-confirmed focused authored/PIE visual evidence: Shield Guard now uses the intended full-body locomotion without the earlier torso conflict, while the established locked-facing result remains correct. The user also reported the focused test route passing.
+2. This stage changes no native C++ or Automation surface. Existing automation remains regression coverage for the unchanged Guard, equipment, and lock-facing contracts; it is not presented as proof of the authored AnimGraph topology.
+3. Main's single defect-first fresh review found no P0-P2 runtime or lifecycle defect in the approved scope. The resolved issue was documentation/plan drift: the rejected `300` and `GuardOverlayGroup` assumptions are removed here. Source inspection confirms the generic Guard category uses hierarchical tag queries, while the current authored child tag remains compatible.
+4. A user-authored shared Stride Warping experiment in `ABP_Player_Dungeon` has passed focused PIE validation after this stage's closeout. It remains local `Content/**` WIP and is not included here. `TODO-07B` owns its cross-weapon cadence calibration, action/reaction exclusion, and focused visual validation before any stable asset closure. Default commit scope remains documentation only; exclude all `Content/**`, Config, map, Blueprint, Input, AnimBP, GA/GE/Montage, project-file, generated, and unrelated user-WIP paths unless the user later authorizes that closure.
