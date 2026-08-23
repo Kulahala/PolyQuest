@@ -18,12 +18,16 @@
 #include "Combat/Input/CombatLoadoutDefinition.h"
 #include "Combat/Projectile/CombatProjectile.h"
 #include "Combat/Projectile/CombatProjectileHitResolver.h"
+#include "Components/SkeletalMeshComponent.h"
 #include "Components/SphereComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Engine/Engine.h"
+#include "Engine/SkeletalMesh.h"
 #include "Engine/StaticMesh.h"
 #include "Engine/StaticMeshSocket.h"
 #include "Engine/World.h"
+#include "EngineUtils.h"
+#include "GameFramework/PlayerController.h"
 #include "GameFramework/ProjectileMovementComponent.h"
 #include "GameplayEffect.h"
 #include "GameplayTagContainer.h"
@@ -682,6 +686,247 @@ bool FProjectileLifecycleAutomationTest::RunTest(const FString& Parameters)
 
 			Player->Destroy();
 			OtherActor->Destroy();
+		}
+	}
+
+	// -------------------------------------------------------------------------
+	// SECTION 6: Bow Release Locked-Target Preference
+	// -------------------------------------------------------------------------
+	{
+		APlayerCharacter* Player = World->SpawnActor<APlayerCharacter>(APlayerCharacter::StaticClass(), FVector(0.0f, 0.0f, 100.0f), FRotator::ZeroRotator);
+		APlayerController* PlayerController = World->SpawnActor<APlayerController>();
+		AEnemyCharacter* LockedEnemy = World->SpawnActor<AEnemyCharacter>(AEnemyCharacter::StaticClass(), FVector(600.0f, 600.0f, 100.0f), FRotator::ZeroRotator);
+		AEnemyCharacter* AutomaticEnemy = World->SpawnActor<AEnemyCharacter>(AEnemyCharacter::StaticClass(), FVector(800.0f, 0.0f, 100.0f), FRotator::ZeroRotator);
+		TestNotNull(TEXT("B3 Player spawned"), Player);
+		TestNotNull(TEXT("B3 PlayerController spawned"), PlayerController);
+		TestNotNull(TEXT("B3 locked Enemy spawned"), LockedEnemy);
+		TestNotNull(TEXT("B3 automatic Enemy spawned"), AutomaticEnemy);
+		const FName BowAttachSocketName(TEXT("Weapon_R"));
+		USkeletalMesh* HeroMesh = Cast<USkeletalMesh>(StaticLoadObject(
+			USkeletalMesh::StaticClass(), nullptr, TEXT("/Game/PolygonDungeons/Meshes/Characters/SK_Character_Hero_Knight_Male")));
+		TestNotNull(TEXT("B3 Hero skeletal mesh loaded"), HeroMesh);
+		TestNotNull(TEXT("B3 Hero mesh contains the equipment attach socket"), HeroMesh ? HeroMesh->FindSocket(BowAttachSocketName) : nullptr);
+
+		if (Player && PlayerController && LockedEnemy && AutomaticEnemy && HeroMesh && HeroMesh->FindSocket(BowAttachSocketName))
+		{
+			if (Player->GetMesh())
+			{
+				Player->GetMesh()->SetSkeletalMeshAsset(HeroMesh);
+			}
+
+			Player->SetTestCombatTeamTag(TagTeamPlayer);
+			LockedEnemy->SetTestCombatTeamTag(TagTeamEnemy);
+			AutomaticEnemy->SetTestCombatTeamTag(TagTeamEnemy);
+			Player->DispatchBeginPlay();
+			LockedEnemy->DispatchBeginPlay();
+			AutomaticEnemy->DispatchBeginPlay();
+			PlayerController->Possess(Player);
+
+			UAbilitySystemComponent* PlayerASC = Player->GetAbilitySystemComponent();
+			UAbilitySystemComponent* LockedASC = LockedEnemy->GetAbilitySystemComponent();
+			TestNotNull(TEXT("B3 Player ASC exists"), PlayerASC);
+			TestNotNull(TEXT("B3 locked Enemy ASC exists"), LockedASC);
+
+			Player->SetTestLockOnProjectionHook([](const FVector& WorldPoint, FVector2D& OutScreenPosition, FVector2D& OutViewportSize)
+			{
+				OutViewportSize = FVector2D(1920.0f, 1080.0f);
+				if (WorldPoint.Y > 200.0f)
+				{
+					OutScreenPosition = FVector2D(1200.0f, 700.0f);
+				}
+				else if (WorldPoint.X > 100.0f)
+				{
+					OutScreenPosition = FVector2D(1200.0f, 540.0f);
+				}
+				else
+				{
+					OutScreenPosition = FVector2D(960.0f, 540.0f);
+				}
+				return true;
+			});
+
+			UStaticMesh* BowMesh = NewObject<UStaticMesh>(GetTransientPackage(), TEXT("Test_B3BowMesh"));
+			const FName BowLaunchSocketName(TEXT("Socket_Bow_Launch"));
+			UStaticMeshSocket* BowLaunchSocket = NewObject<UStaticMeshSocket>(BowMesh);
+			BowLaunchSocket->SocketName = BowLaunchSocketName;
+			BowLaunchSocket->RelativeLocation = FVector(0.0f, 0.0f, 20.0f);
+			BowMesh->AddSocket(BowLaunchSocket);
+
+			UProjectileDefinition* ProjectileDefinition = NewObject<UProjectileDefinition>(GetTransientPackage(), TEXT("Test_B3ProjectileDefinition"));
+			ProjectileDefinition->InitialSpeed = 3000.0f;
+			ProjectileDefinition->MaxSpeed = 3000.0f;
+			ProjectileDefinition->LifespanSeconds = 5.0f;
+			ProjectileDefinition->CollisionRadius = 12.0f;
+			ProjectileDefinition->DamageGameplayEffectClass = UTestProjectileDamageGE::StaticClass();
+			ProjectileDefinition->bEnableTargetAssist = true;
+			ProjectileDefinition->TargetAssistMaxDistance = 1500.0f;
+			ProjectileDefinition->TargetAssistMaxAngleDegrees = 60.0f;
+			ProjectileDefinition->TargetAssistMaxHeightDelta = 250.0f;
+			ProjectileDefinition->TargetAssistMaxPitchDegrees = 45.0f;
+			ProjectileDefinition->bEnableLimitedHoming = true;
+			ProjectileDefinition->HomingStartDelaySeconds = 0.06f;
+			ProjectileDefinition->HomingDurationSeconds = 1.0f;
+			ProjectileDefinition->HomingTurnRateDegreesPerSecond = 180.0f;
+			ProjectileDefinition->HomingMaxTotalTurnDegrees = 180.0f;
+
+			UCombatLoadoutDefinition* BowLoadout = NewObject<UCombatLoadoutDefinition>(GetTransientPackage(), TEXT("Test_B3BowLoadout"));
+			BowLoadout->AddTestInputAbilityRoute(TagInputPrimaryAttack, TagAbilityPrimaryAttack);
+
+			UBowWeaponDefinition* BowDefinition = NewObject<UBowWeaponDefinition>(GetTransientPackage(), TEXT("Test_B3BowDefinition"));
+			BowDefinition->HandSlot = EWeaponHandSlot::MainHandTwoHanded;
+			// The transient definition targets the known socket on the real test Hero mesh.
+			// This does not alter the authored Bow_L socket used by runtime Bow assets.
+			BowDefinition->AttachSocketName = BowAttachSocketName;
+			BowDefinition->WeaponMesh = BowMesh;
+			BowDefinition->LaunchSocketName = BowLaunchSocketName;
+			BowDefinition->DefaultProjectileDefinition = ProjectileDefinition;
+			BowDefinition->AssociatedLoadout = BowLoadout;
+			BowDefinition->BaseGrantedActions.Add(UBowDrawFireAbility::StaticClass());
+
+			FString BowDefinitionReason;
+			TestTrue(TEXT("B3 transient BowDefinition passes validation"), BowDefinition->IsValidWeaponDefinition(BowDefinitionReason));
+			UWeaponEquipmentComponent* EquipmentComp = Player->FindComponentByClass<UWeaponEquipmentComponent>();
+			TestNotNull(TEXT("B3 Player equipment component exists"), EquipmentComp);
+			if (PlayerASC && LockedASC && EquipmentComp)
+			{
+				TestTrue(TEXT("B3 equips transient Bow"), EquipmentComp->EquipWeapon(BowDefinition));
+
+				auto CaptureProjectiles = [World]()
+				{
+					TSet<ACombatProjectile*> ExistingProjectiles;
+					for (TActorIterator<ACombatProjectile> It(World); It; ++It)
+					{
+						if (ACombatProjectile* Projectile = *It)
+						{
+							ExistingProjectiles.Add(Projectile);
+						}
+					}
+					return ExistingProjectiles;
+				};
+
+				auto SpawnReleaseProjectile = [World, Player, PlayerASC, &CaptureProjectiles](const FName AbilityName)
+				{
+					const TSet<ACombatProjectile*> ExistingProjectiles = CaptureProjectiles();
+					UBowDrawFireAbility* BowAbility = NewObject<UBowDrawFireAbility>(Player, AbilityName);
+					if (!BowAbility)
+					{
+						return static_cast<ACombatProjectile*>(nullptr);
+					}
+
+					BowAbility->SetTestCurrentActorInfo(PlayerASC->AbilityActorInfo.Get());
+					BowAbility->SetTestTargetAssistScreenProjectionHook([](const FVector&, FVector2D& OutScreenPosition, FVector2D& OutViewportSize)
+					{
+						OutScreenPosition = FVector2D(960.0f, 540.0f);
+						OutViewportSize = FVector2D(1920.0f, 1080.0f);
+						return true;
+					});
+					BowAbility->TestSpawnProjectile();
+
+					for (TActorIterator<ACombatProjectile> It(World); It; ++It)
+					{
+						ACombatProjectile* Projectile = *It;
+						if (Projectile && !ExistingProjectiles.Contains(Projectile))
+						{
+							return Projectile;
+						}
+					}
+
+					return static_cast<ACombatProjectile*>(nullptr);
+				};
+
+				Player->SetTestLockedTarget(LockedEnemy);
+				TestEqual(TEXT("B3 resolves a valid locked target before Release"), Player->ResolveValidLockedTarget(), LockedEnemy);
+				ACombatProjectile* LockedProjectile = SpawnReleaseProjectile(TEXT("Test_B3LockedProjectileAbility"));
+				TestNotNull(TEXT("B3 Release spawns the locked-target projectile"), LockedProjectile);
+				if (LockedProjectile)
+				{
+					TestEqual(TEXT("B3 valid lock wins over pointer-favored automatic candidate"), LockedProjectile->GetTestTargetActor(), Cast<AActor>(LockedEnemy));
+					TestEqual(TEXT("B3 lock preference preserves pointer initial direction"), LockedProjectile->GetTestInitialLaunchDirection(), FVector::ForwardVector);
+					TestTrue(TEXT("B3 locked projectile starts its existing limited homing"), LockedProjectile->GetTestHomingActive());
+
+					Player->SetTestLockedTarget(AutomaticEnemy);
+					Player->SetTestLockedTarget(nullptr);
+					LockedProjectile->Tick(0.1f);
+					TestEqual(TEXT("B3 post-Release lock switch and clear do not retarget the projectile"), LockedProjectile->GetTestTargetActor(), Cast<AActor>(LockedEnemy));
+				}
+
+				ACombatProjectile* AutomaticProjectile = SpawnReleaseProjectile(TEXT("Test_B3AutomaticProjectileAbility"));
+				TestNotNull(TEXT("B3 no-lock Release spawns an automatic-target projectile"), AutomaticProjectile);
+				if (AutomaticProjectile)
+				{
+					TestEqual(TEXT("B3 no-lock path retains B2 pointer-favored automatic target selection"), AutomaticProjectile->GetTestTargetActor(), Cast<AActor>(AutomaticEnemy));
+				}
+
+				Player->SetTestLockedTarget(LockedEnemy);
+				ProjectileDefinition->bEnableTargetAssist = false;
+				ProjectileDefinition->bEnableLimitedHoming = false;
+				ACombatProjectile* StraightProjectile = SpawnReleaseProjectile(TEXT("Test_B3StraightProjectileAbility"));
+				TestNotNull(TEXT("B3 Target Assist-disabled Release still spawns a straight projectile"), StraightProjectile);
+				if (StraightProjectile)
+				{
+					TestNull(TEXT("B3 Target Assist-disabled Release ignores the Player lock"), StraightProjectile->GetTestTargetActor());
+					TestFalse(TEXT("B3 Target Assist-disabled Release does not activate Homing"), StraightProjectile->GetTestHomingActive());
+				}
+				ProjectileDefinition->bEnableTargetAssist = true;
+				ProjectileDefinition->bEnableLimitedHoming = true;
+
+				Player->SetTestLockedTarget(LockedEnemy);
+				Player->SetTestLockOnProjectionHook([](const FVector& WorldPoint, FVector2D& OutScreenPosition, FVector2D& OutViewportSize)
+				{
+					OutViewportSize = FVector2D(1920.0f, 1080.0f);
+					OutScreenPosition = WorldPoint.Y > 200.0f ? FVector2D(0.0f, 540.0f) : FVector2D(960.0f, 540.0f);
+					return true;
+				});
+				ACombatProjectile* InvalidLockProjectile = SpawnReleaseProjectile(TEXT("Test_B3InvalidLockProjectileAbility"));
+				TestNotNull(TEXT("B3 invalid lock does not block Bow Release"), InvalidLockProjectile);
+				TestNull(TEXT("B3 invalid lock is cleared before automatic fallback"), Player->GetLockedTarget());
+				if (InvalidLockProjectile)
+				{
+					TestEqual(TEXT("B3 invalid lock falls back to automatic target selection"), InvalidLockProjectile->GetTestTargetActor(), Cast<AActor>(AutomaticEnemy));
+				}
+
+				Player->SetTestLockOnProjectionHook([](const FVector& WorldPoint, FVector2D& OutScreenPosition, FVector2D& OutViewportSize)
+				{
+					OutViewportSize = FVector2D(1920.0f, 1080.0f);
+					if (WorldPoint.Y > 200.0f)
+					{
+						OutScreenPosition = FVector2D(1200.0f, 700.0f);
+					}
+					else if (WorldPoint.X > 100.0f)
+					{
+						OutScreenPosition = FVector2D(1200.0f, 540.0f);
+					}
+					else
+					{
+						OutScreenPosition = FVector2D(960.0f, 540.0f);
+					}
+					return true;
+				});
+				Player->SetTestLockedTarget(LockedEnemy);
+				TestEqual(TEXT("B3 death-handoff fixture validates the initial lock"), Player->ResolveValidLockedTarget(), LockedEnemy);
+				LockedASC->AddLooseGameplayTag(TagDead);
+				ACombatProjectile* DeathHandoffProjectile = SpawnReleaseProjectile(TEXT("Test_B3DeathHandoffProjectileAbility"));
+				TestNotNull(TEXT("B3 death handoff does not block Bow Release"), DeathHandoffProjectile);
+				TestEqual(TEXT("B3 dead lock hands off through the existing B2 target lifecycle"), Player->GetLockedTarget(), AutomaticEnemy);
+				if (DeathHandoffProjectile)
+				{
+					TestEqual(TEXT("B3 uses the B2 death-handoff target at Release"), DeathHandoffProjectile->GetTestTargetActor(), Cast<AActor>(AutomaticEnemy));
+				}
+				LockedASC->RemoveLooseGameplayTag(TagDead);
+
+				for (ACombatProjectile* Projectile : { LockedProjectile, AutomaticProjectile, StraightProjectile, InvalidLockProjectile, DeathHandoffProjectile })
+				{
+					if (Projectile)
+					{
+						Projectile->Destroy();
+					}
+				}
+			}
+
+			PlayerController->Destroy();
+			Player->Destroy();
+			LockedEnemy->Destroy();
+			AutomaticEnemy->Destroy();
 		}
 	}
 

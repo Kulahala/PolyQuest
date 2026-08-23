@@ -216,8 +216,11 @@ public:
 	/** Applies Dodge facing: camera-relative movement wins; without movement input, a valid lock wins. */
 	void ApplyDodgeFacing();
 
-	/** C++-only nullable lock query reserved for the later Bow locked-target preference stage. */
+	/** C++-only raw nullable lock read; gameplay callers requiring current validity use ResolveValidLockedTarget(). */
 	AEnemyCharacter* GetLockedTarget() const { return LockedTarget.Get(); }
+
+	/** Validates the current lock once and returns its surviving or death-retargeted Enemy; may clear the lock. */
+	AEnemyCharacter* ResolveValidLockedTarget();
 
 	/** True only when physical Sprint intent and current movement state permit a new Sprint request. */
 	bool CanAttemptSprint() const;

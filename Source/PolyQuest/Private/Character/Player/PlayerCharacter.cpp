@@ -1300,6 +1300,13 @@ APlayerCharacter::ELockOnValidationResult APlayerCharacter::ValidateCurrentLocke
 	return ELockOnValidationResult::Valid;
 }
 
+AEnemyCharacter* APlayerCharacter::ResolveValidLockedTarget()
+{
+	return ValidateCurrentLockedTarget() == ELockOnValidationResult::Cleared
+		? nullptr
+		: LockedTarget.Get();
+}
+
 bool APlayerCharacter::CacheCurrentLockedTargetCandidate()
 {
 	AEnemyCharacter* CurrentTarget = LockedTarget.Get();

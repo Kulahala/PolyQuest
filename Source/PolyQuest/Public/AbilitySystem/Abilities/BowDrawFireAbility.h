@@ -68,6 +68,7 @@ public:
 	void TestSetDodgeCancelable(bool bShouldCancel) { SetDodgeCancelable(bShouldCancel); }
 	void TestRestoreBaselineMontageRate() { RestoreBaselineMontageRate(); }
 	void TestSpawnProjectile() { SpawnProjectile(); }
+	void SetTestTargetAssistScreenProjectionHook(TFunction<bool(const FVector&, FVector2D&, FVector2D&)> InHook) { TestTargetAssistScreenProjectionHook = MoveTemp(InHook); }
 	bool Test_IsGameplayEventFromActiveMontage(const FGameplayEventData& Payload) const { return IsGameplayEventFromActiveMontage(Payload); }
 #endif
 
@@ -193,4 +194,8 @@ private:
 	bool bDodgeCancelable = false;
 	bool bChargingApplied = false;
 	bool bRateWindowApplied = false;
+
+#if WITH_DEV_AUTOMATION_TESTS
+	TFunction<bool(const FVector&, FVector2D&, FVector2D&)> TestTargetAssistScreenProjectionHook;
+#endif
 };

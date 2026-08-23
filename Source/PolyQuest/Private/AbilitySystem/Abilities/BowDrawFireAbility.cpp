@@ -5,6 +5,7 @@
 #include "AbilitySystemComponent.h"
 #include "Animation/AnimInstance.h"
 #include "Animation/AnimMontage.h"
+#include "Character/Enemy/EnemyCharacter.h"
 #include "Character/Player/PlayerCharacter.h"
 #include "Combat/Equipment/BowWeaponDefinition.h"
 #include "Combat/Equipment/ProjectileDefinition.h"
@@ -380,29 +381,46 @@ void UBowDrawFireAbility::SpawnProjectile()
 	TWeakObjectPtr<AActor> SelectedTarget = nullptr;
 	FVector TargetAimPoint = FVector::ZeroVector;
 
-	// 2. Target assistance evaluation on release
+	// 2. Target assistance evaluation on release: a validated Player lock wins, otherwise keep B2 auto-selection.
 	if (ProjDef->bEnableTargetAssist)
 	{
-		FCombatProjectileTargetFilter Filter;
-		Filter.MaxHorizontalDistance = ProjDef->TargetAssistMaxDistance;
-		Filter.MaxAngleDegrees = ProjDef->TargetAssistMaxAngleDegrees;
-		Filter.MaxHeightDelta = ProjDef->TargetAssistMaxHeightDelta;
-		Filter.MaxPitchDegrees = ProjDef->TargetAssistMaxPitchDegrees;
-
-		FCombatProjectileTargetCandidate Candidate;
-		const bool bFoundTarget = FCombatProjectileTargeting::TryFindBestTargetCandidate(
-			World,
-			PlayerCharacter,
-			GetAbilitySystemComponentFromActorInfo(),
-			LaunchLocation,
-			PointerDirection,
-			Filter,
-			Candidate);
-
-		if (bFoundTarget && Candidate.TargetActor.IsValid())
+		if (AEnemyCharacter* LockedTarget = PlayerCharacter->ResolveValidLockedTarget())
 		{
-			SelectedTarget = Candidate.TargetActor;
-			TargetAimPoint = Candidate.AimPoint;
+			const FVector LockedTargetAimPoint = FCombatProjectileTargeting::GetTargetAimPoint(LockedTarget);
+			if (!LockedTargetAimPoint.ContainsNaN())
+			{
+				SelectedTarget = LockedTarget;
+				TargetAimPoint = LockedTargetAimPoint;
+			}
+		}
+
+		if (!SelectedTarget.IsValid())
+		{
+			FCombatProjectileTargetFilter Filter;
+			Filter.MaxHorizontalDistance = ProjDef->TargetAssistMaxDistance;
+			Filter.MaxAngleDegrees = ProjDef->TargetAssistMaxAngleDegrees;
+			Filter.MaxHeightDelta = ProjDef->TargetAssistMaxHeightDelta;
+			Filter.MaxPitchDegrees = ProjDef->TargetAssistMaxPitchDegrees;
+
+#if WITH_DEV_AUTOMATION_TESTS
+			Filter.TestScreenProjectionHook = TestTargetAssistScreenProjectionHook;
+#endif
+
+			FCombatProjectileTargetCandidate Candidate;
+			const bool bFoundTarget = FCombatProjectileTargeting::TryFindBestTargetCandidate(
+				World,
+				PlayerCharacter,
+				GetAbilitySystemComponentFromActorInfo(),
+				LaunchLocation,
+				PointerDirection,
+				Filter,
+				Candidate);
+
+			if (bFoundTarget && Candidate.TargetActor.IsValid())
+			{
+				SelectedTarget = Candidate.TargetActor;
+				TargetAimPoint = Candidate.AimPoint;
+			}
 		}
 	}
 
