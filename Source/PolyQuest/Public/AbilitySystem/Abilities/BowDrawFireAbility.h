@@ -64,6 +64,7 @@ public:
 	void SetTestBowStateReleasing() { BowState = EBowState::Releasing; }
 	void SetTestBowMontage(UAnimMontage* Montage) { BowMontage = Montage; }
 	void SetTestCurrentActorInfo(const FGameplayAbilityActorInfo* InActorInfo) { CurrentActorInfo = InActorInfo; }
+	void SetTestCurrentSpecHandle(const FGameplayAbilitySpecHandle InHandle) { CurrentSpecHandle = InHandle; }
 	void TestSetCharging(bool bShouldCharge) { SetCharging(bShouldCharge); }
 	void TestSetDodgeCancelable(bool bShouldCancel) { SetDodgeCancelable(bShouldCancel); }
 	void TestRestoreBaselineMontageRate() { RestoreBaselineMontageRate(); }

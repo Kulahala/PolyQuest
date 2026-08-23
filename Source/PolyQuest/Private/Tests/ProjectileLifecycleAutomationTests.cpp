@@ -3,6 +3,7 @@
 #if WITH_DEV_AUTOMATION_TESTS
 
 #include "AbilitySystemComponent.h"
+#include "GameplayAbilitySpec.h"
 #include "Abilities/GameplayAbility.h"
 #include "AbilitySystem/Abilities/BowDrawFireAbility.h"
 #include "AbilitySystem/Abilities/DodgeAbility.h"
@@ -790,6 +791,16 @@ bool FProjectileLifecycleAutomationTest::RunTest(const FString& Parameters)
 			if (PlayerASC && LockedASC && EquipmentComp)
 			{
 				TestTrue(TEXT("B3 equips transient Bow"), EquipmentComp->EquipWeapon(BowDefinition));
+				FGameplayAbilitySpec* BowAbilitySpec = PlayerASC->FindAbilitySpecFromClass(UBowDrawFireAbility::StaticClass());
+				TestNotNull(TEXT("B3 equipped Bow grants its Ability Spec"), BowAbilitySpec);
+				const FGameplayAbilitySpecHandle BowAbilitySpecHandle = BowAbilitySpec ? BowAbilitySpec->Handle : FGameplayAbilitySpecHandle();
+				TestTrue(TEXT("B3 equipped Bow Ability Spec has a valid Handle"), BowAbilitySpecHandle.IsValid());
+				TestEqual(TEXT("B3 equipped Bow Ability Spec keeps level one"), BowAbilitySpec ? BowAbilitySpec->Level : INDEX_NONE, 1);
+
+				if (!BowAbilitySpecHandle.IsValid())
+				{
+					return false;
+				}
 
 				auto CaptureProjectiles = [World]()
 				{
@@ -804,7 +815,7 @@ bool FProjectileLifecycleAutomationTest::RunTest(const FString& Parameters)
 					return ExistingProjectiles;
 				};
 
-				auto SpawnReleaseProjectile = [World, Player, PlayerASC, &CaptureProjectiles](const FName AbilityName)
+				auto SpawnReleaseProjectile = [World, Player, PlayerASC, BowAbilitySpecHandle, &CaptureProjectiles](const FName AbilityName)
 				{
 					const TSet<ACombatProjectile*> ExistingProjectiles = CaptureProjectiles();
 					UBowDrawFireAbility* BowAbility = NewObject<UBowDrawFireAbility>(Player, AbilityName);
@@ -814,6 +825,7 @@ bool FProjectileLifecycleAutomationTest::RunTest(const FString& Parameters)
 					}
 
 					BowAbility->SetTestCurrentActorInfo(PlayerASC->AbilityActorInfo.Get());
+					BowAbility->SetTestCurrentSpecHandle(BowAbilitySpecHandle);
 					BowAbility->SetTestTargetAssistScreenProjectionHook([](const FVector&, FVector2D& OutScreenPosition, FVector2D& OutViewportSize)
 					{
 						OutScreenPosition = FVector2D(960.0f, 540.0f);
