@@ -2,7 +2,7 @@
 
 ## Plan State
 
-- Status: Implementation complete; documentation closeout pending one Bow PIE regression gate.
+- Status: Completed; all accepted Automation, compile, Editor readback, PIE, and default fresh-review gates are recorded below.
 - Baseline: `615b7a1` (`[Feature] 完成基础生命 HUD 与敌人血条 / Core Vital HUD And Enemy Bars`).
 - Objective: add one local, Player-owned screen-space lock target selected by middle mouse and cycled by the mouse wheel, with a gold highlight on the target's existing overhead Health bar.
 - Current `Content/**`, maps, authored Blueprint/UMG/input/GA/GE/Montage/AnimBP assets, Config/project files, and every other worktree change are user-owned WIP. Preserve them. This stage may write only the explicitly named `BP_Player`, `IMC_Default`, and `WBP_EnemyVitalBar` assets through live Unreal Editor MCP after a focused readback and recovery point; all other asset work remains excluded.
@@ -81,13 +81,14 @@ Before any write, Main must use live Unreal MCP serially: verify the Editor is n
 
 ### Review, documentation, and commit boundary
 
-1. After user-confirmed Automation, compile, Editor readback, and PIE, Main performs normal defect-first review plus Main adversarial fallback while `gpt-5.6-luna / xhigh` remains unavailable. Do not call that fallback independent review.
+1. After user-confirmed Automation, compile, Editor readback, and PIE, Main performs one default defect-first fresh review. An executor self-review is strict when an executor is assigned; Main only adds adversarial/Fresh-Reviewer review on explicit user request.
 2. On accepted closeout, update README, ARCHITECTURE, ROADMAP, and this plan. Mark B1 done; retain B3 as the only Bow locked-target preference owner and 07A2 as the Enemy-bar visibility-policy owner.
 3. The default commit includes only approved C++/Automation/docs. Exclude all `Content/**`, input/Widget Blueprints, maps, Config/project WIP, generated folders, and unrelated changes unless a later explicit stable asset closure is approved.
 
-## Current Evidence And Remaining Closeout Gate
+## Closeout Record
 
-- User-confirmed: manual `PolyQuestEditor` compilation; Editor setup that produces the Middle Mouse lock and gold existing Enemy-bar frame; PIE checks for no target, cursor-nearest acquisition, Middle Mouse clear/reacquire, both wheel directions, non-death invalidation clear, action-facing, unchanged fixed camera/ordinary movement, and both directional/no-input Dodge behavior.
+- User-confirmed: manual `PolyQuestEditor` compilation; Editor setup that produces the Middle Mouse lock and gold existing Enemy-bar frame; PIE checks for no target, cursor-nearest acquisition, Middle Mouse clear/reacquire, both wheel directions, non-death invalidation clear, action-facing, unchanged fixed camera/ordinary movement, directional/no-input Dodge behavior, and locked Bow Draw/Hold mouse-facing plus the existing Bow Release target-assist/Homing route.
 - User-confirmed: `PolyQuest.Player.LockOn` Automation now succeeds. Its transient fixture warnings about missing Enemy AttackSet, Poise recovery configuration, Player loadout, and ragdoll Physics Asset are intentional incomplete-fixture diagnostics; the test result is `Success`.
 - Main single fresh review found no P0-P2 source defect. CodeGraph caller/callee reads, code-review-graph supplemental context, Rider error-level lint on the touched C++ surface, Rider project Errors, and `git diff --check` found no source or whitespace blocker. Graph-reported global test gaps are not treated as an independent test result.
-- Remaining closeout gate: user PIE must confirm that, while an Enemy is locked, Bow Draw/Hold remains mouse-directed and Bow Release preserves the existing no-lock target-assist/Homing behavior. This stage does not give Bow the lock target; that remains exclusively `TODO-03B-3`. Until this visual regression is confirmed, do not mark B1 done or update README/ARCHITECTURE as completed.
+- Debt handoff: this stage intentionally does not continuously rotate ordinary locomotion, preserve a lock while Sprint free-runs, or retarget on enemy death; those behaviors are the complete scope of `TODO-02B2`. This stage intentionally leaves Bow mouse-facing and its no-lock target-assist/Homing unchanged; `TODO-03B-3` alone may give Bow a valid B1 locked target preference.
+- Commit record: `e1d340b` contains the focused C++/Automation/plan/Roadmap/AGENTS change set and excludes all authored asset WIP. This accompanying documentation closeout commit synchronizes README and ARCHITECTURE and likewise excludes all authored asset WIP.
