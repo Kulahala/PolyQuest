@@ -34,6 +34,9 @@ public:
 	UFUNCTION(BlueprintPure, Category = "AI|Enemy")
 	UEnemyAIProfile* GetAIProfile() const { return AIProfile; }
 
+	/** C++-only presentation bridge for the local Player lock-on highlight. */
+	void SetPlayerLockOnHighlighted(bool bHighlighted);
+
 #if WITH_DEV_AUTOMATION_TESTS
 	void SetTestAttackSet(UEnemyAttackSet* InSet) { AttackSet = InSet; }
 	void SetTestAIProfile(UEnemyAIProfile* InProfile) { AIProfile = InProfile; }
@@ -146,5 +149,6 @@ private:
 	bool bPendingDeferredStanceBreak = false;
 	bool bHasLoggedInvalidPoiseRecoveryConfiguration = false;
 	bool bHasLoggedInvalidUIWidgetClass = false;
+	bool bPlayerLockOnHighlighted = false;
 	const FGameplayEffectSpec* ActivePoiseBreakingEffectSpec = nullptr;
 };

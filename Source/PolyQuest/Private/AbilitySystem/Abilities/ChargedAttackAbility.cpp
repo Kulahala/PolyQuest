@@ -158,7 +158,7 @@ void UChargedAttackAbility::ActivateAbility(
 	RateWindowBeginTask->EventReceived.AddDynamic(this, &UChargedAttackAbility::OnRateWindowBegin);
 	RateWindowEndTask->EventReceived.AddDynamic(this, &UChargedAttackAbility::OnRateWindowEnd);
 
-	PlayerCharacter->ApplyActionFacing();
+	PlayerCharacter->ApplyLockAwareActionFacing();
 
 	HoldReadyTask->ReadyForActivation();
 	TraceWindowBeginTask->ReadyForActivation();

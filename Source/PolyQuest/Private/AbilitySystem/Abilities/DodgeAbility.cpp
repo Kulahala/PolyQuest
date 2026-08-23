@@ -154,7 +154,7 @@ void UDodgeAbility::ActivateAbility(
 	}
 	AbilitySystemComponent->CancelAbilities(&AbilityTagsToCancel, nullptr, this);
 
-	PlayerCharacter->ApplyActionFacing();
+	PlayerCharacter->ApplyDodgeFacing();
 
 	MontageTask->OnCompleted.AddDynamic(this, &UDodgeAbility::OnMontageCompleted);
 	MontageTask->OnInterrupted.AddDynamic(this, &UDodgeAbility::OnMontageInterrupted);

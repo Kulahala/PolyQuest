@@ -176,7 +176,7 @@ void UPlayerMeleeSkillAbility::ActivateAbility(
 	}
 
 	SetRuntimeActionTags(true);
-	PlayerCharacter->ApplyActionFacing();
+	PlayerCharacter->ApplyLockAwareActionFacing();
 
 	TraceWindowBeginTask->ReadyForActivation();
 	TraceWindowEndTask->ReadyForActivation();

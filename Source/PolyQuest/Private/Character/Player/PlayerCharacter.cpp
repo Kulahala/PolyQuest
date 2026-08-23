@@ -7,7 +7,12 @@
 #include "AbilitySystemComponent.h"
 #include "ActiveGameplayEffectHandle.h"
 #include "Camera/CameraComponent.h"
+#include "Camera/PlayerCameraManager.h"
+#include "Character/Enemy/EnemyCharacter.h"
+#include "Character/Player/PlayerLockOnTargeting.h"
+#include "Combat/Projectile/CombatProjectileTargeting.h"
 #include "Components/CapsuleComponent.h"
+#include "EngineUtils.h"
 #include "EnhancedInputComponent.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/PlayerController.h"
@@ -175,6 +180,7 @@ void APlayerCharacter::EndPlay(const EEndPlayReason::Type EndPlayReason)
 	UnbindHealthEvents();
 	UnbindSprintStateEvents();
 	ClearSprintJumpAirSpeed();
+	ClearLockedTarget();
 
 	ActiveBowAimRequester = nullptr;
 	bHasValidBowAimDirection = false;
@@ -317,6 +323,24 @@ void APlayerCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputCom
 		else
 		{
 			UE_LOG(LogPolyQuest, Warning, TEXT("'%s' has no InteractAction configured."), *GetNameSafe(this));
+		}
+
+		if (LockOnAction)
+		{
+			EnhancedInputComponent->BindAction(LockOnAction, ETriggerEvent::Started, this, &APlayerCharacter::HandleLockOnStarted);
+		}
+		else
+		{
+			UE_LOG(LogPolyQuest, Warning, TEXT("'%s' has no LockOnAction configured."), *GetNameSafe(this));
+		}
+
+		if (TargetCycleAction)
+		{
+			EnhancedInputComponent->BindAction(TargetCycleAction, ETriggerEvent::Triggered, this, &APlayerCharacter::HandleTargetCycleTriggered);
+		}
+		else
+		{
+			UE_LOG(LogPolyQuest, Warning, TEXT("'%s' has no TargetCycleAction configured."), *GetNameSafe(this));
 		}
 	}
 	else
@@ -993,14 +1017,325 @@ void APlayerCharacter::ApplyActionFacing()
 	}
 }
 
+void APlayerCharacter::ApplyLockAwareActionFacing()
+{
+	FVector LockedDirection = FVector::ZeroVector;
+	if (TryGetLockedTargetDirection(LockedDirection))
+	{
+		SetActorRotation(FRotator(0.0f, LockedDirection.Rotation().Yaw, 0.0f));
+		return;
+	}
+
+	ApplyActionFacing();
+}
+
+void APlayerCharacter::ApplyDodgeFacing()
+{
+	if (!CurrentMoveInput.IsNearlyZero())
+	{
+		ApplyActionFacing();
+		return;
+	}
+
+	ApplyLockAwareActionFacing();
+}
+
 void APlayerCharacter::Tick(float DeltaSeconds)
 {
 	Super::Tick(DeltaSeconds);
+
+	if (LockedTarget.IsValid())
+	{
+		ValidateCurrentLockedTarget();
+	}
+	else
+	{
+		// A destroyed target can leave a stale weak pointer without a valid actor to unhighlight.
+		LockedTarget.Reset();
+	}
 
 	if (ActiveBowAimRequester.IsValid())
 	{
 		UpdateBowAimFacing();
 	}
+}
+
+void APlayerCharacter::HandleLockOnStarted(const FInputActionValue&)
+{
+	if (ValidateCurrentLockedTarget())
+	{
+		ClearLockedTarget();
+		return;
+	}
+
+	TryAcquireLockOnTarget();
+}
+
+void APlayerCharacter::HandleTargetCycleTriggered(const FInputActionValue& Value)
+{
+	const float AxisValue = Value.Get<float>();
+	if (!FMath::IsFinite(AxisValue) || FMath::IsNearlyZero(AxisValue) || !ValidateCurrentLockedTarget())
+	{
+		return;
+	}
+
+	TArray<FPlayerLockOnCandidate> Candidates;
+	FVector2D PlayerScreenPosition = FVector2D::ZeroVector;
+	if (!BuildLockOnCandidates(Candidates, PlayerScreenPosition))
+	{
+		ClearLockedTarget();
+		return;
+	}
+
+	FPlayerLockOnTargeting::SortClockwise(Candidates);
+	const int32 NextIndex = FPlayerLockOnTargeting::FindCycledTargetIndex(Candidates, LockedTarget.Get(), AxisValue > 0.0f ? 1 : -1);
+	if (NextIndex == INDEX_NONE)
+	{
+		ClearLockedTarget();
+		return;
+	}
+
+	SetLockedTarget(Candidates[NextIndex].TargetActor.Get());
+}
+
+bool APlayerCharacter::TryAcquireLockOnTarget()
+{
+	TArray<FPlayerLockOnCandidate> Candidates;
+	FVector2D PlayerScreenPosition = FVector2D::ZeroVector;
+	if (!BuildLockOnCandidates(Candidates, PlayerScreenPosition))
+	{
+		return false;
+	}
+
+	const APlayerController* PlayerController = Cast<APlayerController>(GetController());
+	float MouseX = 0.0f;
+	float MouseY = 0.0f;
+
+#if WITH_DEV_AUTOMATION_TESTS
+	if (TestLockOnCursorPosition.IsSet())
+	{
+		MouseX = TestLockOnCursorPosition->X;
+		MouseY = TestLockOnCursorPosition->Y;
+	}
+	else
+#endif
+	if (!PlayerController || !PlayerController->IsLocalController() || !PlayerController->GetMousePosition(MouseX, MouseY))
+	{
+		return false;
+	}
+
+	const int32 SelectedIndex = FPlayerLockOnTargeting::FindNearestToCursor(Candidates, FVector2D(MouseX, MouseY));
+	if (SelectedIndex == INDEX_NONE)
+	{
+		return false;
+	}
+
+	SetLockedTarget(Candidates[SelectedIndex].TargetActor.Get());
+	return LockedTarget.IsValid();
+}
+
+bool APlayerCharacter::BuildLockOnCandidates(TArray<FPlayerLockOnCandidate>& OutCandidates, FVector2D& OutPlayerScreenPosition) const
+{
+	OutCandidates.Reset();
+	OutPlayerScreenPosition = FVector2D::ZeroVector;
+
+	UWorld* World = GetWorld();
+	const UAbilitySystemComponent* SourceASC = GetAbilitySystemComponent();
+	const APlayerController* PlayerController = Cast<APlayerController>(GetController());
+	if (!World || !SourceASC || !PlayerController)
+	{
+		return false;
+	}
+
+#if WITH_DEV_AUTOMATION_TESTS
+	if (!PlayerController->IsLocalController() && !TestLockOnProjectionHook)
+	{
+		return false;
+	}
+#else
+	if (!PlayerController->IsLocalController())
+	{
+		return false;
+	}
+#endif
+
+	FVector2D ViewportSize = FVector2D::ZeroVector;
+	if (!TryProjectLockOnWorldPoint(PlayerController, FCombatProjectileTargeting::GetTargetAimPoint(this), OutPlayerScreenPosition, ViewportSize))
+	{
+		return false;
+	}
+
+	for (TActorIterator<AEnemyCharacter> It(World); It; ++It)
+	{
+		AEnemyCharacter* CandidateActor = *It;
+		if (!CandidateActor || !FCombatProjectileTargeting::IsValidTargetCandidate(this, SourceASC, CandidateActor))
+		{
+			continue;
+		}
+
+		const FVector AimPoint = FCombatProjectileTargeting::GetTargetAimPoint(CandidateActor);
+		FVector2D CandidateScreenPosition = FVector2D::ZeroVector;
+		FVector2D CandidateViewportSize = FVector2D::ZeroVector;
+		if (!TryProjectLockOnWorldPoint(PlayerController, AimPoint, CandidateScreenPosition, CandidateViewportSize))
+		{
+			continue;
+		}
+
+		float ClockwiseAngleRadians = 0.0f;
+		if (!FPlayerLockOnTargeting::TryCalculateClockwiseAngle(OutPlayerScreenPosition, CandidateScreenPosition, ClockwiseAngleRadians))
+		{
+			continue;
+		}
+
+		const float PlayerScreenDistanceSquared = FVector2D::DistSquared(CandidateScreenPosition, OutPlayerScreenPosition);
+		if (!FMath::IsFinite(PlayerScreenDistanceSquared))
+		{
+			continue;
+		}
+
+		FPlayerLockOnCandidate& Candidate = OutCandidates.AddDefaulted_GetRef();
+		Candidate.TargetActor = CandidateActor;
+		Candidate.ScreenPosition = CandidateScreenPosition;
+		Candidate.ClockwiseAngleRadians = ClockwiseAngleRadians;
+		Candidate.PlayerScreenDistanceSquared = PlayerScreenDistanceSquared;
+		Candidate.StableKey = CandidateActor->GetPathName();
+	}
+
+	return true;
+}
+
+bool APlayerCharacter::TryProjectLockOnWorldPoint(
+	const APlayerController* PlayerController,
+	const FVector& WorldPoint,
+	FVector2D& OutScreenPosition,
+	FVector2D& OutViewportSize) const
+{
+	OutScreenPosition = FVector2D::ZeroVector;
+	OutViewportSize = FVector2D::ZeroVector;
+	if (!FMath::IsFinite(WorldPoint.X) || !FMath::IsFinite(WorldPoint.Y) || !FMath::IsFinite(WorldPoint.Z))
+	{
+		return false;
+	}
+
+#if WITH_DEV_AUTOMATION_TESTS
+	if (TestLockOnProjectionHook)
+	{
+		return TestLockOnProjectionHook(WorldPoint, OutScreenPosition, OutViewportSize)
+			&& FPlayerLockOnTargeting::IsStrictlyWithinViewport(OutScreenPosition, OutViewportSize);
+	}
+#endif
+
+	if (!PlayerController || !PlayerController->IsLocalController()
+		|| !PlayerController->PlayerCameraManager)
+	{
+		return false;
+	}
+
+	int32 ViewportSizeX = 0;
+	int32 ViewportSizeY = 0;
+	PlayerController->GetViewportSize(ViewportSizeX, ViewportSizeY);
+	OutViewportSize = FVector2D(static_cast<float>(ViewportSizeX), static_cast<float>(ViewportSizeY));
+	if (!FMath::IsFinite(OutViewportSize.X) || !FMath::IsFinite(OutViewportSize.Y)
+		|| OutViewportSize.X <= 0.0f || OutViewportSize.Y <= 0.0f)
+	{
+		return false;
+	}
+
+	const FVector CameraLocation = PlayerController->PlayerCameraManager->GetCameraLocation();
+	const FVector CameraForward = PlayerController->PlayerCameraManager->GetCameraRotation().Vector();
+	const float CameraDot = FVector::DotProduct(CameraForward, WorldPoint - CameraLocation);
+	if (!FMath::IsFinite(CameraLocation.X) || !FMath::IsFinite(CameraLocation.Y) || !FMath::IsFinite(CameraLocation.Z)
+		|| !FMath::IsFinite(CameraForward.X) || !FMath::IsFinite(CameraForward.Y) || !FMath::IsFinite(CameraForward.Z)
+		|| !FMath::IsFinite(CameraDot) || CameraDot <= 0.0f
+		|| !PlayerController->ProjectWorldLocationToScreen(WorldPoint, OutScreenPosition, false))
+	{
+		return false;
+	}
+
+	return FPlayerLockOnTargeting::IsStrictlyWithinViewport(OutScreenPosition, OutViewportSize);
+}
+
+bool APlayerCharacter::ValidateCurrentLockedTarget()
+{
+	AEnemyCharacter* CurrentTarget = LockedTarget.Get();
+	const APlayerController* PlayerController = Cast<APlayerController>(GetController());
+	const UAbilitySystemComponent* SourceASC = GetAbilitySystemComponent();
+	if (!CurrentTarget || !PlayerController || !SourceASC
+		|| !FCombatProjectileTargeting::IsValidTargetCandidate(this, SourceASC, CurrentTarget))
+	{
+		ClearLockedTarget();
+		return false;
+	}
+
+	FVector2D ScreenPosition = FVector2D::ZeroVector;
+	FVector2D ViewportSize = FVector2D::ZeroVector;
+	if (!TryProjectLockOnWorldPoint(PlayerController, FCombatProjectileTargeting::GetTargetAimPoint(CurrentTarget), ScreenPosition, ViewportSize))
+	{
+		ClearLockedTarget();
+		return false;
+	}
+
+	return true;
+}
+
+bool APlayerCharacter::TryGetLockedTargetDirection(FVector& OutDirection)
+{
+	OutDirection = FVector::ZeroVector;
+
+#if WITH_DEV_AUTOMATION_TESTS
+	if (!bTestBypassLockOnValidation && !ValidateCurrentLockedTarget())
+	{
+		return false;
+	}
+#else
+	if (!ValidateCurrentLockedTarget())
+	{
+		return false;
+	}
+#endif
+
+	const AEnemyCharacter* CurrentTarget = LockedTarget.Get();
+	if (!CurrentTarget)
+	{
+		return false;
+	}
+
+	FVector Direction = CurrentTarget->GetActorLocation() - GetActorLocation();
+	Direction.Z = 0.0f;
+	if (!FMath::IsFinite(Direction.X) || !FMath::IsFinite(Direction.Y) || Direction.SizeSquared2D() <= KINDA_SMALL_NUMBER)
+	{
+		return false;
+	}
+
+	OutDirection = Direction.GetSafeNormal2D();
+	return !OutDirection.IsNearlyZero();
+}
+
+void APlayerCharacter::SetLockedTarget(AEnemyCharacter* NewTarget)
+{
+	if (LockedTarget.Get() == NewTarget)
+	{
+		return;
+	}
+
+	ClearLockedTarget();
+	if (!NewTarget)
+	{
+		return;
+	}
+
+	LockedTarget = NewTarget;
+	NewTarget->SetPlayerLockOnHighlighted(true);
+}
+
+void APlayerCharacter::ClearLockedTarget()
+{
+	if (AEnemyCharacter* PreviousTarget = LockedTarget.Get())
+	{
+		PreviousTarget->SetPlayerLockOnHighlighted(false);
+	}
+
+	LockedTarget.Reset();
 }
 
 bool APlayerCharacter::RegisterBowAimRequester(const UObject* Requester)

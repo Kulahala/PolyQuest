@@ -1,135 +1,93 @@
-# TODO-07A1: Core Vital HUD And Enemy Bars v1
+# TODO-02B1: Screen-Space Player Lock-On And Target Cycling v1
 
 ## Plan State
 
-- Status: Completed; native UI source and focused Automation are implemented, and the user has completed the required compile, Editor readback, and PIE gates.
-- Baseline: `84b6bd8` (`[Feature] 完成敌人落地延迟破韧 / Landing-Deferred Enemy Stance Break`).
-- Objective: add a small passive vital UI for the existing single-player GAS runtime: one Player viewport HUD for Health and Stamina, plus one always-visible overhead Health bar for every living Enemy.
-- Current `Content/**`, maps, imported assets, authored Blueprint/UMG/GA/GE/Montage/AnimBP/input assets, `Config/Automation/**`, `Config/Tests/**`, and all unrelated worktree changes remain user-owned WIP. Preserve and exclude them unless the user explicitly approves a stable asset closure. The scoped `AGENTS.md` documentation-ownership clarification belongs to this closeout.
+- Status: Implementation complete; documentation closeout pending one Bow PIE regression gate.
+- Baseline: `615b7a1` (`[Feature] 完成基础生命 HUD 与敌人血条 / Core Vital HUD And Enemy Bars`).
+- Objective: add one local, Player-owned screen-space lock target selected by middle mouse and cycled by the mouse wheel, with a gold highlight on the target's existing overhead Health bar.
+- Current `Content/**`, maps, authored Blueprint/UMG/input/GA/GE/Montage/AnimBP assets, Config/project files, and every other worktree change are user-owned WIP. Preserve them. This stage may write only the explicitly named `BP_Player`, `IMC_Default`, and `WBP_EnemyVitalBar` assets through live Unreal Editor MCP after a focused readback and recovery point; all other asset work remains excluded.
 
 ~~~text
 Outer: ue-stage-workflow
-Primary: ue5-ui-umg-slate
-Support: ue5-cpp-gameplay, ue5-debug-validation
-Route reason: this is a UMG presentation and ASC Attribute-delegate lifecycle bridge; it must remain display-only and preserve the existing input/UI ownership.
+Primary: ue5-cpp-gameplay
+Support: unreal-enhanced-input, ue5-ui-umg-slate, ue5-debug-validation
+Route reason: this stage adds local Player input, target lifecycle, one-shot action-facing, and a narrow UMG presentation bridge while preserving fixed-camera and GAS ownership.
 ~~~
 
 ~~~text
 Plan explorers: 0
-Implementation executors: 1 (Gemini, user-coordinated bounded executor)
+Implementation executors: 0
 Complex Executor: none
-Main parallel work: contract review, validation interpretation, fresh/adversarial review, documentation closeout, and commit preparation after user approval.
-Reason: Controller and Enemy UI lifecycles are a small coupled boundary. The active plan fully fixes their contract, while Main retains architecture, shared GAS ownership, review, documentation, and Git ownership.
+Main parallel work: none
+Reason: Player input/action-facing, public C++ target queries, and lifecycle integration are Main-only territory under AGENTS.md. No child owns these cross-cutting contracts.
 ~~~
 
 ## Locked Product Contract
 
-1. `TODO-07A1` is UMG-only presentation. `UCharacterAttributeSet` and each character ASC remain the sole Health, MaxHealth, Stamina, and MaxStamina authority. Widgets never apply GameplayEffects, mutate Attributes, cancel abilities, or own combat state.
-2. The Player HUD sits at the upper-left viewport edge and shows immediate `Current / Max` Health and Stamina values with matching progress bars. Values are integer-presented; a value change does not use a delayed damage bar, Tween, Widget Tick, or polling loop.
-3. Every living Enemy has an overhead Screen Space `UWidgetComponent` Health bar. It contains no current/max/percentage text, Poise, target marker, fade, animation, or damage number. It hides on death and teardown.
-4. Enemy bars remain constantly visible in v1. The accepted later product direction is idle-hidden bars that appear on damage or Lock-On; no visibility timer, fade policy, target API, or Lock-On integration belongs in this stage.
-5. HUD creation and removal must not change the current Controller mouse cursor flags, `FInputModeGameAndUI`, focus, click/hover handling, Enhanced Input mappings, camera behavior, or gameplay input routing.
-6. A missing configured Widget class, wrong native Widget parent, missing Pawn/ASC, invalid number, destruction, or re-possession must fail closed without a crash, delegate leak, duplicate viewport HUD, or impact on character gameplay.
-7. This stage does not reuse the migrated Test Widgets or Test HUD C++ hierarchy. It does not add CommonUI, a ViewModel framework, an `EActionState`-like UI state, a generic `UHealthBarComponent`, menus, potions, currency, crosshair, arrow count, buffs, Poise UI, damage text, or lock-on.
+1. `APlayerCharacter` owns one local `TWeakObjectPtr<AEnemyCharacter>` lock. It adds no Gameplay Tag, GAS Ability, replication, auto-retargeting, generic targeting framework, camera orbit/recentering, free-look, or continuous rotation control.
+2. A candidate must be an `AEnemyCharacter`, pass the existing `FCombatProjectileTargeting::IsValidTargetCandidate()` hostile/living/non-invulnerable/ASC predicate, and use its existing upper-torso `GetTargetAimPoint()`. The lock route must not call the Bow query `TryFindBestTargetCandidate()` and must not use Bow overscan, distance, angle, height, pitch, or visibility-trace filters.
+3. Candidate aim points must be in front of the active local camera, project to finite screen coordinates, and satisfy strict bounds `0 < X < ViewportWidth`, `0 < Y < ViewportHeight`. Projection, viewport, mouse, ASC, or target failure is fail-closed.
+4. With no valid lock, Middle Mouse selects the valid candidate nearest to the mouse screen position. Exact distance ties resolve by clockwise order, Player-screen distance, then Actor path name. No candidate is a no-op.
+5. With a valid lock, Middle Mouse clears it. `IA_TargetCycle` positive input moves one candidate clockwise around the projected Player position; negative input moves one candidate counter-clockwise. Sort by ascending `atan2(DeltaY, DeltaX)` in screen coordinates, starting at screen-right; exact angle ties resolve by Player-screen distance, then Actor path name. Wheel input with no valid lock is a no-op.
+6. Tick validates only the current lock and never scans candidates. Source/target death, destruction, missing ASC/team validity, invulnerability, projection failure, or leaving the strict viewport clears the weak reference and the old highlight with no automatic replacement. A later explicit Middle Mouse press may acquire anew.
+7. Lock affects only a legal action start. Light, Charged, Sprint Attack, and Player Melee Skill face a valid lock once, otherwise retain legacy facing. A directional Dodge uses camera-relative movement direction whenever input is nonzero (screen-left remains screen-left); a no-input Dodge faces the valid lock, otherwise retains actor-forward fallback. Existing active Montages, Root Motion, ordinary movement, Guard/Parry, camera, Bow pointer facing, Release-time Bow assistance, projectile collision, and Homing remain unchanged.
+8. The existing Enemy bar is the only lock presentation. It gains a gold `TargetHighlightImage` frame while locked; there is no separate reticle, target marker, scale change, fade, damage text, UI input ownership, or `TODO-07A2` visibility policy.
 
 ## Approved Native Surface
 
-### UMG presentation types
+### Player lock and input
 
-- Add `Source/PolyQuest/Public|Private/UI/PlayerVitalHUDWidget.*`.
-  - `UPlayerVitalHUDWidget : UUserWidget` exposes C++-only `SetHealth(float Current, float Max)` and `SetStamina(float Current, float Max)`.
-  - Bind exact Widget Tree names through `BindWidget`: `HealthProgressBar`, `HealthCurrentText`, `HealthMaxText`, `StaminaProgressBar`, `StaminaCurrentText`, `StaminaMaxText`.
-  - Each setter checks every `BindWidget` pointer before use, so `NewObject`/Headless Automation with no Blueprint Widget Tree cannot crash. It validates `FMath::IsFinite(Current)` and `FMath::IsFinite(Max)` before clamping or rounding; invalid values or `Max <= 0` produce `Current = 0`, `Max = 0`, and `Percent = 0`. Valid values clamp display Current to `[0, Max]`, clamp Percent to `[0, 1]`, then format rounded integer text.
-  - It has no ASC delegate, Actor reference, timer, Tick override, Blueprint gameplay callback, or input logic.
-- Add `Source/PolyQuest/Public|Private/UI/EnemyHealthBarWidget.*`.
-  - `UEnemyHealthBarWidget : UUserWidget` exposes C++-only `SetHealth(float Current, float Max)`.
-  - Bind only `HealthProgressBar`; its Blueprint intentionally has no numeric TextBlock contract.
-  - It checks the optional `HealthProgressBar` before use and follows the same finite-value and percent-safety rules, with no gameplay binding, mutation, timer, Tick, or target state.
-- Do not modify `PolyQuest.Build.cs`: the current module already has `UMG` and `Slate` dependencies.
+- Add `Source/PolyQuest/Public|Private/Character/Player/PlayerLockOnTargeting.{h,cpp}` as a stage-specific, pure screen-candidate helper. It owns strict viewport checks, clockwise ordering, mouse-nearest selection, and deterministic tie comparison over supplied candidate records. It owns no World scan, Actor state, GameplayTag, Tick, UI, or asset path.
+- Update `Source/PolyQuest/Public|Private/Character/Player/PlayerCharacter.*`.
+  - Add `LockOnAction` (`UInputAction*`) and `TargetCycleAction` (`UInputAction*`) editable inputs, plus `HandleLockOnStarted()` and `HandleTargetCycleTriggered()`.
+  - Add one C++-only nullable `GetLockedTarget()` query for the later B3 Release-time preference. Do not call it from Bow in B1 and do not expose a Blueprint gameplay API.
+  - Build candidates only for explicit acquire/cycle input using `TActorIterator<AEnemyCharacter>`, the shared projectile eligibility/aim-point helpers, and a local Controller projection adapter. A Tick path validates only `LockedTarget` and never chooses another actor.
+  - Keep `GetActionWorldDirection()` unchanged. Add a lock-aware attack-facing entry that falls back to legacy facing, and a Dodge-facing entry that preserves a nonzero `CurrentMoveInput` before using the lock with no input. Update only Light, Charged, Sprint Attack, Player Melee Skill, and Dodge call sites required by that contract.
+  - Clear the lock and previous highlighter during EndPlay, invalidation, and target changes. Missing local Controller/viewport/input configuration must warn or fail closed without changing gameplay state.
+- Update `Source/PolyQuest/Private/AbilitySystem/Abilities/DodgeAbility.cpp` only to use the new Dodge-facing entry after its existing successful commit/cancellation flow. Do not alter Cost, CancelWindow, invulnerability, Montage, or Root Motion behavior.
 
-### Player Controller ownership
+### Enemy UI bridge
 
-- Update `Source/PolyQuest/Public|Private/Framework/PolyQuestPlayerController.*`.
-  - Add `UPROPERTY(EditDefaultsOnly, Category = "UI") TSubclassOf<UPlayerVitalHUDWidget> PlayerVitalHUDClass` and one `UPROPERTY(Transient)` HUD instance.
-  - Add explicit idempotent private helpers: `EnsureHUDCreated()`, `BindToPawn(APawn* InPawn)`, `UnbindCurrentPawn()`, and `RefreshVitalHUD()`, plus four `FDelegateHandle` values and weak references to the currently bound Player Pawn and ASC.
-  - `EnsureHUDCreated()` creates and adds the Widget exactly once only for a local Controller with a valid configured class. `BindToPawn()` always calls `UnbindCurrentPawn()` before subscribing to a valid `APlayerCharacter` ASC, then immediately calls `RefreshVitalHUD()`.
-  - After `Super::OnPossess(InPawn)`, call `EnsureHUDCreated()` and `BindToPawn(InPawn)`. `BeginPlay()` calls the same idempotent pair for `GetPawn()` so either engine ordering produces one HUD and one binding. Repeated paths may safely unbind/rebind but must never create a second viewport Widget.
-  - Subscribe independently to existing `Health`, `MaxHealth`, `Stamina`, and `MaxStamina` Attribute delegates. All four callbacks only invoke `RefreshVitalHUD()`, which reads the four current values from the same bound ASC and calls both Widget setters. This is also the sole initial-snapshot route, so a Max change cannot leave stale ratio or text.
-  - `OnUnPossess()` calls `UnbindCurrentPawn()` and leaves the single HUD instance available for the next valid possession. `EndPlay()` unbinds, removes the instance from its parent, and clears references.
-  - Do not move, remove, or weaken `APlayerCharacter::BindHealthEvents()` and its hit-reaction route. Controller HUD binding is a separate display subscriber.
-  - Missing configuration or a wrong Widget parent logs at most once per Controller ownership cycle and does not create a fallback HUD.
-
-### Enemy-owned overhead display
-
-- Update `Source/PolyQuest/Public|Private/Character/Enemy/EnemyCharacter.*`.
-  - Construct one `UWidgetComponent` named `EnemyHealthBarWidgetComponent`, attached to the Character Root. Set `EWidgetSpace::Screen`, collision disabled, Pivot `(0.5, 1.0)`, initial relative Z offset `130cm`, and DrawSize `160x20`; Enemy Blueprints own final position/size tuning.
-  - Add a private weak typed Widget reference, independently named Health/MaxHealth delegate handles, and bind/unbind/refresh/hide helpers. These are UI-only and must not reuse or replace the existing death, HitReaction, Poise, or Stance Break handles.
-  - During `BeginPlay()`, resolve and cache the typed Widget only when a Widget Class is configured. A configured but wrong Widget parent logs once; an unconfigured component or Headless Automation where `GetUserWidgetObject()` is null silently leaves the weak reference empty. Bind Health and MaxHealth delegates to the existing ASC and immediately request a snapshot in either case.
-  - `RefreshEnemyHealthBar()` reads the current ASC values but only calls `SetHealth` when `EnemyHealthBarWidget.IsValid()`. It must never dereference a missing Slate/UserWidget object or retry-log every Attribute change. A MaxHealth callback refreshes from both current values.
-  - The existing `HandleDeath()` path hides the component with `SetVisibility(false, true)` before the corpse/ragdoll presentation continues. `EndPlay()` unbinds first, calls the same recursive hide, clears the Widget weak reference, and then follows the existing teardown. No callback may write after destruction.
+- Update `Source/PolyQuest/Public|Private/Character/Enemy/EnemyCharacter.*` with one C++-only `SetPlayerLockOnHighlighted(bool)` bridge. It caches the requested state, forwards it to a valid typed Health-bar Widget, reapplies it after the Widget is resolved, and clears it on death/EndPlay. It must not add a delegate, timer, target cache, gameplay mutation, or change to Health/Poise/death behavior.
+- Update `Source/PolyQuest/Public|Private/UI/EnemyHealthBarWidget.*` with `SetLockOnHighlighted(bool)` and optional `TargetHighlightImage` (`BindWidgetOptional`). It sets only visibility and remains null-safe in Headless Automation or an incompletely authored Widget.
+- Do not modify `FCombatProjectileTargeting`, `BowDrawFireAbility`, projectile classes, Gameplay Tags/config, `PolyQuest.Build.cs`, `APolyQuestPlayerController`, AttributeSet, GAS abilities other than the one Dodge-facing call site, AI, StateTree, maps, or mutable authored combat assets.
 
 ### Focused Automation
 
-- Add `Source/PolyQuest/Private/Tests/VitalHudAutomationTests.cpp` with `PolyQuest.UI.VitalHUD` using the existing transient Game World fixture pattern. Do not load or mutate user `Content` assets.
-- Cover the native behavior that is meaningful without a Widget Blueprint asset:
-  - Player and Enemy Widget setters accept missing `BindWidget` pointers and produce finite, clamped percentages for normal, zero/negative Max, NaN, and Infinity inputs without crashing.
-  - The Enemy CDO owns exactly one Screen Space, collision-disabled WidgetComponent with the agreed defaults.
-  - A transient Enemy can bind once, refresh initial Health/MaxHealth, tolerate a Headless null `GetUserWidgetObject()`, unbind cleanly, and ignore a later old-ASC change.
-  - A transient local Controller rebind/re-possess path reuses one HUD instance rather than creating a second one and removes its delegate ownership on teardown.
-- Add only narrowly scoped `WITH_DEV_AUTOMATION_TESTS` hooks if the existing public surface cannot observe a lifecycle state. Do not expose a production Blueprint API, load a widget asset, or alter GAS Attribute semantics merely to make the test easier.
+- Add `Source/PolyQuest/Private/Tests/PlayerLockOnAutomationTests.cpp` under `PolyQuest.Player.LockOn`. Use transient World fixtures and only narrow `WITH_DEV_AUTOMATION_TESTS` seams when existing C++-only behavior cannot otherwise be observed.
+- Cover strict bounds/camera-front rejection, finite projection failure, mouse-nearest and deterministic tie-break, clockwise/counter-clockwise cycling, no-lock wheel no-op, invalid/dead/invulnerable/destructed/off-screen target clear without replacement, old/new Enemy highlight handoff, and the three facing routes: attack lock, Dodge with camera-relative move input, and no-input Dodge lock fallback.
+- Extend the existing `VitalHudAutomationTests.cpp` only if needed to inject and assert `TargetHighlightImage`; do not load a Widget Blueprint or mutate Content assets in Automation.
 
-## User-Owned Editor Work
+## User-Authorized Live Editor Work
 
-After the native parent classes compile, author fresh UI assets instead of touching the failed Test migration:
+Before any write, Main must use live Unreal MCP serially: verify the Editor is not in PIE, read the current three assets, and save a recovery point. On a failed tool result, stop and report rather than guessing.
 
-1. Create `/Game/UI/HUD/Vitals/WBP_PlayerVitalHUD` derived from `UPlayerVitalHUDWidget`.
-   - Anchor top-left with an authored safe margin.
-   - Use `POLYGON_HUD` resources `SPR_DarkFantasy_Frame_Bar_01_Background`, `SPR_DarkFantasy_Frame_Bar_01`, and `ICON_DarkFantasy_Stat_Health_01_Clean` as the visual baseline.
-   - Use red for Health and cyan-green for Stamina. V1 intentionally has no guessed Stamina icon.
-   - Give the Widget Tree the six exact native `BindWidget` names above.
-2. Create `/Game/UI/HUD/Vitals/WBP_EnemyVitalBar` derived from `UEnemyHealthBarWidget`.
-   - Create exactly one named `HealthProgressBar` plus ordinary visual background/frame layers.
-   - Do not add numeric TextBlocks, Poise, target visuals, bindings, Tick logic, or animation.
-3. In the active `BP_PlayerController`, set `PlayerVitalHUDClass = WBP_PlayerVitalHUD`.
-4. Confirm in Editor that the Default GameMode `BP_GameMode` uses `BP_PlayerController`. Source/config confirms `BP_GameMode` is the project default and Rider confirms `BP_PlayerController` derives from `APolyQuestPlayerController`, but Rider could not read the GameMode CDO property value offline.
-5. In every active Enemy Blueprint derived from `AEnemyCharacter`, set the component Widget Class to `WBP_EnemyVitalBar` and tune the vertical offset for that mesh. Do not alter imported Marketplace assets.
-6. The user has manually deleted the failed migrated assets `/Game/UI/HUD/WBP_PlayerHUD`, `/Game/UI/HUD/WBP_EnemyHealthBar`, and `/Game/UI/Textures/T_PotionIcon` through Unreal Editor. Do not recreate or reuse them. During the later Editor readback, confirm that no redirector or remaining reference points to those retired paths; record only the actual Reference Viewer evidence in closeout.
+1. Create `/Game/Input/Actions/IA_LockOn` as Boolean, map Middle Mouse Button in the existing `/Game/Input/IMC_Default`; create `/Game/Input/Actions/IA_TargetCycle` as Axis1D, map Mouse Wheel Axis in the same context without Hold/Down triggers.
+2. On `/Game/BP/Characters/Player/BP_Player`, assign `LockOnAction = IA_LockOn` and `TargetCycleAction = IA_TargetCycle`. Do not change `BP_test`, `BP_PlayerController`, `IMC_MouseLook`, cursor settings, camera, map, or unrelated input/action fields.
+3. On `/Game/_UI/HUD/Vitals/WBP_EnemyVitalBar`, add a top-layer non-hit-testable `Image` named exactly `TargetHighlightImage`, frame it identically to the current bar, tint it gold, and set default Visibility to `Collapsed`. Preserve `HealthProgressBar`, geometry, and all other Widget behavior.
+4. Read back the created/modified assets and save them. Asset changes remain user WIP and are excluded from the default stage commit unless the user later approves a stable asset closure.
 
 ## Validation, Review, And Closeout
 
 ### Static and Automation gate
 
-1. Gemini supplies only the approved C++ and Automation diff, changed-path list, and a two-pass implementation self-review. It must not edit `plan.md`, docs, `Content/**`, maps, Blueprint/UMG/GA/GE/Montage/AnimBP/input assets, config, Editor state, staging, or commits.
-2. Before user compilation, Main verifies the final Controller and Enemy callback/teardown call chains through CodeGraph, runs Rider `lint_files` or `get_file_problems` on touched C++, runs `PolyQuest.UI.VitalHUD`, and runs `git diff --check`.
-3. Static, Automation, and Rider results are not PIE or visual evidence.
-4. The transient automation world must not emit `No game viewport was found`: test-only non-local Controller creation may create a Widget for lifecycle assertions, but must not call `AddToViewport()` without a real viewport. Treat that log as an Automation defect until removed.
+1. Read final caller/callee and public API paths through CodeGraph, inspect required tags/config only to confirm B1 adds none, run Rider error-level lint on all touched C++, run `PolyQuest.Player.LockOn` plus `PolyQuest.UI.VitalHUD` and affected projectile/combat regressions, then run `git diff --check`. Do not invoke UBT/UAT/Rider builds without explicit user permission.
+2. Static, Automation, Rider, and Editor readback are not PIE or visual proof.
 
-### User compile, Editor, and PIE gate
+### User compile and PIE gate
 
 1. Manually compile `PolyQuestEditor`.
-2. Read back the two Widget parents, all required Widget Tree names, `PlayerVitalHUDClass`, active GameMode Controller class, Enemy Widget Class, `Screen` Widget Space, and per-Enemy placement.
-3. In PIE, verify:
-   - Initial Health/Stamina values are correct and immediately update after Player damage, Stamina spend, and regeneration. The project currently has no playable Player healing source; Automation must directly exercise the same ASC positive-Health refresh branch without claiming a PIE healing route.
-   - Player respawn/restart/re-possession never duplicates the upper-left HUD.
-   - Multiple living enemies each show only a Health bar, immediately update after damage and remain independent; their native Health/MaxHealth refresh behavior is covered by the focused Automation fixture.
-   - Enemy death and actor destruction hide/remove the overhead bar without warnings, stale update, or gameplay regressions.
-   - Cursor visibility, click/hover behavior, Game-and-UI input mode, movement, combat, and camera behavior are unchanged.
+2. In PIE verify no-target acquire, mouse-nearest acquire, Middle Mouse clear/reacquire, positive/negative Wheel order, strict viewport loss, death/destruction clear, gold bar-frame transfer, locked attack/skill facing, screen-left Dodge, no-input lock Dodge, unchanged fixed camera/movement/cursor/Game-and-UI behavior, and unchanged Bow pointer-facing/target-assist/Homing.
 
 ### Review, documentation, and commit boundary
 
-1. After user-confirmed Automation, compile, Editor readback, and PIE, Main performs a normal defect-first fresh review. Attempt the required independent `gpt-5.6-luna / xhigh` adversarial review; if that model/runtime is unavailable, record a clearly labelled Main adversarial fallback instead of claiming an independent review.
-2. On approved closeout, update `README.md` with the verified visible result and `ARCHITECTURE.md` with the stable ASC-to-Controller/Enemy UI ownership and teardown contract.
-3. Update `ROADMAP.md`: mark `TODO-07A1` done and add the accepted future enemy-bar visibility decision under `TODO-07A2`. Its owner must define idle hiding, damage-driven showing, Lock-On showing, duration/fade behavior, and interaction with `TODO-02B1`; 07A1 deliberately implements none of those rules.
-4. Stage only approved source, Automation, and documentation paths by explicit path. Keep new UMG/Blueprint assets and all other `Content/**` WIP out by default. If the user later approves a stable UI asset closure, verify at least one staged `.uasset` is a Git LFS pointer before committing.
-5. No commit occurs until the user explicitly approves the reviewed closeout.
+1. After user-confirmed Automation, compile, Editor readback, and PIE, Main performs normal defect-first review plus Main adversarial fallback while `gpt-5.6-luna / xhigh` remains unavailable. Do not call that fallback independent review.
+2. On accepted closeout, update README, ARCHITECTURE, ROADMAP, and this plan. Mark B1 done; retain B3 as the only Bow locked-target preference owner and 07A2 as the Enemy-bar visibility-policy owner.
+3. The default commit includes only approved C++/Automation/docs. Exclude all `Content/**`, input/Widget Blueprints, maps, Config/project WIP, generated folders, and unrelated changes unless a later explicit stable asset closure is approved.
 
-## Closeout Record
+## Current Evidence And Remaining Closeout Gate
 
-- Implemented surface: added passive `UPlayerVitalHUDWidget` and `UEnemyHealthBarWidget` native bases; `APolyQuestPlayerController` creates one local viewport HUD and owns idempotent Player ASC binding for Health, MaxHealth, Stamina, and MaxStamina; `AEnemyCharacter` owns one Screen Space Health-bar component with independent Health/MaxHealth delegate lifecycle, death hiding, and teardown cleanup. The implementation does not alter Attribute authority, combat state, input ownership, camera, or existing Player Health-reaction binding.
-- User evidence: the user confirmed `PolyQuest.UI.VitalHUD` Automation success, manual `PolyQuestEditor` compilation without errors, Editor readback of Widget/Controller/Enemy configuration, and focused PIE for initial display, Player damage and Stamina spend/recovery, independent multi-Enemy bars, Enemy death hiding, restart/re-possession, and unchanged cursor/input behavior. The latest Automation log no longer includes `No game viewport was found`.
-- Validation boundary: there is currently no playable Player healing source. Automation directly drives a positive Health change through the same ASC-to-HUD callback path; this is evidence for UI refresh only, not a claimed PIE healing route. `TODO-03E` remains the owner of the first gameplay healing loop.
-- Static evidence: final Controller/Enemy/Widget call paths were re-read through CodeGraph; targeted Rider error-level inspection reported no errors before user compilation; `git diff --check` reported no content errors. code-review-graph matched the baseline but did not fully map the untracked new UI sources/test, so its low-risk label and test-gap counters are supplemental only; direct source/Rider/Automation review remains the acceptance evidence. The native Automation fixture covers finite-value handling, missing `BindWidget` pointers, Screen Space component defaults, headless Widget absence, old-ASC unbinding, and HUD rebind/reuse.
-- Review: Main normal defect-first review and Main adversarial fallback found no P0-P2 in the approved UI surface. `gpt-5.6-luna / xhigh` remains unavailable, so this is not represented as an independent reviewer result.
-- Debt handoff: `TODO-07A2` owns any idle-hidden/damage-triggered/lock-triggered visibility, timeout, fade, and lock-clear policy after `TODO-02B1`; `TODO-03E` owns actual Player healing gameplay. No new UI framework, Poise display, damage number, or target system is introduced here.
-- Asset record: the user authored and validated the fresh HUD Widgets in Editor, manually removed the failed migrated Test Widgets, and kept all `Content/**` assets out of this source/test/document closure.
-- Commit boundary: include `Source/PolyQuest/Private/Character/Enemy/EnemyCharacter.cpp`, `Source/PolyQuest/Public/Character/Enemy/EnemyCharacter.h`, `Source/PolyQuest/Private/Framework/PolyQuestPlayerController.cpp`, `Source/PolyQuest/Public/Framework/PolyQuestPlayerController.h`, `Source/PolyQuest/Private/UI/PlayerVitalHUDWidget.cpp`, `Source/PolyQuest/Public/UI/PlayerVitalHUDWidget.h`, `Source/PolyQuest/Private/UI/EnemyHealthBarWidget.cpp`, `Source/PolyQuest/Public/UI/EnemyHealthBarWidget.h`, `Source/PolyQuest/Private/Tests/VitalHudAutomationTests.cpp`, `AGENTS.md`, `README.md`, `ARCHITECTURE.md`, `ROADMAP.md`, and `plan.md`. Exclude all `Content/**`, maps, Config/project WIP, generated files, and every unrelated change.
+- User-confirmed: manual `PolyQuestEditor` compilation; Editor setup that produces the Middle Mouse lock and gold existing Enemy-bar frame; PIE checks for no target, cursor-nearest acquisition, Middle Mouse clear/reacquire, both wheel directions, non-death invalidation clear, action-facing, unchanged fixed camera/ordinary movement, and both directional/no-input Dodge behavior.
+- User-confirmed: `PolyQuest.Player.LockOn` Automation now succeeds. Its transient fixture warnings about missing Enemy AttackSet, Poise recovery configuration, Player loadout, and ragdoll Physics Asset are intentional incomplete-fixture diagnostics; the test result is `Success`.
+- Main single fresh review found no P0-P2 source defect. CodeGraph caller/callee reads, code-review-graph supplemental context, Rider error-level lint on the touched C++ surface, Rider project Errors, and `git diff --check` found no source or whitespace blocker. Graph-reported global test gaps are not treated as an independent test result.
+- Remaining closeout gate: user PIE must confirm that, while an Enemy is locked, Bow Draw/Hold remains mouse-directed and Bow Release preserves the existing no-lock target-assist/Homing behavior. This stage does not give Bow the lock target; that remains exclusively `TODO-03B-3`. Until this visual regression is confirmed, do not mark B1 done or update README/ARCHITECTURE as completed.

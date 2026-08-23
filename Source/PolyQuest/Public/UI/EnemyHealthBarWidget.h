@@ -7,6 +7,7 @@
 #include "EnemyHealthBarWidget.generated.h"
 
 class UProgressBar;
+class UImage;
 
 /**
  * Native C++ base widget for overhead enemy health bar display.
@@ -21,12 +22,20 @@ public:
 	/** Updates displayed health progress bar. */
 	void SetHealth(float Current, float Max);
 
+	/** Shows or hides the existing Enemy bar's lock-on frame without changing Health state. */
+	void SetLockOnHighlighted(bool bHighlighted);
+
 #if WITH_DEV_AUTOMATION_TESTS
 	void SetTestHealthProgressBar(UProgressBar* InBar);
 	UProgressBar* GetTestHealthProgressBar() const;
+	void SetTestTargetHighlightImage(UImage* InImage);
+	UImage* GetTestTargetHighlightImage() const;
 #endif
 
 protected:
 	UPROPERTY(meta = (BindWidget))
-TObjectPtr<UProgressBar> HealthProgressBar;
+	TObjectPtr<UProgressBar> HealthProgressBar;
+
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UImage> TargetHighlightImage;
 };

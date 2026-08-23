@@ -1,6 +1,7 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "UI/EnemyHealthBarWidget.h"
+#include "Components/Image.h"
 #include "Components/ProgressBar.h"
 #include "Math/UnrealMathUtility.h"
 
@@ -20,6 +21,14 @@ void UEnemyHealthBarWidget::SetHealth(float Current, float Max)
 	}
 }
 
+void UEnemyHealthBarWidget::SetLockOnHighlighted(const bool bHighlighted)
+{
+	if (TargetHighlightImage)
+	{
+		TargetHighlightImage->SetVisibility(bHighlighted ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
+	}
+}
+
 #if WITH_DEV_AUTOMATION_TESTS
 void UEnemyHealthBarWidget::SetTestHealthProgressBar(UProgressBar* InBar)
 {
@@ -29,5 +38,15 @@ void UEnemyHealthBarWidget::SetTestHealthProgressBar(UProgressBar* InBar)
 UProgressBar* UEnemyHealthBarWidget::GetTestHealthProgressBar() const
 {
 	return HealthProgressBar;
+}
+
+void UEnemyHealthBarWidget::SetTestTargetHighlightImage(UImage* InImage)
+{
+	TargetHighlightImage = InImage;
+}
+
+UImage* UEnemyHealthBarWidget::GetTestTargetHighlightImage() const
+{
+	return TargetHighlightImage;
 }
 #endif

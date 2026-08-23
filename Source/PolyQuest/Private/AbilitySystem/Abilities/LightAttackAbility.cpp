@@ -124,7 +124,7 @@ void ULightAttackAbility::ActivateAbility(
 		return;
 	}
 
-	PlayerCharacter->ApplyActionFacing();
+	PlayerCharacter->ApplyLockAwareActionFacing();
 
 	TraceWindowBeginTask->ReadyForActivation();
 	TraceWindowEndTask->ReadyForActivation();

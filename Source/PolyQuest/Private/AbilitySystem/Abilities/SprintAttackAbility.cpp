@@ -113,7 +113,7 @@ void USprintAttackAbility::ActivateAbility(
 	}
 
 	SetRuntimeActionTags(true);
-	PlayerCharacter->ApplyActionFacing();
+	PlayerCharacter->ApplyLockAwareActionFacing();
 
 	BoundAnimInstance = AnimInstance;
 	ActiveMontage = SprintAttackMontage;

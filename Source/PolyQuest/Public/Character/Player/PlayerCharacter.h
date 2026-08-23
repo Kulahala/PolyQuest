@@ -5,6 +5,7 @@
 #include "CoreMinimal.h"
 #include "ActiveGameplayEffectHandle.h"
 #include "Character/BaseCharacter.h"
+#include "Character/Player/PlayerLockOnTargeting.h"
 #include "GameplayTagContainer.h"
 #include "TimerManager.h"
 #include "PlayerCharacter.generated.h"
@@ -23,6 +24,8 @@ class UWeaponEquipmentComponent;
 class UAIPerceptionStimuliSourceComponent;
 class USpringArmComponent;
 class AController;
+class AEnemyCharacter;
+class APlayerController;
 struct FInputActionValue;
 struct FOnAttributeChangeData;
 
@@ -91,6 +94,14 @@ protected:
 	/** Input action used for world interaction (such as equipment pickup). */
 	UPROPERTY(EditAnywhere, Category="Input")
 	UInputAction* InteractAction;
+
+	/** Middle-mouse action that acquires or clears the local screen-space lock target. */
+	UPROPERTY(EditAnywhere, Category="Input")
+	UInputAction* LockOnAction;
+
+	/** Mouse-wheel axis action that cycles a currently valid lock target. */
+	UPROPERTY(EditAnywhere, Category="Input")
+	UInputAction* TargetCycleAction;
 
 	/** Hold duration at which the shared Dodge/Sprint input resolves to Sprint intent. */
 	UPROPERTY(EditDefaultsOnly, Category="Input", meta=(ClampMin="0.01", UIMin="0.01"))
@@ -199,6 +210,15 @@ public:
 	/** Applies the current action-facing direction as horizontal actor yaw once at action startup. */
 	void ApplyActionFacing();
 
+	/** Applies one lock-aware attack facing, falling back to the current action-facing direction. */
+	void ApplyLockAwareActionFacing();
+
+	/** Applies Dodge facing: camera-relative movement wins; without movement input, a valid lock wins. */
+	void ApplyDodgeFacing();
+
+	/** C++-only nullable lock query reserved for the later Bow locked-target preference stage. */
+	AEnemyCharacter* GetLockedTarget() const { return LockedTarget.Get(); }
+
 	/** True only when physical Sprint intent and current movement state permit a new Sprint request. */
 	bool CanAttemptSprint() const;
 
@@ -246,6 +266,16 @@ public:
 	/** Returns the player follow camera. */
 	FORCEINLINE UCameraComponent* GetFollowCamera() const { return FollowCamera; }
 
+#if WITH_DEV_AUTOMATION_TESTS
+	void SetTestLockedTarget(AEnemyCharacter* InTarget) { SetLockedTarget(InTarget); }
+	void SetTestCurrentMoveInput(const FVector2D& InInput) { CurrentMoveInput = InInput; }
+	bool TriggerTestAcquireLockOnTarget() { return TryAcquireLockOnTarget(); }
+	bool TriggerTestValidateCurrentLockedTarget() { return ValidateCurrentLockedTarget(); }
+	void SetTestLockOnProjectionHook(TFunction<bool(const FVector&, FVector2D&, FVector2D&)> InHook) { TestLockOnProjectionHook = MoveTemp(InHook); }
+	void SetTestLockOnCursorPosition(const FVector2D& InPosition) { TestLockOnCursorPosition = InPosition; }
+	void SetTestBypassLockOnValidation(const bool bBypass) { bTestBypassLockOnValidation = bBypass; }
+#endif
+
 private:
 	void HandlePrimaryAttackStarted(const FInputActionValue& Value);
 	void HandlePrimaryAttackCompleted(const FInputActionValue& Value);
@@ -266,6 +296,8 @@ private:
 	void HandleDodgeSprintCompleted(const FInputActionValue& Value);
 	void HandleDodgeSprintCanceled(const FInputActionValue& Value);
 	void HandleDodgeSprintThresholdElapsed();
+	void HandleLockOnStarted(const FInputActionValue& Value);
+	void HandleTargetCycleTriggered(const FInputActionValue& Value);
 	void RequestDodgeAbility();
 	void ResumeGuardAfterAttack();
 	void ClearDodgeSprintInputState();
@@ -282,6 +314,13 @@ private:
 	void OnSprintRelevantTagChanged(const FGameplayTag Tag, int32 NewCount);
 	void GetCameraPlanarAxes(FVector& OutForwardDirection, FVector& OutRightDirection) const;
 	void UpdateActionFacingRotationMode();
+	bool TryAcquireLockOnTarget();
+	bool BuildLockOnCandidates(TArray<FPlayerLockOnCandidate>& OutCandidates, FVector2D& OutPlayerScreenPosition) const;
+	bool TryProjectLockOnWorldPoint(const APlayerController* PlayerController, const FVector& WorldPoint, FVector2D& OutScreenPosition, FVector2D& OutViewportSize) const;
+	bool ValidateCurrentLockedTarget();
+	bool TryGetLockedTargetDirection(FVector& OutDirection);
+	void SetLockedTarget(AEnemyCharacter* NewTarget);
+	void ClearLockedTarget();
 
 	bool IsMovementInputBlocked() const;
 
@@ -349,4 +388,11 @@ private:
 	TWeakObjectPtr<const UObject> ActiveBowAimRequester;
 	FVector LastValidBowAimDirection = FVector::ZeroVector;
 	bool bHasValidBowAimDirection = false;
+	TWeakObjectPtr<AEnemyCharacter> LockedTarget;
+
+#if WITH_DEV_AUTOMATION_TESTS
+	TFunction<bool(const FVector&, FVector2D&, FVector2D&)> TestLockOnProjectionHook;
+	TOptional<FVector2D> TestLockOnCursorPosition;
+	bool bTestBypassLockOnValidation = false;
+#endif
 };

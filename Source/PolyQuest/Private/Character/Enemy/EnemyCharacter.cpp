@@ -79,6 +79,7 @@ void AEnemyCharacter::EndPlay(const EEndPlayReason::Type EndPlayReason)
 	bLaunchStanceBreakDeferralActive = false;
 	bPendingDeferredStanceBreak = false;
 	ActivePoiseBreakingEffectSpec = nullptr;
+	SetPlayerLockOnHighlighted(false);
 	UnbindUIHealthEvents();
 	HideEnemyHealthBar();
 	EnemyHealthBarWidget.Reset();
@@ -573,6 +574,7 @@ void AEnemyCharacter::HandleDeath()
 	}
 
 	bDeathTeardownStarted = true;
+	SetPlayerLockOnHighlighted(false);
 	HideEnemyHealthBar();
 	ClearPoiseRecovery();
 	if (UWorld* World = GetWorld())
@@ -669,6 +671,10 @@ void AEnemyCharacter::BindUIHealthEvents()
 				if (UUserWidget* UserWidget = EnemyHealthBarWidgetComponent->GetUserWidgetObject())
 				{
 					EnemyHealthBarWidget = Cast<UEnemyHealthBarWidget>(UserWidget);
+					if (EnemyHealthBarWidget.IsValid())
+					{
+						EnemyHealthBarWidget->SetLockOnHighlighted(bPlayerLockOnHighlighted);
+					}
 				}
 			}
 		}
@@ -727,6 +733,15 @@ void AEnemyCharacter::RefreshEnemyHealthBar()
 
 			EnemyHealthBarWidget->SetHealth(bFoundHealth ? CurrentHealth : 0.0f, bFoundMaxHealth ? MaxHealth : 0.0f);
 		}
+	}
+}
+
+void AEnemyCharacter::SetPlayerLockOnHighlighted(const bool bHighlighted)
+{
+	bPlayerLockOnHighlighted = bHighlighted;
+	if (EnemyHealthBarWidget.IsValid())
+	{
+		EnemyHealthBarWidget->SetLockOnHighlighted(bPlayerLockOnHighlighted);
 	}
 }
 
