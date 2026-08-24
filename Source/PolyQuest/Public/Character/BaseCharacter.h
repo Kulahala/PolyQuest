@@ -16,6 +16,7 @@ class UCharacterAttributeSet;
 class UGameplayAbility;
 class UMeleeTraceSourceComponent;
 class UMaterialInterface;
+class UMeleeWeaponTrailComponent;
 struct FOnAttributeChangeData;
 
 UCLASS(Abstract)
@@ -78,6 +79,9 @@ private:
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Combat|Melee", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<UMeleeTraceSourceComponent> MeleeTraceSource;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Combat|Feedback", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<UMeleeWeaponTrailComponent> MeleeWeaponTrail;
 
 	void ClearHitFeedbackOverlay();
 

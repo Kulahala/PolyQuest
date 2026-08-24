@@ -8,6 +8,7 @@
 class AActor;
 class UGameplayAbility;
 class UMeleeTraceSourceComponent;
+class UMeleeWeaponTrailComponent;
 class UGameplayEffect;
 
 /**
@@ -63,6 +64,7 @@ private:
 	FVector PreviousBladeBase = FVector::ZeroVector;
 	FVector PreviousBladeTip = FVector::ZeroVector;
 	TSet<TWeakObjectPtr<AActor>> DeliveredTargets;
+	TWeakObjectPtr<UMeleeWeaponTrailComponent> CachedTrailComponent;
 	bool bWindowOpen = false;
 	bool bHasPreviousBladeSample = false;
 };

@@ -3,6 +3,7 @@
 #include "AbilitySystemComponent.h"
 #include "Combat/Melee/MeleeHitResolver.h"
 #include "Combat/Melee/MeleeTraceSourceComponent.h"
+#include "Combat/Melee/MeleeWeaponTrailComponent.h"
 #include "Engine/World.h"
 #include "GameFramework/Actor.h"
 #include "GameplayEffect.h"
@@ -64,6 +65,15 @@ void UAbilityTask_MeleeTraceWindow::Activate()
 
 	bWindowOpen = true;
 	bHasPreviousBladeSample = true;
+
+	if (AActor* AvatarActor = GetAvatarActor())
+	{
+		CachedTrailComponent = AvatarActor->FindComponentByClass<UMeleeWeaponTrailComponent>();
+		if (UMeleeWeaponTrailComponent* TrailComponent = CachedTrailComponent.Get())
+		{
+			TrailComponent->StartTrail(this, PreviousBladeBase, PreviousBladeTip);
+		}
+	}
 }
 
 void UAbilityTask_MeleeTraceWindow::TickTask(float DeltaTime)
@@ -81,6 +91,12 @@ void UAbilityTask_MeleeTraceWindow::TickTask(float DeltaTime)
 
 void UAbilityTask_MeleeTraceWindow::OnDestroy(bool AbilityIsEnding)
 {
+	if (UMeleeWeaponTrailComponent* TrailComponent = CachedTrailComponent.Get())
+	{
+		TrailComponent->EndTrail(this);
+	}
+	CachedTrailComponent.Reset();
+
 	ResetWindowState();
 	Super::OnDestroy(AbilityIsEnding);
 }
@@ -98,6 +114,11 @@ void UAbilityTask_MeleeTraceWindow::TraceCurrentSegment()
 	{
 		EndTask();
 		return;
+	}
+
+	if (UMeleeWeaponTrailComponent* TrailComponent = CachedTrailComponent.Get())
+	{
+		TrailComponent->UpdateTrail(this, CurrentBladeBase, CurrentBladeTip);
 	}
 
 	AActor* SourceActor = GetAvatarActor();
@@ -159,4 +180,5 @@ void UAbilityTask_MeleeTraceWindow::ResetWindowState()
 	PreviousBladeBase = FVector::ZeroVector;
 	PreviousBladeTip = FVector::ZeroVector;
 	DeliveredTargets.Reset();
+	CachedTrailComponent.Reset();
 }

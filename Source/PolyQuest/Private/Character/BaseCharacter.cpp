@@ -4,6 +4,7 @@
 #include "AbilitySystemComponent.h"
 #include "Abilities/GameplayAbility.h"
 #include "Combat/Melee/MeleeTraceSourceComponent.h"
+#include "Combat/Melee/MeleeWeaponTrailComponent.h"
 #include "Components/CapsuleComponent.h"
 #include "Components/PrimitiveComponent.h"
 #include "Components/SkeletalMeshComponent.h"
@@ -21,6 +22,11 @@ ABaseCharacter::ABaseCharacter()
 	AbilitySystemComponent = CreateDefaultSubobject<UAbilitySystemComponent>(TEXT("AbilitySystemComponent"));
 	Attributes = CreateDefaultSubobject<UCharacterAttributeSet>(TEXT("Attributes"));
 	MeleeTraceSource = CreateDefaultSubobject<UMeleeTraceSourceComponent>(TEXT("MeleeTraceSource"));
+	MeleeWeaponTrail = CreateDefaultSubobject<UMeleeWeaponTrailComponent>(TEXT("MeleeWeaponTrail"));
+	MeleeWeaponTrail->SetupAttachment(GetCapsuleComponent());
+	MeleeWeaponTrail->SetAutoActivate(false);
+	MeleeWeaponTrail->bAutoManageAttachment = false;
+	MeleeWeaponTrail->SetAutoDestroy(false);
 	GetCapsuleComponent()->SetCollisionResponseToChannel(ECC_GameTraceChannel1, ECR_Block);
 	GetCapsuleComponent()->SetCollisionResponseToChannel(ECC_Camera, ECR_Ignore);
 	GetMesh()->SetCollisionResponseToChannel(ECC_Camera, ECR_Ignore);

@@ -1,101 +1,151 @@
-# TODO-07B1A: Reaction-Tier Player Hit Camera Shake v1
+# TODO-07B2: Melee Weapon Trail v1
 
 ## Plan State
 
-- Status: Complete. The strict three-tier implementation, user validation, P1 lifecycle repair, and Main delta fresh review are complete.
-- Baseline: `8d8e1d5` (`[Feature] 完成战斗受击反馈 (Combat Hit Feedback)`).
-- Objective: extend the completed B1 Player-only Camera Shake into exactly `Small` / `Big` / `Launch` reaction-tier variants while preserving B1's red-flash, damage, reaction-event, and fixed-camera contracts.
-- Preserve all user-owned WIP. This stage does not write or stage `Content/**`, Config, maps, Blueprints, Input, AnimBPs, Niagara, GA/GE/Montage assets, project files, generated output, or unrelated worktree changes.
+- Status: Complete. This record preserves the accepted B2 contract and closeout evidence; the approved source/test slice and documentation are ready for the focused commit boundary below.
+- Baseline: `1f80cf5` (`[Feature] 三档受击镜头抖动 (Reaction-Tier Hit Camera Shake)`).
+- Objective: add one Niagara-only white melee trail to every current Player and Enemy melee Trace Window. The trail follows the existing world-space Blade Base/Tip samples, starts only while the exact active `UAbilityTask_MeleeTraceWindow` exists, and retains a short particle fade after that window closes.
+- Preserve all user-owned WIP. Do not modify, stage, move, delete, or infer behavior from unrelated `Content/**`, Config, maps, Blueprints, input, AnimBPs, GA/GE/Montage assets, `.uproject`, generated output, or external imported-resource changes.
 
 ```text
 Outer: ue-stage-workflow
-Primary: ue5-cpp-gameplay
-Support: ue5-debug-validation, game-feel, camera-systems
-Route reason: B1A changes the existing Player Health-delegate presentation selection, exact CameraShake lifetime, and the existing native Automation suite without changing the damage or reaction systems.
+Primary: unreal-niagara
+Support: ue5-cpp-gameplay, ue5-debug-validation
+Route reason: the player-facing result is a Niagara System driven continuously by existing combat samples, while the narrow native work owns the component, AbilityTask lifetime, test seam, and no-regression validation.
 ```
 
 ```text
 Plan explorers: 0
-Implementation executors: 1 (Gemini, user-assigned)
-Complex Executor: Gemini external execution boundary
-Main parallel work: frozen-contract ownership, validation evidence accounting, and post-validation fresh review
-Reason: Player Header, Health callback, EndPlay cleanup, and Automation form one lifecycle-sensitive slice. Main owns the contract; Gemini may implement only the named frozen paths after plan review approval.
+Implementation executors: 1 (Gemini only after its read-only plan review is accepted and the user explicitly authorizes execution)
+Complex Executor: Gemini external executor for one frozen Task/component lifecycle slice
+Main parallel work: none
+Reason: Trace Window, Character component ownership, Niagara module boundary, and Automation teardown form one lifecycle-sensitive integration. Main owns the contract, documentation, validation interpretation, fresh review, staging, and commit; Gemini may write only the frozen source/test slice.
 ```
 
 ## Evidence And Decisions
 
-- Local UE 5.8 headers confirm `APlayerCameraManager::StartCameraShake(...)` returns the started instance and `StopCameraShake(UCameraShakeBase*, true)` stops exactly that instance. `UCameraShakeBase::bSingleInstance` restarts the timer for a repeated class instead of stacking it.
-- Current `APlayerCharacter::OnHealthAttributeChanged()` proves real nonlethal Health GE damage, triggers B1 Overlay before Stunned/reaction suppression, then classifies the exact `Data.Reaction.Small`, `Data.Reaction.Big`, and `Data.Reaction.Launch` Asset Tags.
-- The user selected CameraLocal rotation-only feedback. No Camera Location offset, Roll, or FOV variation is introduced.
-- Gemini's read-only plan review found no P0-P2 blocker. Its three non-blocking recommendations are adopted explicitly below: weak-reference validity guards, native test patterns that remain active until explicitly stopped, and one pre-`FinishSpawning()` fixture injection path.
-- The user rejected a fourth Generic Camera Shake asset/field. The B1 generic Shake behavior is deliberately narrowed: a legal `None` tier, an `Invalid` multi-tier tag set, or a missing valid-tier class now leaves Camera Shake untouched while retaining B1 Overlay behavior and the existing Invalid-tag reaction-event warning.
-- The current working tree already has the B1A scheduling diff in `ROADMAP.md`; retain it. It is Main-owned documentation and not part of Gemini's source/test handoff.
+- The current live source has one shared `UMeleeTraceSourceComponent` on `ABaseCharacter`. `UAbilityTask_MeleeTraceWindow::Activate()` captures initial Blade Base/Tip endpoints; `TraceCurrentSegment()` captures their current endpoints once per task tick and then performs the unchanged prior-to-current sweep plus `FMeleeHitResolver` delivery.
+- The five current callers of that Task are `ULightAttackAbility`, `UChargedAttackAbility`, `USprintAttackAbility`, `UPlayerMeleeSkillAbility`, and `UEnemyMeleeAbility`. Player dynamic equipment endpoints and the Enemy static/fixed compatibility route already converge at `TryGetBladeEndpoints()`.
+- `PolyQuest.Build.cs` now carries only the private Engine `Niagara` module dependency. `NiagaraToolsets` in the project file remains outside B2.
+- There is no current `GameplayCue` or `GameplayCueManager` route in `Source/`, `Config/`, or `PolyQuest.uproject`. B2 does not establish one.
+- The user selected coverage for Player and current Enemy melee, not Player-only presentation. When a Trace Window ends, the system stops emitting through normal Niagara deactivation; particles already emitted fade naturally. Initial authored targets are `0.08s` for the blade sheet and `0.12s` for the farther tip accent.
+- The user authored local `Content/_FeedBack/Materials/M_MeleeTrail_White` and `Content/_FeedBack/Niagara/NS_MeleeWeaponTrail` assets, then assigned the System to the inherited component on `BP_Player` and `BP_Enemy_Goblin`. Those mutable `Content/**` assets remain user-owned WIP and are excluded from this source/test/docs commit.
 
 ## Frozen Runtime Contract
 
-1. Remove the retired `HitFeedbackCameraShakeClass` and its missing-class warning state. Keep exactly three non-callable `EditDefaultsOnly` Player fields under `Combat|Feedback`:
-   - `SmallHitFeedbackCameraShakeClass`
-   - `BigHitFeedbackCameraShakeClass`
-   - `LaunchHitFeedbackCameraShakeClass`
-   They are authored on `BP_Player`; no Blueprint function, Gameplay Tag, input, DataAsset, or generic feedback framework is added.
-2. After the existing authority, real nonlethal Health-GE, ASC, and Dead checks, `OnHealthAttributeChanged()` must keep `TriggerHitFeedbackOverlay()` first. It then reads Asset Tags and computes `EHitReactionTier` only for feedback selection, calls the tier-aware Shake helper, then retains the existing Stunned return and Invalid-tag reaction-event warning/return order.
-3. `Small`, `Big`, and `Launch` use only their matching authored class. `None` and `Invalid` do not call `StartCameraShake()` and do not clear, replace, or otherwise mutate an already-active tier Shake. A missing valid-tier class emits one Player-local configuration Warning for that tier and no-ops; it does not fall back to another tier.
-4. A valid Stunned Player still receives the selected valid-tier presentation Shake, but no reaction Gameplay Event is sent. `None` and Invalid tags remain without Shake; when not Stunned Invalid retains its existing log and no reaction event, while Stunned still returns before that existing log branch. B1 Overlay behavior is unchanged for every valid nonlethal Health GE decrease.
-5. `APlayerCharacter` owns only its exact started Shake instance, the originating `APlayerCameraManager`, and its class. Store both UObject references as `TWeakObjectPtr`; before `StopCameraShake(OldInstance, true)`, require both `ActiveHitFeedbackCameraManager.IsValid()` and `ActiveHitFeedbackCameraShake.IsValid()`. Otherwise perform no dereference and only reset local state. The same class calls `StartCameraShake()` again and relies on `bSingleInstance=true` to restart. A different class or CameraManager stops the exact old instance through the stored old manager before starting the new one. Never call a class-wide or global stop API.
-6. `EndPlay()` clears this exact active instance before existing teardown and `Super::EndPlay()`. The clear helper is idempotent and always resets the weak references/class state, even when the manager or instance has already expired.
-7. This remains Player-local presentation. Do not modify `ABaseCharacter` Overlay logic, `AEnemyCharacter`, `FHitReactionClassifier`, damage delivery, Guard/Parry, Hit Reaction Gameplay Events, Root Motion, CameraBoom, Pawn transform, FOV, or world camera behavior.
+1. Add one native-only `UMeleeWeaponTrailComponent : UNiagaraComponent` under `Source/PolyQuest/Private/Combat/Melee/`. `ABaseCharacter` creates exactly one `MeleeWeaponTrail` default subobject, attaches it to the Character Root only for lifetime ownership, and exposes it as an inherited visible component. It is configured with `bAutoActivate = false`, `bAutoDestroy = false`, and `bAutoManageAttachment = false`.
+2. The component must never attach to, move, reparent, query, or change `WeaponMesh`, `BladeTraceBase`, or `BladeTraceTip`. It receives only the current world-space positions through the exact Niagara User parameters `User.BladeBase` and `User.BladeTip`. Its Root attachment is not a transform source for the effect.
+3. The component exposes only narrow non-Blueprint C++ requests to start, update, and end a trail for one requester token. It stores that token as a weak `UObject` reference. An update or end request from an older Task must do nothing after a newer Task has taken ownership. A missing Niagara System is a silent visual no-op: it must not log, block a Trace Window, change hit delivery, or leave an active requester.
+4. `UAbilityTask_MeleeTraceWindow` is the sole B2 runtime caller. After successful initial endpoint capture in `Activate()`, it resolves the avatar's root-owned Trail component and starts it with that initial pair. It caches only a weak component reference for teardown.
+5. In `TraceCurrentSegment()`, after current endpoint capture and before the existing sweep loop, the Task updates the same trail with the already captured pair. It must not make another endpoint query, change the start/end Sweep samples, subdivisions, collision channel, damage effect, target set, hit resolver, or Trace Window Gameplay Event contract.
+6. In `OnDestroy()`, the Task ends only its own trail request before it clears Task state and calls `Super::OnDestroy()`. This covers normal Notify end, `EndAbility`, cancellation, invalid endpoint shutdown, and late teardown. It uses normal `Deactivate()` only; B2 must not call `DeactivateImmediate()` to force a hard visual cut. Actor/component destruction may discard residual particles with its owner, but cannot dereference a stale Task or stale component.
+7. B2 does not activate from `State.Action.Attacking`, Montages, AnimNotifies, raw input, impact delivery, Guard, Bow Draw/Hold/Release, Projectile, Targeting, or a generic timer. There is no second trace path and no gameplay effect, tag, input, ability, movement, collision, damage, target-selection, camera, or replication change.
+8. B2 does not introduce GameplayCue/Cue Notify assets, cue paths, cue tags, `GameplayCueManager` configuration, or a generic presentation dispatcher. The current Overlay, Player CameraShake, and Trail each retain their existing local owner and exact teardown path.
 
 ## Approved Source And Test Surface
 
-**Contract owner: Main. Implementation writer: Gemini after explicit execution authorization.**
+**Contract owner: Main. Implementation writer: Gemini only after explicit execution authorization.**
 
-- `Source/PolyQuest/Public/Character/Player/PlayerCharacter.h`
-  - Remove the Generic authored field/state and retain only the three tier fields, private tier-aware selection/start/clear declarations, `TWeakObjectPtr<APlayerCameraManager>` plus `TWeakObjectPtr<UCameraShakeBase>` exact active state, per-tier warning state, and minimal `WITH_DEV_AUTOMATION_TESTS` configuration/observation surface.
-  - A forward declaration of `APlayerCameraManager` and non-reflected `EHitReactionTier` is allowed only if required by those private helpers.
-- `Source/PolyQuest/Private/Character/Player/PlayerCharacter.cpp`
-  - Implement the frozen three-tier selection, stop/restart, and EndPlay lifecycle above. Keep the existing local-controller/CameraManager guard; `None` and Invalid must resolve to null without a configuration warning.
-- `Source/PolyQuest/Private/Tests/CombatAutomationFixture.cpp`
-  - Before `FinishSpawning()`, make one three-class test-only configuration call for every Player fixture so H3's clean-success-path signal contract remains intact. Do not leave a per-test or post-BeginPlay injection alternative.
-- `Source/PolyQuest/Private/Tests/TestHitFeedbackCameraShake.h/.cpp`
-  - Retain the `UTestHitFeedbackCameraShakePattern` that remains active until `StopShakePatternImpl()` or teardown, and bind Small, Big, and Launch test classes to it. All three classes must be `bSingleInstance=true`, so Headless Automation cannot naturally expire an instance before same-tier restart or cross-tier replacement assertions.
-- `Source/PolyQuest/Private/Tests/CombatHitFeedbackAutomationTests.cpp`
-  - Extend the existing suite; do not create a thirteenth suite or introduce Content dependencies.
+- `Source/PolyQuest/PolyQuest.Build.cs`
+  - Contract owner: Main. Implementation writer: Gemini.
+  - Add exactly `"Niagara"` to `PrivateDependencyModuleNames`; do not add a public dependency, plugin declaration, `NiagaraToolsets`, or `.uproject` change.
+- `Source/PolyQuest/Private/Combat/Melee/MeleeWeaponTrailComponent.h/.cpp` (new)
+  - Contract owner: Main. Implementation writer: Gemini.
+  - Define the private component and its exact requester-scoped start/update/end lifecycle. It may contain `WITH_DEV_AUTOMATION_TESTS` read-only observation/configuration support only for the named B2 Automation suite; it must not expose Blueprint, gameplay, asset-loading, or global presentation APIs.
+- `Source/PolyQuest/Public/Character/BaseCharacter.h` and `Source/PolyQuest/Private/Character/BaseCharacter.cpp`
+  - Contract owner: Main. Implementation writer: Gemini.
+  - Add only the private `MeleeWeaponTrail` default-subobject declaration and constructor creation/root attachment. Do not change ASC, Attributes, Mesh Overlay, MoveSpeed, fixed weapon display, BeginPlay, Possession, EndPlay, combat-team, or public callable API behavior.
+- `Source/PolyQuest/Public/AbilitySystem/Tasks/AbilityTask_MeleeTraceWindow.h` and `Source/PolyQuest/Private/AbilitySystem/Tasks/AbilityTask_MeleeTraceWindow.cpp`
+  - Contract owner: Main. Implementation writer: Gemini.
+  - Add only the weak Trail-component cache and calls in `Activate()`, `TraceCurrentSegment()`, and `OnDestroy()` described above. The two `OpenMeleeTraceWindow()` signatures and every existing hit/trace input remain frozen.
+- `Source/PolyQuest/Private/Tests/TestMeleeTrailAbility.h/.cpp` (new)
+  - Contract owner: Main. Implementation writer: Gemini.
+  - Create a native test-only ability that owns the real `UAbilityTask_MeleeTraceWindow` for Automation. It is not a production Ability, not a Blueprint asset, and does not duplicate Task logic.
+- `Source/PolyQuest/Private/Tests/MeleeWeaponTrailAutomationTests.cpp` (new)
+  - Contract owner: Main. Implementation writer: Gemini.
+  - Add the thirteenth suite, `PolyQuest.Melee.WeaponTrail`, using a real ASC-hosted Task and the existing deferred-spawn combat fixture.
+- `Source/PolyQuest/Private/Tests/CombatAutomationFixture.cpp` and `Source/PolyQuest/Private/Tests/CombatAutomationFixture.h`
+  - Contract owner: Main. Implementation writer: Gemini only if a minimal pre-`FinishSpawning()` test-only Trail configuration is required by the chosen observation seam.
+  - Do not migrate unrelated fixtures or add a test Content dependency. If a valid no-render native seam can avoid this file, leave it unchanged.
 
-The existing singular test configuration method has only the shared fixture caller and may be replaced by one three-class test-only configuration method. No other Header/API expansion is allowed.
+No unlisted source, Header/public API, Gameplay Tag, Input, Config, project, or asset file is approved. An executor that needs one must stop and return the exact evidence to Main rather than broadening the implementation.
 
-## Automation And User Validation
+## Niagara Asset Authoring (User-Owned)
 
-`PolyQuest.Combat.HitFeedback` must cover:
+After native source passes static review, the user authors the following assets in the Unreal Editor under the existing feedback root:
 
-- No reaction tag and deliberate invalid multi-tier tags flash but do not start, clear, replace, or log a missing Camera Shake.
-- Exact Small, Big, and Launch class selection.
-- Same-tier restart returning the same active single-instance class; Small -> Big -> Launch replacement stops the previous instance (`IsActive() == false`) rather than stacking it.
-- Stunned tier damage selecting the tier Shake while existing reaction suppression remains intact.
-- Enemy damage not increasing the Player Shake start count.
-- Active Shake cleanup on Player `EndPlay`, while retaining all B1 Overlay/Timer/external-Overlay/death/destroy regression checks.
+| Asset | Required role |
+| --- | --- |
+| `Content/_FeedBack/Materials/M_MeleeTrail_White` | Unlit, Additive white trail material with alpha-over-life support; it is presentation only and has no collision or gameplay readback. |
+| `Content/_FeedBack/Niagara/NE_MeleeTrail_BladeSheet` | CPU Ribbon emitter that consumes `User.BladeBase` and `User.BladeTip` as world-space samples and renders a broad swept blade sheet. Its width/orientation must span the actual Blade Base-to-Tip segment rather than render a single centerline. |
+| `Content/_FeedBack/Niagara/NE_MeleeTrail_TipAccent` | CPU Ribbon emitter that follows the Blade Tip only, is visibly narrower, and has the longer particle lifetime. |
+| `Content/_FeedBack/Niagara/NS_MeleeWeaponTrail` | System containing the two emitters and exposing exactly `User.BladeBase` / `User.BladeTip` Position parameters. |
 
-The invalid multi-tier tag Warning remains a deliberate negative-test signal. No successful fixture path may emit missing Player Loadout, weapon, Stamina, AI, Poise, Ragdoll, missing Shake, or invalid AbilitySpec warnings.
+Authoring constraints:
 
-User-owned Editor work after source validation:
+- Both emitters are CPU simulation with Local Space disabled. The System consumes the supplied positions as world positions; the native component's Root attachment must not double-transform the trail.
+- Start with BladeSheet lifetime `0.08s` and TipAccent lifetime `0.12s`, Additive white output, and alpha fading to zero over life. The visible farther tip is therefore longer than the base side without a separate gameplay route.
+- Use fixed sensible bounds appropriate to the weapon swing. Do not add GPU simulation, collision, Niagara Gameplay Events, event handlers, data-interface readback, socket sampling, or a second position source.
+- `Deactivate()` must stop new particle emission while the existing particles finish their configured lifespan. Do not use a hard kill/Immediate deactivation to compensate for bad lifetime tuning.
+- Assign the same authored `NS_MeleeWeaponTrail` to the inherited `MeleeWeaponTrail` component on `BP_Player` and `BP_Enemy_Goblin`. Do not attach the System to a mesh/socket and do not alter weapon trace marker authoring.
 
-1. Rename the current working `CS_PlayerHit` through the Unreal Content Browser to `CS_PlayerHit_Small`, then duplicate it to create `CS_PlayerHit_Big` and `CS_PlayerHit_Launch`. There is no `CS_PlayerHit_Generic` asset and no Generic Player field after recompilation.
-2. All three authored classes use `bSingleInstance=true`, CameraLocal rotational noise only, zero Location/FOV, and zero Roll. Start with roughly `0.08s`, `0.12s`, and `0.18s` for Small/Big/Launch; tune amplitude in PIE so intensity is strictly increasing without camera motion sickness.
-3. Assign the three classes on `BP_Player`. The retired Generic field will disappear after class recompilation; do not change any Enemy asset.
-4. Manually compile `PolyQuestEditor`, run `PolyQuest.Combat.HitFeedback` and the eleven existing regressions: `Equipment.TransactionMatrix`, `Melee.TraceSourceGeometry`, `Player.ActionWindows`, `Combat.HitReaction`, `Enemy.AttackSetSelection`, `Enemy.CombatSpacing`, `UI.VitalHUD`, `Player.Exhaustion`, `Player.LockOn`, `Projectile.Lifecycle`, and `Projectile.TargetAssist`.
-5. PIE: validate Small < Big < Launch readability, rapid cross-tier hits without accumulated amplitude, no Camera Location/FOV change, Guard/Parry and lethal damage remaining silent, and Enemy hits never shaking the Player camera.
+These assets are user-owned mutable `Content/**` work and remain outside the default B2 commit unless the user later gives separate explicit approval for a stable asset closure.
+
+## Automation And Validation
+
+### Native Automation
+
+Add `PolyQuest.Melee.WeaponTrail`; it must use a real AbilitySystemComponent, `UTestMeleeTrailAbility`, and `UAbilityTask_MeleeTraceWindow`, never a hand-written approximation of Task behavior. The test may use a `WITH_DEV_AUTOMATION_TESTS` observation seam on the component, but it must not require a `.uasset`, a viewport, a GPU simulation, or a test switch that changes production no-asset behavior.
+
+It must cover all of the following:
+
+- The BaseCharacter-owned component is root-attached and starts with Auto Activate, Auto Destroy, and Auto Manage Attachment disabled.
+- A configured test path receives the initial Blade Base/Tip pair, receives a Task-tick update from the same captured current pair, and observes normal deactivation after normal Task end/cancellation.
+- An older Task's late `OnDestroy()` cannot deactivate the newer Task's active trail. The newer Task can still end its own request.
+- Invalid endpoint shutdown and Player/Enemy destruction clear the current request safely without stale dereference or surviving active state.
+- With no Niagara System assigned, opening/ticking/ending a real Trace Window remains functional, produces no new configuration Warning, and does not alter trace endpoints, hit acceptance, damage delivery, or existing Trace Window state.
+- The suite leaves no Auto-destroyed component, no duplicated Task, no trail activation outside the Trace Window, and no H3 fixture-signal warning. Do not hide output with `AddExpectedError`, a lowered log category, or a test-only runtime fallback.
+
+Run the new suite plus the twelve existing suites through the Unreal Editor Automation front end:
+
+`PolyQuest.Equipment.TransactionMatrix`, `PolyQuest.Melee.TraceSourceGeometry`, `PolyQuest.Player.ActionWindows`, `PolyQuest.Combat.HitReaction`, `PolyQuest.Enemy.AttackSetSelection`, `PolyQuest.Enemy.CombatSpacing`, `PolyQuest.UI.VitalHUD`, `PolyQuest.Player.Exhaustion`, `PolyQuest.Player.LockOn`, `PolyQuest.Projectile.Lifecycle`, `PolyQuest.Projectile.TargetAssist`, and `PolyQuest.Combat.HitFeedback`.
+
+Any retained warning must map to the existing intentional negative assertion ledger: invalid multi-tier reaction tags, Stance Break fallback, equipment preflight/rollback, or invalid static trace geometry. B2 adds no successful-path missing-Niagara warning.
+
+### Static And User Gates
+
+Before asking for user validation, Main/Gemini must read all changed source and direct Task/component callers/callees, use CodeGraph, run a scoped code-review-graph impact read against `1f80cf5` if its index covers the baseline, run Rider error-level inspection on touched C++ paths, and run `git diff --check`. These are static gates only; they are not compile or visual evidence.
+
+User-owned validation after source static preflight:
+
+1. Editor readback: verify both inherited components point to `NS_MeleeWeaponTrail`; the System has exactly the two required User Position parameters, CPU Ribbons, Local Space off, no gameplay events/readback/collision, and the requested `0.08s` / `0.12s` fade relationship.
+2. Compile `PolyQuestEditor` manually and report the result.
+3. Run all thirteen Automation suites in the Unreal Editor front end and preserve raw logs.
+4. PIE in `Scene01`: verify Player Light, Charged, Sprint, and current Player Melee Skill windows; current Enemy melee; the blade sheet spans the weapon; the tip accent remains longer; and a normal close/cancel blends out naturally.
+5. PIE regressions: idle, ordinary locomotion, Guard/Parry, Bow Draw/Hold/Release, Projectile flight/impact, hit reaction, any `State.Action.Attacking` interval outside a Trace Window, weapon switching, no target, and rejected target behavior show no unintended trail or changed damage/target selection. Destroy/teardown must not leave a visual component or stale activation.
+
+## GameplayCue Decision
+
+Do not introduce GameplayCue merely because PolyQuest now has several visual effects. The deciding factor is ownership and dispatch topology, not effect count:
+
+- Mesh Overlay is an `ABaseCharacter` material/timer lifecycle that restores the prior Overlay.
+- Camera Shake is Player-local and tracks one exact CameraManager-owned instance across tier replacement, UnPossess, and EndPlay.
+- B2 Trail requires per-Task, per-tick endpoint updates and stale-requester protection.
+
+Putting these into Cue Notifies now would add a second dispatch/mapping lifecycle, obscure the existing precise teardown owners, and force Cue assets/configuration without providing a current single-player benefit. Reconsider a dedicated GameplayCue adoption gate only when one GameplayEffect/GameplayEvent needs data-driven fan-out to shared impact VFX, audio, and presentation across several recipients, or when multiplayer prediction/replication becomes an accepted project boundary. That future gate must define cue ownership, asset paths, stacking/removal semantics, and validation before any migration; it is not part of B2.
 
 ## Review, Closeout, And Commit Boundary
 
-- Gemini first performs a strict read-only plan review and reports only P0-P2 blockers, lifecycle risks, or missing required coverage. It must not edit until the user explicitly authorizes execution.
-- After execution, Gemini performs a strict implementation self-review. It is not an independent fresh review. Main interprets user validation and performs one separate defect-first fresh review.
-- Static preflight before user compile: final caller/callee reads, CodeGraph, code-review-graph impact against `8d8e1d5`, Rider error-level inspection, and `git diff --check`. Rider MCP recovered on 2026-08-24: project-relative `get_file_problems` and `lint_files` both returned zero error-level issues on the current B1 sources. Re-run the targeted inspection on the final touched files; if transport fails again, record that limitation rather than claiming inspection passed.
-- After accepted validation/review, Main updates `README.md`, `ARCHITECTURE.md`, `ROADMAP.md`, and this closeout record. Default commit includes only approved B1A C++, Automation, and those four documents; it excludes all `Content/**`, Config, maps, Blueprints, Input, AnimBPs, GA/GE/Montage assets, project files, generated output, and unrelated WIP.
+- Gemini first performs a strict read-only plan review. It may inspect the approved source/direct dependencies and Engine API facts, but it must not edit code, documents, assets, Config, project files, or Git state; it must not compile, launch the Editor, run PIE, or claim user evidence.
+- After explicit execution authorization, Gemini performs a strict implementation self-review limited to the frozen paths. It is not an independent fresh review. Main validates the report against the repository, interprets user compile/Automation/PIE evidence, and performs one defect-first fresh review after accepted validation.
+- Only after that review and the mandatory roadmap debt-handoff check does Main update `README.md`, `ARCHITECTURE.md`, `ROADMAP.md`, and this B2 closeout record.
+- Default commit boundary: only B2 C++, Automation, and the four project documents. Exclude all `Content/**`, Config, maps, Blueprints, Input, AnimBPs, GA/GE/Montage assets, `.uproject`, generated output, imported resources, and unrelated user WIP. Do not commit until the user explicitly approves it.
 
 ## Closeout Record
 
-- Implementation: the retired Generic Player Camera Shake field and test class are removed. `APlayerCharacter` now selects only the authored `Small`, `Big`, or `Launch` class from the existing `Data.Reaction.*` classification, while legal `None` and fail-closed `Invalid` tags preserve B1's Overlay-only behavior and leave an active tier Shake untouched. Same-tier hits rely on UE 5.8 `bSingleInstance`; a valid tier change stops the exact prior instance through its originating `APlayerCameraManager` before starting the replacement.
-- Lifecycle: the Player stores only weak references to its exact B1A CameraManager, instance, and class. `UnPossessed()` and `EndPlay()` share idempotent cleanup. During fresh review, the first implementation's direct `StopShake()` / `TeardownShake()` fallback after Manager expiry was rejected because it bypassed `CameraModifier` removal and pooling. The final code dereferences only when both weak references remain valid, otherwise clears local state only.
-- Automation: the shared deferred-spawn fixture injects Small/Big/Launch native test classes before `FinishSpawning()`. `PolyQuest.Combat.HitFeedback` covers tier selection, same-tier reuse, cross-tier replacement, no-tag/Invalid no-op, Stunned presentation, Enemy non-participation, and teardown. `Player->Destroy()` reaches the new `UnPossessed()` path through the UE Pawn teardown chain and asserts the active Shake stops.
-- User-confirmed runtime evidence: focused PIE and all twelve Automation suites passed through the Unreal Editor front end. The retained log signals are the established negative assertions for invalid multi-tier reaction tags, Stance Break fallback, equipment rejection/rollback, and invalid static Trace geometry.
-- Main static/review evidence: final caller/callee inspection, CodeGraph, scoped code-review-graph impact, Rider error-level inspection, and `git diff --check` passed. Main's defect-first fresh review found the Manager-expiry P1, and its post-repair delta review found no remaining P0-P2. Graph test-gap labels are supplemental because Unreal Automation macros are not fully linked by the graph; direct test and Engine teardown reads establish the relevant coverage.
-- Scope: the commit contains only B1A native source, Automation, and project documentation. The three authored Camera Shake assets, BP assignments, and all other `Content/**`/Config/map/input/AnimBP WIP remain user-owned and excluded. `TODO-07B2` remains the next accepted stage.
+- Runtime ownership: `ABaseCharacter` owns one root-attached, inactive `UMeleeWeaponTrailComponent`. `UAbilityTask_MeleeTraceWindow` is its sole runtime caller: it starts after the existing initial endpoint capture, updates from the same current endpoint pair before the unchanged Sweep/Resolver loop, and ends only its own weak requester token from `OnDestroy()`. A missing Niagara System is a silent visual no-op; normal `Deactivate()` stops emission without a hard kill. No GameplayCue, Tag, Input, damage, targeting, collision, or second trace route was added.
+- Automation: new `PolyQuest.Melee.WeaponTrail` uses a real ASC-hosted `UTestMeleeTrailAbility` and covers component defaults, initial/continuous endpoint forwarding, stale Task A versus active Task B requester arbitration, active Player endpoint invalidation followed by valid recovery, Player and content-free Enemy real-Task destruction, and the no-asset path. The endpoint-invalidation case deliberately makes the two markers coincide, proves `TraceCurrentSegment()` closes the Task and clears its requester, then proves a subsequent valid Task opens normally.
+- User evidence: the user confirmed focused `Scene01` PIE visual validation for the authored trail route and the Unreal Editor Automation front-end matrix of thirteen suites, including `PolyQuest.Melee.WeaponTrail`, as Success. The final endpoint/Enemy-teardown repair is Automation-only and does not change the already validated runtime/asset route.
+- Static/fresh review: Main re-read the final Task/component/test call path with CodeGraph, used code-review-graph as supplemental impact evidence, and inspected the untracked Automation source directly where graph macro coverage was incomplete. Rider error-level inspections returned zero errors for the Task and new suite; `git diff --check` passed. The defect-first fresh review found no P0-P2.
+- Warning ledger: retained warnings map to deliberate negative assertions only: invalid multi-tier reaction tags, Enemy Stance Break fallback, equipment preflight/active-swap/rollback, invalid static trace geometry, and the new explicit coincident blade-marker signal in `PolyQuest.Melee.WeaponTrail`. No missing-fixture, missing-Niagara, or `Invalid AbilitySpecHandle` success-path warning is accepted.
+- Scope and debt handoff: the focused commit contains only B2 C++, Automation, and these four documents. All `Content/**` assets and Blueprint assignments, Config, maps, `.uproject`, generated files, imported resources, and unrelated WIP remain excluded. No unresolved B2 runtime risk or validation debt requires a new Roadmap entry.
