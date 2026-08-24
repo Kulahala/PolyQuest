@@ -1,151 +1,157 @@
-# TODO-07B2: Melee Weapon Trail v1
+# TODO-03B-4: Player Mobile Bow Draw v1
 
 ## Plan State
 
-- Status: Complete. This record preserves the accepted B2 contract and closeout evidence; the approved source/test slice and documentation are ready for the focused commit boundary below.
-- Baseline: `1f80cf5` (`[Feature] 三档受击镜头抖动 (Reaction-Tier Hit Camera Shake)`).
-- Objective: add one Niagara-only white melee trail to every current Player and Enemy melee Trace Window. The trail follows the existing world-space Blade Base/Tip samples, starts only while the exact active `UAbilityTask_MeleeTraceWindow` exists, and retains a short particle fade after that window closes.
-- Preserve all user-owned WIP. Do not modify, stage, move, delete, or infer behavior from unrelated `Content/**`, Config, maps, Blueprints, input, AnimBPs, GA/GE/Montage assets, `.uproject`, generated output, or external imported-resource changes.
+- Status: Completed. This record preserves the accepted B4 contract and closeout evidence; it is not a claim that mutable authored assets are reproducible from the focused source/test commit.
+- Baseline: `51a17c7` (`[Feature] 完成近战武器拖尾 (Complete Melee Weapon Trail)`).
+- Objective: allow the Player to move through the complete active Bow Ability lifecycle: `Draw -> Hold -> Release -> Recovery/EndAbility`, while one configured authored MoveSpeed GameplayEffect owns the whole lifecycle's pace. Fixed top-down Bow presentation remains base locomotion plus an upper-body Montage layer.
+- Preserve every unrelated user WIP. Do not modify, stage, move, delete, infer behavior from, or include `Content/**`, Config, maps, Blueprints, input, AnimBPs, GA/GE/Montage assets, `.uproject`, generated output, or imported-resource changes unless the user later grants a separate explicit closure.
 
 ```text
 Outer: ue-stage-workflow
-Primary: unreal-niagara
-Support: ue5-cpp-gameplay, ue5-debug-validation
-Route reason: the player-facing result is a Niagara System driven continuously by existing combat samples, while the narrow native work owns the component, AbilityTask lifetime, test seam, and no-regression validation.
+Primary: ue5-cpp-gameplay
+Support: ue5-blueprint-workflow, ue5-debug-validation
+Route reason: the stage changes one GAS Ability's owned tags, exact MoveSpeed GE Handle lifetime, and Sprint handoff; user-owned Montage/AnimBP authoring closes the visual result.
 ```
 
 ```text
 Plan explorers: 0
 Implementation executors: 1 (Gemini only after its read-only plan review is accepted and the user explicitly authorizes execution)
-Complex Executor: Gemini external executor for one frozen Task/component lifecycle slice
+Complex Executor: Gemini external executor for one frozen Bow Ability lifecycle slice
 Main parallel work: none
-Reason: Trace Window, Character component ownership, Niagara module boundary, and Automation teardown form one lifecycle-sensitive integration. Main owns the contract, documentation, validation interpretation, fresh review, staging, and commit; Gemini may write only the frozen source/test slice.
+Reason: Bow's ASC Tag, Sprint, MoveSpeed Handle, EndAbility, and Automation contracts form one lifecycle-sensitive integration. Main owns the plan, contracts, documentation, validation interpretation, fresh review, staging, and commit; Gemini may write only the frozen source/test slice.
 ```
 
 ## Evidence And Decisions
 
-- The current live source has one shared `UMeleeTraceSourceComponent` on `ABaseCharacter`. `UAbilityTask_MeleeTraceWindow::Activate()` captures initial Blade Base/Tip endpoints; `TraceCurrentSegment()` captures their current endpoints once per task tick and then performs the unchanged prior-to-current sweep plus `FMeleeHitResolver` delivery.
-- The five current callers of that Task are `ULightAttackAbility`, `UChargedAttackAbility`, `USprintAttackAbility`, `UPlayerMeleeSkillAbility`, and `UEnemyMeleeAbility`. Player dynamic equipment endpoints and the Enemy static/fixed compatibility route already converge at `TryGetBladeEndpoints()`.
-- `PolyQuest.Build.cs` now carries only the private Engine `Niagara` module dependency. `NiagaraToolsets` in the project file remains outside B2.
-- There is no current `GameplayCue` or `GameplayCueManager` route in `Source/`, `Config/`, or `PolyQuest.uproject`. B2 does not establish one.
-- The user selected coverage for Player and current Enemy melee, not Player-only presentation. When a Trace Window ends, the system stops emitting through normal Niagara deactivation; particles already emitted fade naturally. Initial authored targets are `0.08s` for the blade sheet and `0.12s` for the farther tip accent.
-- The user authored local `Content/_FeedBack/Materials/M_MeleeTrail_White` and `Content/_FeedBack/Niagara/NS_MeleeWeaponTrail` assets, then assigned the System to the inherited component on `BP_Player` and `BP_Enemy_Goblin`. Those mutable `Content/**` assets remain user-owned WIP and are excluded from this source/test/docs commit.
+- `UBowDrawFireAbility` currently owns `State.Action.Attacking`, `State.Input.Block.Movement`, and `State.Input.Block.Jump`. `APlayerCharacter::DoMove()` rejects movement only through the matching movement-block tag.
+- Existing `State.Action.Attacking` already keeps Sprint unavailable through `APlayerCharacter::CanAttemptSprint()` and `USprintAbility`; removing Bow's movement block must not relax the Sprint gate.
+- Existing Bow activation registers a mouse-plane aim requester, which owns horizontal Capsule yaw. Valid B2 lock state remains only a B3 Release-time target preference; it must not replace Bow mouse-facing.
+- `ABaseCharacter` already owns the `MoveSpeed` Attribute-to-`CharacterMovement.MaxWalkSpeed` delegate. The stage must not write `MaxWalkSpeed` directly.
+- The Mobile Bow slowdown is a required authored, Infinite, non-periodic MoveSpeed GameplayEffect. Its exact multiplier is mutable Content tuning, not a native or architectural contract. `UTestMobileBowMoveSpeedGE` uses a controlled native multiplier solely to prove exact-handle lifetime and Attribute-to-CharacterMovement synchronization; it does not assert the current authored balance value.
+- The user confirmed fixed top-down presentation should use an upper-body overlay rather than Aim Offset. Candidate Bow resources exist under `Content/ArcherAnimsetPro`, but their skeleton compatibility and Root Motion settings are Editor-owned facts, not established by this plan.
+- No Internet lookup or old `E:\GameDevelop\Test` implementation is required. Current PolyQuest source provides the required GAS, input, Sprint, aim-facing, and movement boundaries.
 
 ## Frozen Runtime Contract
 
-1. Add one native-only `UMeleeWeaponTrailComponent : UNiagaraComponent` under `Source/PolyQuest/Private/Combat/Melee/`. `ABaseCharacter` creates exactly one `MeleeWeaponTrail` default subobject, attaches it to the Character Root only for lifetime ownership, and exposes it as an inherited visible component. It is configured with `bAutoActivate = false`, `bAutoDestroy = false`, and `bAutoManageAttachment = false`.
-2. The component must never attach to, move, reparent, query, or change `WeaponMesh`, `BladeTraceBase`, or `BladeTraceTip`. It receives only the current world-space positions through the exact Niagara User parameters `User.BladeBase` and `User.BladeTip`. Its Root attachment is not a transform source for the effect.
-3. The component exposes only narrow non-Blueprint C++ requests to start, update, and end a trail for one requester token. It stores that token as a weak `UObject` reference. An update or end request from an older Task must do nothing after a newer Task has taken ownership. A missing Niagara System is a silent visual no-op: it must not log, block a Trace Window, change hit delivery, or leave an active requester.
-4. `UAbilityTask_MeleeTraceWindow` is the sole B2 runtime caller. After successful initial endpoint capture in `Activate()`, it resolves the avatar's root-owned Trail component and starts it with that initial pair. It caches only a weak component reference for teardown.
-5. In `TraceCurrentSegment()`, after current endpoint capture and before the existing sweep loop, the Task updates the same trail with the already captured pair. It must not make another endpoint query, change the start/end Sweep samples, subdivisions, collision channel, damage effect, target set, hit resolver, or Trace Window Gameplay Event contract.
-6. In `OnDestroy()`, the Task ends only its own trail request before it clears Task state and calls `Super::OnDestroy()`. This covers normal Notify end, `EndAbility`, cancellation, invalid endpoint shutdown, and late teardown. It uses normal `Deactivate()` only; B2 must not call `DeactivateImmediate()` to force a hard visual cut. Actor/component destruction may discard residual particles with its owner, but cannot dereference a stale Task or stale component.
-7. B2 does not activate from `State.Action.Attacking`, Montages, AnimNotifies, raw input, impact delivery, Guard, Bow Draw/Hold/Release, Projectile, Targeting, or a generic timer. There is no second trace path and no gameplay effect, tag, input, ability, movement, collision, damage, target-selection, camera, or replication change.
-8. B2 does not introduce GameplayCue/Cue Notify assets, cue paths, cue tags, `GameplayCueManager` configuration, or a generic presentation dispatcher. The current Overlay, Player CameraShake, and Trail each retain their existing local owner and exact teardown path.
+1. In `UBowDrawFireAbility`, remove only the `State.Input.Block.Movement` contribution from `ActivationOwnedTags`. Retain `State.Action.Attacking` and `State.Input.Block.Jump`; retain every ActivationBlockedTag, AbilityTag, input event, target-assist, Dodge-window, rate-window, projectile, and aim-facing contract. Do not remove the tag from project config or from any other Ability.
+
+2. Add one authored field to `UBowDrawFireAbility`:
+
+   ```cpp
+   UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Bow|Movement")
+   TSubclassOf<UGameplayEffect> MobileBowMoveSpeedGameplayEffectClass;
+   ```
+
+   Add one private `FActiveGameplayEffectHandle` plus private start/clear helpers. The public reflected surface changes only by this authoring property; no Blueprint callable runtime API is added.
+
+3. Treat the configured Mobile Bow GE as mandatory setup. Include a null-class preflight with the existing Bow setup validation. After `MontageTask` has actually started and the current Montage is confirmed active, execute one common mobile-movement start helper:
+
+   - Resolve the configured GE CDO and apply it to the current ASC at `GetAbilityLevel()`.
+   - If no CDO or no valid Handle is obtained, log a clear `LogPolyQuest` Warning and converge through the existing cancelled `EndAbility()` path. Never silently leave Bow at base movement speed.
+   - Only after Bow's own GE applied successfully, call `PlayerCharacter->CancelSprintAbility()`. This prevents `Sprint -> Bow` from retaining the Sprint effect while preserving Sprint when a misconfigured Bow fails to start.
+
+4. The same Bow Handle stays active through Drawing, Holding, Releasing, and the authored Release/Recovery tail. `OnDrawReadyEvent`, early primary release, `TriggerRelease`, Release Notify, and rate/cancel-window events must neither reapply nor remove it. No new `Recovery` enum state, section-driven GE switching, timer, or second Bow state machine is allowed.
+
+5. `EndAbility()` must call one idempotent exact-handle clear helper before it tears down tasks. That helper removes only the Handle applied by this Bow instance from the current ASC, then invalidates it even if the ASC is unavailable. It covers normal Montage completion/blend-out, input cancel, existing Dodge cancellation, existing action/hit interruption, and any other route that already reaches Bow `EndAbility()`; it must not remove an external MoveSpeed source using the same GE class.
+
+6. Do not introduce a Player terminal-cancellation route. Current Player death does not yet cancel active Bow/other Ability instances; that accepted debt remains owned by `TODO-03D`. This stage proves correct cleanup once `EndAbility()` is reached, not unimplemented Player death teardown.
+
+7. Do not change `APlayerCharacter`, input mappings, Sprint Ability source, AttributeSet, Gameplay Tag config, replication, camera, lock-on, projectile target selection, gameplay costs, GameplayCue routing, root-motion policy, or movement-component configuration. Bow remains single-player/server-only as it is today.
 
 ## Approved Source And Test Surface
 
-**Contract owner: Main. Implementation writer: Gemini only after explicit execution authorization.**
+**Contract owner: Main. Implementation writer: Gemini only after explicit execution authorization.** Any need to modify an unlisted source/header/public API, Gameplay Tag, Input route, Config, `.uproject`, or asset is a stop condition requiring Main evidence review.
 
-- `Source/PolyQuest/PolyQuest.Build.cs`
+- `Source/PolyQuest/Public/AbilitySystem/Abilities/BowDrawFireAbility.h`
   - Contract owner: Main. Implementation writer: Gemini.
-  - Add exactly `"Niagara"` to `PrivateDependencyModuleNames`; do not add a public dependency, plugin declaration, `NiagaraToolsets`, or `.uproject` change.
-- `Source/PolyQuest/Private/Combat/Melee/MeleeWeaponTrailComponent.h/.cpp` (new)
+  - Add only the authored GE class, private Handle/helper declarations, required forward declaration/include, and narrow `WITH_DEV_AUTOMATION_TESTS` configuration/observation accessors that call the same production start/clear path.
+
+- `Source/PolyQuest/Private/AbilitySystem/Abilities/BowDrawFireAbility.cpp`
   - Contract owner: Main. Implementation writer: Gemini.
-  - Define the private component and its exact requester-scoped start/update/end lifecycle. It may contain `WITH_DEV_AUTOMATION_TESTS` read-only observation/configuration support only for the named B2 Automation suite; it must not expose Blueprint, gameplay, asset-loading, or global presentation APIs.
-- `Source/PolyQuest/Public/Character/BaseCharacter.h` and `Source/PolyQuest/Private/Character/BaseCharacter.cpp`
+  - Remove only the Bow movement owned-tag contribution; validate, apply, cancel Sprint, and clear the exact Handle in the order above. Keep Montage, event, Projectile, target-assist, aim-requester, and cancellation logic otherwise unchanged.
+
+- `Source/PolyQuest/Private/Tests/TestMobileBowMoveSpeedGE.h/.cpp` (new)
   - Contract owner: Main. Implementation writer: Gemini.
-  - Add only the private `MeleeWeaponTrail` default-subobject declaration and constructor creation/root attachment. Do not change ASC, Attributes, Mesh Overlay, MoveSpeed, fixed weapon display, BeginPlay, Possession, EndPlay, combat-team, or public callable API behavior.
-- `Source/PolyQuest/Public/AbilitySystem/Tasks/AbilityTask_MeleeTraceWindow.h` and `Source/PolyQuest/Private/AbilitySystem/Tasks/AbilityTask_MeleeTraceWindow.cpp`
+  - Define a native-only, Infinite, non-periodic controlled MoveSpeed GE. It must not load or reference `Content/**`, and its test multiplier must not be described as the source of truth for authored balance.
+
+- `Source/PolyQuest/Private/Tests/TestMobileBowSprintAbility.h/.cpp` (new)
   - Contract owner: Main. Implementation writer: Gemini.
-  - Add only the weak Trail-component cache and calls in `Activate()`, `TraceCurrentSegment()`, and `OnDestroy()` described above. The two `OpenMeleeTraceWindow()` signatures and every existing hit/trace input remain frozen.
-- `Source/PolyQuest/Private/Tests/TestMeleeTrailAbility.h/.cpp` (new)
+  - Define only the minimal active Ability carrying the real `Ability.Movement.Sprint` and `State.Movement.Sprinting` contracts necessary to verify `CancelSprintAbility()` cancellation. It is not a replacement for production `USprintAbility`, has no asset/config dependency, and is test-only.
+
+- `Source/PolyQuest/Private/Tests/PlayerMobileBowAutomationTests.cpp` (new)
   - Contract owner: Main. Implementation writer: Gemini.
-  - Create a native test-only ability that owns the real `UAbilityTask_MeleeTraceWindow` for Automation. It is not a production Ability, not a Blueprint asset, and does not duplicate Task logic.
-- `Source/PolyQuest/Private/Tests/MeleeWeaponTrailAutomationTests.cpp` (new)
-  - Contract owner: Main. Implementation writer: Gemini.
-  - Add the thirteenth suite, `PolyQuest.Melee.WeaponTrail`, using a real ASC-hosted Task and the existing deferred-spawn combat fixture.
-- `Source/PolyQuest/Private/Tests/CombatAutomationFixture.cpp` and `Source/PolyQuest/Private/Tests/CombatAutomationFixture.h`
-  - Contract owner: Main. Implementation writer: Gemini only if a minimal pre-`FinishSpawning()` test-only Trail configuration is required by the chosen observation seam.
-  - Do not migrate unrelated fixtures or add a test Content dependency. If a valid no-render native seam can avoid this file, leave it unchanged.
+  - Add the fourteenth suite, `PolyQuest.Player.MobileBow`, using the existing H3 deferred-spawn Player fixture. Do not modify fixture defaults, create a Content dependency, or create a second movement implementation.
 
-No unlisted source, Header/public API, Gameplay Tag, Input, Config, project, or asset file is approved. An executor that needs one must stop and return the exact evidence to Main rather than broadening the implementation.
+No `PlayerCharacter`, `SprintAbility`, `CombatAutomationFixture`, `PlayerActionWindowAutomationTests`, `ProjectileLifecycleAutomationTests`, Build.cs, Config, or Content path is approved for modification in this stage.
 
-## Niagara Asset Authoring (User-Owned)
+## Automation Contract
 
-After native source passes static review, the user authors the following assets in the Unreal Editor under the existing feedback root:
+`PolyQuest.Player.MobileBow` must use the real `UBowDrawFireAbility` instance and the production start/clear helpers through a narrow `WITH_DEV_AUTOMATION_TESTS` seam. It does not need a renderable AnimInstance or production Montage asset merely to prove GE ownership; actual Montage startup and visuals remain Editor/PIE evidence.
 
-| Asset | Required role |
-| --- | --- |
-| `Content/_FeedBack/Materials/M_MeleeTrail_White` | Unlit, Additive white trail material with alpha-over-life support; it is presentation only and has no collision or gameplay readback. |
-| `Content/_FeedBack/Niagara/NE_MeleeTrail_BladeSheet` | CPU Ribbon emitter that consumes `User.BladeBase` and `User.BladeTip` as world-space samples and renders a broad swept blade sheet. Its width/orientation must span the actual Blade Base-to-Tip segment rather than render a single centerline. |
-| `Content/_FeedBack/Niagara/NE_MeleeTrail_TipAccent` | CPU Ribbon emitter that follows the Blade Tip only, is visibly narrower, and has the longer particle lifetime. |
-| `Content/_FeedBack/Niagara/NS_MeleeWeaponTrail` | System containing the two emitters and exposing exactly `User.BladeBase` / `User.BladeTip` Position parameters. |
+It must cover all of the following without `AddExpectedError`, lowered log levels, or a test-only runtime fallback:
 
-Authoring constraints:
+- The Bow CDO owns `State.Action.Attacking` and `State.Input.Block.Jump`, but not `State.Input.Block.Movement`.
+- With a base `MoveSpeed` of `500`, one successful mobile-Bow start produces a valid Bow Handle, the controlled fixture's expected slowed MoveSpeed, and matching `CharacterMovement.MaxWalkSpeed` through the existing delegate.
+- A genuinely active test-only Sprint request is cancelled by the successful Bow start. Bow's retained Attacking contract remains the reason a new production Sprint cannot start; this stage does not rewrite Sprint preflight.
+- The exact same Handle persists while test state traverses Draw, Hold, Release, and Recovery/active-Releasing representation; no duplicate active effect is added.
+- Normal and cancelled `EndAbility()` each remove Bow's own Handle and restore base speed. If an independent MoveSpeed GE was already active, its resolved pre-Bow speed and its active Handle survive Bow teardown.
+- All test setup injects `UTestMobileBowMoveSpeedGE` before invoking the start helper, so H3's clean successful-path signal remains intact.
 
-- Both emitters are CPU simulation with Local Space disabled. The System consumes the supplied positions as world positions; the native component's Root attachment must not double-transform the trail.
-- Start with BladeSheet lifetime `0.08s` and TipAccent lifetime `0.12s`, Additive white output, and alpha fading to zero over life. The visible farther tip is therefore longer than the base side without a separate gameplay route.
-- Use fixed sensible bounds appropriate to the weapon swing. Do not add GPU simulation, collision, Niagara Gameplay Events, event handlers, data-interface readback, socket sampling, or a second position source.
-- `Deactivate()` must stop new particle emission while the existing particles finish their configured lifespan. Do not use a hard kill/Immediate deactivation to compensate for bad lifetime tuning.
-- Assign the same authored `NS_MeleeWeaponTrail` to the inherited `MeleeWeaponTrail` component on `BP_Player` and `BP_Enemy_Goblin`. Do not attach the System to a mesh/socket and do not alter weapon trace marker authoring.
+Run the new suite plus the existing thirteen-suite matrix through the Unreal Editor Automation front end:
 
-These assets are user-owned mutable `Content/**` work and remain outside the default B2 commit unless the user later gives separate explicit approval for a stable asset closure.
+`PolyQuest.Equipment.TransactionMatrix`, `PolyQuest.Melee.TraceSourceGeometry`, `PolyQuest.Melee.WeaponTrail`, `PolyQuest.Player.ActionWindows`, `PolyQuest.Combat.HitReaction`, `PolyQuest.Enemy.AttackSetSelection`, `PolyQuest.Enemy.CombatSpacing`, `PolyQuest.UI.VitalHUD`, `PolyQuest.Player.Exhaustion`, `PolyQuest.Player.LockOn`, `PolyQuest.Projectile.Lifecycle`, `PolyQuest.Projectile.TargetAssist`, and `PolyQuest.Combat.HitFeedback`.
 
-## Automation And Validation
+All fourteen suites must succeed. Existing retained warnings may only be those in the H3 intentional-negative ledger: invalid multi-tier reaction tags, no Stance Break Ability fallback, equipment preflight/rollback, and invalid static trace geometry. B4 adds no successful-path missing-GE, missing-fixture, or invalid-spec warning.
 
-### Native Automation
+## User-Owned Editor Authoring
 
-Add `PolyQuest.Melee.WeaponTrail`; it must use a real AbilitySystemComponent, `UTestMeleeTrailAbility`, and `UAbilityTask_MeleeTraceWindow`, never a hand-written approximation of Task behavior. The test may use a `WITH_DEV_AUTOMATION_TESTS` observation seam on the component, but it must not require a `.uasset`, a viewport, a GPU simulation, or a test switch that changes production no-asset behavior.
+After source static preflight, the user owns the following Editor work and readback:
 
-It must cover all of the following:
+1. In `GA_Player_Bow_DrawFire`, assign `MobileBowMoveSpeedGameplayEffectClass` to the selected authored MoveSpeed GameplayEffect; confirm it is `Infinite`, has no Periodic execution, and uses the currently intended MoveSpeed modifier. The exact multiplier remains asset-owned tuning and must be read back from the Editor when it changes.
 
-- The BaseCharacter-owned component is root-attached and starts with Auto Activate, Auto Destroy, and Auto Manage Attachment disabled.
-- A configured test path receives the initial Blade Base/Tip pair, receives a Task-tick update from the same captured current pair, and observes normal deactivation after normal Task end/cancellation.
-- An older Task's late `OnDestroy()` cannot deactivate the newer Task's active trail. The newer Task can still end its own request.
-- Invalid endpoint shutdown and Player/Enemy destruction clear the current request safely without stale dereference or surviving active state.
-- With no Niagara System assigned, opening/ticking/ending a real Trace Window remains functional, produces no new configuration Warning, and does not alter trace endpoints, hit acceptance, damage delivery, or existing Trace Window state.
-- The suite leaves no Auto-destroyed component, no duplicated Task, no trail activation outside the Trace Window, and no H3 fixture-signal warning. Do not hide output with `AddExpectedError`, a lowered log category, or a test-only runtime fallback.
+2. In `AM_Bow_Shoot`, author the continuous `Draw -> Hold(loop) -> Release -> Recovery -> End` route. The full active Montage belongs to the currently validated `DefaultGroup.UpperBody` Slot route; do not put Bow back into a full-body `DefaultSlot` track.
 
-Run the new suite plus the twelve existing suites through the Unreal Editor Automation front end:
+3. Choose compatible in-place Bow Draw/Hold/Release source sequences from `Content/ArcherAnimsetPro`. Confirm the source sequences and Montage do not generate Root Motion. Do not use Force Root Lock to hide Root Motion, and do not use RootMotion-directory Bow assets as a `CharacterMovement` walking substitute.
 
-`PolyQuest.Equipment.TransactionMatrix`, `PolyQuest.Melee.TraceSourceGeometry`, `PolyQuest.Player.ActionWindows`, `PolyQuest.Combat.HitReaction`, `PolyQuest.Enemy.AttackSetSelection`, `PolyQuest.Enemy.CombatSpacing`, `PolyQuest.UI.VitalHUD`, `PolyQuest.Player.Exhaustion`, `PolyQuest.Player.LockOn`, `PolyQuest.Projectile.Lifecycle`, `PolyQuest.Projectile.TargetAssist`, and `PolyQuest.Combat.HitFeedback`.
+4. In `ABP_Player_Dungeon`, preserve existing Bow base locomotion and the existing pure-base-pose Stride Warping position. Feed that pose into the current upper-body Slot, layer the Slot output from `spine_01` with the existing Mesh Space Rotation Blend setup, then keep the existing Reaction Overlay last:
 
-Any retained warning must map to the existing intentional negative assertion ledger: invalid multi-tier reaction tags, Stance Break fallback, equipment preflight/rollback, or invalid static trace geometry. B2 adds no successful-path missing-Niagara warning.
+   ```text
+   Bow base locomotion / Stride Warping
+       -> DefaultGroup.UpperBody Bow Slot
+       -> Layered Blend per Bone (spine_01)
+       -> existing Reaction Overlay
+   ```
 
-### Static And User Gates
+   Do not add Aim Offset, a dedicated Bow Aim BlendSpace, a second equipment-state bool, or a new Slot Group. The active Slot controls presentation; Bow's existing mouse-plane yaw controls aim-facing.
 
-Before asking for user validation, Main/Gemini must read all changed source and direct Task/component callers/callees, use CodeGraph, run a scoped code-review-graph impact read against `1f80cf5` if its index covers the baseline, run Rider error-level inspection on touched C++ paths, and run `git diff --check`. These are static gates only; they are not compile or visual evidence.
+5. If the existing Bow base locomotion cannot visibly support forward/backward/left/right movement while the upper body stays aimed, stop the asset closure and report the missing strafe/in-place asset evidence. Do not compensate with native movement changes, Root Motion, or a misleading upper-body blend.
 
-User-owned validation after source static preflight:
+These mutable assets stay outside the default source/test/document commit.
 
-1. Editor readback: verify both inherited components point to `NS_MeleeWeaponTrail`; the System has exactly the two required User Position parameters, CPU Ribbons, Local Space off, no gameplay events/readback/collision, and the requested `0.08s` / `0.12s` fade relationship.
-2. Compile `PolyQuestEditor` manually and report the result.
-3. Run all thirteen Automation suites in the Unreal Editor front end and preserve raw logs.
-4. PIE in `Scene01`: verify Player Light, Charged, Sprint, and current Player Melee Skill windows; current Enemy melee; the blade sheet spans the weapon; the tip accent remains longer; and a normal close/cancel blends out naturally.
-5. PIE regressions: idle, ordinary locomotion, Guard/Parry, Bow Draw/Hold/Release, Projectile flight/impact, hit reaction, any `State.Action.Attacking` interval outside a Trace Window, weapon switching, no target, and rejected target behavior show no unintended trail or changed damage/target selection. Destroy/teardown must not leave a visual component or stale activation.
+## Static Checks, User Validation, And Closeout
 
-## GameplayCue Decision
+Before user validation, Gemini/Main must read the final changed Ability and direct callers/callees, run CodeGraph, use code-review-graph only as supplementary diff/impact evidence when its index covers the baseline, run Rider error-level inspection on every touched C++ path, and run `git diff --check`. These are static checks only and are not compile, Editor, PIE, or visual proof.
 
-Do not introduce GameplayCue merely because PolyQuest now has several visual effects. The deciding factor is ownership and dispatch topology, not effect count:
+User validation:
 
-- Mesh Overlay is an `ABaseCharacter` material/timer lifecycle that restores the prior Overlay.
-- Camera Shake is Player-local and tracks one exact CameraManager-owned instance across tier replacement, UnPossess, and EndPlay.
-- B2 Trail requires per-Task, per-tick endpoint updates and stale-requester protection.
+- Manually compile `PolyQuestEditor`.
+- Run the fourteen Automation suites above from the Editor front end and preserve the raw result/log excerpt.
+- In `Scene01`, equip Bow and verify: Sprint then Bow starts at the configured authored pace; Draw/Hold/Release/Recovery all retain that pace and allow camera-relative eight-direction movement; cursor-facing remains stable; Jump and new Sprint are blocked; Release-time lock/target assist and projectile behavior are unchanged.
+- Verify the upper body draws/holds/releases while the lower body walks, no Root Motion translates the Character, no torso twist or foot-slide regression is introduced, and Reaction Overlay remains visible.
+- Verify normal release, input cancel, and an existing valid Dodge cancel restore the non-Bow speed. Do not claim Player death teardown is supported until `TODO-03D` supplies its terminal route.
 
-Putting these into Cue Notifies now would add a second dispatch/mapping lifecycle, obscure the existing precise teardown owners, and force Cue assets/configuration without providing a current single-player benefit. Reconsider a dedicated GameplayCue adoption gate only when one GameplayEffect/GameplayEvent needs data-driven fan-out to shared impact VFX, audio, and presentation across several recipients, or when multiplayer prediction/replication becomes an accepted project boundary. That future gate must define cue ownership, asset paths, stacking/removal semantics, and validation before any migration; it is not part of B2.
+After user-confirmed compile, Automation, and PIE evidence, Main performs one defect-first fresh review. Then Main updates `README.md`, `ARCHITECTURE.md`, `ROADMAP.md`, and this `plan.md` with only verified results. `ROADMAP.md` must update B4 wording from Draw/Hold-only movement to the complete active Bow lifecycle; its existing `TODO-03D` terminal-Ability debt remains canonical.
 
-## Review, Closeout, And Commit Boundary
+## Commit Boundary
 
-- Gemini first performs a strict read-only plan review. It may inspect the approved source/direct dependencies and Engine API facts, but it must not edit code, documents, assets, Config, project files, or Git state; it must not compile, launch the Editor, run PIE, or claim user evidence.
-- After explicit execution authorization, Gemini performs a strict implementation self-review limited to the frozen paths. It is not an independent fresh review. Main validates the report against the repository, interprets user compile/Automation/PIE evidence, and performs one defect-first fresh review after accepted validation.
-- Only after that review and the mandatory roadmap debt-handoff check does Main update `README.md`, `ARCHITECTURE.md`, `ROADMAP.md`, and this B2 closeout record.
-- Default commit boundary: only B2 C++, Automation, and the four project documents. Exclude all `Content/**`, Config, maps, Blueprints, Input, AnimBPs, GA/GE/Montage assets, `.uproject`, generated output, imported resources, and unrelated user WIP. Do not commit until the user explicitly approves it.
+Default commit includes only the two Bow Ability files, the four new test helper files, `PlayerMobileBowAutomationTests.cpp`, the scoped `MeleeWeaponTrailAutomationTests.cpp` Unity-build local-helper rename, and the four project documents after verified closeout. Explicitly exclude all `Content/**`, Config, map, Blueprint, GA/GE/Montage, AnimBP, input, `.uproject`, generated output, and unrelated WIP. No commit occurs until the user explicitly approves it.
 
 ## Closeout Record
 
-- Runtime ownership: `ABaseCharacter` owns one root-attached, inactive `UMeleeWeaponTrailComponent`. `UAbilityTask_MeleeTraceWindow` is its sole runtime caller: it starts after the existing initial endpoint capture, updates from the same current endpoint pair before the unchanged Sweep/Resolver loop, and ends only its own weak requester token from `OnDestroy()`. A missing Niagara System is a silent visual no-op; normal `Deactivate()` stops emission without a hard kill. No GameplayCue, Tag, Input, damage, targeting, collision, or second trace route was added.
-- Automation: new `PolyQuest.Melee.WeaponTrail` uses a real ASC-hosted `UTestMeleeTrailAbility` and covers component defaults, initial/continuous endpoint forwarding, stale Task A versus active Task B requester arbitration, active Player endpoint invalidation followed by valid recovery, Player and content-free Enemy real-Task destruction, and the no-asset path. The endpoint-invalidation case deliberately makes the two markers coincide, proves `TraceCurrentSegment()` closes the Task and clears its requester, then proves a subsequent valid Task opens normally.
-- User evidence: the user confirmed focused `Scene01` PIE visual validation for the authored trail route and the Unreal Editor Automation front-end matrix of thirteen suites, including `PolyQuest.Melee.WeaponTrail`, as Success. The final endpoint/Enemy-teardown repair is Automation-only and does not change the already validated runtime/asset route.
-- Static/fresh review: Main re-read the final Task/component/test call path with CodeGraph, used code-review-graph as supplemental impact evidence, and inspected the untracked Automation source directly where graph macro coverage was incomplete. Rider error-level inspections returned zero errors for the Task and new suite; `git diff --check` passed. The defect-first fresh review found no P0-P2.
-- Warning ledger: retained warnings map to deliberate negative assertions only: invalid multi-tier reaction tags, Enemy Stance Break fallback, equipment preflight/active-swap/rollback, invalid static trace geometry, and the new explicit coincident blade-marker signal in `PolyQuest.Melee.WeaponTrail`. No missing-fixture, missing-Niagara, or `Invalid AbilitySpecHandle` success-path warning is accepted.
-- Scope and debt handoff: the focused commit contains only B2 C++, Automation, and these four documents. All `Content/**` assets and Blueprint assignments, Config, maps, `.uproject`, generated files, imported resources, and unrelated WIP remain excluded. No unresolved B2 runtime risk or validation debt requires a new Roadmap entry.
+- Runtime ownership: `UBowDrawFireAbility` no longer owns `State.Input.Block.Movement`, but retains `State.Action.Attacking` and `State.Input.Block.Jump`. After its Montage is confirmed active, it applies one exact handle from the mandatory authored `MobileBowMoveSpeedGameplayEffectClass`, then cancels only an active Sprint. The same handle remains through Draw, Hold, Release, and Recovery; every existing path reaching `EndAbility()` removes only that handle before task, aim-requester, scoped-tag, and Montage cleanup. No direct `MaxWalkSpeed` write, new Bow state machine, input route, targeting behavior, or terminal-death route was added.
+- Automation: `PolyQuest.Player.MobileBow` uses a real ASC-hosted Bow Ability plus native-only controlled MoveSpeed and Sprint fixtures. It covers Tag ownership, successful and missing-GE start behavior, MoveSpeed-to-CharacterMovement synchronization, Sprint cancellation, handle idempotency across Bow states, normal/cancelled `EndAbility()` cleanup on independent instances, and survival of an external MoveSpeed handle. The controlled fixture validates lifecycle mechanics only; it does not duplicate mutable GE balance tuning from `Content/**`. The committed `MeleeWeaponTrailAutomationTests.cpp` change only renames its local world-cleanup type to avoid a Unity-build collision; it changes no trail test behavior.
+- User evidence: the user confirmed focused PIE behavior and the fourteen-suite Unreal Editor Automation matrix as Success after the final repair. The authored GE, Montage, AnimBP, Blueprint, and input settings remain user-owned local `Content/**` WIP and are excluded from this commit.
+- Static and fresh review: Main re-read the final Ability lifecycle, `CancelSprintAbility()` caller boundary, test fixture, and direct cleanup paths; CodeGraph and code-review-graph supplied supplemental source/impact context, while direct source review covered UE Automation macro and untracked-file gaps. Rider lint reported no Error. `git diff --check` reported no whitespace defect. Main's defect-first fresh review found no P0-P2.
+- Tuning source of truth: the local authored Mobile Bow GE was retuned after the original x0.6 plan assumption. This closeout intentionally records no durable numeric multiplier; current pace is read from the authored asset and verified in focused PIE, while the native fixture remains an isolated control value.
+- Scope: the approved commit contains only B4 C++, Automation, this closeout record, and synchronized `README.md`, `ARCHITECTURE.md`, and `ROADMAP.md`. All `Content/**`, Config, maps, Blueprints, GA/GE/Montage, AnimBP, input, `.uproject`, generated output, imported resources, and unrelated user WIP stay out.

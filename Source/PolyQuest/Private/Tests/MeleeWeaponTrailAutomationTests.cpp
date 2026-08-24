@@ -24,10 +24,10 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 
 namespace
 {
-	struct FWorldCleanup
+	struct FMeleeWeaponTrailWorldCleanup
 	{
 		UWorld* World = nullptr;
-		~FWorldCleanup()
+		~FMeleeWeaponTrailWorldCleanup()
 		{
 			if (World)
 			{
@@ -48,7 +48,7 @@ bool FMeleeWeaponTrailAutomationTest::RunTest(const FString& Parameters)
 	FWorldContext& WorldContext = GEngine->CreateNewWorldContext(EWorldType::Game);
 	UWorld* World = UWorld::CreateWorld(EWorldType::Game, false, TEXT("MeleeWeaponTrailTestWorld"));
 	WorldContext.SetCurrentWorld(World);
-	FWorldCleanup Cleanup{ World };
+	FMeleeWeaponTrailWorldCleanup Cleanup{ World };
 	if (!TestNotNull(TEXT("Test World created successfully"), World))
 	{
 		return false;

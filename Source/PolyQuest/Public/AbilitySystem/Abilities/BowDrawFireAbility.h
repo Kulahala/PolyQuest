@@ -2,6 +2,7 @@
 
 #include "CoreMinimal.h"
 #include "Abilities/GameplayAbility.h"
+#include "ActiveGameplayEffectHandle.h"
 #include "GameplayTagContainer.h"
 #include "BowDrawFireAbility.generated.h"
 
@@ -9,6 +10,7 @@ class ACombatProjectile;
 class UAbilityTask_PlayMontageAndWait;
 class UAbilityTask_WaitGameplayEvent;
 class UAnimMontage;
+class UGameplayEffect;
 
 /**
  * GAS ability governing player bow draw, hold, and projectile release lifecycle.
@@ -71,6 +73,11 @@ public:
 	void TestSpawnProjectile() { SpawnProjectile(); }
 	void SetTestTargetAssistScreenProjectionHook(TFunction<bool(const FVector&, FVector2D&, FVector2D&)> InHook) { TestTargetAssistScreenProjectionHook = MoveTemp(InHook); }
 	bool Test_IsGameplayEventFromActiveMontage(const FGameplayEventData& Payload) const { return IsGameplayEventFromActiveMontage(Payload); }
+	void SetTestMobileBowMoveSpeedGameplayEffectClass(TSubclassOf<UGameplayEffect> InClass) { MobileBowMoveSpeedGameplayEffectClass = InClass; }
+	bool TestStartMobileBowMoveSpeedEffect() { return StartMobileBowMoveSpeedEffect(); }
+	void TestClearMobileBowMoveSpeedEffect() { ClearMobileBowMoveSpeedEffect(); }
+	bool HasTestMobileBowMoveSpeedEffectHandle() const { return MobileBowMoveSpeedEffectHandle.IsValid(); }
+	FActiveGameplayEffectHandle GetTestMobileBowMoveSpeedEffectHandle() const { return MobileBowMoveSpeedEffectHandle; }
 #endif
 
 protected:
@@ -93,6 +100,10 @@ protected:
 	/** Optional projectile Actor class override; defaults to ACombatProjectile. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Bow|Projectile")
 	TSubclassOf<ACombatProjectile> ProjectileClass;
+
+	/** Authored continuous move-speed GameplayEffect applied during the active mobile Bow lifecycle. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Bow|Movement")
+	TSubclassOf<UGameplayEffect> MobileBowMoveSpeedGameplayEffectClass;
 
 private:
 	enum class EBowState : uint8
@@ -147,6 +158,8 @@ private:
 	void SetCharging(bool bShouldCharge);
 	void SetDodgeCancelable(bool bShouldBeCancelable);
 	void RestoreBaselineMontageRate();
+	bool StartMobileBowMoveSpeedEffect();
+	void ClearMobileBowMoveSpeedEffect();
 
 	UPROPERTY(Transient)
 	TObjectPtr<UAbilityTask_PlayMontageAndWait> MontageTask;
@@ -195,6 +208,7 @@ private:
 	bool bDodgeCancelable = false;
 	bool bChargingApplied = false;
 	bool bRateWindowApplied = false;
+	FActiveGameplayEffectHandle MobileBowMoveSpeedEffectHandle;
 
 #if WITH_DEV_AUTOMATION_TESTS
 	TFunction<bool(const FVector&, FVector2D&, FVector2D&)> TestTargetAssistScreenProjectionHook;

@@ -14,6 +14,8 @@
 #include "Combat/Projectile/CombatProjectileTargeting.h"
 #include "DrawDebugHelpers.h"
 #include "Engine/World.h"
+#include "GameplayEffect.h"
+#include "GameplayEffectTypes.h"
 #include "PolyQuest.h"
 
 UBowDrawFireAbility::UBowDrawFireAbility()
@@ -23,7 +25,6 @@ UBowDrawFireAbility::UBowDrawFireAbility()
 
 	const FGameplayTag PrimaryAttackAbilityTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Attack.Primary")), false);
 	const FGameplayTag AttackingStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Action.Attacking")), false);
-	const FGameplayTag MovementBlockTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Input.Block.Movement")), false);
 	const FGameplayTag JumpBlockTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Input.Block.Jump")), false);
 
 	if (PrimaryAttackAbilityTag.IsValid())
@@ -46,10 +47,6 @@ UBowDrawFireAbility::UBowDrawFireAbility()
 	if (AttackingStateTag.IsValid())
 	{
 		ActivationOwnedTags.AddTag(AttackingStateTag);
-	}
-	if (MovementBlockTag.IsValid())
-	{
-		ActivationOwnedTags.AddTag(MovementBlockTag);
 	}
 	if (JumpBlockTag.IsValid())
 	{
@@ -116,6 +113,7 @@ void UBowDrawFireAbility::ActivateAbility(
 	bRateWindowApplied = false;
 	bSpawnedProjectile = false;
 	bReleaseRequested = false;
+	MobileBowMoveSpeedEffectHandle.Invalidate();
 	BowState = EBowState::Inactive;
 
 	Super::ActivateAbility(Handle, ActorInfo, ActivationInfo, TriggerEventData);
@@ -159,7 +157,15 @@ void UBowDrawFireAbility::ActivateAbility(
 		return;
 	}
 
-	// 5. Validate Bow Montage and required section names
+	// 5. Validate MobileBowMoveSpeedGameplayEffectClass is configured
+	if (!MobileBowMoveSpeedGameplayEffectClass)
+	{
+		UE_LOG(LogPolyQuest, Warning, TEXT("UBowDrawFireAbility on '%s' failed activation: missing MobileBowMoveSpeedGameplayEffectClass."), *GetNameSafe(PlayerCharacter));
+		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
+		return;
+	}
+
+	// 6. Validate Bow Montage and required section names
 	if (!BowMontage
 		|| DrawSectionName.IsNone() || BowMontage->GetSectionIndex(DrawSectionName) == INDEX_NONE
 		|| HoldSectionName.IsNone() || BowMontage->GetSectionIndex(HoldSectionName) == INDEX_NONE
@@ -170,7 +176,7 @@ void UBowDrawFireAbility::ActivateAbility(
 		return;
 	}
 
-	// 6. Create Montage Task and Event Wait Tasks
+	// 7. Create Montage Task and Event Wait Tasks
 	MontageTask = UAbilityTask_PlayMontageAndWait::CreatePlayMontageAndWaitProxy(
 		this,
 		NAME_None,
@@ -236,6 +242,13 @@ void UBowDrawFireAbility::ActivateAbility(
 	if (!AnimInstance || !AnimInstance->Montage_IsActive(BowMontage))
 	{
 		UE_LOG(LogPolyQuest, Warning, TEXT("UBowDrawFireAbility on '%s' failed to start BowMontage."), *GetNameSafe(PlayerCharacter));
+		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
+		return;
+	}
+
+	if (!StartMobileBowMoveSpeedEffect())
+	{
+		UE_LOG(LogPolyQuest, Warning, TEXT("UBowDrawFireAbility on '%s' failed to apply MobileBowMoveSpeedGameplayEffect."), *GetNameSafe(PlayerCharacter));
 		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
 		return;
 	}
@@ -511,6 +524,7 @@ void UBowDrawFireAbility::EndAbility(
 	}
 	bEndAbilityInProgress = true;
 
+	ClearMobileBowMoveSpeedEffect();
 	SetCharging(false);
 	SetDodgeCancelable(false);
 	RestoreBaselineMontageRate();
@@ -753,4 +767,51 @@ void UBowDrawFireAbility::SetDodgeCancelable(bool bShouldBeCancelable)
 	}
 
 	bDodgeCancelable = false;
+}
+
+bool UBowDrawFireAbility::StartMobileBowMoveSpeedEffect()
+{
+	if (MobileBowMoveSpeedEffectHandle.IsValid())
+	{
+		return true;
+	}
+
+	UAbilitySystemComponent* AbilitySystemComponent = GetAbilitySystemComponentFromActorInfo();
+	APlayerCharacter* PlayerCharacter = Cast<APlayerCharacter>(GetAvatarActorFromActorInfo());
+	const UGameplayEffect* MoveSpeedEffect = MobileBowMoveSpeedGameplayEffectClass
+		? MobileBowMoveSpeedGameplayEffectClass->GetDefaultObject<UGameplayEffect>()
+		: nullptr;
+
+	if (!AbilitySystemComponent || !PlayerCharacter || !MoveSpeedEffect)
+	{
+		return false;
+	}
+
+	MobileBowMoveSpeedEffectHandle = AbilitySystemComponent->ApplyGameplayEffectToSelf(
+		MoveSpeedEffect,
+		GetAbilityLevel(),
+		AbilitySystemComponent->MakeEffectContext());
+
+	if (!MobileBowMoveSpeedEffectHandle.IsValid())
+	{
+		return false;
+	}
+
+	PlayerCharacter->CancelSprintAbility();
+	return true;
+}
+
+void UBowDrawFireAbility::ClearMobileBowMoveSpeedEffect()
+{
+	if (!MobileBowMoveSpeedEffectHandle.IsValid())
+	{
+		return;
+	}
+
+	if (UAbilitySystemComponent* AbilitySystemComponent = GetAbilitySystemComponentFromActorInfo())
+	{
+		AbilitySystemComponent->RemoveActiveGameplayEffect(MobileBowMoveSpeedEffectHandle);
+	}
+
+	MobileBowMoveSpeedEffectHandle.Invalidate();
 }
