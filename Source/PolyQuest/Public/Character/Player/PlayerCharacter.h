@@ -111,6 +111,10 @@ protected:
 	UPROPERTY(EditDefaultsOnly, Category="GAS|Stamina")
 	TSubclassOf<UGameplayEffect> StaminaRegenGameplayEffectClass;
 
+	/** Infinite move-speed effect retained while the Player is recovering from Stamina exhaustion. */
+	UPROPERTY(EditDefaultsOnly, Category="GAS|Stamina")
+	TSubclassOf<UGameplayEffect> ExhaustionMoveSpeedGameplayEffectClass;
+
 	/** The authored combat routes applied to this player at BeginPlay. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Loadout", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<UCombatLoadoutDefinition> InitialCombatLoadout;
@@ -274,8 +278,12 @@ public:
 	void ConfigureTestStartupFixture(
 		UCombatLoadoutDefinition* InInitialCombatLoadout,
 		UMeleeWeaponDefinition* InDefaultEquippedWeapon,
-		TSubclassOf<UGameplayEffect> InStaminaRegenGameplayEffectClass);
+		TSubclassOf<UGameplayEffect> InStaminaRegenGameplayEffectClass,
+		TSubclassOf<UGameplayEffect> InExhaustionMoveSpeedGameplayEffectClass);
 	bool HasTestStaminaRegenEffectApplied() const { return bStaminaRegenEffectApplied; }
+	bool IsTestExhaustionActive() const { return bExhaustionActive; }
+	bool HasTestExhaustionRecoveryTimer() const { return ExhaustionRecoveryTimerHandle.IsValid(); }
+	bool HasTestExhaustionMoveSpeedEffect() const { return ExhaustionMoveSpeedEffectHandle.IsValid(); }
 
 	void SetTestLockedTarget(AEnemyCharacter* InTarget) { SetLockedTarget(InTarget); }
 	void SetTestCurrentMoveInput(const FVector2D& InInput) { CurrentMoveInput = InInput; }
@@ -372,6 +380,7 @@ private:
 	FGameplayTag HitReactingStateTag;
 	FGameplayTag SmallHitReactingStateTag;
 	FGameplayTag DeadStateTag;
+	FGameplayTag ExhaustedStateTag;
 	FGameplayTag StunnedStateTag;
 	FGameplayTag GuardAbilityTag;
 	FGameplayTag ParryAbilityTag;
@@ -379,6 +388,7 @@ private:
 	FGameplayTag BigHitReactionEventTag;
 	FGameplayTag LaunchReactionEventTag;
 	FActiveGameplayEffectHandle SprintJumpAirSpeedEffectHandle;
+	FActiveGameplayEffectHandle ExhaustionMoveSpeedEffectHandle;
 	FDelegateHandle MovementInputBlockedTagChangedHandle;
 	FDelegateHandle AttackingStateTagChangedHandle;
 	FDelegateHandle DodgingStateTagChangedHandle;
@@ -387,10 +397,14 @@ private:
 	FDelegateHandle DeadStateTagChangedHandle;
 	FDelegateHandle StunnedStateTagChangedHandle;
 	FDelegateHandle HealthAttributeChangedHandle;
+	FDelegateHandle StaminaAttributeChangedHandle;
+	FDelegateHandle ExhaustionDeadStateTagChangedHandle;
 	TWeakObjectPtr<UAbilitySystemComponent> SprintStateBoundAbilitySystemComponent;
 	TWeakObjectPtr<UAbilitySystemComponent> HealthBoundAbilitySystemComponent;
+	TWeakObjectPtr<UAbilitySystemComponent> ExhaustionBoundAbilitySystemComponent;
 	FTimerHandle DodgeSprintHoldTimerHandle;
 	FTimerHandle GuardResumeTimerHandle;
+	FTimerHandle ExhaustionRecoveryTimerHandle;
 	float DodgeSprintInputPressedTime = 0.0f;
 	bool bDodgeSprintInputHeld = false;
 	bool bDodgeSprintResolvedToSprint = false;
@@ -400,10 +414,21 @@ private:
 	bool bGuardResumeEligibleAfterAttack = false;
 	bool bGuardRequiresReleaseAfterBreak = false;
 	bool bStaminaRegenEffectApplied = false;
+	bool bExhaustionActive = false;
+	bool bExhaustionMinimumDurationElapsed = false;
 
 	void BindHealthEvents();
 	void UnbindHealthEvents();
 	void OnHealthAttributeChanged(const FOnAttributeChangeData& ChangeData);
+	void BindExhaustionStateEvents();
+	void UnbindExhaustionStateEvents();
+	void OnStaminaAttributeChanged(const FOnAttributeChangeData& ChangeData);
+	void OnExhaustionDeadStateTagChanged(const FGameplayTag Tag, int32 NewCount);
+	void BeginExhaustion();
+	void OnExhaustionMinimumDurationElapsed();
+	void TryClearExhaustionAfterRecovery();
+	void ClearExhaustionState();
+	void ApplyExhaustionMoveSpeedEffect();
 
 	bool TryCalculateMousePlaneIntersection(FVector& OutIntersectionPoint) const;
 	void UpdateBowAimFacing();

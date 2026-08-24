@@ -6,7 +6,7 @@
 
 class UGameplayEffect;
 
-/** One-shot GAS Jump that commits Stamina before invoking native Character jumping. */
+/** One-shot GAS Jump that commits its authored zero-cost GE without delaying Stamina recovery. */
 UCLASS()
 class POLYQUEST_API UJumpAbility : public UStaminaActionAbility
 {
@@ -14,6 +14,12 @@ class POLYQUEST_API UJumpAbility : public UStaminaActionAbility
 
 public:
 	UJumpAbility();
+
+	/** Keeps the authored zero-cost GE validation while allowing Jump at zero Stamina during Exhaustion. */
+	virtual bool CheckCost(
+		const FGameplayAbilitySpecHandle Handle,
+		const FGameplayAbilityActorInfo* ActorInfo,
+		OUT FGameplayTagContainer* OptionalRelevantTags = nullptr) const override;
 
 	virtual bool CanActivateAbility(
 		const FGameplayAbilitySpecHandle Handle,
@@ -28,7 +34,14 @@ public:
 		const FGameplayAbilityActivationInfo ActivationInfo,
 		const FGameplayEventData* TriggerEventData) override;
 
+#if WITH_DEV_AUTOMATION_TESTS
+	const FGameplayTagContainer& GetTestActivationBlockedTags() const { return ActivationBlockedTags; }
+	bool DoesTestApplyStaminaRegenDelayOnEnd() const { return ShouldApplyStaminaRegenDelayOnEnd(); }
+#endif
+
 protected:
+	virtual bool ShouldApplyStaminaRegenDelayOnEnd() const override { return false; }
+
 	/** Applied from takeoff until landing when Jump starts from an active Sprint. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Jump")
 	TSubclassOf<UGameplayEffect> SprintJumpAirSpeedGameplayEffectClass;

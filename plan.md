@@ -1,17 +1,17 @@
-# TODO-03A6B: Shield Guard Locomotion, Pace, And Facing Alignment v1
+# TODO-01I: Player Exhaustion Recovery And Walk-Pace v1
 
 ## Plan State
 
-- Status: Complete. The user confirmed the focused authored Guard route and PIE visual result after replacing the conflicting upper-body/full-body composition.
-- Baseline: `c8a30b5` (`[Test] 清理自动化夹具信号噪音 (Automation Fixture Signal Hygiene)`).
-- Objective: close the Shield Guard presentation route over the accepted A6A locomotion baseline without changing Guard gameplay authority. The original fixed-`300` and new-Guard-slot assumptions were rejected by the actual authored result: the existing `0.7` pace is retained, while Shield Guard uses a dedicated full-body locomotion branch.
-- Preserve all current user-owned WIP. The existing untracked Guard GE, Montages, BlendSpace, and modified `ABP_Player_Dungeon` are authoring inputs only; do not overwrite, stage, or commit any `Content/**` asset without later explicit stable-closure approval.
+- Status: Complete.
+- Baseline: `51a9b16` (`[Docs] 完成持盾防御表现文档收尾`).
+- Objective: replace AttributeSet's immediate Stamina-to-Exhausted toggle with one Player-owned exhaustion lifecycle. Stamina continues to regenerate normally, but the Player remains action-locked until both the original three-second buffer has elapsed and Stamina is positive.
+- Preserve all user-owned WIP. This stage does not write or stage `Content/**`, Config, maps, Blueprints, Input, AnimBPs, GA/GE/Montage assets, project files, or generated output.
 
 ```text
 Outer: ue-stage-workflow
-Primary: ue5-blueprint-workflow
+Primary: ue5-cpp-gameplay
 Support: ue5-debug-validation
-Route reason: the required behavior is an authored GE/Montage/AnimBP closure over already-proven native Guard, Movement, equipment-locomotion, and B2 facing contracts.
+Route reason: Player ASC attribute delegates, Gameplay Tags, persistent GameplayEffect handles, movement speed, and Ability activation gates change together.
 ```
 
 ```text
@@ -19,27 +19,49 @@ Plan explorers: 0
 Implementation executors: 0
 Complex Executor: none
 Main parallel work: none
-Reason: Guard, movement, lock-facing, and authored animation layers share one integration contract; user owns Editor authoring and no native implementation slice is necessary.
+Reason: AttributeSet, Player lifecycle, shared tags, and Ability activation contracts are Main-only integration territory.
 ```
 
-## Accepted Runtime And Presentation Contract
+## Approved Runtime Contract
 
-1. Both `GA_PlayerShieldGuard` and `GA_Guard_Sowrd` retain `UPlayerGuardAbility`, held-input release/cancel, Guard Arc, Stamina cost/recovery, Guard Break, and exact active-GE handle cleanup. `GE_Guard_MoveSpeed` remains the shared pace source, as the existing Infinite, non-periodic `MoveSpeed` multiplier at `0.7`; no `Override = 300` was authored.
-2. Generic Guard remains the C++/GAS category `State.Action.Guarding`. Shield Guard owns the active child `State.Action.Guarding.Shield`, while single-Sword Guard retains the generic parent. Hierarchical GameplayTag matching therefore preserves every existing generic Guard consumer without turning the child tag into an equipment-state signal.
-3. `ABaseCharacter` still writes the resolved `MoveSpeed` Attribute to `CharacterMovement.MaxWalkSpeed`. B2 lock-facing remains the yaw owner: eligible non-Root-Motion Guard faces a valid lock at `800 deg/s`; unlocked Guard remains camera-relative movement-facing; Guard still cancels Sprint.
-4. `ABP_Player_Dungeon` derives `IsShieldGuarding` from ASC matching of the child Shield Guard tag. `ResolvedLocomotionMode` remains the ordinary equipped-family selector and is deliberately not reused as the active Shield Guard condition.
-5. Shield Guard uses the full-body `BS_Shield_Walk_Run`. While `IsShieldGuarding` is true, the existing `DefaultGroup.UpperBody` branch has zero visual weight; single-Sword Guard continues to use that upper-body overlay. This prevents a full-body Shield Block Move from being mixed beneath a second full-body Guard pose at `spine_01`.
-6. `AM_Shield_Guard` remains present for `UPlayerGuardAbility`'s established Montage lifecycle, but its visual contribution is bypassed only during active Shield Guard. `ReactionOverlayGroup.ReactionOverlay` remains downstream. The Root Motion `Anim_SAS_V2_Block_Move_*` assets remain outside this CharacterMovement-driven route.
+1. `APlayerCharacter` owns an authority-only exhaustion lifecycle. The first Stamina value at or below zero writes the Player's loose `State.Status.Exhausted`, applies one independent MoveSpeed GameplayEffect handle, and starts one fixed `3.0s` timer.
+2. Exhaustion clears only when that original timer has elapsed and the current Stamina is strictly positive. A positive value before expiry remains action-locked; a timer expiry at zero remains action-locked until the next positive value.
+3. An additional zero transition while Exhaustion is active never resets the timer. A later zero after a successful clear begins a new cycle.
+4. `ExhaustionMoveSpeedGameplayEffectClass` is a Player-authored reference to the existing `GE_Guard_MoveSpeed`: Infinite, non-periodic, `MoveSpeed` multiplicative `0.7`. Exhaustion owns its own handle and never writes `CharacterMovement.MaxWalkSpeed` directly.
+5. A committed Attack, Dodge, Bow, or Parry keeps its existing Montage/Root Motion/task cleanup. Sprint retains its own zero-Stamina stop and release-to-restart gate; Guard retains its Guard Break route. Guard Break does not clear the intended Exhaustion lifecycle.
+6. Death-tag receipt, EndPlay, ASC rebind, and failed/restarted state clean the timer, exact loose tag contribution, and correct ASC-owned GameplayEffect handle through one idempotent path.
+7. `UCharacterAttributeSet` continues to clamp Stamina but no longer writes `State.Status.Exhausted` for every shared AttributeSet holder. `UPlayerParryAbility` gains the Exhausted activation blocker; `UJumpAbility` loses it. Guard Break and Player reactions remain available.
+8. Jump is a zero-cost movement exception, not a generic Stamina action: it retains its authored Cost GE and Regen Delay GE references for the existing ability setup contract, but bypasses the shared positive-Stamina gate and does not apply the Regen Delay GE on end. It therefore neither pauses ordinary Stamina recovery nor clears the Player-owned Exhaustion timer, loose tag, or slow before their existing conditions are met.
 
-## Accepted User-Owned Asset Closure
+## Approved Source And Test Surface
 
-1. `GA_PlayerShieldGuard` owns `Ability.Defense.Guard.Shield` and `State.Action.Guarding.Shield`; `GA_Guard_Sowrd` remains the generic Guard route.
-2. `ABP_Player_Dungeon` uses the existing cached base locomotion pose for both the base input and `DefaultGroup.UpperBody` source. It gates only the UpperBody blend weight with `IsShieldGuarding`, then leaves the existing Default Slot and Reaction Overlay order intact.
-3. The final visual result is a full-body Shield Guard locomotion pose under B2 lock-facing, without the prior waist twist from a full-body Block Move plus an upper-body Guard overlay. No new Guard BlendSpace, Slot Group, native API, Input action, or generic animation framework was introduced.
+- `Source/PolyQuest/Private/AbilitySystem/CharacterAttributeSet.cpp`: remove the generic exhaustion loose-tag side effect.
+- `Source/PolyQuest/Public/Character/Player/PlayerCharacter.h` and `Private/Character/Player/PlayerCharacter.cpp`: add the private delegate, Timer, exact GE-handle cleanup, state helpers, editor-configurable GE class, and narrow automation fixture hooks.
+- `Source/PolyQuest/Private/AbilitySystem/Abilities/JumpAbility.cpp`, `StaminaActionAbility.cpp`, and `PlayerParryAbility.cpp`: correct the two changed activation gates and make zero-cost Jump opt out of the shared Regen Delay application without changing other Stamina actions.
+- `Source/PolyQuest/Private/Tests/`: add `UTestExhaustionMoveSpeedGE`, `UTestJumpExhaustionAbility` and its temporary GE inputs, extend `FCombatAutomationFixture` with the native authored reference, and add `PolyQuest.Player.Exhaustion` coverage without Content assets.
+- Regression repair discovered by the required matrix: `AEnemyCharacter` must not retain a callback-local `FGameplayEffectSpec*` across GameplayEffect applications. Replace it with a Definition plus EffectContext snapshot, require that the current effect has executed its own Poise modifier, and extend `HitReactionAutomationTests.cpp` for different-transaction rejection with both fresh and reused Context paths.
 
-## Validation And Closeout
+## User-Owned Editor Work
 
-1. User-confirmed focused authored/PIE visual evidence: Shield Guard now uses the intended full-body locomotion without the earlier torso conflict, while the established locked-facing result remains correct. The user also reported the focused test route passing.
-2. This stage changes no native C++ or Automation surface. Existing automation remains regression coverage for the unchanged Guard, equipment, and lock-facing contracts; it is not presented as proof of the authored AnimGraph topology.
-3. Main's single defect-first fresh review found no P0-P2 runtime or lifecycle defect in the approved scope. The resolved issue was documentation/plan drift: the rejected `300` and `GuardOverlayGroup` assumptions are removed here. Source inspection confirms the generic Guard category uses hierarchical tag queries, while the current authored child tag remains compatible.
-4. A user-authored shared Stride Warping experiment in `ABP_Player_Dungeon` has passed focused PIE validation after this stage's closeout. It remains local `Content/**` WIP and is not included here. `TODO-07B` owns its cross-weapon cadence calibration, action/reaction exclusion, and focused visual validation before any stable asset closure. Default commit scope remains documentation only; exclude all `Content/**`, Config, map, Blueprint, Input, AnimBP, GA/GE/Montage, project-file, generated, and unrelated user-WIP paths unless the user later authorizes that closure.
+1. In `BP_Player`, assign the new `ExhaustionMoveSpeedGameplayEffectClass` to the existing `GE_Guard_MoveSpeed`; read back Infinite duration, no Periodic execution, and `MoveSpeed x 0.7`.
+2. In the existing Jump Cost GE, set the Stamina modifier magnitude to `0`, but retain both the Cost GE and Stamina Regen Delay GE references on the Jump ability.
+3. Compile `PolyQuestEditor` manually, run the Automation matrix from the Editor front-end, then validate focused Scene01 PIE behavior.
+
+## Validation Matrix
+
+- New `PolyQuest.Player.Exhaustion`: zero entry; 70-percent MoveSpeed and CharacterMovement synchronization; positive-before-expiry retention; expiry-at-zero retention; no timer extension; fresh post-clear cycle; Death/EndPlay cleanup; Parry block; and a real zero-cost Jump activation that preserves the Exhausted tag/timer and leaves its observable delay effect unapplied.
+- Existing regression suites: `PolyQuest.Equipment.TransactionMatrix`, `PolyQuest.Melee.TraceSourceGeometry`, `PolyQuest.Player.ActionWindows`, `PolyQuest.Combat.HitReaction`, `PolyQuest.Enemy.AttackSetSelection`, `PolyQuest.Enemy.CombatSpacing`, `PolyQuest.UI.VitalHUD`, `PolyQuest.Player.LockOn`, `PolyQuest.Projectile.Lifecycle`, and `PolyQuest.Projectile.TargetAssist`.
+- PIE: Exhausted permits ordinary movement and zero-cost Jump, blocks new combat/defense/Bow/Sprint starts, does not pause recovery, remains locked before three seconds, preserves committed-action cleanup, retains the Sprint physical-release gate, and leaves no speed residue after Guard Break or recovery.
+
+## Non-Goals And Closeout
+
+- No new Gameplay Tag, input route, generic movement system, Player death implementation, UI, replication, asset migration, or generic equipment query.
+- `State.Action.Guarding.Shield` continues to mean active Shield Guard, not equipped Shield. A future accepted backpack/equipment UI stage may add a narrow `UWeaponEquipmentComponent` query based on the OffHand DefenseProfile; it must not replace this active-action tag for Guard locomotion.
+
+## Completion Record
+
+- User-confirmed Editor work: `BP_Player` references the existing Infinite, non-periodic `GE_Guard_MoveSpeed` for Exhaustion at `MoveSpeed x0.7`; Jump retains its Cost and Regen Delay references with a zero Stamina Cost magnitude.
+- User-confirmed validation: manual `PolyQuestEditor` compilation, focused `Scene01` PIE, new `PolyQuest.Player.Exhaustion`, and the ten existing regression suites all passed from the Editor Automation front-end. The remaining logs are H3's classified negative assertions for multi-tier reaction tags, Stance Break fallback, equipment transaction rejection/rollback, and static trace geometry.
+- Main defect-first fresh review against `51a9b16` found no P0-P2 in the Player exhaustion/Jump lifecycle, shared stamina-action cleanup, Enemy Poise source correlation, or Automation fixture boundary. CodeGraph and code-review-graph were read against the matching baseline; graph test-gap labels were checked against the direct Automation source and user run. Rider MCP was unavailable during the final review due to its local HTTP stream failure, so no new final IDE inspection is claimed.
+- Debt handoff: no current 01I blocker or unowned validation debt remains. The future equipment-display query is deliberately not prebuilt; it is a conditional design decision for a later accepted backpack/equipment UI stage, not a substitute for active Shield Guard state.
+- Commit boundary remains limited to approved `Source/PolyQuest/**`, the new/updated Automation files, and these four documents. `Content/**`, Config, maps, Blueprints, Input, AnimBPs, authored GA/GE/Montage assets, project files, generated output, and unrelated user WIP remain excluded pending explicit approval.

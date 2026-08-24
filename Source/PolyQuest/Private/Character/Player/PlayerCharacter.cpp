@@ -38,6 +38,11 @@
 #include "GameplayEffectExtension.h"
 #include "PolyQuest.h"
 
+namespace
+{
+	constexpr float ExhaustionMinimumDurationSeconds = 3.0f;
+}
+
 APlayerCharacter::APlayerCharacter()
 {
 	PrimaryActorTick.bCanEverTick = true;
@@ -66,6 +71,7 @@ APlayerCharacter::APlayerCharacter()
 	HitReactingStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Action.HitReacting")), false);
 	SmallHitReactingStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Action.SmallHitReacting")), false);
 	DeadStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Status.Dead")), false);
+	ExhaustedStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Status.Exhausted")), false);
 	StunnedStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Status.Stunned")), false);
 	GuardAbilityTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Defense.Guard")), false);
 	ParryAbilityTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Defense.Parry")), false);
@@ -116,6 +122,7 @@ void APlayerCharacter::BeginPlay()
 	SetActiveCombatLoadout(InitialCombatLoadout);
 	BindSprintStateEvents();
 	BindHealthEvents();
+	BindExhaustionStateEvents();
 
 	if (WeaponEquipment)
 	{
@@ -165,11 +172,13 @@ void APlayerCharacter::BeginPlay()
 void APlayerCharacter::ConfigureTestStartupFixture(
 	UCombatLoadoutDefinition* InInitialCombatLoadout,
 	UMeleeWeaponDefinition* InDefaultEquippedWeapon,
-	TSubclassOf<UGameplayEffect> InStaminaRegenGameplayEffectClass)
+	TSubclassOf<UGameplayEffect> InStaminaRegenGameplayEffectClass,
+	TSubclassOf<UGameplayEffect> InExhaustionMoveSpeedGameplayEffectClass)
 {
 	InitialCombatLoadout = InInitialCombatLoadout;
 	DefaultEquippedWeapon = InDefaultEquippedWeapon;
 	StaminaRegenGameplayEffectClass = InStaminaRegenGameplayEffectClass;
+	ExhaustionMoveSpeedGameplayEffectClass = InExhaustionMoveSpeedGameplayEffectClass;
 }
 #endif
 
@@ -178,6 +187,7 @@ void APlayerCharacter::PossessedBy(AController* NewController)
 	Super::PossessedBy(NewController);
 	BindSprintStateEvents();
 	BindHealthEvents();
+	BindExhaustionStateEvents();
 }
 
 void APlayerCharacter::EndPlay(const EEndPlayReason::Type EndPlayReason)
@@ -191,6 +201,8 @@ void APlayerCharacter::EndPlay(const EEndPlayReason::Type EndPlayReason)
 	ClearGuardResumeEligibility();
 	bGuardRequiresReleaseAfterBreak = false;
 	CancelSprintAbility();
+	ClearExhaustionState();
+	UnbindExhaustionStateEvents();
 	UnbindHealthEvents();
 	UnbindSprintStateEvents();
 	ClearSprintJumpAirSpeed();
@@ -1923,6 +1935,190 @@ void APlayerCharacter::UnbindHealthEvents()
 
 	HealthAttributeChangedHandle.Reset();
 	HealthBoundAbilitySystemComponent.Reset();
+}
+
+void APlayerCharacter::BindExhaustionStateEvents()
+{
+	if (!HasAuthority())
+	{
+		return;
+	}
+
+	UAbilitySystemComponent* CharacterASC = GetAbilitySystemComponent();
+	if (!CharacterASC || ExhaustionBoundAbilitySystemComponent.Get() == CharacterASC)
+	{
+		return;
+	}
+
+	ClearExhaustionState();
+	UnbindExhaustionStateEvents();
+	ExhaustionBoundAbilitySystemComponent = CharacterASC;
+	StaminaAttributeChangedHandle = CharacterASC->GetGameplayAttributeValueChangeDelegate(UCharacterAttributeSet::GetStaminaAttribute())
+		.AddUObject(this, &APlayerCharacter::OnStaminaAttributeChanged);
+
+	if (DeadStateTag.IsValid())
+	{
+		ExhaustionDeadStateTagChangedHandle = CharacterASC->RegisterGameplayTagEvent(DeadStateTag)
+			.AddUObject(this, &APlayerCharacter::OnExhaustionDeadStateTagChanged);
+	}
+
+	if (CharacterASC->GetNumericAttribute(UCharacterAttributeSet::GetStaminaAttribute()) <= 0.0f)
+	{
+		BeginExhaustion();
+	}
+}
+
+void APlayerCharacter::UnbindExhaustionStateEvents()
+{
+	UAbilitySystemComponent* BoundASC = ExhaustionBoundAbilitySystemComponent.Get();
+	if (BoundASC)
+	{
+		if (StaminaAttributeChangedHandle.IsValid())
+		{
+			BoundASC->GetGameplayAttributeValueChangeDelegate(UCharacterAttributeSet::GetStaminaAttribute())
+				.Remove(StaminaAttributeChangedHandle);
+		}
+		if (ExhaustionDeadStateTagChangedHandle.IsValid() && DeadStateTag.IsValid())
+		{
+			BoundASC->UnregisterGameplayTagEvent(ExhaustionDeadStateTagChangedHandle, DeadStateTag);
+		}
+	}
+
+	StaminaAttributeChangedHandle.Reset();
+	ExhaustionDeadStateTagChangedHandle.Reset();
+	ExhaustionBoundAbilitySystemComponent.Reset();
+}
+
+void APlayerCharacter::OnStaminaAttributeChanged(const FOnAttributeChangeData& ChangeData)
+{
+	if (!HasAuthority() || IsActorBeingDestroyed())
+	{
+		return;
+	}
+
+	if (ChangeData.NewValue <= 0.0f)
+	{
+		BeginExhaustion();
+		return;
+	}
+
+	TryClearExhaustionAfterRecovery();
+}
+
+void APlayerCharacter::OnExhaustionDeadStateTagChanged(const FGameplayTag, int32 NewCount)
+{
+	if (NewCount > 0)
+	{
+		ClearExhaustionState();
+	}
+}
+
+void APlayerCharacter::BeginExhaustion()
+{
+	if (bExhaustionActive || !HasAuthority() || IsActorBeingDestroyed())
+	{
+		return;
+	}
+
+	UAbilitySystemComponent* CharacterASC = ExhaustionBoundAbilitySystemComponent.Get();
+	UWorld* World = GetWorld();
+	if (!CharacterASC || !World || !ExhaustedStateTag.IsValid()
+		|| (DeadStateTag.IsValid() && CharacterASC->HasMatchingGameplayTag(DeadStateTag)))
+	{
+		return;
+	}
+
+	bExhaustionActive = true;
+	bExhaustionMinimumDurationElapsed = false;
+	CharacterASC->AddLooseGameplayTag(ExhaustedStateTag);
+	ApplyExhaustionMoveSpeedEffect();
+	World->GetTimerManager().SetTimer(
+		ExhaustionRecoveryTimerHandle,
+		this,
+		&APlayerCharacter::OnExhaustionMinimumDurationElapsed,
+		ExhaustionMinimumDurationSeconds,
+		false);
+}
+
+void APlayerCharacter::OnExhaustionMinimumDurationElapsed()
+{
+	ExhaustionRecoveryTimerHandle.Invalidate();
+	if (!bExhaustionActive || !HasAuthority() || IsActorBeingDestroyed())
+	{
+		return;
+	}
+
+	bExhaustionMinimumDurationElapsed = true;
+	TryClearExhaustionAfterRecovery();
+}
+
+void APlayerCharacter::TryClearExhaustionAfterRecovery()
+{
+	if (!bExhaustionActive || !bExhaustionMinimumDurationElapsed)
+	{
+		return;
+	}
+
+	UAbilitySystemComponent* CharacterASC = ExhaustionBoundAbilitySystemComponent.Get();
+	if (!CharacterASC
+		|| (DeadStateTag.IsValid() && CharacterASC->HasMatchingGameplayTag(DeadStateTag))
+		|| CharacterASC->GetNumericAttribute(UCharacterAttributeSet::GetStaminaAttribute()) > 0.0f)
+	{
+		ClearExhaustionState();
+	}
+}
+
+void APlayerCharacter::ClearExhaustionState()
+{
+	const bool bRemoveOwnedExhaustionTag = bExhaustionActive;
+
+	if (UWorld* World = GetWorld())
+	{
+		World->GetTimerManager().ClearTimer(ExhaustionRecoveryTimerHandle);
+	}
+	ExhaustionRecoveryTimerHandle.Invalidate();
+
+	UAbilitySystemComponent* BoundASC = ExhaustionBoundAbilitySystemComponent.Get();
+	if (BoundASC && ExhaustionMoveSpeedEffectHandle.IsValid())
+	{
+		BoundASC->RemoveActiveGameplayEffect(ExhaustionMoveSpeedEffectHandle);
+	}
+	if (BoundASC && bRemoveOwnedExhaustionTag && ExhaustedStateTag.IsValid())
+	{
+		BoundASC->RemoveLooseGameplayTag(ExhaustedStateTag);
+	}
+
+	ExhaustionMoveSpeedEffectHandle.Invalidate();
+	bExhaustionActive = false;
+	bExhaustionMinimumDurationElapsed = false;
+}
+
+void APlayerCharacter::ApplyExhaustionMoveSpeedEffect()
+{
+	UAbilitySystemComponent* CharacterASC = ExhaustionBoundAbilitySystemComponent.Get();
+	const UGameplayEffect* ExhaustionMoveSpeedEffect = ExhaustionMoveSpeedGameplayEffectClass
+		? ExhaustionMoveSpeedGameplayEffectClass->GetDefaultObject<UGameplayEffect>()
+		: nullptr;
+	if (!CharacterASC || !ExhaustionMoveSpeedEffect)
+	{
+		UE_LOG(LogPolyQuest, Warning, TEXT("'%s' cannot apply Exhaustion move speed without an ASC and configured GameplayEffect."), *GetNameSafe(this));
+		return;
+	}
+
+	if (ExhaustionMoveSpeedEffectHandle.IsValid())
+	{
+		CharacterASC->RemoveActiveGameplayEffect(ExhaustionMoveSpeedEffectHandle);
+		ExhaustionMoveSpeedEffectHandle.Invalidate();
+	}
+
+	ExhaustionMoveSpeedEffectHandle = CharacterASC->ApplyGameplayEffectToSelf(
+		ExhaustionMoveSpeedEffect,
+		1.0f,
+		CharacterASC->MakeEffectContext());
+	if (!ExhaustionMoveSpeedEffectHandle.IsValid())
+	{
+		UE_LOG(LogPolyQuest, Warning, TEXT("'%s' failed to apply its configured Exhaustion move-speed GameplayEffect."), *GetNameSafe(this));
+	}
 }
 
 void APlayerCharacter::OnHealthAttributeChanged(const FOnAttributeChangeData& ChangeData)

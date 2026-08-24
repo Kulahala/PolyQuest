@@ -91,16 +91,19 @@ void UStaminaActionAbility::EndAbility(
 	{
 		bCostCommitted = false;
 
-		UAbilitySystemComponent* AbilitySystemComponent = GetAbilitySystemComponentFromActorInfo();
-		const UGameplayEffect* RegenDelayEffect = StaminaRegenDelayGameplayEffectClass
-			? StaminaRegenDelayGameplayEffectClass->GetDefaultObject<UGameplayEffect>()
-			: nullptr;
-		if (AbilitySystemComponent && RegenDelayEffect)
+		if (ShouldApplyStaminaRegenDelayOnEnd())
 		{
-			AbilitySystemComponent->ApplyGameplayEffectToSelf(
-				RegenDelayEffect,
-				GetAbilityLevel(),
-				AbilitySystemComponent->MakeEffectContext());
+			UAbilitySystemComponent* AbilitySystemComponent = GetAbilitySystemComponentFromActorInfo();
+			const UGameplayEffect* RegenDelayEffect = StaminaRegenDelayGameplayEffectClass
+				? StaminaRegenDelayGameplayEffectClass->GetDefaultObject<UGameplayEffect>()
+				: nullptr;
+			if (AbilitySystemComponent && RegenDelayEffect)
+			{
+				AbilitySystemComponent->ApplyGameplayEffectToSelf(
+					RegenDelayEffect,
+					GetAbilityLevel(),
+					AbilitySystemComponent->MakeEffectContext());
+			}
 		}
 	}
 

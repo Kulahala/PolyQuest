@@ -53,6 +53,10 @@ public:
 	/** Consumes one resolver-validated front-arc melee contact during the active window. */
 	bool TryParryMeleeHit(AActor* AttackingActor);
 
+#if WITH_DEV_AUTOMATION_TESTS
+	const FGameplayTagContainer& GetTestActivationBlockedTags() const { return ActivationBlockedTags; }
+#endif
+
 private:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Player|Parry", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<UAnimMontage> ParryMontage;

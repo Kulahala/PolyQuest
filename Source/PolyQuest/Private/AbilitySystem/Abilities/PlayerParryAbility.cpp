@@ -39,6 +39,7 @@ UPlayerParryAbility::UPlayerParryAbility()
 	ActivationOwnedTags.AddTag(ParryingStateTag);
 	ActivationBlockedTags.AddTag(ParryingStateTag);
 	ActivationBlockedTags.AddTag(DeadStateTag);
+	ActivationBlockedTags.AddTag(FGameplayTag::RequestGameplayTag(FName(TEXT("State.Status.Exhausted")), false));
 	ActivationBlockedTags.AddTag(StunnedStateTag);
 	ActivationBlockedTags.AddTag(FGameplayTag::RequestGameplayTag(FName(TEXT("State.Action.Dodging")), false));
 

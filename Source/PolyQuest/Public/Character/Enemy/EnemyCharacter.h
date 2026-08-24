@@ -2,6 +2,7 @@
 
 #include "CoreMinimal.h"
 #include "TimerManager.h"
+#include "GameplayEffectTypes.h"
 #include "Character/BaseCharacter.h"
 #include "EnemyCharacter.generated.h"
 
@@ -90,6 +91,9 @@ private:
 	void StartDeathRagdoll();
 	void DispatchPendingStanceBreak();
 	bool TryDispatchStanceBreak();
+	void CacheActivePoiseBreakingEffectSource(const FGameplayEffectSpec& EffectSpec);
+	bool MatchesActivePoiseBreakingEffectSource(const FGameplayEffectSpec& EffectSpec) const;
+	void ClearActivePoiseBreakingEffectSource();
 	void OnPoiseRecoveryTick();
 	void StartPoiseRecovery();
 	void ClearPoiseRecovery();
@@ -153,5 +157,6 @@ private:
 	bool bHasLoggedInvalidPoiseRecoveryConfiguration = false;
 	bool bHasLoggedInvalidUIWidgetClass = false;
 	bool bPlayerLockOnHighlighted = false;
-	const FGameplayEffectSpec* ActivePoiseBreakingEffectSpec = nullptr;
+	TWeakObjectPtr<const UGameplayEffect> ActivePoiseBreakingEffectDefinition;
+	FGameplayEffectContextHandle ActivePoiseBreakingEffectContext;
 };

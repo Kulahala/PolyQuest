@@ -1435,16 +1435,94 @@ bool FHitReactionAutomationTest::RunTest(const FString& Parameters)
 							TestTrue(TEXT("6.10d: Health-only Launch GE applied"),
 								DeferralASC->ApplyGameplayEffectSpecToSelf(*LaunchSpecHandle.Data.Get()).WasSuccessfullyApplied());
 
-							// Launch MUST be rejected because ActivePoiseBreakingEffectSpec belongs to PoiseSpec, NOT LaunchSpec
+							// Launch MUST be rejected because the cached Poise-breaking source belongs to PoiseSpec, NOT LaunchSpec.
 							TestEqual(TEXT("6.10d: Health-only Launch rejected against different Poise-break spec"), LaunchEventCount, 0);
 							TestTrue(TEXT("6.10d: Ordinary timer was NOT cancelled by rejected Launch"), DeferralEnemy->HasPendingStanceBreakTimer());
 							TestFalse(TEXT("6.10d: Launch deferral was NOT activated"), DeferralEnemy->IsLaunchStanceBreakDeferralActive());
 						}
 
-						// 3. Dispatch the ordinary timer, which clears ActivePoiseBreakingEffectSpec and emits Stance Break
+						// 3. Dispatch the ordinary timer, which clears the cached Poise-breaking source and emits Stance Break.
+					DeferralEnemy->DispatchTestPendingStanceBreak();
+					TestEqual(TEXT("6.10d: Exactly 1 Stance Break event dispatched by timer"), DeferralStanceBreakCount, 1);
+					TestFalse(TEXT("6.10d: Timer cleared"), DeferralEnemy->HasPendingStanceBreakTimer());
+				}
+			}
+
+				// 6.10e Same GE definition with a different EffectContext must not impersonate the pending Poise break.
+				{
+					ResetEnemyState();
+					DeferralStanceBreakCount = 0;
+					LaunchEventCount = 0;
+
+					FGameplayEffectContextHandle PoiseBreakContext = DeferralASC->MakeEffectContext();
+					PoiseBreakContext.AddInstigator(DeferralEnemy, DeferralEnemy);
+					FGameplayEffectSpecHandle PoiseBreakSpecHandle = DeferralASC->MakeOutgoingSpec(UTestLaunchDamageGE_PoiseFirst::StaticClass(), 1, PoiseBreakContext);
+					TestTrue(TEXT("6.10e: Poise-break SpecHandle valid"), PoiseBreakSpecHandle.IsValid() && PoiseBreakSpecHandle.Data.IsValid());
+					if (PoiseBreakSpecHandle.IsValid() && PoiseBreakSpecHandle.Data.IsValid())
+					{
+						FGameplayTagContainer LaunchTags;
+						LaunchTags.AddTag(TagDataLaunch);
+						PoiseBreakSpecHandle.Data->AppendDynamicAssetTags(LaunchTags);
+						TestTrue(TEXT("6.10e: Poise-break Launch GE applied"),
+							DeferralASC->ApplyGameplayEffectSpecToSelf(*PoiseBreakSpecHandle.Data.Get()).WasSuccessfullyApplied());
+						TestEqual(TEXT("6.10e: Initial same-transaction Launch dispatched"), LaunchEventCount, 1);
+						TestTrue(TEXT("6.10e: Ordinary timer scheduled for initial Launch break"), DeferralEnemy->HasPendingStanceBreakTimer());
+
+						LaunchEventCount = 0;
+						FGameplayEffectContextHandle LaterContext = DeferralASC->MakeEffectContext();
+						LaterContext.AddInstigator(DeferralEnemy, DeferralEnemy);
+						FGameplayEffectSpecHandle LaterSpecHandle = DeferralASC->MakeOutgoingSpec(UTestLaunchDamageGE_PoiseFirst::StaticClass(), 1, LaterContext);
+						TestTrue(TEXT("6.10e: Later SpecHandle valid"), LaterSpecHandle.IsValid() && LaterSpecHandle.Data.IsValid());
+						if (LaterSpecHandle.IsValid() && LaterSpecHandle.Data.IsValid())
+						{
+							LaterSpecHandle.Data->AppendDynamicAssetTags(LaunchTags);
+							TestTrue(TEXT("6.10e: Same-definition later Launch GE applied"),
+								DeferralASC->ApplyGameplayEffectSpecToSelf(*LaterSpecHandle.Data.Get()).WasSuccessfullyApplied());
+							TestEqual(TEXT("6.10e: Same definition with a fresh context is rejected"), LaunchEventCount, 0);
+							TestTrue(TEXT("6.10e: Rejected same-definition later Launch retains ordinary timer"), DeferralEnemy->HasPendingStanceBreakTimer());
+							TestFalse(TEXT("6.10e: Rejected same-definition later Launch does not defer"), DeferralEnemy->IsLaunchStanceBreakDeferralActive());
+						}
+
 						DeferralEnemy->DispatchTestPendingStanceBreak();
-						TestEqual(TEXT("6.10d: Exactly 1 Stance Break event dispatched by timer"), DeferralStanceBreakCount, 1);
-						TestFalse(TEXT("6.10d: Timer cleared"), DeferralEnemy->HasPendingStanceBreakTimer());
+						TestEqual(TEXT("6.10e: Ordinary timer dispatches exactly one Stance Break"), DeferralStanceBreakCount, 1);
+					}
+				}
+
+				// 6.10f The same Definition and shared EffectContext still cannot impersonate a completed Poise break transaction.
+				{
+					ResetEnemyState();
+					DeferralStanceBreakCount = 0;
+					LaunchEventCount = 0;
+
+					FGameplayEffectContextHandle SharedContext = DeferralASC->MakeEffectContext();
+					SharedContext.AddInstigator(DeferralEnemy, DeferralEnemy);
+					FGameplayEffectSpecHandle InitialSpecHandle = DeferralASC->MakeOutgoingSpec(UTestLaunchDamageGE_PoiseFirst::StaticClass(), 1, SharedContext);
+					TestTrue(TEXT("6.10f: Initial SpecHandle valid"), InitialSpecHandle.IsValid() && InitialSpecHandle.Data.IsValid());
+					if (InitialSpecHandle.IsValid() && InitialSpecHandle.Data.IsValid())
+					{
+						FGameplayTagContainer LaunchTags;
+						LaunchTags.AddTag(TagDataLaunch);
+						InitialSpecHandle.Data->AppendDynamicAssetTags(LaunchTags);
+						TestTrue(TEXT("6.10f: Initial Poise-break Launch GE applied"),
+							DeferralASC->ApplyGameplayEffectSpecToSelf(*InitialSpecHandle.Data.Get()).WasSuccessfullyApplied());
+						TestEqual(TEXT("6.10f: Initial same-transaction Launch dispatched"), LaunchEventCount, 1);
+						TestTrue(TEXT("6.10f: Ordinary timer scheduled for initial Launch break"), DeferralEnemy->HasPendingStanceBreakTimer());
+
+						LaunchEventCount = 0;
+						FGameplayEffectSpecHandle ReusedContextSpecHandle = DeferralASC->MakeOutgoingSpec(UTestLaunchDamageGE_PoiseFirst::StaticClass(), 1, SharedContext);
+						TestTrue(TEXT("6.10f: Reused-context SpecHandle valid"), ReusedContextSpecHandle.IsValid() && ReusedContextSpecHandle.Data.IsValid());
+						if (ReusedContextSpecHandle.IsValid() && ReusedContextSpecHandle.Data.IsValid())
+						{
+							ReusedContextSpecHandle.Data->AppendDynamicAssetTags(LaunchTags);
+							TestTrue(TEXT("6.10f: Same-definition shared-context later GE applied"),
+								DeferralASC->ApplyGameplayEffectSpecToSelf(*ReusedContextSpecHandle.Data.Get()).WasSuccessfullyApplied());
+							TestEqual(TEXT("6.10f: Same definition and shared context are rejected after the initial Poise break"), LaunchEventCount, 0);
+							TestTrue(TEXT("6.10f: Rejected shared-context later Launch retains ordinary timer"), DeferralEnemy->HasPendingStanceBreakTimer());
+							TestFalse(TEXT("6.10f: Rejected shared-context later Launch does not defer"), DeferralEnemy->IsLaunchStanceBreakDeferralActive());
+						}
+
+						DeferralEnemy->DispatchTestPendingStanceBreak();
+						TestEqual(TEXT("6.10f: Ordinary timer dispatches exactly one Stance Break"), DeferralStanceBreakCount, 1);
 					}
 				}
 

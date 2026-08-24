@@ -19,11 +19,6 @@ namespace
 			&& TargetASC->HasMatchingGameplayTag(DeadTag);
 	}
 
-	const FGameplayTag& GetExhaustedTag()
-	{
-		static const FGameplayTag ExhaustedTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Status.Exhausted")), false);
-		return ExhaustedTag;
-	}
 }
 
 UCharacterAttributeSet::UCharacterAttributeSet()
@@ -119,18 +114,4 @@ void UCharacterAttributeSet::PostGameplayEffectExecute(const FGameplayEffectModC
 		return;
 	}
 
-	if (Data.EvaluatedData.Attribute != GetStaminaAttribute())
-	{
-		return;
-	}
-
-	const FGameplayTag& ExhaustedTag = GetExhaustedTag();
-	if (!TargetASC || !ExhaustedTag.IsValid())
-	{
-		return;
-	}
-
-	// Stamina may execute multiple effects while clamped at zero. Set an exact
-	// loose-tag count so repeated drains cannot leave Exhausted latched after recovery.
-	TargetASC->SetLooseGameplayTagCount(ExhaustedTag, GetStamina() <= 0.0f ? 1 : 0);
 }

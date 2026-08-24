@@ -9,6 +9,7 @@
 #include "Character/Player/PlayerCharacter.h"
 #include "Combat/Equipment/MeleeWeaponDefinition.h"
 #include "Combat/Input/CombatLoadoutDefinition.h"
+#include "Tests/TestExhaustionMoveSpeedGE.h"
 #include "Tests/TestPoiseRecoveryGE.h"
 #include "Tests/TestStaminaRegenGE.h"
 
@@ -66,7 +67,11 @@ APlayerCharacter* FCombatAutomationFixture::SpawnPlayer(
 	WeaponDefinition->BladeBaseMarkerRelativeLocation = FVector::ZeroVector;
 	WeaponDefinition->BladeTipMarkerRelativeLocation = FVector(20.0f, 0.0f, 0.0f);
 	WeaponDefinition->AssociatedLoadout = Loadout;
-	Player->ConfigureTestStartupFixture(Loadout, WeaponDefinition, UTestStaminaRegenGE::StaticClass());
+	Player->ConfigureTestStartupFixture(
+		Loadout,
+		WeaponDefinition,
+		UTestStaminaRegenGE::StaticClass(),
+		UTestExhaustionMoveSpeedGE::StaticClass());
 
 	if (PreBeginPlaySetup)
 	{

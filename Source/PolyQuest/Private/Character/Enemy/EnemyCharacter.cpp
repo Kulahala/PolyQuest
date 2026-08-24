@@ -87,7 +87,7 @@ void AEnemyCharacter::EndPlay(const EEndPlayReason::Type EndPlayReason)
 	bStanceBreakDispatchPending = false;
 	bLaunchStanceBreakDeferralActive = false;
 	bPendingDeferredStanceBreak = false;
-	ActivePoiseBreakingEffectSpec = nullptr;
+	ClearActivePoiseBreakingEffectSource();
 	SetPlayerLockOnHighlighted(false);
 	UnbindUIHealthEvents();
 	HideEnemyHealthBar();
@@ -212,27 +212,30 @@ void AEnemyCharacter::OnHealthAttributeChanged(const FOnAttributeChangeData& Cha
 	const bool bIsStunned = StunnedStateTag.IsValid() && CharacterASC->HasMatchingGameplayTag(StunnedStateTag);
 	if (IsDead() || bIsStunned)
 	{
-		ActivePoiseBreakingEffectSpec = nullptr;
+		ClearActivePoiseBreakingEffectSource();
 		return;
 	}
 
-	const bool bIsSameSpecPoiseBreak = (ActivePoiseBreakingEffectSpec != nullptr && &ChangeData.GEModData->EffectSpec == ActivePoiseBreakingEffectSpec);
-	ActivePoiseBreakingEffectSpec = nullptr;
+	const FGameplayEffectSpec& EffectSpec = ChangeData.GEModData->EffectSpec;
+	const bool bIsSameSpecPoiseBreak = MatchesActivePoiseBreakingEffectSource(EffectSpec);
+	const bool bCurrentEffectExecutedPoiseModifier = EffectSpec.GetModifiedAttribute(UCharacterAttributeSet::GetPoiseAttribute()) != nullptr;
+	ClearActivePoiseBreakingEffectSource();
 
 	FGameplayTagContainer AssetTags;
-	ChangeData.GEModData->EffectSpec.GetAllAssetTags(AssetTags);
+	EffectSpec.GetAllAssetTags(AssetTags);
 
 	const EHitReactionTier ReactionTier = FHitReactionClassifier::ClassifyReactionTier(AssetTags);
 	if (ReactionTier == EHitReactionTier::Invalid)
 	{
 		UE_LOG(LogPolyQuest, Warning, TEXT("Enemy '%s' received invalid multi-tier hit reaction tags from effect '%s'; skipping reaction event."),
-			*GetNameSafe(this), *GetNameSafe(ChangeData.GEModData->EffectSpec.Def));
+			*GetNameSafe(this), *GetNameSafe(EffectSpec.Def));
 		return;
 	}
 
 	if (IsPoiseBroken())
 	{
-		const bool bAllowSameSpecLaunch = (bIsSameSpecPoiseBreak && ReactionTier == EHitReactionTier::Launch);
+		const bool bAllowSameSpecLaunch = (bIsSameSpecPoiseBreak && bCurrentEffectExecutedPoiseModifier
+			&& ReactionTier == EHitReactionTier::Launch);
 		if (!bAllowSameSpecLaunch)
 		{
 			return;
@@ -265,10 +268,10 @@ void AEnemyCharacter::OnHealthAttributeChanged(const FOnAttributeChangeData& Cha
 
 	FGameplayEventData ReactionEventData;
 	ReactionEventData.EventTag = TargetEventTag;
-	ReactionEventData.Instigator = ChangeData.GEModData->EffectSpec.GetContext().GetInstigator();
+	ReactionEventData.Instigator = EffectSpec.GetContext().GetInstigator();
 	ReactionEventData.Target = this;
 	ReactionEventData.EventMagnitude = ChangeData.OldValue - ChangeData.NewValue;
-	ReactionEventData.ContextHandle = ChangeData.GEModData->EffectSpec.GetContext();
+	ReactionEventData.ContextHandle = EffectSpec.GetContext();
 	CharacterASC->HandleGameplayEvent(TargetEventTag, &ReactionEventData);
 }
 
@@ -285,7 +288,7 @@ void AEnemyCharacter::BeginLaunchStanceBreakDeferral()
 	}
 	PendingStanceBreakTimerHandle.Invalidate();
 	bStanceBreakDispatchPending = false;
-	ActivePoiseBreakingEffectSpec = nullptr;
+	ClearActivePoiseBreakingEffectSource();
 
 	if (IsPoiseBroken())
 	{
@@ -298,7 +301,7 @@ void AEnemyCharacter::CompleteLaunchStanceBreakDeferral()
 	const bool bHadPendingStanceBreak = bPendingDeferredStanceBreak;
 	bPendingDeferredStanceBreak = false;
 	bLaunchStanceBreakDeferralActive = false;
-	ActivePoiseBreakingEffectSpec = nullptr;
+	ClearActivePoiseBreakingEffectSource();
 
 	if (bHadPendingStanceBreak)
 	{
@@ -311,7 +314,7 @@ void AEnemyCharacter::AbortLaunchStanceBreakDeferral()
 	const bool bHadPendingStanceBreak = bPendingDeferredStanceBreak;
 	bPendingDeferredStanceBreak = false;
 	bLaunchStanceBreakDeferralActive = false;
-	ActivePoiseBreakingEffectSpec = nullptr;
+	ClearActivePoiseBreakingEffectSource();
 
 	if (bHadPendingStanceBreak && HasAuthority() && !bDeathTeardownStarted && !IsDead() && !IsActorBeingDestroyed() && IsPoiseBroken())
 	{
@@ -323,18 +326,23 @@ void AEnemyCharacter::OnPoiseAttributeChanged(const FOnAttributeChangeData& Chan
 {
 	if (!HasAuthority() || bDeathTeardownStarted || IsDead())
 	{
-		ActivePoiseBreakingEffectSpec = nullptr;
+		ClearActivePoiseBreakingEffectSource();
 		return;
 	}
 
 	if (FMath::IsNearlyEqual(ChangeData.NewValue, ChangeData.OldValue))
 	{
+		if (ChangeData.GEModData)
+		{
+			// A later GE may reuse the original Definition and EffectContext while it no longer breaks Poise.
+			ClearActivePoiseBreakingEffectSource();
+		}
 		return;
 	}
 
 	if (ChangeData.NewValue > 0.0f)
 	{
-		ActivePoiseBreakingEffectSpec = nullptr;
+		ClearActivePoiseBreakingEffectSource();
 		if (bLaunchStanceBreakDeferralActive)
 		{
 			bPendingDeferredStanceBreak = false;
@@ -360,7 +368,7 @@ void AEnemyCharacter::OnPoiseAttributeChanged(const FOnAttributeChangeData& Chan
 
 	if (ChangeData.NewValue >= ChangeData.OldValue)
 	{
-		ActivePoiseBreakingEffectSpec = nullptr;
+		ClearActivePoiseBreakingEffectSource();
 		return;
 	}
 
@@ -368,7 +376,7 @@ void AEnemyCharacter::OnPoiseAttributeChanged(const FOnAttributeChangeData& Chan
 
 	if (bLaunchStanceBreakDeferralActive)
 	{
-		ActivePoiseBreakingEffectSpec = nullptr;
+		ClearActivePoiseBreakingEffectSource();
 		bPendingDeferredStanceBreak = true;
 		return;
 	}
@@ -377,18 +385,25 @@ void AEnemyCharacter::OnPoiseAttributeChanged(const FOnAttributeChangeData& Chan
 	if (!CharacterASC || CharacterASC->GetNumericAttribute(UCharacterAttributeSet::GetHealthAttribute()) <= 0.0f
 		|| !StanceBreakEventTag.IsValid() || bStanceBreakDispatchPending)
 	{
-		ActivePoiseBreakingEffectSpec = nullptr;
+		ClearActivePoiseBreakingEffectSource();
 		return;
 	}
 
 	UWorld* World = GetWorld();
 	if (!World)
 	{
-		ActivePoiseBreakingEffectSpec = nullptr;
+		ClearActivePoiseBreakingEffectSource();
 		return;
 	}
 
-	ActivePoiseBreakingEffectSpec = ChangeData.GEModData ? &ChangeData.GEModData->EffectSpec : nullptr;
+	if (ChangeData.GEModData)
+	{
+		CacheActivePoiseBreakingEffectSource(ChangeData.GEModData->EffectSpec);
+	}
+	else
+	{
+		ClearActivePoiseBreakingEffectSource();
+	}
 
 	bStanceBreakDispatchPending = true;
 	PendingStanceBreakTimerHandle = World->GetTimerManager().SetTimerForNextTick(this, &AEnemyCharacter::DispatchPendingStanceBreak);
@@ -396,7 +411,7 @@ void AEnemyCharacter::OnPoiseAttributeChanged(const FOnAttributeChangeData& Chan
 
 void AEnemyCharacter::DispatchPendingStanceBreak()
 {
-	ActivePoiseBreakingEffectSpec = nullptr;
+	ClearActivePoiseBreakingEffectSource();
 	if (UWorld* World = GetWorld())
 	{
 		if (PendingStanceBreakTimerHandle.IsValid())
@@ -407,6 +422,25 @@ void AEnemyCharacter::DispatchPendingStanceBreak()
 	PendingStanceBreakTimerHandle.Invalidate();
 	bStanceBreakDispatchPending = false;
 	TryDispatchStanceBreak();
+}
+
+void AEnemyCharacter::CacheActivePoiseBreakingEffectSource(const FGameplayEffectSpec& EffectSpec)
+{
+	ActivePoiseBreakingEffectDefinition = EffectSpec.Def.Get();
+	ActivePoiseBreakingEffectContext = EffectSpec.GetContext();
+}
+
+bool AEnemyCharacter::MatchesActivePoiseBreakingEffectSource(const FGameplayEffectSpec& EffectSpec) const
+{
+	return ActivePoiseBreakingEffectDefinition.IsValid()
+		&& ActivePoiseBreakingEffectDefinition.Get() == EffectSpec.Def.Get()
+		&& ActivePoiseBreakingEffectContext.Get() == EffectSpec.GetContext().Get();
+}
+
+void AEnemyCharacter::ClearActivePoiseBreakingEffectSource()
+{
+	ActivePoiseBreakingEffectDefinition.Reset();
+	ActivePoiseBreakingEffectContext.Clear();
 }
 
 bool AEnemyCharacter::TryDispatchStanceBreak()
@@ -597,7 +631,7 @@ void AEnemyCharacter::HandleDeath()
 	bStanceBreakDispatchPending = false;
 	bLaunchStanceBreakDeferralActive = false;
 	bPendingDeferredStanceBreak = false;
-	ActivePoiseBreakingEffectSpec = nullptr;
+	ClearActivePoiseBreakingEffectSource();
 	// A Dead Tag granted by any legal source becomes terminal in C2; revival is out of scope.
 	CharacterASC->SetLooseGameplayTagCount(DeadStateTag, 1);
 	CharacterASC->SetNumericAttributeBase(UCharacterAttributeSet::GetHealthAttribute(), 0.0f);
