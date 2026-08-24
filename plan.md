@@ -1,83 +1,101 @@
-# TODO-07B1: Combat Hit Feedback v1
+# TODO-07B1A: Reaction-Tier Player Hit Camera Shake v1
 
 ## Plan State
 
-- Status: Complete.
-- Baseline: `feeb378` (`[Docs] 安排基础战斗反馈阶段`).
-- Objective: add short visual hit feedback for actual nonlethal Health damage without changing damage delivery, Guard/Parry consumption, Hit Reaction classification, movement, camera ownership, or asset topology.
-- Preserve all user-owned WIP. This stage does not write or stage `Content/**`, Config, maps, Blueprints, Input, AnimBPs, Niagara, GA/GE/Montage assets, project files, or generated output.
+- Status: Complete. The strict three-tier implementation, user validation, P1 lifecycle repair, and Main delta fresh review are complete.
+- Baseline: `8d8e1d5` (`[Feature] 完成战斗受击反馈 (Combat Hit Feedback)`).
+- Objective: extend the completed B1 Player-only Camera Shake into exactly `Small` / `Big` / `Launch` reaction-tier variants while preserving B1's red-flash, damage, reaction-event, and fixed-camera contracts.
+- Preserve all user-owned WIP. This stage does not write or stage `Content/**`, Config, maps, Blueprints, Input, AnimBPs, Niagara, GA/GE/Montage assets, project files, generated output, or unrelated worktree changes.
 
 ```text
 Outer: ue-stage-workflow
 Primary: ue5-cpp-gameplay
-Support: ue5-debug-validation, game-feel
-Route reason: B1 modifies existing Health attribute callbacks, Character EndPlay, Mesh Overlay lifetime, and local PlayerCameraManager feedback without changing the combat resolver.
+Support: ue5-debug-validation, game-feel, camera-systems
+Route reason: B1A changes the existing Player Health-delegate presentation selection, exact CameraShake lifetime, and the existing native Automation suite without changing the damage or reaction systems.
 ```
 
 ```text
 Plan explorers: 0
-Implementation executors: 1
-Complex Executor: none
-Main parallel work: plan ownership, evidence accounting, and final fresh review only
-Reason: Gemini reviews the plan, executes the complete approved C++/Automation slice, and performs a strict implementation self-review. Main owns scope, plan, user validation interpretation, documentation, staging, and the separate final fresh review.
+Implementation executors: 1 (Gemini, user-assigned)
+Complex Executor: Gemini external execution boundary
+Main parallel work: frozen-contract ownership, validation evidence accounting, and post-validation fresh review
+Reason: Player Header, Health callback, EndPlay cleanup, and Automation form one lifecycle-sensitive slice. Main owns the contract; Gemini may implement only the named frozen paths after plan review approval.
 ```
 
-## Implementation Evidence
+## Evidence And Decisions
 
-- **Process correction:** the user clarified the executor split after implementation had started. Main had already written the B1 runtime integration while Gemini implemented only the Automation slice; this is a recorded process deviation and must not be described as Gemini having executed the complete B1 slice. Before final fresh review, Gemini must now strict-review the complete approved B1 diff and make only justified in-scope repairs. Future stages use the corrected split from the start.
-- Gemini's read-only review was accepted: the Health callbacks invoke feedback after real nonlethal Health-GE/death checks but before Stunned or reaction-tier suppression; deferred fixtures inject their test Overlay and Player Shake before `FinishSpawning()`; Headless Shake coverage uses a possessed Controller explicitly marked local rather than a viewport or Engine-private active-shake list.
-- Main integrated the runtime Overlay/Shake lifecycle and reviewed the test slice. The native test Shake uses `FObjectInitializer::SetDefaultSubobjectClass` for its persistent Pattern; it does not call `NewObject` through `ChangeRootShakePattern()` while constructing a UObject.
-- Static preflight completed against the approved B1 C++ surface: direct caller/callee reads, CodeGraph, code-review-graph impact against `feeb378` (graph-built SHA matches the baseline), Rider error-level inspection, and scoped `git diff --check`. Rider reports no current error-level issue. Graph test-gap labels remain supplemental because the new Automation file is untracked until the eventual approved commit; direct test source is the coverage evidence.
-- The first user `PolyQuest.Combat.HitFeedback` run failed after the new suite created its transient World: it omitted the `World->BeginPlay()` transition used by the established Exhaustion fixture, and its single large world tick was not a stable TimerManager frame pump. Its temporary local `APlayerController` also exposed eight missing InputAction warnings. Gemini's test-only repair now begins the World before spawning fixtures, advances Timer time in `0.05s` frame steps with `GFrameCounter` progression, and injects one transient `UInputAction` through the existing `WITH_DEV_AUTOMATION_TESTS` startup fixture before `FinishSpawning()`. The runtime Overlay/Shake path is unchanged.
-- User-confirmed evidence: focused PIE passed, and the repaired `PolyQuest.Combat.HitFeedback` Automation plus all eleven named regression suites passed in the Editor front-end. The remaining logs are intentional negative assertions: invalid multi-tier Reaction Tags, no accepted Stance Break fallback, equipment preflight/rollback/active-swap rejection, and invalid static Trace geometry. This is user runtime/visual evidence, not an Agent asset readback or a separately supplied manual compile claim.
-- Main's single defect-first fresh review against `feeb378` found no P0-P2 source defect in the approved B1 diff. Direct source, CodeGraph, Rider error-level inspection, and scoped `git diff --check` were reviewed; code-review-graph coverage labels remain supplemental because its baseline index cannot prove the untracked new Automation coverage. No error-memory MCP endpoint was available.
-- The full B1 Automation matrix and focused PIE gate are complete. `README.md`, `ARCHITECTURE.md`, `ROADMAP.md`, this plan, and the repository delegation boundary are synchronized; B2 remains the next accepted stage. The default commit still excludes all user-owned `Content/**`, Config, maps, Blueprints, Input, AnimBPs, Niagara assets, project files, generated output, and unrelated WIP.
+- Local UE 5.8 headers confirm `APlayerCameraManager::StartCameraShake(...)` returns the started instance and `StopCameraShake(UCameraShakeBase*, true)` stops exactly that instance. `UCameraShakeBase::bSingleInstance` restarts the timer for a repeated class instead of stacking it.
+- Current `APlayerCharacter::OnHealthAttributeChanged()` proves real nonlethal Health GE damage, triggers B1 Overlay before Stunned/reaction suppression, then classifies the exact `Data.Reaction.Small`, `Data.Reaction.Big`, and `Data.Reaction.Launch` Asset Tags.
+- The user selected CameraLocal rotation-only feedback. No Camera Location offset, Roll, or FOV variation is introduced.
+- Gemini's read-only plan review found no P0-P2 blocker. Its three non-blocking recommendations are adopted explicitly below: weak-reference validity guards, native test patterns that remain active until explicitly stopped, and one pre-`FinishSpawning()` fixture injection path.
+- The user rejected a fourth Generic Camera Shake asset/field. The B1 generic Shake behavior is deliberately narrowed: a legal `None` tier, an `Invalid` multi-tier tag set, or a missing valid-tier class now leaves Camera Shake untouched while retaining B1 Overlay behavior and the existing Invalid-tag reaction-event warning.
+- The current working tree already has the B1A scheduling diff in `ROADMAP.md`; retain it. It is Main-owned documentation and not part of Gemini's source/test handoff.
 
-## Approved Runtime Contract
+## Frozen Runtime Contract
 
-1. `ABaseCharacter` owns one protected, non-Blueprint-callable global Mesh Overlay lifecycle. It exposes only inherited `EditDefaultsOnly` authoring fields `HitFeedbackOverlayMaterial` and `HitFeedbackOverlayDurationSeconds`; the duration defaults to `0.10s`.
-2. The helper uses only `GetOverlayMaterial()` and global `SetOverlayMaterial()`. It never replaces a normal material slot or changes `MaterialSlotsOverlayMaterial`.
-3. On the first flash, cache the current global Overlay and apply the authored flash material. A repeat hit refreshes the one Timer. If another system replaces the Overlay while the flash is active, preserve that newer external Overlay as the value to restore after the refreshed flash.
-4. On Timer expiry or `EndPlay`, restore the cached Overlay only when the Mesh still displays B1's active flash material. If another system has already changed it, leave that value untouched. Clear the Timer and transient cache through the same idempotent helper.
-5. Missing Overlay material or non-positive duration is a once-per-actor authoring warning followed by a no-op. Player Camera Shake remains an independent channel and may still run.
-6. Player and Enemy invoke the Overlay only after their existing Health delegates establish a real nonlethal GameplayEffect-driven decrease: `NewValue > 0`, `NewValue < OldValue`, valid `GEModData`, and no Dead state/teardown. The call is before Hit Reaction tier classification and before Stunned/Poise-Broken reaction suppression.
-7. Therefore nonlethal Health damage with no reaction tag, an invalid multi-tier tag, Stunned state, or Enemy Poise Broken state still flashes. Healing, direct attribute-base changes, Poise-only changes, lethal Health damage, dead targets, and teardown do not flash.
-8. Guard/Parry remain naturally excluded: both current Resolver paths consume a successful defense before applying the Health GameplayEffect. No B1 branch is added to Guard, Parry, melee tracing, or projectile hit resolution.
-9. `APlayerCharacter` gains one `EditDefaultsOnly` `HitFeedbackCameraShakeClass`. On a valid local `APlayerController` with `PlayerCameraManager`, it calls `StartCameraShake(Class, 1.0f)`. It never moves the Pawn, CameraBoom, fixed camera transform, OS window, or FOV.
-10. The authored Camera Shake must have `bSingleInstance=true`; UE 5.8 then restarts the same class instance on repeat hits instead of stacking it. Missing local controller/manager is a transient no-op; a missing authored Shake class on a valid local Player is a once-per-actor configuration warning.
-11. This is single-player local presentation. No replication, Gameplay Tags, input, new damage route, Hit Stop, sound, Niagara, weapon trail, or generic feedback framework is introduced.
+1. Remove the retired `HitFeedbackCameraShakeClass` and its missing-class warning state. Keep exactly three non-callable `EditDefaultsOnly` Player fields under `Combat|Feedback`:
+   - `SmallHitFeedbackCameraShakeClass`
+   - `BigHitFeedbackCameraShakeClass`
+   - `LaunchHitFeedbackCameraShakeClass`
+   They are authored on `BP_Player`; no Blueprint function, Gameplay Tag, input, DataAsset, or generic feedback framework is added.
+2. After the existing authority, real nonlethal Health-GE, ASC, and Dead checks, `OnHealthAttributeChanged()` must keep `TriggerHitFeedbackOverlay()` first. It then reads Asset Tags and computes `EHitReactionTier` only for feedback selection, calls the tier-aware Shake helper, then retains the existing Stunned return and Invalid-tag reaction-event warning/return order.
+3. `Small`, `Big`, and `Launch` use only their matching authored class. `None` and `Invalid` do not call `StartCameraShake()` and do not clear, replace, or otherwise mutate an already-active tier Shake. A missing valid-tier class emits one Player-local configuration Warning for that tier and no-ops; it does not fall back to another tier.
+4. A valid Stunned Player still receives the selected valid-tier presentation Shake, but no reaction Gameplay Event is sent. `None` and Invalid tags remain without Shake; when not Stunned Invalid retains its existing log and no reaction event, while Stunned still returns before that existing log branch. B1 Overlay behavior is unchanged for every valid nonlethal Health GE decrease.
+5. `APlayerCharacter` owns only its exact started Shake instance, the originating `APlayerCameraManager`, and its class. Store both UObject references as `TWeakObjectPtr`; before `StopCameraShake(OldInstance, true)`, require both `ActiveHitFeedbackCameraManager.IsValid()` and `ActiveHitFeedbackCameraShake.IsValid()`. Otherwise perform no dereference and only reset local state. The same class calls `StartCameraShake()` again and relies on `bSingleInstance=true` to restart. A different class or CameraManager stops the exact old instance through the stored old manager before starting the new one. Never call a class-wide or global stop API.
+6. `EndPlay()` clears this exact active instance before existing teardown and `Super::EndPlay()`. The clear helper is idempotent and always resets the weak references/class state, even when the manager or instance has already expired.
+7. This remains Player-local presentation. Do not modify `ABaseCharacter` Overlay logic, `AEnemyCharacter`, `FHitReactionClassifier`, damage delivery, Guard/Parry, Hit Reaction Gameplay Events, Root Motion, CameraBoom, Pawn transform, FOV, or world camera behavior.
 
 ## Approved Source And Test Surface
 
-- Main-only runtime integration:
-  - `Source/PolyQuest/Public/Character/BaseCharacter.h` and `Private/Character/BaseCharacter.cpp`: shared Overlay authoring fields, transient cache/Timer, protected apply/clear helpers, EndPlay cleanup, and narrow test-only configuration/state hooks.
-  - `Source/PolyQuest/Public/Character/Player/PlayerCharacter.h` and `Private/Character/Player/PlayerCharacter.cpp`: Player Shake class, local Camera Manager trigger, one-time configuration signal, test-only observability, and correctly placed Health callback call.
-  - `Source/PolyQuest/Private/Character/Enemy/EnemyCharacter.cpp`: correctly placed Overlay trigger only; no Enemy Camera Shake and no Enemy header/public API expansion.
-- Gemini-only Automation implementation after Main freezes the above interfaces:
-  - `Source/PolyQuest/Private/Tests/CombatAutomationFixture.cpp` and any required test-only fixture declaration: inject a valid Engine/test Overlay into every deferred Player/Enemy fixture and the Player test Shake class into every Player fixture so H3 clean-success signal rules remain intact.
-  - `Source/PolyQuest/Private/Tests/TestHitFeedbackCameraShake.h/.cpp`: native Automation-only `UCameraShakeBase` subclass with `bSingleInstance=true` plus a private Engine-native test Pattern that stays active across the second start, so instance reuse can be observed without Engine private state or an `EngineCameras` module dependency.
-  - `Source/PolyQuest/Private/Tests/CombatHitFeedbackAutomationTests.cpp`: new `PolyQuest.Combat.HitFeedback` suite using the H3 fixture, a possessed `APlayerController`, real `UTestProjectileDamageGE` health changes, and no Content assets.
-- The dedicated suite must cover Player/Enemy nonlethal flash, Player Shake invocation/single-instance reuse through a narrow test-only observation point rather than Engine private shake lists, no-tag and invalid-tag independence, healing/direct-base/lethal/dead rejection, repeated-hit Timer refresh, initial Overlay restoration, external Overlay preservation, and active-flash destroy/EndPlay cleanup.
-- Existing `PolyQuest.Player.ActionWindows` remains the Guard/Parry regression proof; this stage does not manufacture a second defense test route.
+**Contract owner: Main. Implementation writer: Gemini after explicit execution authorization.**
 
-## User-Owned Editor Work
+- `Source/PolyQuest/Public/Character/Player/PlayerCharacter.h`
+  - Remove the Generic authored field/state and retain only the three tier fields, private tier-aware selection/start/clear declarations, `TWeakObjectPtr<APlayerCameraManager>` plus `TWeakObjectPtr<UCameraShakeBase>` exact active state, per-tier warning state, and minimal `WITH_DEV_AUTOMATION_TESTS` configuration/observation surface.
+  - A forward declaration of `APlayerCameraManager` and non-reflected `EHitReactionTier` is allowed only if required by those private helpers.
+- `Source/PolyQuest/Private/Character/Player/PlayerCharacter.cpp`
+  - Implement the frozen three-tier selection, stop/restart, and EndPlay lifecycle above. Keep the existing local-controller/CameraManager guard; `None` and Invalid must resolve to null without a configuration warning.
+- `Source/PolyQuest/Private/Tests/CombatAutomationFixture.cpp`
+  - Before `FinishSpawning()`, make one three-class test-only configuration call for every Player fixture so H3's clean-success-path signal contract remains intact. Do not leave a per-test or post-BeginPlay injection alternative.
+- `Source/PolyQuest/Private/Tests/TestHitFeedbackCameraShake.h/.cpp`
+  - Retain the `UTestHitFeedbackCameraShakePattern` that remains active until `StopShakePatternImpl()` or teardown, and bind Small, Big, and Launch test classes to it. All three classes must be `bSingleInstance=true`, so Headless Automation cannot naturally expire an instance before same-tier restart or cross-tier replacement assertions.
+- `Source/PolyQuest/Private/Tests/CombatHitFeedbackAutomationTests.cpp`
+  - Extend the existing suite; do not create a thirteenth suite or introduce Content dependencies.
 
-1. Create one local shared `M_HitFlash_Red`, preferably under `Content/_Feedback/Materials/`: Surface, Translucent, Unlit, red Emissive/Opacity Overlay. Start at roughly `0.65` opacity; tune only after PIE.
-2. Create `CS_PlayerHit` under `Content/_Feedback/Camera/` as a `DefaultCameraShakeBase` / `CameraShakeBase` child. The UE 5.8 EngineCameras plugin is enabled by default; do not add a project plugin or module dependency. Set `bSingleInstance=true`; use a brief low-amplitude noise pattern, roughly `0.12s`, with no FOV change.
-3. In `BP_Player` and `BP_Enemy_Goblin`, assign the same inherited Overlay material and `0.10s` duration. In `BP_Player` only, assign `CS_PlayerHit`.
-4. Read back that the Player and Enemy Meshes have no per-slot Overlay configuration that would override the global B1 Overlay. These assets remain user-owned WIP and are excluded from the default commit.
-5. Manually compile `PolyQuestEditor`, run Automation from the Editor front-end, and perform focused Scene01 PIE validation.
+The existing singular test configuration method has only the shared fixture caller and may be replaced by one three-class test-only configuration method. No other Header/API expansion is allowed.
 
-## Validation Matrix
+## Automation And User Validation
 
-- New Automation: `PolyQuest.Combat.HitFeedback`.
-- Regression Automation: `PolyQuest.Equipment.TransactionMatrix`, `PolyQuest.Melee.TraceSourceGeometry`, `PolyQuest.Player.ActionWindows`, `PolyQuest.Combat.HitReaction`, `PolyQuest.Enemy.AttackSetSelection`, `PolyQuest.Enemy.CombatSpacing`, `PolyQuest.UI.VitalHUD`, `PolyQuest.Player.Exhaustion`, `PolyQuest.Player.LockOn`, `PolyQuest.Projectile.Lifecycle`, and `PolyQuest.Projectile.TargetAssist`.
-- Successful paths must retain H3's clean fixture signal contract: no missing Loadout, weapon, stamina, AI, Poise, ragdoll, Hit Feedback, or invalid AbilitySpec configuration warnings. Existing deliberate negative-test signals remain mapped to their assertions.
-- PIE: verify Player melee/projectile damage flashes red and shakes briefly; Enemy nonlethal damage flashes without changing the Player camera; rapid hits reset cleanly without permanent red or increasing shake amplitude; Guard/Parry neither flash nor shake; lethal damage does not steal death presentation; LockOn/HUD/camera collision/Bow/Hit Reactions remain unchanged.
-- Static before user handoff: read changed callers/callees; Rider `lint_files` with project-relative paths, `rootFolder=E:/GameDevelop/PolyQuest`, and `timeout=60000`; CodeGraph; code-review-graph diff impact; `git diff --check`. Agents do not call UBT, UAT, packaging, or Editor compilation.
+`PolyQuest.Combat.HitFeedback` must cover:
 
-## Review, Documentation, And Commit Boundary
+- No reaction tag and deliberate invalid multi-tier tags flash but do not start, clear, replace, or log a missing Camera Shake.
+- Exact Small, Big, and Launch class selection.
+- Same-tier restart returning the same active single-instance class; Small -> Big -> Launch replacement stops the previous instance (`IsActive() == false`) rather than stacking it.
+- Stunned tier damage selecting the tier Shake while existing reaction suppression remains intact.
+- Enemy damage not increasing the Player Shake start count.
+- Active Shake cleanup on Player `EndPlay`, while retaining all B1 Overlay/Timer/external-Overlay/death/destroy regression checks.
 
-- Gemini first performs a strict read-only plan review and reports only concrete P0-P2 blockers, lifecycle risks, or missing tests. Main accepts/rejects suggestions and freezes the whole approved slice before Gemini implements it. Gemini then conducts a strict self-review; it is not an independent fresh review.
-- User validation and Main's single defect-first fresh review are complete. The four project documents and `AGENTS.md` now record the stable B1 contract, evidence, next stage, and the corrected Main-plan/Gemini-execution boundary. `TODO-07B2` remains next work.
-- Default commit includes only approved B1 C++, Automation, and the four project documents. It excludes all `Content/**`, Config, maps, Blueprints, Input, AnimBPs, Niagara assets, project files, generated output, and unrelated user WIP.
+The invalid multi-tier tag Warning remains a deliberate negative-test signal. No successful fixture path may emit missing Player Loadout, weapon, Stamina, AI, Poise, Ragdoll, missing Shake, or invalid AbilitySpec warnings.
+
+User-owned Editor work after source validation:
+
+1. Rename the current working `CS_PlayerHit` through the Unreal Content Browser to `CS_PlayerHit_Small`, then duplicate it to create `CS_PlayerHit_Big` and `CS_PlayerHit_Launch`. There is no `CS_PlayerHit_Generic` asset and no Generic Player field after recompilation.
+2. All three authored classes use `bSingleInstance=true`, CameraLocal rotational noise only, zero Location/FOV, and zero Roll. Start with roughly `0.08s`, `0.12s`, and `0.18s` for Small/Big/Launch; tune amplitude in PIE so intensity is strictly increasing without camera motion sickness.
+3. Assign the three classes on `BP_Player`. The retired Generic field will disappear after class recompilation; do not change any Enemy asset.
+4. Manually compile `PolyQuestEditor`, run `PolyQuest.Combat.HitFeedback` and the eleven existing regressions: `Equipment.TransactionMatrix`, `Melee.TraceSourceGeometry`, `Player.ActionWindows`, `Combat.HitReaction`, `Enemy.AttackSetSelection`, `Enemy.CombatSpacing`, `UI.VitalHUD`, `Player.Exhaustion`, `Player.LockOn`, `Projectile.Lifecycle`, and `Projectile.TargetAssist`.
+5. PIE: validate Small < Big < Launch readability, rapid cross-tier hits without accumulated amplitude, no Camera Location/FOV change, Guard/Parry and lethal damage remaining silent, and Enemy hits never shaking the Player camera.
+
+## Review, Closeout, And Commit Boundary
+
+- Gemini first performs a strict read-only plan review and reports only P0-P2 blockers, lifecycle risks, or missing required coverage. It must not edit until the user explicitly authorizes execution.
+- After execution, Gemini performs a strict implementation self-review. It is not an independent fresh review. Main interprets user validation and performs one separate defect-first fresh review.
+- Static preflight before user compile: final caller/callee reads, CodeGraph, code-review-graph impact against `8d8e1d5`, Rider error-level inspection, and `git diff --check`. Rider MCP recovered on 2026-08-24: project-relative `get_file_problems` and `lint_files` both returned zero error-level issues on the current B1 sources. Re-run the targeted inspection on the final touched files; if transport fails again, record that limitation rather than claiming inspection passed.
+- After accepted validation/review, Main updates `README.md`, `ARCHITECTURE.md`, `ROADMAP.md`, and this closeout record. Default commit includes only approved B1A C++, Automation, and those four documents; it excludes all `Content/**`, Config, maps, Blueprints, Input, AnimBPs, GA/GE/Montage assets, project files, generated output, and unrelated WIP.
+
+## Closeout Record
+
+- Implementation: the retired Generic Player Camera Shake field and test class are removed. `APlayerCharacter` now selects only the authored `Small`, `Big`, or `Launch` class from the existing `Data.Reaction.*` classification, while legal `None` and fail-closed `Invalid` tags preserve B1's Overlay-only behavior and leave an active tier Shake untouched. Same-tier hits rely on UE 5.8 `bSingleInstance`; a valid tier change stops the exact prior instance through its originating `APlayerCameraManager` before starting the replacement.
+- Lifecycle: the Player stores only weak references to its exact B1A CameraManager, instance, and class. `UnPossessed()` and `EndPlay()` share idempotent cleanup. During fresh review, the first implementation's direct `StopShake()` / `TeardownShake()` fallback after Manager expiry was rejected because it bypassed `CameraModifier` removal and pooling. The final code dereferences only when both weak references remain valid, otherwise clears local state only.
+- Automation: the shared deferred-spawn fixture injects Small/Big/Launch native test classes before `FinishSpawning()`. `PolyQuest.Combat.HitFeedback` covers tier selection, same-tier reuse, cross-tier replacement, no-tag/Invalid no-op, Stunned presentation, Enemy non-participation, and teardown. `Player->Destroy()` reaches the new `UnPossessed()` path through the UE Pawn teardown chain and asserts the active Shake stops.
+- User-confirmed runtime evidence: focused PIE and all twelve Automation suites passed through the Unreal Editor front end. The retained log signals are the established negative assertions for invalid multi-tier reaction tags, Stance Break fallback, equipment rejection/rollback, and invalid static Trace geometry.
+- Main static/review evidence: final caller/callee inspection, CodeGraph, scoped code-review-graph impact, Rider error-level inspection, and `git diff --check` passed. Main's defect-first fresh review found the Manager-expiry P1, and its post-repair delta review found no remaining P0-P2. Graph test-gap labels are supplemental because Unreal Automation macros are not fully linked by the graph; direct test and Engine teardown reads establish the relevant coverage.
+- Scope: the commit contains only B1A native source, Automation, and project documentation. The three authored Camera Shake assets, BP assignments, and all other `Content/**`/Config/map/input/AnimBP WIP remain user-owned and excluded. `TODO-07B2` remains the next accepted stage.

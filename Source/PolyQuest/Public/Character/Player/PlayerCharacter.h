@@ -26,7 +26,9 @@ class UAIPerceptionStimuliSourceComponent;
 class USpringArmComponent;
 class AController;
 class AEnemyCharacter;
+class APlayerCameraManager;
 class APlayerController;
+enum class EHitReactionTier : uint8;
 struct FInputActionValue;
 struct FOnAttributeChangeData;
 
@@ -116,9 +118,17 @@ protected:
 	UPROPERTY(EditDefaultsOnly, Category="GAS|Stamina")
 	TSubclassOf<UGameplayEffect> ExhaustionMoveSpeedGameplayEffectClass;
 
-	/** Local camera shake played when this Player receives nonlethal Health damage. */
+	/** Local camera shake played when this Player receives Small tier hit reaction damage. */
 	UPROPERTY(EditDefaultsOnly, Category="Combat|Feedback")
-	TSubclassOf<UCameraShakeBase> HitFeedbackCameraShakeClass;
+	TSubclassOf<UCameraShakeBase> SmallHitFeedbackCameraShakeClass;
+
+	/** Local camera shake played when this Player receives Big tier hit reaction damage. */
+	UPROPERTY(EditDefaultsOnly, Category="Combat|Feedback")
+	TSubclassOf<UCameraShakeBase> BigHitFeedbackCameraShakeClass;
+
+	/** Local camera shake played when this Player receives Launch tier hit reaction damage. */
+	UPROPERTY(EditDefaultsOnly, Category="Combat|Feedback")
+	TSubclassOf<UCameraShakeBase> LaunchHitFeedbackCameraShakeClass;
 
 	/** The authored combat routes applied to this player at BeginPlay. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Loadout", meta = (AllowPrivateAccess = "true"))
@@ -134,6 +144,7 @@ public:
 protected:
 	virtual void BeginPlay() override;
 	virtual void PossessedBy(AController* NewController) override;
+	virtual void UnPossessed() override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 	virtual void PawnClientRestart() override;
 	virtual void OnMovementModeChanged(EMovementMode PrevMovementMode, uint8 PreviousCustomMode = 0) override;
@@ -290,9 +301,13 @@ public:
 	bool IsTestExhaustionActive() const { return bExhaustionActive; }
 	bool HasTestExhaustionRecoveryTimer() const { return ExhaustionRecoveryTimerHandle.IsValid(); }
 	bool HasTestExhaustionMoveSpeedEffect() const { return ExhaustionMoveSpeedEffectHandle.IsValid(); }
-	void ConfigureTestHitFeedbackCameraShake(TSubclassOf<UCameraShakeBase> InClass) { HitFeedbackCameraShakeClass = InClass; }
+	void ConfigureTestHitFeedbackCameraShakes(
+		TSubclassOf<UCameraShakeBase> InSmallClass,
+		TSubclassOf<UCameraShakeBase> InBigClass,
+		TSubclassOf<UCameraShakeBase> InLaunchClass);
 	int32 GetTestHitFeedbackCameraShakeStartCount() const { return TestHitFeedbackCameraShakeStartCount; }
 	UCameraShakeBase* GetTestLastHitFeedbackCameraShake() const { return TestLastHitFeedbackCameraShake.Get(); }
+	UCameraShakeBase* GetTestActiveHitFeedbackCameraShake() const { return ActiveHitFeedbackCameraShake.Get(); }
 
 	void SetTestLockedTarget(AEnemyCharacter* InTarget) { SetLockedTarget(InTarget); }
 	void SetTestCurrentMoveInput(const FVector2D& InInput) { CurrentMoveInput = InInput; }
@@ -425,7 +440,12 @@ private:
 	bool bStaminaRegenEffectApplied = false;
 	bool bExhaustionActive = false;
 	bool bExhaustionMinimumDurationElapsed = false;
-	bool bHasLoggedMissingHitFeedbackCameraShakeClass = false;
+	bool bHasLoggedMissingSmallHitFeedbackCameraShakeClass = false;
+	bool bHasLoggedMissingBigHitFeedbackCameraShakeClass = false;
+	bool bHasLoggedMissingLaunchHitFeedbackCameraShakeClass = false;
+	TWeakObjectPtr<APlayerCameraManager> ActiveHitFeedbackCameraManager;
+	TWeakObjectPtr<UCameraShakeBase> ActiveHitFeedbackCameraShake;
+	TSubclassOf<UCameraShakeBase> ActiveHitFeedbackCameraShakeClass;
 
 #if WITH_DEV_AUTOMATION_TESTS
 	int32 TestHitFeedbackCameraShakeStartCount = 0;
@@ -435,7 +455,9 @@ private:
 	void BindHealthEvents();
 	void UnbindHealthEvents();
 	void OnHealthAttributeChanged(const FOnAttributeChangeData& ChangeData);
-	void TriggerHitFeedbackCameraShake();
+	void TriggerHitFeedbackCameraShake(EHitReactionTier ReactionTier);
+	TSubclassOf<UCameraShakeBase> ResolveHitFeedbackCameraShakeClass(EHitReactionTier ReactionTier);
+	void ClearActiveHitFeedbackCameraShake();
 	void BindExhaustionStateEvents();
 	void UnbindExhaustionStateEvents();
 	void OnStaminaAttributeChanged(const FOnAttributeChangeData& ChangeData);

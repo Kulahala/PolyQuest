@@ -85,7 +85,10 @@ APlayerCharacter* FCombatAutomationFixture::SpawnPlayer(
 		UTestExhaustionMoveSpeedGE::StaticClass(),
 		TestInputAction);
 	Player->ConfigureTestHitFeedbackOverlay(CreateTestOverlay(Player), 0.10f);
-	Player->ConfigureTestHitFeedbackCameraShake(UTestHitFeedbackCameraShake::StaticClass());
+	Player->ConfigureTestHitFeedbackCameraShakes(
+		UTestSmallHitFeedbackCameraShake::StaticClass(),
+		UTestBigHitFeedbackCameraShake::StaticClass(),
+		UTestLaunchHitFeedbackCameraShake::StaticClass());
 
 	if (PreBeginPlaySetup)
 	{

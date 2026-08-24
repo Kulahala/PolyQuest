@@ -193,6 +193,16 @@ void APlayerCharacter::ConfigureTestStartupFixture(
 	LockOnAction = InTestInputAction;
 	TargetCycleAction = InTestInputAction;
 }
+
+void APlayerCharacter::ConfigureTestHitFeedbackCameraShakes(
+	TSubclassOf<UCameraShakeBase> InSmallClass,
+	TSubclassOf<UCameraShakeBase> InBigClass,
+	TSubclassOf<UCameraShakeBase> InLaunchClass)
+{
+	SmallHitFeedbackCameraShakeClass = InSmallClass;
+	BigHitFeedbackCameraShakeClass = InBigClass;
+	LaunchHitFeedbackCameraShakeClass = InLaunchClass;
+}
 #endif
 
 void APlayerCharacter::PossessedBy(AController* NewController)
@@ -203,6 +213,12 @@ void APlayerCharacter::PossessedBy(AController* NewController)
 	BindExhaustionStateEvents();
 }
 
+void APlayerCharacter::UnPossessed()
+{
+	ClearActiveHitFeedbackCameraShake();
+	Super::UnPossessed();
+}
+
 void APlayerCharacter::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
 	if (SightStimuliSource)
@@ -210,6 +226,7 @@ void APlayerCharacter::EndPlay(const EEndPlayReason::Type EndPlayReason)
 		SightStimuliSource->UnregisterFromPerceptionSystem();
 	}
 
+	ClearActiveHitFeedbackCameraShake();
 	ClearDodgeSprintInputState();
 	ClearGuardResumeEligibility();
 	bGuardRequiresReleaseAfterBreak = false;
@@ -2165,7 +2182,12 @@ void APlayerCharacter::OnHealthAttributeChanged(const FOnAttributeChangeData& Ch
 	}
 
 	TriggerHitFeedbackOverlay();
-	TriggerHitFeedbackCameraShake();
+
+	FGameplayTagContainer AssetTags;
+	ChangeData.GEModData->EffectSpec.GetAllAssetTags(AssetTags);
+
+	const EHitReactionTier ReactionTier = FHitReactionClassifier::ClassifyReactionTier(AssetTags);
+	TriggerHitFeedbackCameraShake(ReactionTier);
 
 	const bool bIsStunned = StunnedStateTag.IsValid() && CharacterASC->HasMatchingGameplayTag(StunnedStateTag);
 	if (bIsStunned)
@@ -2173,10 +2195,6 @@ void APlayerCharacter::OnHealthAttributeChanged(const FOnAttributeChangeData& Ch
 		return;
 	}
 
-	FGameplayTagContainer AssetTags;
-	ChangeData.GEModData->EffectSpec.GetAllAssetTags(AssetTags);
-
-	const EHitReactionTier ReactionTier = FHitReactionClassifier::ClassifyReactionTier(AssetTags);
 	if (ReactionTier == EHitReactionTier::Invalid)
 	{
 		UE_LOG(LogPolyQuest, Warning, TEXT("Player '%s' received invalid multi-tier hit reaction tags from effect '%s'; skipping reaction event."),
@@ -2226,7 +2244,54 @@ void APlayerCharacter::OnHealthAttributeChanged(const FOnAttributeChangeData& Ch
 	// None is a legal no-op for Player.
 }
 
-void APlayerCharacter::TriggerHitFeedbackCameraShake()
+TSubclassOf<UCameraShakeBase> APlayerCharacter::ResolveHitFeedbackCameraShakeClass(const EHitReactionTier ReactionTier)
+{
+	switch (ReactionTier)
+	{
+	case EHitReactionTier::Small:
+		if (SmallHitFeedbackCameraShakeClass)
+		{
+			return SmallHitFeedbackCameraShakeClass;
+		}
+		if (!bHasLoggedMissingSmallHitFeedbackCameraShakeClass)
+		{
+			UE_LOG(LogPolyQuest, Warning, TEXT("'%s' is missing SmallHitFeedbackCameraShakeClass."), *GetNameSafe(this));
+			bHasLoggedMissingSmallHitFeedbackCameraShakeClass = true;
+		}
+		return nullptr;
+
+	case EHitReactionTier::Big:
+		if (BigHitFeedbackCameraShakeClass)
+		{
+			return BigHitFeedbackCameraShakeClass;
+		}
+		if (!bHasLoggedMissingBigHitFeedbackCameraShakeClass)
+		{
+			UE_LOG(LogPolyQuest, Warning, TEXT("'%s' is missing BigHitFeedbackCameraShakeClass."), *GetNameSafe(this));
+			bHasLoggedMissingBigHitFeedbackCameraShakeClass = true;
+		}
+		return nullptr;
+
+	case EHitReactionTier::Launch:
+		if (LaunchHitFeedbackCameraShakeClass)
+		{
+			return LaunchHitFeedbackCameraShakeClass;
+		}
+		if (!bHasLoggedMissingLaunchHitFeedbackCameraShakeClass)
+		{
+			UE_LOG(LogPolyQuest, Warning, TEXT("'%s' is missing LaunchHitFeedbackCameraShakeClass."), *GetNameSafe(this));
+			bHasLoggedMissingLaunchHitFeedbackCameraShakeClass = true;
+		}
+		return nullptr;
+
+	case EHitReactionTier::None:
+	case EHitReactionTier::Invalid:
+	default:
+		return nullptr;
+	}
+}
+
+void APlayerCharacter::TriggerHitFeedbackCameraShake(const EHitReactionTier ReactionTier)
 {
 	APlayerController* PlayerController = Cast<APlayerController>(GetController());
 	if (!PlayerController || !PlayerController->IsLocalController() || !PlayerController->PlayerCameraManager)
@@ -2234,25 +2299,54 @@ void APlayerCharacter::TriggerHitFeedbackCameraShake()
 		return;
 	}
 
-	if (!HitFeedbackCameraShakeClass)
+	const TSubclassOf<UCameraShakeBase> ResolvedClass = ResolveHitFeedbackCameraShakeClass(ReactionTier);
+	if (!ResolvedClass)
 	{
-		if (!bHasLoggedMissingHitFeedbackCameraShakeClass)
-		{
-			UE_LOG(LogPolyQuest, Warning, TEXT("'%s' cannot play hit feedback Camera Shake without a configured class."), *GetNameSafe(this));
-			bHasLoggedMissingHitFeedbackCameraShakeClass = true;
-		}
 		return;
 	}
 
-	UCameraShakeBase* StartedShake = PlayerController->PlayerCameraManager->StartCameraShake(HitFeedbackCameraShakeClass, 1.0f);
+	APlayerCameraManager* CameraManager = PlayerController->PlayerCameraManager;
 
-#if WITH_DEV_AUTOMATION_TESTS
+	if (ActiveHitFeedbackCameraManager.IsValid() && ActiveHitFeedbackCameraShake.IsValid())
+	{
+		if (ActiveHitFeedbackCameraManager.Get() != CameraManager || ActiveHitFeedbackCameraShakeClass != ResolvedClass)
+		{
+			ActiveHitFeedbackCameraManager->StopCameraShake(ActiveHitFeedbackCameraShake.Get(), true);
+			ActiveHitFeedbackCameraManager = nullptr;
+			ActiveHitFeedbackCameraShake = nullptr;
+			ActiveHitFeedbackCameraShakeClass = nullptr;
+		}
+	}
+	else
+	{
+		ActiveHitFeedbackCameraManager = nullptr;
+		ActiveHitFeedbackCameraShake = nullptr;
+		ActiveHitFeedbackCameraShakeClass = nullptr;
+	}
+
+	UCameraShakeBase* StartedShake = CameraManager->StartCameraShake(ResolvedClass, 1.0f);
 	if (StartedShake)
 	{
+		ActiveHitFeedbackCameraManager = CameraManager;
+		ActiveHitFeedbackCameraShake = StartedShake;
+		ActiveHitFeedbackCameraShakeClass = ResolvedClass;
+#if WITH_DEV_AUTOMATION_TESTS
 		++TestHitFeedbackCameraShakeStartCount;
 		TestLastHitFeedbackCameraShake = StartedShake;
-	}
 #endif
+	}
+}
+
+void APlayerCharacter::ClearActiveHitFeedbackCameraShake()
+{
+	if (ActiveHitFeedbackCameraManager.IsValid() && ActiveHitFeedbackCameraShake.IsValid())
+	{
+		ActiveHitFeedbackCameraManager->StopCameraShake(ActiveHitFeedbackCameraShake.Get(), true);
+	}
+
+	ActiveHitFeedbackCameraManager = nullptr;
+	ActiveHitFeedbackCameraShake = nullptr;
+	ActiveHitFeedbackCameraShakeClass = nullptr;
 }
 
 void APlayerCharacter::OnSprintRelevantTagChanged(const FGameplayTag Tag, int32 NewCount)
