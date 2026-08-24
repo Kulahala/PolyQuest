@@ -5,6 +5,9 @@
 #include "Components/SkeletalMeshComponent.h"
 #include "Engine/SkeletalMesh.h"
 #include "Engine/World.h"
+#include "InputAction.h"
+#include "Materials/Material.h"
+#include "Materials/MaterialInstanceDynamic.h"
 #include "Character/Enemy/EnemyCharacter.h"
 #include "Character/Player/PlayerCharacter.h"
 #include "Combat/Equipment/MeleeWeaponDefinition.h"
@@ -12,11 +15,18 @@
 #include "Tests/TestExhaustionMoveSpeedGE.h"
 #include "Tests/TestPoiseRecoveryGE.h"
 #include "Tests/TestStaminaRegenGE.h"
+#include "Tests/TestHitFeedbackCameraShake.h"
 
 namespace
 {
 	constexpr TCHAR HeroMeshPath[] = TEXT("/Game/PolygonDungeons/Meshes/Characters/SK_Character_Hero_Knight_Male");
 	const FName WeaponSocketName(TEXT("Weapon_R"));
+
+	UMaterialInterface* CreateTestOverlay(UObject* Outer)
+	{
+		UMaterial* DefaultMaterial = UMaterial::GetDefaultMaterial(MD_Surface);
+		return DefaultMaterial ? UMaterialInstanceDynamic::Create(DefaultMaterial, Outer) : nullptr;
+	}
 
 	void DispatchBeginPlayOnce(AActor* Actor)
 	{
@@ -50,9 +60,10 @@ APlayerCharacter* FCombatAutomationFixture::SpawnPlayer(
 
 	UCombatLoadoutDefinition* Loadout = NewObject<UCombatLoadoutDefinition>(Player, NAME_None, RF_Transient);
 	UMeleeWeaponDefinition* WeaponDefinition = NewObject<UMeleeWeaponDefinition>(Player, NAME_None, RF_Transient);
+	UInputAction* TestInputAction = NewObject<UInputAction>(Player, TEXT("TestStartupInputAction"), RF_Transient);
 	USkeletalMesh* HeroMesh = LoadObject<USkeletalMesh>(nullptr, HeroMeshPath);
 	USkeletalMeshComponent* PlayerMesh = Player->GetMesh();
-	if (!Loadout || !WeaponDefinition || !HeroMesh || !HeroMesh->FindSocket(WeaponSocketName) || !PlayerMesh)
+	if (!Loadout || !WeaponDefinition || !TestInputAction || !HeroMesh || !HeroMesh->FindSocket(WeaponSocketName) || !PlayerMesh)
 	{
 		Player->Destroy();
 		return nullptr;
@@ -71,7 +82,10 @@ APlayerCharacter* FCombatAutomationFixture::SpawnPlayer(
 		Loadout,
 		WeaponDefinition,
 		UTestStaminaRegenGE::StaticClass(),
-		UTestExhaustionMoveSpeedGE::StaticClass());
+		UTestExhaustionMoveSpeedGE::StaticClass(),
+		TestInputAction);
+	Player->ConfigureTestHitFeedbackOverlay(CreateTestOverlay(Player), 0.10f);
+	Player->ConfigureTestHitFeedbackCameraShake(UTestHitFeedbackCameraShake::StaticClass());
 
 	if (PreBeginPlaySetup)
 	{
@@ -105,6 +119,7 @@ AEnemyCharacter* FCombatAutomationFixture::SpawnPassiveEnemy(
 	}
 
 	Enemy->ConfigureTestPassiveStartupFixture(UTestPoiseRecoveryGE::StaticClass());
+	Enemy->ConfigureTestHitFeedbackOverlay(CreateTestOverlay(Enemy), 0.10f);
 	if (PreBeginPlaySetup)
 	{
 		PreBeginPlaySetup(*Enemy);

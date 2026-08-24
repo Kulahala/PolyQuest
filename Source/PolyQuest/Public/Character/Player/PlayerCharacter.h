@@ -11,6 +11,7 @@
 #include "PlayerCharacter.generated.h"
 
 class UCameraComponent;
+class UCameraShakeBase;
 class UCombatLoadoutDefinition;
 class UGameplayEffect;
 class UInputAction;
@@ -114,6 +115,10 @@ protected:
 	/** Infinite move-speed effect retained while the Player is recovering from Stamina exhaustion. */
 	UPROPERTY(EditDefaultsOnly, Category="GAS|Stamina")
 	TSubclassOf<UGameplayEffect> ExhaustionMoveSpeedGameplayEffectClass;
+
+	/** Local camera shake played when this Player receives nonlethal Health damage. */
+	UPROPERTY(EditDefaultsOnly, Category="Combat|Feedback")
+	TSubclassOf<UCameraShakeBase> HitFeedbackCameraShakeClass;
 
 	/** The authored combat routes applied to this player at BeginPlay. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Loadout", meta = (AllowPrivateAccess = "true"))
@@ -279,11 +284,15 @@ public:
 		UCombatLoadoutDefinition* InInitialCombatLoadout,
 		UMeleeWeaponDefinition* InDefaultEquippedWeapon,
 		TSubclassOf<UGameplayEffect> InStaminaRegenGameplayEffectClass,
-		TSubclassOf<UGameplayEffect> InExhaustionMoveSpeedGameplayEffectClass);
+		TSubclassOf<UGameplayEffect> InExhaustionMoveSpeedGameplayEffectClass,
+		UInputAction* InTestInputAction);
 	bool HasTestStaminaRegenEffectApplied() const { return bStaminaRegenEffectApplied; }
 	bool IsTestExhaustionActive() const { return bExhaustionActive; }
 	bool HasTestExhaustionRecoveryTimer() const { return ExhaustionRecoveryTimerHandle.IsValid(); }
 	bool HasTestExhaustionMoveSpeedEffect() const { return ExhaustionMoveSpeedEffectHandle.IsValid(); }
+	void ConfigureTestHitFeedbackCameraShake(TSubclassOf<UCameraShakeBase> InClass) { HitFeedbackCameraShakeClass = InClass; }
+	int32 GetTestHitFeedbackCameraShakeStartCount() const { return TestHitFeedbackCameraShakeStartCount; }
+	UCameraShakeBase* GetTestLastHitFeedbackCameraShake() const { return TestLastHitFeedbackCameraShake.Get(); }
 
 	void SetTestLockedTarget(AEnemyCharacter* InTarget) { SetLockedTarget(InTarget); }
 	void SetTestCurrentMoveInput(const FVector2D& InInput) { CurrentMoveInput = InInput; }
@@ -416,10 +425,17 @@ private:
 	bool bStaminaRegenEffectApplied = false;
 	bool bExhaustionActive = false;
 	bool bExhaustionMinimumDurationElapsed = false;
+	bool bHasLoggedMissingHitFeedbackCameraShakeClass = false;
+
+#if WITH_DEV_AUTOMATION_TESTS
+	int32 TestHitFeedbackCameraShakeStartCount = 0;
+	TWeakObjectPtr<UCameraShakeBase> TestLastHitFeedbackCameraShake;
+#endif
 
 	void BindHealthEvents();
 	void UnbindHealthEvents();
 	void OnHealthAttributeChanged(const FOnAttributeChangeData& ChangeData);
+	void TriggerHitFeedbackCameraShake();
 	void BindExhaustionStateEvents();
 	void UnbindExhaustionStateEvents();
 	void OnStaminaAttributeChanged(const FOnAttributeChangeData& ChangeData);

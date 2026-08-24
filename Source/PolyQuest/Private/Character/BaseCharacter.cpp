@@ -7,10 +7,14 @@
 #include "Components/CapsuleComponent.h"
 #include "Components/PrimitiveComponent.h"
 #include "Components/SkeletalMeshComponent.h"
+#include "Engine/World.h"
 #include "GameplayAbilitySpec.h"
 #include "GameplayEffectTypes.h"
 #include "GameFramework/Controller.h"
 #include "GameFramework/CharacterMovementComponent.h"
+#include "Materials/MaterialInterface.h"
+#include "PolyQuest.h"
+#include "TimerManager.h"
 
 ABaseCharacter::ABaseCharacter()
 {
@@ -80,6 +84,7 @@ void ABaseCharacter::GrantStartupAbilities()
 
 void ABaseCharacter::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
+	ClearHitFeedbackOverlay();
 	UnbindMoveSpeedAttribute();
 
 	if (AbilitySystemComponent)
@@ -103,6 +108,80 @@ FGameplayTag ABaseCharacter::GetCombatTeamTag_Implementation() const
 UMeleeTraceSourceComponent* ABaseCharacter::GetMeleeTraceSource() const
 {
 	return MeleeTraceSource.Get();
+}
+
+#if WITH_DEV_AUTOMATION_TESTS
+void ABaseCharacter::ConfigureTestHitFeedbackOverlay(UMaterialInterface* InOverlayMaterial, const float InDurationSeconds)
+{
+	HitFeedbackOverlayMaterial = InOverlayMaterial;
+	HitFeedbackOverlayDurationSeconds = InDurationSeconds;
+	bHasLoggedInvalidHitFeedbackOverlayConfiguration = false;
+}
+#endif
+
+void ABaseCharacter::TriggerHitFeedbackOverlay()
+{
+	USkeletalMeshComponent* MeshComponent = GetMesh();
+	if (!MeshComponent || !HitFeedbackOverlayMaterial || HitFeedbackOverlayDurationSeconds <= 0.0f)
+	{
+		if (!bHasLoggedInvalidHitFeedbackOverlayConfiguration)
+		{
+			UE_LOG(LogPolyQuest, Warning, TEXT("'%s' cannot apply hit feedback Overlay without a mesh, configured Overlay material, and positive duration."), *GetNameSafe(this));
+			bHasLoggedInvalidHitFeedbackOverlayConfiguration = true;
+		}
+		return;
+	}
+
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return;
+	}
+
+	UMaterialInterface* CurrentOverlayMaterial = MeshComponent->GetOverlayMaterial();
+	if (!bHitFeedbackOverlayActive)
+	{
+		PreviousHitFeedbackOverlayMaterial = CurrentOverlayMaterial;
+		bHitFeedbackOverlayActive = true;
+	}
+	else if (CurrentOverlayMaterial != ActiveHitFeedbackOverlayMaterial.Get())
+	{
+		// An external presentation owner changed the Overlay between hits. Preserve it for restoration.
+		PreviousHitFeedbackOverlayMaterial = CurrentOverlayMaterial;
+	}
+
+	ActiveHitFeedbackOverlayMaterial = HitFeedbackOverlayMaterial;
+	MeshComponent->SetOverlayMaterial(ActiveHitFeedbackOverlayMaterial.Get());
+	World->GetTimerManager().SetTimer(
+		HitFeedbackOverlayTimerHandle,
+		this,
+		&ABaseCharacter::ClearHitFeedbackOverlay,
+		HitFeedbackOverlayDurationSeconds,
+		false);
+}
+
+void ABaseCharacter::ClearHitFeedbackOverlay()
+{
+	if (UWorld* World = GetWorld())
+	{
+		World->GetTimerManager().ClearTimer(HitFeedbackOverlayTimerHandle);
+	}
+	HitFeedbackOverlayTimerHandle.Invalidate();
+
+	if (bHitFeedbackOverlayActive)
+	{
+		if (USkeletalMeshComponent* MeshComponent = GetMesh())
+		{
+			if (MeshComponent->GetOverlayMaterial() == ActiveHitFeedbackOverlayMaterial.Get())
+			{
+				MeshComponent->SetOverlayMaterial(PreviousHitFeedbackOverlayMaterial.Get());
+			}
+		}
+	}
+
+	PreviousHitFeedbackOverlayMaterial = nullptr;
+	ActiveHitFeedbackOverlayMaterial = nullptr;
+	bHitFeedbackOverlayActive = false;
 }
 
 void ABaseCharacter::DisableFixedWeaponDisplayCollision()

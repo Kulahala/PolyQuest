@@ -209,8 +209,16 @@ void AEnemyCharacter::OnHealthAttributeChanged(const FOnAttributeChangeData& Cha
 		return;
 	}
 
+	if (IsDead())
+	{
+		ClearActivePoiseBreakingEffectSource();
+		return;
+	}
+
+	TriggerHitFeedbackOverlay();
+
 	const bool bIsStunned = StunnedStateTag.IsValid() && CharacterASC->HasMatchingGameplayTag(StunnedStateTag);
-	if (IsDead() || bIsStunned)
+	if (bIsStunned)
 	{
 		ClearActivePoiseBreakingEffectSource();
 		return;

@@ -218,6 +218,11 @@ The old `Test` project is evidence for player-facing behavior, not a source tree
   - The player trace source now consumes equipped marker positions and weapon-owned sweep shape; the original fixed-name lookup and fixed-name collision guard remain only for the first enemy fixture. The shared Trace Window task, resolver, tags, and damage path are unchanged.
   - The user confirmed the post-repair `PolyQuestEditor` compile and Scene01 PIE equipment route. The focused native/documentation commit excludes DataAssets, Blueprints, temporary swap-debug bindings, maps, all other `Content/**`, project settings, and unrelated WIP; it is not a clean-checkout authoring fixture.
 
+- [x] `TODO-07B1: Combat Hit Feedback v1`
+  - Completed the narrow damage-path-owned feedback slice. A real nonlethal Health GameplayEffect decrease asks `ABaseCharacter` to own one temporary global Mesh Overlay; it caches/restores the prior Overlay, refreshes one Timer on repeat hits, and leaves a newer external Overlay untouched. Guard/Parry remain excluded because their successful resolver paths never apply Health damage.
+  - Player-only feedback starts the authored local single-instance `UCameraShakeBase` through `PlayerCameraManager`; it does not move the Pawn, CameraBoom, operating-system window, or Enemy camera. Healing, direct Attribute writes, Poise-only effects, lethal/dead state, and teardown do not flash. No Hit Stop, audio, Niagara, Gameplay Tag, replication, or second damage route was added.
+  - The user confirmed focused PIE and the new `PolyQuest.Combat.HitFeedback` suite plus all eleven existing Automation regressions. Remaining logs are only the established negative assertions for invalid reaction tags, Stance Break fallback, equipment rejection/rollback, and invalid static trace geometry. Main's single defect-first fresh review found no P0-P2. Material/Camera Shake assets remain local `Content/**` WIP and are excluded from the focused source/test/document commit.
+
 ## Milestones
 
 ### Player Loadout, Rewards, And Encounters
@@ -404,11 +409,7 @@ The old `Test` project is evidence for player-facing behavior, not a source tree
   - Replaced the shared AttributeSet's immediate Exhausted-tag side effect with one authority-only `APlayerCharacter` lifecycle: first Stamina depletion adds one Player loose `State.Status.Exhausted` contribution, applies one exact Infinite `MoveSpeed x0.7` handle, and starts one fixed three-second timer. Normal recovery continues; only the original timer plus positive Stamina clears the action lock, and repeated depletion cannot extend the cycle.
   - The local `BP_Player` reference reuses the existing Guard-speed GameplayEffect. Jump keeps valid zero-cost Cost/Delay authored references but bypasses the shared positive-Stamina action gate and skips the generic regeneration-delay application, so it remains available without spending Stamina or clearing/pausing Exhaustion. Attack, prepared skills, Bow, Guard, Parry, Dodge, and Sprint remain blocked; committed actions retain their existing cleanup.
   - The required matrix also found and repaired a separate Enemy Poise/Launch transaction bug: no callback-local `FGameplayEffectSpec*` is retained across effect application; Definition, EffectContext, and the current executed Poise modifier prove a same-transaction Launch. New `PolyQuest.Player.Exhaustion` coverage and the ten existing suites passed. The user confirmed manual `PolyQuestEditor` compilation, focused `Scene01` PIE, and all eleven Automation suites. Main's single defect-first fresh review found no P0-P2; authored assets remain local `Content/**` WIP.
-  - Next accepted development order: `TODO-07B1` -> `TODO-07B2` -> `TODO-03B-4` -> `TODO-03AI3` -> `TODO-03C`.
-
-- [ ] `TODO-07B1: Combat Hit Feedback v1`
-  - Add one narrow, damage-path-owned hit-feedback slice: a nonlethal Player or Enemy Health decrease temporarily applies a red `OverlayMaterial`, preserves and restores the prior overlay, and refreshes one timer on repeat hits. Guard/Parry contacts remain excluded because their existing defense route consumes the hit before Health damage is applied.
-  - Player-only feedback additionally starts one short, non-stacking `UCameraShakeBase` through `PlayerCameraManager`; do not move the Pawn, CameraBoom, or operating-system window. This slice excludes Hit Stop, audio, new Gameplay Tags, replication, and a second damage route.
+  - Next accepted development order: `TODO-07B2` -> `TODO-03B-4` -> `TODO-03AI3` -> `TODO-03C`.
 
 - [ ] `TODO-07B2: Melee Weapon Trail v1`
   - Add a Niagara-only melee trail driven by the existing `BladeBase` and `BladeTip` world positions. Its component is Character/root-owned for lifetime and receives read-only `User.BladeBase` / `User.BladeTip` values; it must not attach, move, reparent, or otherwise change the hit-trace markers.

@@ -7,6 +7,7 @@
 #include "AbilitySystemComponent.h"
 #include "ActiveGameplayEffectHandle.h"
 #include "Camera/CameraComponent.h"
+#include "Camera/CameraShakeBase.h"
 #include "Camera/PlayerCameraManager.h"
 #include "Character/Enemy/EnemyCharacter.h"
 #include "Character/Player/PlayerLockOnTargeting.h"
@@ -173,12 +174,24 @@ void APlayerCharacter::ConfigureTestStartupFixture(
 	UCombatLoadoutDefinition* InInitialCombatLoadout,
 	UMeleeWeaponDefinition* InDefaultEquippedWeapon,
 	TSubclassOf<UGameplayEffect> InStaminaRegenGameplayEffectClass,
-	TSubclassOf<UGameplayEffect> InExhaustionMoveSpeedGameplayEffectClass)
+	TSubclassOf<UGameplayEffect> InExhaustionMoveSpeedGameplayEffectClass,
+	UInputAction* InTestInputAction)
 {
 	InitialCombatLoadout = InInitialCombatLoadout;
 	DefaultEquippedWeapon = InDefaultEquippedWeapon;
 	StaminaRegenGameplayEffectClass = InStaminaRegenGameplayEffectClass;
 	ExhaustionMoveSpeedGameplayEffectClass = InExhaustionMoveSpeedGameplayEffectClass;
+	JumpAction = InTestInputAction;
+	MoveAction = InTestInputAction;
+	PrimaryAttackAction = InTestInputAction;
+	AimAction = InTestInputAction;
+	GuardAction = InTestInputAction;
+	ParryAction = InTestInputAction;
+	AbilitySlotActions.Init(InTestInputAction, 4);
+	DodgeSprintAction = InTestInputAction;
+	InteractAction = InTestInputAction;
+	LockOnAction = InTestInputAction;
+	TargetCycleAction = InTestInputAction;
 }
 #endif
 
@@ -2146,8 +2159,16 @@ void APlayerCharacter::OnHealthAttributeChanged(const FOnAttributeChangeData& Ch
 	}
 
 	const bool bIsDead = DeadStateTag.IsValid() && CharacterASC->HasMatchingGameplayTag(DeadStateTag);
+	if (bIsDead)
+	{
+		return;
+	}
+
+	TriggerHitFeedbackOverlay();
+	TriggerHitFeedbackCameraShake();
+
 	const bool bIsStunned = StunnedStateTag.IsValid() && CharacterASC->HasMatchingGameplayTag(StunnedStateTag);
-	if (bIsDead || bIsStunned)
+	if (bIsStunned)
 	{
 		return;
 	}
@@ -2203,6 +2224,35 @@ void APlayerCharacter::OnHealthAttributeChanged(const FOnAttributeChangeData& Ch
 		}
 	}
 	// None is a legal no-op for Player.
+}
+
+void APlayerCharacter::TriggerHitFeedbackCameraShake()
+{
+	APlayerController* PlayerController = Cast<APlayerController>(GetController());
+	if (!PlayerController || !PlayerController->IsLocalController() || !PlayerController->PlayerCameraManager)
+	{
+		return;
+	}
+
+	if (!HitFeedbackCameraShakeClass)
+	{
+		if (!bHasLoggedMissingHitFeedbackCameraShakeClass)
+		{
+			UE_LOG(LogPolyQuest, Warning, TEXT("'%s' cannot play hit feedback Camera Shake without a configured class."), *GetNameSafe(this));
+			bHasLoggedMissingHitFeedbackCameraShakeClass = true;
+		}
+		return;
+	}
+
+	UCameraShakeBase* StartedShake = PlayerController->PlayerCameraManager->StartCameraShake(HitFeedbackCameraShakeClass, 1.0f);
+
+#if WITH_DEV_AUTOMATION_TESTS
+	if (StartedShake)
+	{
+		++TestHitFeedbackCameraShakeStartCount;
+		TestLastHitFeedbackCameraShake = StartedShake;
+	}
+#endif
 }
 
 void APlayerCharacter::OnSprintRelevantTagChanged(const FGameplayTag Tag, int32 NewCount)

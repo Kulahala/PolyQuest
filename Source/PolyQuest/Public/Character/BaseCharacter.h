@@ -7,6 +7,7 @@
 #include "Combat/Melee/CombatTeamAgent.h"
 #include "GameFramework/Character.h"
 #include "GameplayTagContainer.h"
+#include "TimerManager.h"
 #include "BaseCharacter.generated.h"
 
 class AController;
@@ -14,6 +15,7 @@ class UAbilitySystemComponent;
 class UCharacterAttributeSet;
 class UGameplayAbility;
 class UMeleeTraceSourceComponent;
+class UMaterialInterface;
 struct FOnAttributeChangeData;
 
 UCLASS(Abstract)
@@ -35,6 +37,10 @@ public:
 
 #if WITH_DEV_AUTOMATION_TESTS
 	void SetTestCombatTeamTag(const FGameplayTag& InTag) { CombatTeamTag = InTag; }
+	void ConfigureTestHitFeedbackOverlay(UMaterialInterface* InOverlayMaterial, float InDurationSeconds);
+	bool IsTestHitFeedbackOverlayActive() const { return bHitFeedbackOverlayActive; }
+	bool HasTestHitFeedbackOverlayTimer() const { return HitFeedbackOverlayTimerHandle.IsValid(); }
+	UMaterialInterface* GetTestActiveHitFeedbackOverlayMaterial() const { return ActiveHitFeedbackOverlayMaterial.Get(); }
 #endif
 
 protected:
@@ -45,6 +51,8 @@ protected:
 	void OnMoveSpeedAttributeChanged(const FOnAttributeChangeData& ChangeData);
 	/** Keeps the fixed v1 WeaponMesh display fixture out of camera and physics collision. */
 	void DisableFixedWeaponDisplayCollision();
+	/** Applies the authored global mesh Overlay briefly without altering base material slots. */
+	void TriggerHitFeedbackOverlay();
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "GAS")
 	TArray<TSubclassOf<UGameplayAbility>> StartupAbilities;
@@ -52,6 +60,14 @@ protected:
 	/** Invalid or exactly equal tags are intentionally treated as non-hostile by the narrow melee resolver. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Team", meta = (AllowPrivateAccess = "true"))
 	FGameplayTag CombatTeamTag;
+
+	/** Translucent global Overlay applied for one short nonlethal hit-feedback flash. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Feedback", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<UMaterialInterface> HitFeedbackOverlayMaterial;
+
+	/** Duration for the hit-feedback Overlay before the prior Overlay is restored. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Feedback", meta = (AllowPrivateAccess = "true", ClampMin = "0.0", Units = "Seconds"))
+	float HitFeedbackOverlayDurationSeconds = 0.10f;
 
 private:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "GAS", meta = (AllowPrivateAccess = "true"))
@@ -63,6 +79,17 @@ private:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Combat|Melee", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<UMeleeTraceSourceComponent> MeleeTraceSource;
 
+	void ClearHitFeedbackOverlay();
+
+	UPROPERTY(Transient)
+	TObjectPtr<UMaterialInterface> PreviousHitFeedbackOverlayMaterial;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UMaterialInterface> ActiveHitFeedbackOverlayMaterial;
+
 	TWeakObjectPtr<UAbilitySystemComponent> MoveSpeedBoundAbilitySystemComponent;
 	FDelegateHandle MoveSpeedAttributeChangedHandle;
+	FTimerHandle HitFeedbackOverlayTimerHandle;
+	bool bHitFeedbackOverlayActive = false;
+	bool bHasLoggedInvalidHitFeedbackOverlayConfiguration = false;
 };
