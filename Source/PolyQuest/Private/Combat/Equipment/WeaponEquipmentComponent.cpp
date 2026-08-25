@@ -52,21 +52,13 @@ EWeaponLocomotionMode UWeaponEquipmentComponent::GetResolvedLocomotionMode() con
 		BaseMode = EWeaponLocomotionMode::Default;
 	}
 
-	if (CurrentOffHandWeapon)
-	{
-		const UOffHandWeaponDefinition* OffHandDef = Cast<UOffHandWeaponDefinition>(CurrentOffHandWeapon.Get());
-		if (OffHandDef
-			&& OffHandDef->RequiredMainHandLocomotionMode == EWeaponLocomotionMode::LightSword
-			&& OffHandDef->CompositionLocomotionMode == EWeaponLocomotionMode::SwordShield)
-		{
-			if (BaseMode == EWeaponLocomotionMode::LightSword)
-			{
-				return EWeaponLocomotionMode::SwordShield;
-			}
-		}
-	}
-
 	return BaseMode;
+}
+
+bool UWeaponEquipmentComponent::HasShieldEquipped() const
+{
+	const UOffHandWeaponDefinition* OffHandDef = Cast<UOffHandWeaponDefinition>(CurrentOffHandWeapon.Get());
+	return OffHandDef && OffHandDef->bProvidesShieldPresentation;
 }
 
 bool UWeaponEquipmentComponent::TryGetEquippedMainHandDisplaySocketTransform(FName SocketName, FTransform& OutTransform) const

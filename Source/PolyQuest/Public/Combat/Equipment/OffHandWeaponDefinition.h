@@ -23,13 +23,9 @@ public:
 
 	virtual bool IsValidWeaponDefinition(FString& OutReason) const override;
 
-	/** Required main-hand locomotion mode for this off-hand's composition override to activate. */
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Locomotion")
-	EWeaponLocomotionMode RequiredMainHandLocomotionMode = EWeaponLocomotionMode::Default;
-
-	/** Locomotion mode applied when paired with a matching main hand. Default means no composition override. */
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Locomotion")
-	EWeaponLocomotionMode CompositionLocomotionMode = EWeaponLocomotionMode::Default;
+	/** True when this committed off-hand weapon provides Shield presentation. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Presentation")
+	bool bProvidesShieldPresentation = false;
 };
 
 inline bool UOffHandWeaponDefinition::IsValidWeaponDefinition(FString& OutReason) const
@@ -48,21 +44,13 @@ inline bool UOffHandWeaponDefinition::IsValidWeaponDefinition(FString& OutReason
 
 	if (LocomotionMode != EWeaponLocomotionMode::Default)
 	{
-		OutReason = TEXT("OffHandWeaponDefinition base LocomotionMode must be Default (base locomotion mode belongs to MainHand weapons only; use CompositionLocomotionMode for off-hand overrides).");
+		OutReason = TEXT("OffHandWeaponDefinition base LocomotionMode must be Default (base locomotion mode belongs to MainHand weapons only).");
 		return false;
 	}
 
 	if (!WeaponMesh)
 	{
 		OutReason = TEXT("WeaponMesh is not assigned on OffHandWeaponDefinition.");
-		return false;
-	}
-
-	const bool bNoOverride = (RequiredMainHandLocomotionMode == EWeaponLocomotionMode::Default && CompositionLocomotionMode == EWeaponLocomotionMode::Default);
-	const bool bValidSwordShield = (RequiredMainHandLocomotionMode == EWeaponLocomotionMode::LightSword && CompositionLocomotionMode == EWeaponLocomotionMode::SwordShield);
-	if (!bNoOverride && !bValidSwordShield)
-	{
-		OutReason = TEXT("OffHandWeaponDefinition locomotion override must be either both Default (no override) or RequiredMainHandLocomotionMode=LightSword with CompositionLocomotionMode=SwordShield.");
 		return false;
 	}
 

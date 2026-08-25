@@ -34,11 +34,18 @@ public:
 	UWeaponEquipmentComponent();
 
 	/**
-	 * Resolves the active locomotion presentation mode for the currently equipped weapons
-	 * to one of Default, LightSword, HeavySword, SwordShield, or Bow without internal caching or state mutation.
+	 * Resolves the active locomotion presentation mode for the currently equipped main-hand weapon
+	 * to one of Default, LightSword, HeavySword, or Bow without internal caching or state mutation.
 	 */
 	UFUNCTION(BlueprintPure, Category = "Combat|Equipment")
 	EWeaponLocomotionMode GetResolvedLocomotionMode() const;
+
+	/**
+	 * Returns true only when the committed off-hand weapon is a valid UOffHandWeaponDefinition
+	 * configured with bProvidesShieldPresentation = true.
+	 */
+	UFUNCTION(BlueprintPure, Category = "Combat|Equipment")
+	bool HasShieldEquipped() const;
 
 	/**
 	 * Atomically swaps the definition's hand slot: full composition preflight

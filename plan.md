@@ -1,157 +1,131 @@
-# TODO-03B-4: Player Mobile Bow Draw v1
+# TODO-03A6C: OffHand Presentation And Shield Guard Locomotion Decoupling v1
 
 ## Plan State
 
-- Status: Completed. This record preserves the accepted B4 contract and closeout evidence; it is not a claim that mutable authored assets are reproducible from the focused source/test commit.
-- Baseline: `51a17c7` (`[Feature] 完成近战武器拖尾 (Complete Melee Weapon Trail)`).
-- Objective: allow the Player to move through the complete active Bow Ability lifecycle: `Draw -> Hold -> Release -> Recovery/EndAbility`, while one configured authored MoveSpeed GameplayEffect owns the whole lifecycle's pace. Fixed top-down Bow presentation remains base locomotion plus an upper-body Montage layer.
-- Preserve every unrelated user WIP. Do not modify, stage, move, delete, infer behavior from, or include `Content/**`, Config, maps, Blueprints, input, AnimBPs, GA/GE/Montage assets, `.uproject`, generated output, or imported-resource changes unless the user later grants a separate explicit closure.
+- Status: Completed. The user confirmed the post-cleanup Editor compilation/readback, fourteen-suite Automation matrix, and focused PIE; Main completed one defect-first fresh review with no P0-P2. The user has approved documentation closeout and this scoped commit.
+- Baseline: `cade92a54fcf7a968d4e13be77279f94223a40eb` (`[Feature] 完成可移动玩家拉弓 (Complete Mobile Player Bow Draw)`).
+- Objective: separate MainHand base locomotion, durable Shield-equipped presentation, and active Shield Guard presentation so Shield Guard can be selected without encoding every MainHand/OffHand pair as a new locomotion mode.
+- Preserve every unrelated user WIP. Do not modify, stage, move, delete, infer behavior from, or include `Content/**`, Config, maps, Blueprints, input, AnimBPs, GA/GE/Montage assets, `.uproject`, generated output, or imported-resource changes unless the user later explicitly approves their stable closure.
 
 ```text
 Outer: ue-stage-workflow
 Primary: ue5-cpp-gameplay
 Support: ue5-blueprint-workflow, ue5-debug-validation
-Route reason: the stage changes one GAS Ability's owned tags, exact MoveSpeed GE Handle lifetime, and Sprint handoff; user-owned Montage/AnimBP authoring closes the visual result.
+Route reason: this stage changes one committed equipment-state query and one MainHand-only locomotion query, while the user-owned AnimBP consumes those facts with the established Shield Guard Gameplay Tag.
 ```
 
 ```text
 Plan explorers: 0
 Implementation executors: 1 (Gemini only after its read-only plan review is accepted and the user explicitly authorizes execution)
-Complex Executor: Gemini external executor for one frozen Bow Ability lifecycle slice
+Complex Executor: Gemini external executor for one frozen Equipment query and Automation slice
 Main parallel work: none
-Reason: Bow's ASC Tag, Sprint, MoveSpeed Handle, EndAbility, and Automation contracts form one lifecycle-sensitive integration. Main owns the plan, contracts, documentation, validation interpretation, fresh review, staging, and commit; Gemini may write only the frozen source/test slice.
+Reason: committed OffHand state, public BlueprintPure queries, asset-facing Guard-state consumption, and transaction regression coverage are one integrated contract. Main owns the plan, contract decisions, documentation, validation interpretation, fresh review, staging, and commit; Gemini may write only the frozen source/test slice.
 ```
 
 ## Evidence And Decisions
 
-- `UBowDrawFireAbility` currently owns `State.Action.Attacking`, `State.Input.Block.Movement`, and `State.Input.Block.Jump`. `APlayerCharacter::DoMove()` rejects movement only through the matching movement-block tag.
-- Existing `State.Action.Attacking` already keeps Sprint unavailable through `APlayerCharacter::CanAttemptSprint()` and `USprintAbility`; removing Bow's movement block must not relax the Sprint gate.
-- Existing Bow activation registers a mouse-plane aim requester, which owns horizontal Capsule yaw. Valid B2 lock state remains only a B3 Release-time target preference; it must not replace Bow mouse-facing.
-- `ABaseCharacter` already owns the `MoveSpeed` Attribute-to-`CharacterMovement.MaxWalkSpeed` delegate. The stage must not write `MaxWalkSpeed` directly.
-- The Mobile Bow slowdown is a required authored, Infinite, non-periodic MoveSpeed GameplayEffect. Its exact multiplier is mutable Content tuning, not a native or architectural contract. `UTestMobileBowMoveSpeedGE` uses a controlled native multiplier solely to prove exact-handle lifetime and Attribute-to-CharacterMovement synchronization; it does not assert the current authored balance value.
-- The user confirmed fixed top-down presentation should use an upper-body overlay rather than Aim Offset. Candidate Bow resources exist under `Content/ArcherAnimsetPro`, but their skeleton compatibility and Root Motion settings are Editor-owned facts, not established by this plan.
-- No Internet lookup or old `E:\GameDevelop\Test` implementation is required. Current PolyQuest source provides the required GAS, input, Sprint, aim-facing, and movement boundaries.
+- The first 03A6C implementation has already made `UWeaponEquipmentComponent::GetResolvedLocomotionMode()` MainHand-only, but the residual `RequiredMainHandLocomotionMode` / `CompositionLocomotionMode` fields still participate in `UOffHandWeaponDefinition::IsValidWeaponDefinition()`. `UWeaponEquipmentComponent::RunPreflight()` calls that validation for every prospective OffHand, so these are live equipment-preflight dependencies rather than harmless unused metadata.
+- The user has saved the actual Shield DataAsset with both residual fields set together to `Default`, while retaining `Provides Shield Presentation = true`, `Locomotion Mode = Default`, `Hand Slot = Off Hand`, its Defense Profile, and its granted actions. That prepares a narrow source cleanup without changing current authored gameplay behavior.
+- `PolyQuest.Equipment.TransactionMatrix` still assigns and tests the residual pair, so enum removal, OffHand validation removal, and matrix migration must happen as one atomic source/test slice.
+- The current Player's `WeaponEquipment` component is `VisibleAnywhere, BlueprintReadOnly`, so `ABP_Player_Dungeon` can consume a new component query without a new Player API, delegate, Tick, or replicated state.
+- Offline Rider CDO readback confirms `GA_PlayerShieldGuard` overrides its `ActivationOwnedTags` to exactly `State.Action.Guarding.Shield`; `GA_Guard_Sowrd` has no such override. The child tag hierarchically satisfies existing generic `State.Action.Guarding` checks, so Guard gameplay authority does not require a native change.
+- `Ability.Defense.Guard.Shield` identifies the defensive ability route supplied by a Defense Profile. It is not evidence that a Shield is currently equipped. Conversely, generic `State.Action.Guarding` cannot choose the Shield-only locomotion because single-sword Guard also owns it.
+- The existing full-body `BS_Shield_Walk_Run` is the accepted active Shield Guard branch. It must remain distinct from the single-sword upper-body Guard route because the Shield stance includes torso, hips, and lower-body orientation.
 
 ## Frozen Runtime Contract
 
-1. In `UBowDrawFireAbility`, remove only the `State.Input.Block.Movement` contribution from `ActivationOwnedTags`. Retain `State.Action.Attacking` and `State.Input.Block.Jump`; retain every ActivationBlockedTag, AbilityTag, input event, target-assist, Dodge-window, rate-window, projectile, and aim-facing contract. Do not remove the tag from project config or from any other Ability.
+1. Add `bProvidesShieldPresentation` to `UOffHandWeaponDefinition` as an `EditDefaultsOnly, BlueprintReadOnly` authoring field in `Weapon|Presentation`, defaulting to `false`. It means only: this committed OffHand should expose the v1 Shield presentation fact. It must not inspect Ability Tags, ASC state, DefenseProfile, inventory, or UI.
 
-2. Add one authored field to `UBowDrawFireAbility`:
+2. Add `UWeaponEquipmentComponent::HasShieldEquipped()` as one `BlueprintPure` public query. It returns `true` only when the committed `CurrentOffHandWeapon` is a valid `UOffHandWeaponDefinition` whose `bProvidesShieldPresentation` is true. It has no cache, delegate, Tick, tag mutation, equipment mutation, or runtime state of its own.
 
-   ```cpp
-   UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Bow|Movement")
-   TSubclassOf<UGameplayEffect> MobileBowMoveSpeedGameplayEffectClass;
-   ```
+3. Make `GetResolvedLocomotionMode()` MainHand-only. It still returns `Default` for a missing or invalid MainHand, otherwise the validated MainHand `Default` / `LightSword` / `HeavySword` / `Bow` mode. It must no longer inspect `CurrentOffHandWeapon` or return `SwordShield` for any equipment composition.
 
-   Add one private `FActiveGameplayEffectHandle` plus private start/clear helpers. The public reflected surface changes only by this authoring property; no Blueprint callable runtime API is added.
+4. Complete the residual composition cleanup in this stage. Remove `EWeaponLocomotionMode::SwordShield`, `UOffHandWeaponDefinition::RequiredMainHandLocomotionMode`, and `UOffHandWeaponDefinition::CompositionLocomotionMode`. Preserve the serialized numeric identity of Bow by declaring `EWeaponLocomotionMode::Bow = 4`; ordinal `3` has no valid enumerator and must fail closed in `UWeaponDefinition::IsValidWeaponDefinition()`. Do not introduce a deprecated alias, enum redirect, or a new composition field.
 
-3. Treat the configured Mobile Bow GE as mandatory setup. Include a null-class preflight with the existing Bow setup validation. After `MontageTask` has actually started and the current Montage is confirmed active, execute one common mobile-movement start helper:
+5. `UOffHandWeaponDefinition::IsValidWeaponDefinition()` continues to require an OffHand slot, `LocomotionMode == Default`, and a WeaponMesh, but no longer validates any MainHand/OffHand locomotion pair. Its error text must not refer to composition overrides. This changes no DefenseProfile, BaseGrantedActions, transaction, pickup/drop, or committed-state rule.
 
-   - Resolve the configured GE CDO and apply it to the current ASC at `GetAbilityLevel()`.
-   - If no CDO or no valid Handle is obtained, log a clear `LogPolyQuest` Warning and converge through the existing cancelled `EndAbility()` path. Never silently leave Bow at base movement speed.
-   - Only after Bow's own GE applied successfully, call `PlayerCharacter->CancelSprintAbility()`. This prevents `Sprint -> Bow` from retaining the Sprint effect while preserving Sprint when a misconfigured Bow fails to start.
+6. Do not add a Gameplay Tag or change `UPlayerGuardAbility`, Guard/Parry routing, DefenseProfile precedence, Guard Arc, Stamina, Guard Break, MoveSpeed, B2 lock-facing, input, replication, equipment transaction, pickup/drop, Bow, Dodge, attack, or hit-reaction logic.
 
-4. The same Bow Handle stays active through Drawing, Holding, Releasing, and the authored Release/Recovery tail. `OnDrawReadyEvent`, early primary release, `TriggerRelease`, Release Notify, and rate/cancel-window events must neither reapply nor remove it. No new `Recovery` enum state, section-driven GE switching, timer, or second Bow state machine is allowed.
+7. Shield Guard selection remains a presentation conjunction owned by AnimBP:
 
-5. `EndAbility()` must call one idempotent exact-handle clear helper before it tears down tasks. That helper removes only the Handle applied by this Bow instance from the current ASC, then invalidates it even if the ASC is unavailable. It covers normal Montage completion/blend-out, input cancel, existing Dodge cancellation, existing action/hit interruption, and any other route that already reaches Bow `EndAbility()`; it must not remove an external MoveSpeed source using the same GE class.
+```text
+bUseShieldGuardLocomotion = HasShieldEquipped()
+    && ASC has matching State.Action.Guarding.Shield
+```
 
-6. Do not introduce a Player terminal-cancellation route. Current Player death does not yet cancel active Bow/other Ability instances; that accepted debt remains owned by `TODO-03D`. This stage proves correct cleanup once `EndAbility()` is reached, not unimplemented Player death teardown.
-
-7. Do not change `APlayerCharacter`, input mappings, Sprint Ability source, AttributeSet, Gameplay Tag config, replication, camera, lock-on, projectile target selection, gameplay costs, GameplayCue routing, root-motion policy, or movement-component configuration. Bow remains single-player/server-only as it is today.
+The exact Shield child tag is the required authored state. A generic Guard tag, `Ability.Defense.Guard.Shield`, a MainHand mode, or merely a left-hand mesh must not replace either half of this conjunction.
 
 ## Approved Source And Test Surface
 
-**Contract owner: Main. Implementation writer: Gemini only after explicit execution authorization.** Any need to modify an unlisted source/header/public API, Gameplay Tag, Input route, Config, `.uproject`, or asset is a stop condition requiring Main evidence review.
+**Contract owner: Main. Implementation writer: Gemini only after explicit execution authorization.** A need to modify an unlisted header/public surface, Player/Guard Ability source, Gameplay Tag, Input route, Config, Build.cs, `.uproject`, or asset is a stop condition requiring Main review.
 
-- `Source/PolyQuest/Public/AbilitySystem/Abilities/BowDrawFireAbility.h`
+- `Source/PolyQuest/Public/Combat/Equipment/OffHandWeaponDefinition.h`
   - Contract owner: Main. Implementation writer: Gemini.
-  - Add only the authored GE class, private Handle/helper declarations, required forward declaration/include, and narrow `WITH_DEV_AUTOMATION_TESTS` configuration/observation accessors that call the same production start/clear path.
+  - Retain `bProvidesShieldPresentation`; remove only the two residual composition fields and their validation. Keep `HandSlot`, DefenseProfile ownership, required base `LocomotionMode == Default`, mesh validation, and every unrelated authored property unchanged.
 
-- `Source/PolyQuest/Private/AbilitySystem/Abilities/BowDrawFireAbility.cpp`
+- `Source/PolyQuest/Public/Combat/Equipment/WeaponDefinition.h`
   - Contract owner: Main. Implementation writer: Gemini.
-  - Remove only the Bow movement owned-tag contribution; validate, apply, cancel Sprint, and clear the exact Handle in the order above. Keep Montage, event, Projectile, target-assist, aim-requester, and cancellation logic otherwise unchanged.
+  - Remove only the `SwordShield` enum member, make `Bow = 4` explicit, update the enum description, and collapse the base validation to a generic invalid-enum failure. Do not reorder or renumber `Default`, `LightSword`, `HeavySword`, or `Bow`; do not alter any other DataAsset field or validation rule.
 
-- `Source/PolyQuest/Private/Tests/TestMobileBowMoveSpeedGE.h/.cpp` (new)
+- `Source/PolyQuest/Public/Combat/Equipment/WeaponEquipmentComponent.h`
   - Contract owner: Main. Implementation writer: Gemini.
-  - Define a native-only, Infinite, non-periodic controlled MoveSpeed GE. It must not load or reference `Content/**`, and its test multiplier must not be described as the source of truth for authored balance.
+  - This file contains the already-authorized first 03A6C query change. The supplemental cleanup must not edit it.
 
-- `Source/PolyQuest/Private/Tests/TestMobileBowSprintAbility.h/.cpp` (new)
+- `Source/PolyQuest/Private/Combat/Equipment/WeaponEquipmentComponent.cpp`
   - Contract owner: Main. Implementation writer: Gemini.
-  - Define only the minimal active Ability carrying the real `Ability.Movement.Sprint` and `State.Movement.Sprinting` contracts necessary to verify `CancelSprintAbility()` cancellation. It is not a replacement for production `USprintAbility`, has no asset/config dependency, and is test-only.
+  - This file contains the already-authorized first 03A6C query change. The supplemental cleanup must not edit it.
 
-- `Source/PolyQuest/Private/Tests/PlayerMobileBowAutomationTests.cpp` (new)
+- `Source/PolyQuest/Private/Tests/WeaponEquipmentComponentAutomationTests.cpp`
   - Contract owner: Main. Implementation writer: Gemini.
-  - Add the fourteenth suite, `PolyQuest.Player.MobileBow`, using the existing H3 deferred-spawn Player fixture. Do not modify fixture defaults, create a Content dependency, or create a second movement implementation.
+  - Extend the existing `PolyQuest.Equipment.TransactionMatrix`; do not create a Content-independent replacement fixture or modify global fixture defaults.
+  - Remove all residual-pair setup and composition validation cases. Add only a raw ordinal-`3` fail-closed assertion and an assertion that `Bow` retains underlying numeric value `4`, while retaining the existing Shield-presentation, rollback, and Guard CDO Tag coverage. Do not add a `UPlayerGuardAbility` test accessor or change production Guard source solely for test access.
 
-No `PlayerCharacter`, `SprintAbility`, `CombatAutomationFixture`, `PlayerActionWindowAutomationTests`, `ProjectileLifecycleAutomationTests`, Build.cs, Config, or Content path is approved for modification in this stage.
+No `PlayerCharacter`, `PlayerGuardAbility`, `DefenseProfileDefinition`, `MeleeWeaponDefinition`, `WeaponEquipmentComponent.h/.cpp`, input, Gameplay Tag config, Build.cs, Config, or Content path is approved for modification by this supplemental cleanup. `PlayerExhaustionAutomationTests.cpp` is unrelated user-owned WIP and must remain untouched and unstaged.
 
 ## Automation Contract
 
-`PolyQuest.Player.MobileBow` must use the real `UBowDrawFireAbility` instance and the production start/clear helpers through a narrow `WITH_DEV_AUTOMATION_TESTS` seam. It does not need a renderable AnimInstance or production Montage asset merely to prove GE ownership; actual Montage startup and visuals remain Editor/PIE evidence.
+Extend the existing transaction matrix with these assertions, without `AddExpectedError`, lowered log levels, or a test-only product fallback:
 
-It must cover all of the following without `AddExpectedError`, lowered log levels, or a test-only runtime fallback:
+- A committed OffHand configured with `bProvidesShieldPresentation = true` makes `HasShieldEquipped()` true; no OffHand and an otherwise valid generic OffHand with the default false field return false.
+- Unarmed + Shield resolves `Default` plus true Shield presentation; one-handed Sword + Shield resolves `LightSword` plus true Shield presentation; no valid runtime/asset path can select a composition locomotion mode.
+- `static_cast<EWeaponLocomotionMode>(3)` fails `UWeaponDefinition::IsValidWeaponDefinition()` with the generic invalid-enum path, and `static_cast<uint8>(EWeaponLocomotionMode::Bow)` remains `4`. This protects existing serialized Bow assets while proving removed SwordShield data cannot silently become a valid mode.
+- Equipping a TwoHanded Bow/Heavy weapon clears the OffHand and returns false; world-pickup Apply and Drop rollback restore both the MainHand-only locomotion result and the prior Shield-presentation fact with no drift.
+- `GA_PlayerShieldGuard` CDO has the exact child `State.Action.Guarding.Shield` and hierarchically matches generic `State.Action.Guarding`; `GA_Guard_Sowrd` does not have the exact Shield child and retains the generic Guard route. This is authored-asset static evidence, not a PIE assertion.
 
-- The Bow CDO owns `State.Action.Attacking` and `State.Input.Block.Jump`, but not `State.Input.Block.Movement`.
-- With a base `MoveSpeed` of `500`, one successful mobile-Bow start produces a valid Bow Handle, the controlled fixture's expected slowed MoveSpeed, and matching `CharacterMovement.MaxWalkSpeed` through the existing delegate.
-- A genuinely active test-only Sprint request is cancelled by the successful Bow start. Bow's retained Attacking contract remains the reason a new production Sprint cannot start; this stage does not rewrite Sprint preflight.
-- The exact same Handle persists while test state traverses Draw, Hold, Release, and Recovery/active-Releasing representation; no duplicate active effect is added.
-- Normal and cancelled `EndAbility()` each remove Bow's own Handle and restore base speed. If an independent MoveSpeed GE was already active, its resolved pre-Bow speed and its active Handle survive Bow teardown.
-- All test setup injects `UTestMobileBowMoveSpeedGE` before invoking the start helper, so H3's clean successful-path signal remains intact.
+Run the resulting `PolyQuest.Equipment.TransactionMatrix` plus the remaining thirteen suites through the Unreal Editor Automation front end:
 
-Run the new suite plus the existing thirteen-suite matrix through the Unreal Editor Automation front end:
+`PolyQuest.Melee.TraceSourceGeometry`, `PolyQuest.Melee.WeaponTrail`, `PolyQuest.Player.ActionWindows`, `PolyQuest.Player.MobileBow`, `PolyQuest.Combat.HitReaction`, `PolyQuest.Enemy.AttackSetSelection`, `PolyQuest.Enemy.CombatSpacing`, `PolyQuest.UI.VitalHUD`, `PolyQuest.Player.Exhaustion`, `PolyQuest.Player.LockOn`, `PolyQuest.Projectile.Lifecycle`, `PolyQuest.Projectile.TargetAssist`, and `PolyQuest.Combat.HitFeedback`.
 
-`PolyQuest.Equipment.TransactionMatrix`, `PolyQuest.Melee.TraceSourceGeometry`, `PolyQuest.Melee.WeaponTrail`, `PolyQuest.Player.ActionWindows`, `PolyQuest.Combat.HitReaction`, `PolyQuest.Enemy.AttackSetSelection`, `PolyQuest.Enemy.CombatSpacing`, `PolyQuest.UI.VitalHUD`, `PolyQuest.Player.Exhaustion`, `PolyQuest.Player.LockOn`, `PolyQuest.Projectile.Lifecycle`, `PolyQuest.Projectile.TargetAssist`, and `PolyQuest.Combat.HitFeedback`.
-
-All fourteen suites must succeed. Existing retained warnings may only be those in the H3 intentional-negative ledger: invalid multi-tier reaction tags, no Stance Break Ability fallback, equipment preflight/rollback, and invalid static trace geometry. B4 adds no successful-path missing-GE, missing-fixture, or invalid-spec warning.
+All fourteen suites must succeed. Retained logs may only be established intentional-negative coverage; 03A6C adds no success-path configuration warning.
 
 ## User-Owned Editor Authoring
 
-After source static preflight, the user owns the following Editor work and readback:
+After static preflight, the user owns every asset change and readback:
 
-1. In `GA_Player_Bow_DrawFire`, assign `MobileBowMoveSpeedGameplayEffectClass` to the selected authored MoveSpeed GameplayEffect; confirm it is `Infinite`, has no Periodic execution, and uses the currently intended MoveSpeed modifier. The exact multiplier remains asset-owned tuning and must be read back from the Editor when it changes.
+1. Completed preparation evidence: on the actual Shield `UOffHandWeaponDefinition`, the user set both residual fields together to `Default` and saved, while retaining `bProvidesShieldPresentation = true`. After source compilation, reopen it and confirm both residual fields are absent; keep the Shield presentation flag, base `LocomotionMode = Default`, Hand Slot, Defense Profile, and granted actions unchanged.
 
-2. In `AM_Bow_Shoot`, author the continuous `Draw -> Hold(loop) -> Release -> Recovery -> End` route. The full active Montage belongs to the currently validated `DefaultGroup.UpperBody` Slot route; do not put Bow back into a full-body `DefaultSlot` track.
+2. In `ABP_Player_Dungeon` Event Graph, preserve the existing cached `WeaponEquipment` and ASC acquisition route. Update the cached ordinary locomotion enum from the component's now MainHand-only `GetResolvedLocomotionMode()`, add `bHasShieldEquipped` from `HasShieldEquipped()`, and derive `bUseShieldGuardLocomotion` from that bool plus the existing ASC tag query for `State.Action.Guarding.Shield`. Do not create a parallel Equipment boolean, tag, or Blueprint-side inventory check.
 
-3. Choose compatible in-place Bow Draw/Hold/Release source sequences from `Content/ArcherAnimsetPro`. Confirm the source sequences and Montage do not generate Root Motion. Do not use Force Root Lock to hide Root Motion, and do not use RootMotion-directory Bow assets as a `CharacterMovement` walking substitute.
+3. After source compilation, open `ABP_Player_Dungeon`, refresh/reconstruct every `Blend Poses by EWeaponLocomotionMode` node, and inspect the labelled enum pins rather than raw `BlendPose_N` array indices. Remove the obsolete `SwordShield` branch/reference. Confirm the remaining `Default`, `LightSword`, `HeavySword`, and `Bow` branches point to their correct existing assets, especially the Bow branch. Select full-body `BS_Shield_Walk_Run` only when `bUseShieldGuardLocomotion` is true. Route that result through the established final Reaction Overlay so Small Hit remains visible. The Shield Guard branch bypasses the single-sword `DefaultGroup.UpperBody` Guard visual branch; ordinary Sword/Shield locomotion does not acquire a new passive overlay.
 
-4. In `ABP_Player_Dungeon`, preserve existing Bow base locomotion and the existing pure-base-pose Stride Warping position. Feed that pose into the current upper-body Slot, layer the Slot output from `spine_01` with the existing Mesh Space Rotation Blend setup, then keep the existing Reaction Overlay last:
-
-   ```text
-   Bow base locomotion / Stride Warping
-       -> DefaultGroup.UpperBody Bow Slot
-       -> Layered Blend per Bone (spine_01)
-       -> existing Reaction Overlay
-   ```
-
-   Do not add Aim Offset, a dedicated Bow Aim BlendSpace, a second equipment-state bool, or a new Slot Group. The active Slot controls presentation; Bow's existing mouse-plane yaw controls aim-facing.
-
-5. If the existing Bow base locomotion cannot visibly support forward/backward/left/right movement while the upper body stays aimed, stop the asset closure and report the missing strafe/in-place asset evidence. Do not compensate with native movement changes, Root Motion, or a misleading upper-body blend.
-
-These mutable assets stay outside the default source/test/document commit.
+4. Preserve Bow's independent aim branch, the current Stride Warping placement on pure base locomotion, and all Root Motion policy. Do not add an Aim Offset, new Slot, passive shield hold layer, shield-back stowage, or a new Guard BlendSpace.
 
 ## Static Checks, User Validation, And Closeout
 
-Before user validation, Gemini/Main must read the final changed Ability and direct callers/callees, run CodeGraph, use code-review-graph only as supplementary diff/impact evidence when its index covers the baseline, run Rider error-level inspection on every touched C++ path, and run `git diff --check`. These are static checks only and are not compile, Editor, PIE, or visual proof.
-
-User validation:
-
-- Manually compile `PolyQuestEditor`.
-- Run the fourteen Automation suites above from the Editor front end and preserve the raw result/log excerpt.
-- In `Scene01`, equip Bow and verify: Sprint then Bow starts at the configured authored pace; Draw/Hold/Release/Recovery all retain that pace and allow camera-relative eight-direction movement; cursor-facing remains stable; Jump and new Sprint are blocked; Release-time lock/target assist and projectile behavior are unchanged.
-- Verify the upper body draws/holds/releases while the lower body walks, no Root Motion translates the Character, no torso twist or foot-slide regression is introduced, and Reaction Overlay remains visible.
-- Verify normal release, input cancel, and an existing valid Dodge cancel restore the non-Bow speed. Do not claim Player death teardown is supported until `TODO-03D` supplies its terminal route.
-
-After user-confirmed compile, Automation, and PIE evidence, Main performs one defect-first fresh review. Then Main updates `README.md`, `ARCHITECTURE.md`, `ROADMAP.md`, and this `plan.md` with only verified results. `ROADMAP.md` must update B4 wording from Draw/Hold-only movement to the complete active Bow lifecycle; its existing `TODO-03D` terminal-Ability debt remains canonical.
+- Before handoff, read the final query and direct transaction callers; use CodeGraph and file-scoped code-review-graph as supplemental evidence; run Rider Error-level inspection on all touched C++ paths and `git diff --check`. These are static checks only. The graph does not prove Blueprint branches or GameplayTag runtime ownership, so direct Automation/Editor readback remains required.
+- The user manually compiles `PolyQuestEditor`, runs the fourteen Automation suites, and records the result.
+- Editor readback confirms the actual Shield DataAsset no longer exposes the two removed fields, the Shield-presentation flag and DefenseProfile remain intact, the two Guard Blueprint CDO tag containers remain correct, and every `Blend Poses by EWeaponLocomotionMode` node has exactly the current labelled branches with Bow correctly wired. Do not delete `BS_SwordShield_Walk_Run` in this stage; after Reference Viewer proves it has zero referencers, asset deletion belongs to a separate approved Content-cleanup decision.
+- In `Scene01`, validate Unarmed + Shield and Sword + Shield ordinary locomotion retain their respective MainHand base routes; Shield Guard for both uses the full-body Shield BlendSpace; single-sword Guard stays upper-body only; Bow/Heavy clears Shield presentation; and release, attack/Dodge cancellation, Guard Break, Small Hit, death, and B2 locked movement leave no stale Shield Guard pose or yaw regression.
+- After user-confirmed compile, Automation, Editor readback, and PIE evidence, Main performs one defect-first fresh review. Then Main updates `README.md`, `ARCHITECTURE.md`, `ROADMAP.md`, and this `plan.md` with verified results. The closeout must record that the enum and OffHand composition fields were removed, that Bow keeps serialized value `4`, and that any now-unreferenced legacy Content asset still requires its own evidence-led cleanup approval.
 
 ## Commit Boundary
 
-Default commit includes only the two Bow Ability files, the four new test helper files, `PlayerMobileBowAutomationTests.cpp`, the scoped `MeleeWeaponTrailAutomationTests.cpp` Unity-build local-helper rename, and the four project documents after verified closeout. Explicitly exclude all `Content/**`, Config, map, Blueprint, GA/GE/Montage, AnimBP, input, `.uproject`, generated output, and unrelated WIP. No commit occurs until the user explicitly approves it.
+This user-approved commit includes only `WeaponDefinition.h`, `OffHandWeaponDefinition.h`, the already-approved `WeaponEquipmentComponent.h/.cpp`, `WeaponEquipmentComponentAutomationTests.cpp`, and the four synchronized project documents. It explicitly excludes every `Content/**` asset, Config, map, Blueprint, GA/GE/Montage, AnimBP, input, `.uproject`, generated output, imported resource, `PlayerExhaustionAutomationTests.cpp`, and unrelated user WIP.
 
 ## Closeout Record
 
-- Runtime ownership: `UBowDrawFireAbility` no longer owns `State.Input.Block.Movement`, but retains `State.Action.Attacking` and `State.Input.Block.Jump`. After its Montage is confirmed active, it applies one exact handle from the mandatory authored `MobileBowMoveSpeedGameplayEffectClass`, then cancels only an active Sprint. The same handle remains through Draw, Hold, Release, and Recovery; every existing path reaching `EndAbility()` removes only that handle before task, aim-requester, scoped-tag, and Montage cleanup. No direct `MaxWalkSpeed` write, new Bow state machine, input route, targeting behavior, or terminal-death route was added.
-- Automation: `PolyQuest.Player.MobileBow` uses a real ASC-hosted Bow Ability plus native-only controlled MoveSpeed and Sprint fixtures. It covers Tag ownership, successful and missing-GE start behavior, MoveSpeed-to-CharacterMovement synchronization, Sprint cancellation, handle idempotency across Bow states, normal/cancelled `EndAbility()` cleanup on independent instances, and survival of an external MoveSpeed handle. The controlled fixture validates lifecycle mechanics only; it does not duplicate mutable GE balance tuning from `Content/**`. The committed `MeleeWeaponTrailAutomationTests.cpp` change only renames its local world-cleanup type to avoid a Unity-build collision; it changes no trail test behavior.
-- User evidence: the user confirmed focused PIE behavior and the fourteen-suite Unreal Editor Automation matrix as Success after the final repair. The authored GE, Montage, AnimBP, Blueprint, and input settings remain user-owned local `Content/**` WIP and are excluded from this commit.
-- Static and fresh review: Main re-read the final Ability lifecycle, `CancelSprintAbility()` caller boundary, test fixture, and direct cleanup paths; CodeGraph and code-review-graph supplied supplemental source/impact context, while direct source review covered UE Automation macro and untracked-file gaps. Rider lint reported no Error. `git diff --check` reported no whitespace defect. Main's defect-first fresh review found no P0-P2.
-- Tuning source of truth: the local authored Mobile Bow GE was retuned after the original x0.6 plan assumption. This closeout intentionally records no durable numeric multiplier; current pace is read from the authored asset and verified in focused PIE, while the native fixture remains an isolated control value.
-- Scope: the approved commit contains only B4 C++, Automation, this closeout record, and synchronized `README.md`, `ARCHITECTURE.md`, and `ROADMAP.md`. All `Content/**`, Config, maps, Blueprints, GA/GE/Montage, AnimBP, input, `.uproject`, generated output, imported resources, and unrelated user WIP stay out.
+- Runtime contract: `EWeaponLocomotionMode` now exposes only `Default = 0`, `LightSword = 1`, `HeavySword = 2`, and `Bow = 4`. The removed ordinal `3` fails `UWeaponDefinition::IsValidWeaponDefinition()` together with every other invalid enum value, preserving the serialized Bow value without a deprecated alias or enum redirect. `UOffHandWeaponDefinition` retains required OffHand slot, base `LocomotionMode == Default`, display-mesh validation, and `bProvidesShieldPresentation`, but no MainHand/OffHand composition fields or preflight rule.
+- Presentation contract: `GetResolvedLocomotionMode()` reads only committed MainHand base locomotion. `HasShieldEquipped()` independently reads only the committed OffHand presentation flag. `ABP_Player_Dungeon` combines the latter with exact active `State.Action.Guarding.Shield` for full-body `BS_Shield_Walk_Run`; generic Guard and the Shield Guard ability tag are not equipped-Shield signals. The ordinary enum branch set is `Default`, `LightSword`, `HeavySword`, and `Bow`.
+- Automation and review: `PolyQuest.Equipment.TransactionMatrix` covers the ordinal-`3` failure, preserved Bow value, Shield/non-Shield OffHand presentation, TwoHanded clearing, and Apply/Drop rollback. The user confirmed all fourteen Editor Automation suites and focused Scene01 PIE after the final cleanup. Main re-read the enum, OffHand validation, preflight/commit path, transaction matrix, direct callers, and final diff; CodeGraph, code-review-graph, Rider inspection, and `git diff --check` supplied supplemental static evidence. Main found no P0-P2.
+- Asset boundary: the user removed the obsolete `SwordShield` AnimBP branch but retained `BS_SwordShield_Walk_Run` in local `Content/**`. It is not a current runtime selection path and is deliberately excluded from this commit. Any deletion requires a separately approved, Reference Viewer-backed Content cleanup.
+- Scope: no Player/Guard Ability, DefenseProfile, Gameplay Tag, input, transaction, pickup/drop, Bow, Stamina, B2 facing, Config, Blueprint, AnimBP source asset, map, or project-file contract changed outside the approved 03A6C surface. The unrelated `PlayerExhaustionAutomationTests.cpp` modification remains uncommitted user WIP.

@@ -22,15 +22,14 @@ enum class EWeaponHandSlot : uint8
 	OffHand
 };
 
-/** The authored locomotion presentation mode for a weapon family or weapon composition. */
+/** The authored locomotion presentation mode for a weapon family. */
 UENUM(BlueprintType)
 enum class EWeaponLocomotionMode : uint8
 {
-	Default,
-	LightSword,
-	HeavySword,
-	SwordShield,
-	Bow
+	Default = 0,
+	LightSword = 1,
+	HeavySword = 2,
+	Bow = 4
 };
 
 /**
@@ -108,14 +107,7 @@ inline bool UWeaponDefinition::IsValidWeaponDefinition(FString& OutReason) const
 		&& LocomotionMode != EWeaponLocomotionMode::HeavySword
 		&& LocomotionMode != EWeaponLocomotionMode::Bow)
 	{
-		if (LocomotionMode == EWeaponLocomotionMode::SwordShield)
-		{
-			OutReason = TEXT("Base LocomotionMode cannot be SwordShield (SwordShield is reserved for OffHand composition).");
-		}
-		else
-		{
-			OutReason = TEXT("LocomotionMode contains an invalid enum value.");
-		}
+		OutReason = TEXT("LocomotionMode contains an invalid enum value.");
 		return false;
 	}
 
