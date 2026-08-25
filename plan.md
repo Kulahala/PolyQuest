@@ -1,124 +1,125 @@
-# TODO-03AI3B: Enemy Combat Target Retention v1
+# TODO-03H4: Combat Delivery And Presentation Health Review v1
 
 ## Plan State
 
-- Status: Completed. TODO-03AI3 and this blocking retention repair have passed their user-confirmed validation gates and Main's initial plus delta Fresh Reviews; this file remains as the completed-stage handoff record until the next accepted plan replaces it.
-- Baseline: 7b78187dfedd6af9f98c8240e234203683a8a40d ([Feature] 完成投射物飞行拖尾).
-- The uncommitted TODO-03AI3 Controller/header/test work already in the worktree is approved active-stage work, not unrelated WIP; preserve it.
-- Objective: after an Enemy acquires the Player as combat target, retain that target through a temporary negative sight stimulus caused by the Player moving behind it, while still clearing deterministically when the Player leaves the existing combat-memory distance or the Enemy breaks its Home leash.
-- Frozen v1 decisions:
-  - Initial discovery remains the existing 140-degree sight cone. Passive Enemies do not become globally 360-degree aware.
-  - Post-acquisition memory retains the current target only while it is valid, within existing LoseSightRadius in 2D, and the Enemy remains within existing Home LeashRadius.
-  - Existing LoseSightRadius is the v1 memory distance. Do not add a DataAsset field, config value, grace timer, or Gameplay Tag.
-  - Distance escape, Home-leash break, target invalidation/destruction, explicit clear, Enemy death, and UnPossess use the existing one-time ClearCurrentTarget(true) route.
-  - No Search state, LastKnownLocation, Hearing/Damage sense, target retargeting, StateTree topology, animation, or perception-asset edit is included.
-- Preserve all unrelated user WIP. Do not modify, stage, move, delete, or infer product behavior from .gitignore, Config/**, Content/**, maps, Blueprints, AnimBPs, GA/GE/Montage assets, .uproject, generated output, or any unlisted source file.
+- Status: Completed read-first health review; no production repair was required and the closeout commit is documentation-only.
+- Baseline: `905c2e4` (`[Feature] 完成敌人根运动朝向与目标记忆`).
+- Objective: audit the completed combat-delivery and presentation boundaries before `TODO-03C: Ranged Enemy v1`, then either close confirmed healthy contracts without implementation changes or isolate each real blocker into a minimal approved repair slice.
+- This stage adds no player loop, weapon family, VFX system, asset migration, DataAsset field, Gameplay Tag, Input route, StateTree topology, generic framework, or authored Content change by default.
+- Preserve all current user WIP. `.gitignore`, `Config/**`, `Content/**`, maps, Blueprints, AnimBPs, GA/GE/Montage assets, `.uproject`, generated files, and unrelated source changes are not review findings or commit candidates unless a direct confirmed defect requires a separate Main scope decision.
 
 ## Route And Delegation
 
-Outer: ue-stage-workflow
-Primary: ue5-cpp-gameplay
-Support: ue5-debug-validation
-Route reason: this repair owns one Controller-held combat-target memory flag, its perception-to-StateTree event boundary, and a bounded revalidation loop. It does not alter perception assets, StateTree structure, or GAS ownership.
+Outer: `ue-stage-workflow`
+Primary: `ue5-debug-validation`
+Support: none initially
+Route reason: H4 is an evidence-led integration audit across already-completed native contracts. It must distinguish an observed gameplay defect from expected negative-test logging, authored-asset WIP, and speculative future scaling.
 
 Plan explorers: 0
-Implementation executors: 1 (Gemini only after its read-only plan review is accepted and the user explicitly authorizes execution)
-Complex Executor: one scoped lifecycle-sensitive C++ slice
+Implementation executors: 0
+Complex Executor: none
 Main parallel work: none
-Reason: negative perception, target ownership, Root-Motion-facing integration, periodic validation, and TargetLost cleanup are one Controller lifecycle. Main owns contract, stage status, validation interpretation, Fresh Review, documents, staging, and commit; Gemini writes only the frozen source/test slice.
+Reason: target/trace/trail/projectile/equipment/AI teardown boundaries overlap through shared Controller, AbilityTask, GAS, and presentation lifecycles. A broad audit has no safe independent implementation slice; Main owns the review conclusion and any later repair scope.
 
-## Evidence And Design Decision
+## Review Surface And Primary Runtime Questions
 
-- AEnemyAIController::HandleTargetPerceptionUpdated currently calls ClearCurrentTarget(true) immediately whenever a negative FAIStimulus belongs to CurrentTarget. ClearCurrentTarget stops Reposition, clears Gameplay Focus, resets the Root-Motion handoff, and sends Event.AI.Target.Lost; the observed StateTree return-home behavior follows from that existing event path.
-- The exact negative stimulus source can be sight-cone loss, occlusion, or distance. PeripheralVisionHalfAngleDegrees = 70 makes the described launch-then-walk-behind case highly plausible, but this repair fixes the proven immediate-clear behavior rather than assuming one visual cause.
-- LoseSightRadius already belongs to Controller sight hysteresis and is configured into UAISenseConfig_Sight. Reusing it as bounded post-acquisition memory avoids a speculative second radius.
-- TODO-03AI3 clears Controller Gameplay Focus during active Root Motion without clearing CurrentTarget. Retention must preserve that target through sight loss so the Root-Motion handoff can resume safely.
+### 1. Delivery ownership and stale-callback safety
 
-## Frozen Runtime Contract
+- Review `UAbilityTask_MeleeTraceWindow`, `UMeleeTraceSourceComponent`, `UMeleeWeaponTrailComponent`, relevant AnimNotify payload routing, and the multi-source Trace/Trail Automation suites.
+- Confirm one attack window remains the sole owner of endpoint sampling, shared target deduplication, and source-keyed trail requester cleanup; stale Notify/Task teardown must not close a successor window or trail.
+- Confirm invalid/degenerate endpoints fail closed before hit delivery and visual updates, without leaving active requesters/components behind.
 
-### 1. Bounded Combat Target Retention
+### 2. Equipment composition and active-action teardown
 
-In Source/PolyQuest/Public/AI/EnemyAIController.h and Source/PolyQuest/Private/AI/EnemyAIController.cpp:
+- Review `UWeaponEquipmentComponent`, weapon definitions, Guard/Bow entry points, and transaction/Action Window/Mobile Bow Automation coverage.
+- Confirm an equipment transaction cannot leave a display, Trace source, granted spec, prepared slot, defense state, or effect handle from a displaced composition after a successful swap, rollback, death, or active-action rejection.
+- Preserve MainHand locomotion facts, committed OffHand Shield presentation, current Bow contract, and all existing GAS authority; do not redesign equipment.
 
-1. Add one private non-reflected boolean meaning current target has lost visual sight but remains retained by combat memory. Add a protected Tick(float DeltaSeconds) override and only private helpers needed to evaluate retention eligibility, process negative perception, and revalidate memory.
-2. Positive perception of a valid Player continues through SetCurrentTarget. It clears the lost-visual retention flag and retains existing focus and Root-Motion deferral behavior.
-3. A negative perception of the current Player target:
-   - retains target and sets the lost-visual flag only when HasValidCombatTarget, a valid possessed Pawn, FVector::Dist2D(Pawn, CurrentTarget) <= LoseSightRadius, and !IsExceedingLeash all hold;
-   - does not clear focus, stop navigation, send TargetLost, restart StateTree, or change Root-Motion yaw ownership in that retained case;
-   - otherwise calls unchanged ClearCurrentTarget(true) exactly once.
-   Negative perception for a non-current actor remains a no-op.
-4. Before Super::Tick(DeltaSeconds), revalidate only while the lost-visual flag is active. If target is invalid, no longer within LoseSightRadius, or Enemy now exceeds LeashRadius, call ClearCurrentTarget(true). If it remains valid, do nothing. This prevents permanent retained aggro after the Player runs away.
-5. ClearCurrentTarget, OnPossess, OnUnPossess, and existing Enemy-death cleanup reset the lost-visual flag. Do not add a second TargetLost event or duplicate StateTree transition.
-6. Preserve initial 140-degree acquisition, SightRadius, LoseSightRadius, perception affiliation, CurrentTarget ownership, Home leash calculation, TargetAcquired/TargetLost tags, StateTree topology, Approach/Reposition geometry, GAS, complete TODO-03AI3 Root-Motion-facing handoff, and the current fixed 300 Reposition pace.
+### 3. Bow, projectile, and presentation terminal paths
 
-### 2. Test-Only Surface
+- Review `UBowDrawFireAbility`, `ACombatProjectile`, `UProjectileDefinition`, targeting/homing helpers, and Lifecycle/TargetAssist/FlightTrail Automation coverage.
+- Confirm Bow's exact MoveSpeed effect handle, aim requester, cancel windows, montage/event tasks, and projectile spawn boundary converge safely through `EndAbility()`.
+- Confirm projectile collision/damage delivery remains immediate and exactly once while Flight Trail visual completion, timeout, external destruction, and world teardown remain bounded and cannot re-enable movement, homing, collision, or a second hit.
 
-Under WITH_DEV_AUTOMATION_TESTS, add only narrow wrappers/inspectors that invoke or observe the real production retention path:
+### 4. Enemy combat presentation and target continuity
 
-- submit a Player perception-result boolean through the same private helper used by HandleTargetPerceptionUpdated;
-- invoke the real retained-target revalidation path;
-- read whether current target is retained without visual sight.
+- Review `AEnemyAIController`, Enemy combat StateTree-facing call sites, hit-reaction/Root Motion handoff, Reposition move completion, and RootMotionFacing/CombatTargetRetention/CombatSpacing Automation coverage.
+- Confirm StateTree selects intent only; Controller owns CurrentTarget, Focus, Home leash, tactical pace, and Root Motion yaw handoff. Retained target loss must yield one deterministic TargetLost path, and late perception/teardown must not restore a stale target.
+- Preserve the completed 140-degree initial Sight rule, bounded retention, fixed v1 `300` tactical pace, and no Search/Hearing/LastKnownLocation behavior.
 
-They must not directly set retention state, target pointer, focus, range, leash result, or StateTree event. Existing TODO-03AI3 test-only wrappers remain unchanged unless a compilation-required declaration grouping is unavoidable.
+### 5. Automation signal and evidence integrity
 
-## Approved Source And Test Surface
+- Classify current Automation logs as either expected negative assertion evidence, unexpected success-path signal noise, or a real product warning.
+- Inspect test fixtures only where they prove the production route. Do not turn a renderer/headless limitation, expected fail-closed warning, or user-owned asset absence into a production defect.
+- Do not claim manual compilation, Editor readback, PIE, visual, or asset validation unless the user separately supplies that evidence for this stage.
 
-Contract owner: Main. Implementation writer: Gemini only after explicit execution authorization. Any need to touch an unlisted file, public production API, AEnemyCharacter, AIProfile, Config, Gameplay Tag, Input route, Ability, StateTree, asset, map, Blueprint, AnimBP, Montage, document, or current Root-Motion-facing test requires a Main scope decision.
+## Approved Initial Files
 
-- Source/PolyQuest/Public/AI/EnemyAIController.h
-  - Add only protected Tick declaration, private retention state/helpers, and frozen test-only wrapper/inspector declarations.
-  - Preserve existing public APIs, CDO data, perception setup, Root-Motion-facing/pace members, and reflection visibility.
-- Source/PolyQuest/Private/AI/EnemyAIController.cpp
-  - Modify only Tick (new), HandleTargetPerceptionUpdated, SetCurrentTarget, ClearCurrentTarget, OnPossess, OnUnPossess, and minimal private retention helpers.
-  - Do not change UpdateControlRotation, TryRequestCooldownReposition, StopCooldownReposition, OnMoveCompleted, ConfigureSight, StateTree start/stop, target-selection rules, or existing logging except where direct retention behavior requires no log.
-- Add Source/PolyQuest/Private/Tests/EnemyCombatTargetRetentionAutomationTests.cpp with Automation name PolyQuest.Enemy.CombatTargetRetention.
-  - Reuse the transient valid Enemy Controller setup proven by EnemyRootMotionFacingAutomationTests: valid transient AttackSet/Profile, passive Enemy fixture, real Controller possession, and Player fixture.
-  - Do not modify CombatAutomationFixture, use Content assets, require NavMesh, or depend on renderer/viewport.
+Read-only initial review surface:
 
-## Native Automation Contract
+- `Source/PolyQuest/Public|Private/AbilitySystem/Tasks/AbilityTask_MeleeTraceWindow.*`
+- `Source/PolyQuest/Public|Private/Combat/Melee/MeleeTraceSourceComponent.*`
+- `Source/PolyQuest/Private/Combat/Melee/MeleeWeaponTrailComponent.*`
+- `Source/PolyQuest/Public|Private/Combat/Equipment/WeaponEquipmentComponent.*` and directly read weapon-definition contracts
+- `Source/PolyQuest/Public|Private/AbilitySystem/Abilities/BowDrawFireAbility.*`
+- `Source/PolyQuest/Public|Private/Combat/Projectile/CombatProjectile.*`, `ProjectileDefinition.*`, and direct targeting helpers
+- `Source/PolyQuest/Public|Private/AI/EnemyAIController.*` plus direct StateTree task/condition callers
+- Directly related Automation files: `MeleeMultiTraceSourceAutomationTests.cpp`, `MeleeWeaponTrailAutomationTests.cpp`, `WeaponEquipmentComponentAutomationTests.cpp`, `PlayerMobileBowAutomationTests.cpp`, `ProjectileLifecycleAutomationTests.cpp`, `ProjectileTargetAssistAutomationTests.cpp`, `ProjectileFlightTrailAutomationTests.cpp`, `EnemyRootMotionFacingAutomationTests.cpp`, `EnemyCombatTargetRetentionAutomationTests.cpp`, and only required fixtures/test helpers.
+- `AGENTS.md`, `ROADMAP.md`, `ARCHITECTURE.md`, and this active `plan.md` for contract/debt comparison.
 
-PolyQuest.Enemy.CombatTargetRetention must prove:
+Any source, Config, asset, Blueprint, map, StateTree asset, public API, Tag, Input route, or Build.cs modification is a stop condition until Main records a narrow repair decision. H4 itself has no authorized production-code edits at plan acceptance.
 
-1. A front-side positive perception acquires the Player through real production target route.
-2. A negative perception of that Player while inside LoseSightRadius and Home leash retains CurrentTarget, marks lost-visual memory, and survives revalidation.
-3. A later positive perception clears only lost-visual memory and retains the same target.
-4. After an in-range negative perception, moving Player beyond LoseSightRadius then revalidating clears target through existing TargetLost route.
-5. After an in-range negative perception, moving Enemy beyond Home leash then revalidating clears target through existing TargetLost route.
-6. Negative perception for another Player never affects current target.
-7. UnPossess and explicit clear reset retained-memory without a stale later restoration.
-8. With active transient Root Motion, an in-range negative perception preserves CurrentTarget; existing TODO-03AI3 Controller update still owns yaw and does not reintroduce focus during Root Motion.
+## Audit Order And Evidence Rules
 
-Run this new suite, PolyQuest.Enemy.RootMotionFacing, PolyQuest.Enemy.CombatSpacing, PolyQuest.Combat.HitReaction, and complete current Automation matrix. The full matrix must remain green.
+1. Freeze the current baseline and preserve unrelated WIP; use CodeGraph before raw source search and code-review-graph only as supplemental change/impact evidence.
+2. Trace each boundary from entry event to cleanup, including cancellation, interrupted montage/task callbacks, invalid data, actor teardown, and same-frame successor paths.
+3. Compare native source, directly relevant tests, current Roadmap debt, and user-provided Automation/PIE evidence. Source/static inspection is not runtime or visual proof.
+4. Run targeted Rider diagnostics and `git diff --check` only if H4 creates or approves a code repair. Do not invoke UBT, UAT, packaging, or Editor writes.
+5. Classify findings: P0-P2 block closeout and require a minimal repair plan; a P3 becomes Roadmap debt only when it has an affected boundary, current evidence, actual impact, closure trigger, and owning stage/release gate. Pure style observations and optional ideas remain out of the debt register.
+6. If no blocker remains, Main performs the stage Fresh Review, records stable facts in project documentation, and waits for explicit commit approval. If any repair changes runtime code, the user reruns the affected Automation and focused PIE route before that closeout.
 
-## Execution Order
+## Validation Matrix
 
-1. Add minimal Controller retained-memory state, bounded eligibility helper, and Tick revalidation before modifying perception behavior.
-2. Route positive/negative perception and existing clear/possess teardown through frozen state transitions.
-3. Add isolated headless Automation suite and only named test seams.
-4. Gemini rereads final diff and direct callers/callees, runs Rider errors-only inspection on three touched C++ files using solution-relative paths, and runs git diff --check. It must not compile, enter PIE, edit assets, update documents, stage, or commit.
-5. User manually compiles PolyQuestEditor, runs targeted/full Automation, and validates PIE. Main interprets evidence and performs separate Fresh Review across TODO-03AI3 plus this repair.
+### Existing user evidence to interpret, not rerun by default
 
-## User-Owned Editor And PIE Contract
+- Current Editor Automation matrix: 18 suites, including the trace, trail, equipment, mobile Bow, projectile, and Enemy AI suites.
+- Focused Scene01 PIE evidence from their owning completed stages, including weapon trails, arrow flight trail, mobile Bow, Shield presentation, multi-source melee, and Enemy Root-Motion-facing/target retention.
 
-1. Do not alter PeripheralVisionHalfAngleDegrees, SightRadius, LoseSightRadius, StateTree, or authored assets. Confirm current values only by readback.
-2. Manually compile PolyQuestEditor.
-3. In Scene01, approach a passive Enemy from behind before it acquires Player: existing initial sight-cone behavior must remain; no new global 360-degree rule.
-4. Acquire combat from front, launch/hit Enemy, then move behind while inside current LoseSightRadius and Home leash: it must retain combat, not return Home, and retain TODO-03AI3 Root-Motion-facing behavior.
-5. From retained behind-target state, run beyond LoseSightRadius, then separately make Enemy exceed Home leash: each must do normal one-time disengage/return-home.
-6. Report Editor readback, compilation, focused/full Automation, and PIE evidence separately.
+### Only if H4 confirms and repairs a defect
 
-## Non-Goals, Documentation, And Commit Boundary
+1. User compiles the affected `PolyQuestEditor` target or otherwise explicitly reports the current-code build result.
+2. User reruns the exact affected Automation suite plus the full current matrix.
+3. User performs a focused Scene01 PIE repro/verification that distinguishes the original first-bad transition from the repaired outcome.
+4. Main completes a delta Fresh Review before documentation/commit.
 
-- No global 360-degree detection, dynamic peripheral-vision change, Search/Alert state, LastKnownLocation, hearing/damage sense, target grace timer, target swap, AIProfile field, GE_Walk_MoveSpeed reuse, Enemy MoveSpeed GE, DataAsset migration, StateTree edit, animation edit, GameplayCue, new Tag, ranged Enemy behavior, or persistence work is included.
-- Current fixed 300 Reposition pace remains a validated v1 implementation. TODO-03H4 owns future health check: migrate to UEnemyAIProfile-authored pace plus dedicated Enemy MoveSpeed effect only if a second Enemy needs another pace or Enemy MoveSpeed GameplayEffects become real.
-- After TODO-03AI3B validation and Main Fresh Review, Main alone closes both slices in plan.md, marks Roadmap accurately, updates ARCHITECTURE.md, and updates README.md only if its public evidence summary needs it.
-- Default eventual commit scope is approved TODO-03AI3 Controller/header/test files, this new Automation suite, and completed documents. Exclude Content/**, Config/**, maps, Blueprints, AnimBPs, GA/GE/Montage assets, imported resources, .uproject, generated folders, and all unrelated user WIP unless user separately approves stable closure.
+## Existing Debt Handoff
 
-## Closeout Record
+- `TODO-03H4B` owns the header-hygiene candidates as isolated no-behavior micro-slices. `MeleeWeaponDefinition.h` may stop including `CombatLoadoutDefinition.h`, but its `.cpp` must include it directly because `IsValidWeaponDefinition()` calls `AssociatedLoadout->IsRouteTableValid()`; this is a Public-header dependency move, not removal of the C++ dependency. The four `GameplayAbilityTypes.h` candidates require individual self-sufficiency review and a clean compile; a direct public/reflected type use is valid reason to retain the include.
+- The Controller-owned fixed `300` Reposition pace remains a conditional future AI debt, not a slimming task. Trigger migration to `UEnemyAIProfile` authored pace plus a dedicated Enemy MoveSpeed GameplayEffect only if a second Enemy needs a distinct pace or Enemy MoveSpeed effects become real; never reuse Player `GE_Walk_MoveSpeed`.
+- Definition-wide Niagara System and Trace Radius remain the accepted symmetric-fist v1 contract. Per-source overrides are an adoption condition for a real asymmetric source, not an approved P3 cleanup or pre-authorized field addition.
+- `EnemyCombatSpacingTests.cpp` contains local state-machine simulations for some Approach/Reposition cases instead of driving the production Controller route. This is a P3 test-fidelity debt, not a current behavior defect. Its owner is `TODO-03C` only if that stage changes shared Approach/Reposition logic; then add a production `AEnemyAIController` / StateTree-facing fixture before accepting the change.
+- The prior AI3/AI3B protected-override Rider notice is not an accepted debt: no direct caller or gameplay impact was found, and H4 must not add a cleanup item merely to silence an IDE style preference.
 
-- **Implemented contract:** `AEnemyAIController` remains the sole owner of Enemy perception, `CurrentTarget`, Gameplay Focus, Home leash, tactical Reposition pace, and StateTree target events. Active Root Motion clears Gameplay Focus and returns before Controller yaw/control-rotation writes; after Root Motion ends, a valid target restores focus and Pawn yaw turns only through the bounded `800 degrees/second` recovery handoff. Cooldown Reposition temporarily captures and overrides only the controlled Enemy's `MaxWalkSpeed` to `300`, then restores the exact prior value on completion, failure, interruption, UnPossess, or death.
-- **Retention contract:** initial discovery remains the existing 140-degree Sight cone. A negative Sight stimulus for the current Player retains the target only inside `LoseSightRadius` and Home leash; the Controller's pre-`Super::Tick` revalidation clears through the existing one-time `TargetLost` route once either bound fails. Positive Sight clears only the retained-without-sight flag. `SetCurrentTarget()` now fails closed without a possessed Pawn, so a late positive perception callback after `UnPossess()` cannot restore a stale target into a later possession.
-- **Validation evidence:** the user confirmed focused Scene01 PIE for the Root-Motion-facing and retained-target player loop, then confirmed the complete 18-suite Editor Automation matrix after the late-perception safety repair, including `PolyQuest.Enemy.RootMotionFacing` and `PolyQuest.Enemy.CombatTargetRetention`. A separate manually logged `PolyQuestEditor (Development Editor)` build is not claimed; the recorded Editor Automation run is runtime evidence for the loaded current test code.
-- **Review:** Main's first defect-first Fresh Review found one P1: a late positive perception after `UnPossess()` could recreate `CurrentTarget` and bypass fresh Sight acquisition on a later possession. The central no-Pawn guard and the `UnPossess -> late positive -> re-Possess -> fresh positive` production-path regression were added. Main delta Fresh Review found no remaining P0/P1/P2. Rider errors-only inspection of the repaired Controller and retention test returned zero errors; scoped `git diff --check` passed. The Rider public-to-protected override notice is an accepted non-runtime style observation with no direct caller, not a Roadmap debt.
-- **Debt handoff:** no new accepted debt was created. `TODO-03H4` remains the canonical owner of the already-recorded future interaction between the fixed Controller-owned `300` Reposition override and any future Enemy MoveSpeed GameplayEffect/data-authored pace requirement.
-- **Commit boundary:** include only `EnemyAIController.h/.cpp`, `EnemyRootMotionFacingAutomationTests.cpp`, `EnemyCombatTargetRetentionAutomationTests.cpp`, and the synchronized project documents. Exclude all `Content/**`, `Config/**`, `.uproject`, generated files, and unrelated worktree changes.
+## Closeout And Commit Boundary
+
+- With no repair, the eventual commit contains only H4 documentation updates. With a confirmed repair, commit scope is limited to the explicitly approved source/test/document paths for that repair; never absorb user WIP as a health-review side effect.
+- `ARCHITECTURE.md` receives only stable implemented ownership facts. `ROADMAP.md` receives only completed H4 evidence and genuine unresolved debt with a closure trigger. `README.md` changes only if its public summary materially changes.
+
+## Main Fresh Review And Closeout
+
+### Findings
+
+- P0-P2: none found in the approved delivery, equipment, Bow/projectile, and Enemy Controller review surface.
+- P3, documentation/evidence correction: the initial executor-style report counted seventeen `*AutomationTests.cpp` files, but the repository contains eighteen Automation macro declarations; `EnemyCombatSpacingTests.cpp` was omitted by that glob. This is an audit-coverage correction, not a failed test or a product regression.
+- P3, validation fidelity: the omitted Combat Spacing suite uses local simulated state machines for parts of Approach/Reposition. The direct Root-Motion-facing and target-retention routes retain their existing coverage; only a future shared AI-spacing change must add the production-path fixture described above.
+
+### Evidence Accounting
+
+- Main used source/static inspection, CodeGraph call-path reads, direct test inspection, and a documentation-only code-review-graph check. The graph was built at an older SHA than `905c2e4`, so its zero-impact result was not treated as source-review coverage.
+- Existing user evidence interpreted by H4: eighteen Editor Automation suites and focused Scene01 PIE validation from the owning completed stages. H4 made no source or asset change, so it did not request or run a new compile, Automation pass, Editor readback, or PIE session.
+
+### Documentation And Commit Result
+
+- `ROADMAP.md` records H4 as complete, preserves only the concrete P3 closure conditions above, and keeps the accepted order `TODO-03H4A` -> `TODO-03H4B` -> `TODO-03C`.
+- `ARCHITECTURE.md` and `README.md` remain unchanged because this audit introduced no stable runtime contract or public-facing feature.
+- Commit scope: `plan.md` and `ROADMAP.md` only. All `.gitignore`, `Config/**`, `Content/**`, Blueprint, map, animation, and other user WIP remains excluded.
