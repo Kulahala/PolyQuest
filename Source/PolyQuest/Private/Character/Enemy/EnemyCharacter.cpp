@@ -6,6 +6,7 @@
 #include "AbilitySystem/CharacterAttributeSet.h"
 #include "AbilitySystemComponent.h"
 #include "Combat/Reaction/HitReactionClassifier.h"
+#include "Combat/Reaction/HitReactionImpactResolver.h"
 #include "Components/CapsuleComponent.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "Components/WidgetComponent.h"
@@ -62,6 +63,7 @@ void AEnemyCharacter::BeginPlay()
 	}
 
 	Super::BeginPlay();
+	bHasLoggedInvalidDeathRagdollBone = false;
 	BindDeathEvents();
 	BindUIHealthEvents();
 
@@ -75,6 +77,7 @@ void AEnemyCharacter::BeginPlay()
 void AEnemyCharacter::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
 	bDeathTeardownStarted = true;
+	PendingDeathRagdollVelocityChange = FVector::ZeroVector;
 	ClearPoiseRecovery();
 	if (UWorld* World = GetWorld())
 	{
@@ -193,6 +196,47 @@ void AEnemyCharacter::OnHealthAttributeChanged(const FOnAttributeChangeData& Cha
 	{
 		if (!IsDead())
 		{
+			PendingDeathRagdollVelocityChange = FVector::ZeroVector;
+
+			if (ChangeData.NewValue < ChangeData.OldValue && ChangeData.GEModData)
+			{
+				const FGameplayEffectSpec& EffectSpec = ChangeData.GEModData->EffectSpec;
+				const FGameplayEffectContextHandle ContextHandle = EffectSpec.GetContext();
+				const FVector LocalAttackerDirection = FHitReactionImpactResolver::ResolveImpactDirectionFromContext(ContextHandle, nullptr, this);
+
+				const FRotator ActorRotation = GetActorRotation();
+				if (!LocalAttackerDirection.IsNearlyZero()
+					&& FMath::IsFinite(LocalAttackerDirection.X)
+					&& FMath::IsFinite(LocalAttackerDirection.Y)
+					&& FMath::IsFinite(ActorRotation.Yaw)
+					&& FMath::IsFinite(DeathRagdollHorizontalVelocityChange)
+					&& DeathRagdollHorizontalVelocityChange > 0.0f
+					&& FMath::IsFinite(DeathRagdollUpwardVelocityChange)
+					&& DeathRagdollUpwardVelocityChange >= 0.0f)
+				{
+					const FRotator PlanarRotation(0.0f, ActorRotation.Yaw, 0.0f);
+					const FVector WorldAwayDirection = PlanarRotation.RotateVector(-LocalAttackerDirection);
+					if (FMath::IsFinite(WorldAwayDirection.X) && FMath::IsFinite(WorldAwayDirection.Y))
+					{
+						const FVector CandidateVelocity(
+							WorldAwayDirection.X * DeathRagdollHorizontalVelocityChange,
+							WorldAwayDirection.Y * DeathRagdollHorizontalVelocityChange,
+							DeathRagdollUpwardVelocityChange);
+
+						if (FMath::IsFinite(CandidateVelocity.X)
+							&& FMath::IsFinite(CandidateVelocity.Y)
+							&& FMath::IsFinite(CandidateVelocity.Z))
+						{
+							PendingDeathRagdollVelocityChange = CandidateVelocity;
+#if WITH_DEV_AUTOMATION_TESTS
+							LastDeathRagdollVelocityChange = CandidateVelocity;
+							DeathRagdollCaptureCount++;
+#endif
+						}
+					}
+				}
+			}
+
 			SetDeadState();
 		}
 		return;
@@ -662,6 +706,12 @@ void AEnemyCharacter::HandleDeath()
 
 void AEnemyCharacter::StartDeathRagdoll()
 {
+	const FVector ConsumedVelocityChange = PendingDeathRagdollVelocityChange;
+	PendingDeathRagdollVelocityChange = FVector::ZeroVector;
+#if WITH_DEV_AUTOMATION_TESTS
+	DeathRagdollConsumeCount++;
+#endif
+
 	if (!bUseRagdollOnDeath || bDeathRagdollStarted)
 	{
 		return;
@@ -687,6 +737,27 @@ void AEnemyCharacter::StartDeathRagdoll()
 	SkeletalMesh->SetSimulatePhysics(true);
 	SkeletalMesh->WakeAllRigidBodies();
 	bDeathRagdollStarted = true;
+
+	if (!ConsumedVelocityChange.IsNearlyZero()
+		&& FMath::IsFinite(ConsumedVelocityChange.X)
+		&& FMath::IsFinite(ConsumedVelocityChange.Y)
+		&& FMath::IsFinite(ConsumedVelocityChange.Z))
+	{
+		if (DeathRagdollImpulseBoneName != NAME_None)
+		{
+			const FBodyInstance* BodyInstance = SkeletalMesh->GetBodyInstance(DeathRagdollImpulseBoneName);
+			if (BodyInstance && SkeletalMesh->IsSimulatingPhysics(DeathRagdollImpulseBoneName))
+			{
+				SkeletalMesh->AddImpulse(ConsumedVelocityChange, DeathRagdollImpulseBoneName, true);
+			}
+			else if (!bHasLoggedInvalidDeathRagdollBone)
+			{
+				UE_LOG(LogPolyQuest, Warning, TEXT("Enemy '%s' configured death ragdoll impulse bone '%s' is not simulating physics or does not exist in Physics Asset."),
+					*GetNameSafe(this), *DeathRagdollImpulseBoneName.ToString());
+				bHasLoggedInvalidDeathRagdollBone = true;
+			}
+		}
+	}
 }
 
 void AEnemyCharacter::BindUIHealthEvents()
@@ -813,5 +884,35 @@ UEnemyHealthBarWidget* AEnemyCharacter::GetTestHealthBarWidget() const
 void AEnemyCharacter::SetTestHealthBarWidget(UEnemyHealthBarWidget* InWidget)
 {
 	EnemyHealthBarWidget = InWidget;
+}
+
+void AEnemyCharacter::ConfigureTestDeathRagdollImpact(
+	FName InImpulseBoneName,
+	float InHorizontalVelocityChange,
+	float InUpwardVelocityChange)
+{
+	DeathRagdollImpulseBoneName = InImpulseBoneName;
+	DeathRagdollHorizontalVelocityChange = InHorizontalVelocityChange;
+	DeathRagdollUpwardVelocityChange = InUpwardVelocityChange;
+}
+
+FVector AEnemyCharacter::GetTestLastDeathRagdollVelocityChange() const
+{
+	return LastDeathRagdollVelocityChange;
+}
+
+FVector AEnemyCharacter::GetTestPendingDeathRagdollVelocityChange() const
+{
+	return PendingDeathRagdollVelocityChange;
+}
+
+int32 AEnemyCharacter::GetTestDeathRagdollCaptureCount() const
+{
+	return DeathRagdollCaptureCount;
+}
+
+int32 AEnemyCharacter::GetTestDeathRagdollConsumeCount() const
+{
+	return DeathRagdollConsumeCount;
 }
 #endif

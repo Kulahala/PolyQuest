@@ -56,6 +56,15 @@ public:
 	void TriggerTestBindUIHealthEvents() { BindUIHealthEvents(); }
 	void TriggerTestUnbindUIHealthEvents() { UnbindUIHealthEvents(); }
 	void TriggerTestRefreshEnemyHealthBar() { RefreshEnemyHealthBar(); }
+
+	void ConfigureTestDeathRagdollImpact(
+		FName InImpulseBoneName,
+		float InHorizontalVelocityChange,
+		float InUpwardVelocityChange);
+	FVector GetTestLastDeathRagdollVelocityChange() const;
+	FVector GetTestPendingDeathRagdollVelocityChange() const;
+	int32 GetTestDeathRagdollCaptureCount() const;
+	int32 GetTestDeathRagdollConsumeCount() const;
 #endif
 
 	/** Native-only lifecycle hooks for pairing with Launch hit reaction stance break deferral. */
@@ -118,6 +127,15 @@ private:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Enemy|Death", meta = (AllowPrivateAccess = "true", ToolTip = "死亡时是否尝试开启物理布娃娃模拟；需要角色网格体与有效 Physics Asset，缺失时跳过布娃娃并记录 Warning。"))
 	bool bUseRagdollOnDeath = true;
 
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Enemy|Death", meta = (AllowPrivateAccess = "true", ToolTip = "死亡击飞冲量施加的目标物理骨骼名称；NAME_None 表示不施加额外方向冲量（保持自然布娃娃下落）。"))
+	FName DeathRagdollImpulseBoneName = NAME_None;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Enemy|Death", meta = (AllowPrivateAccess = "true", ClampMin = "0.0", Units = "CentimetersPerSecond", ToolTip = "死亡布娃娃远离攻击者的水平速度变化量（cm/s）。"))
+	float DeathRagdollHorizontalVelocityChange = 2000.0f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Enemy|Death", meta = (AllowPrivateAccess = "true", ClampMin = "0.0", Units = "CentimetersPerSecond", ToolTip = "死亡布娃娃向上的垂直速度变化量（cm/s）。"))
+	float DeathRagdollUpwardVelocityChange = 500.0f;
+
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Enemy|Poise", meta = (AllowPrivateAccess = "true", ToolTip = "用于定时恢复韧性值的 Instant GameplayEffect 类。"))
 	TSubclassOf<UGameplayEffect> PoiseRecoveryGameplayEffectClass;
 
@@ -159,4 +177,12 @@ private:
 	bool bPlayerLockOnHighlighted = false;
 	TWeakObjectPtr<const UGameplayEffect> ActivePoiseBreakingEffectDefinition;
 	FGameplayEffectContextHandle ActivePoiseBreakingEffectContext;
+
+	FVector PendingDeathRagdollVelocityChange = FVector::ZeroVector;
+	bool bHasLoggedInvalidDeathRagdollBone = false;
+#if WITH_DEV_AUTOMATION_TESTS
+	FVector LastDeathRagdollVelocityChange = FVector::ZeroVector;
+	int32 DeathRagdollCaptureCount = 0;
+	int32 DeathRagdollConsumeCount = 0;
+#endif
 };
