@@ -58,14 +58,14 @@ public:
 #endif
 
 private:
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Player|Parry", meta = (AllowPrivateAccess = "true"))
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Player|Parry", meta = (AllowPrivateAccess = "true", ToolTip = "弹反/招架动作动画 Montage 资产。"))
 	TObjectPtr<UAnimMontage> ParryMontage;
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Player|Parry", meta = (AllowPrivateAccess = "true"))
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Player|Parry", meta = (AllowPrivateAccess = "true", ToolTip = "弹反成功对攻击方施加削韧惩罚的 GameplayEffect 类。"))
 	TSubclassOf<UGameplayEffect> ParryCounterPoiseGameplayEffectClass;
 
 	/** Poise removed from the attacker by one successful Parry; applied as negative Data.Poise.Parry. */
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Player|Parry", meta = (AllowPrivateAccess = "true", ClampMin = "0.01"))
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Player|Parry", meta = (AllowPrivateAccess = "true", ClampMin = "0.01", ToolTip = "弹反成功直接扣除攻击方的削韧数值。"))
 	float ParryPoiseDamage = 100.0f;
 
 	UPROPERTY(Transient)

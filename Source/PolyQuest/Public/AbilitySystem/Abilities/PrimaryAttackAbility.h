@@ -41,7 +41,7 @@ public:
 		bool bWasCancelled) override;
 
 protected:
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Primary Attack", meta = (ClampMin = "0.0"))
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Primary Attack", meta = (ClampMin = "0.0", ToolTip = "主攻击输入裁决阈值（秒）；短按释放判定为轻攻击，长按超过该阈值裁决为蓄力攻击。"))
 	float ChargeThresholdSeconds = 0.2f;
 
 private:

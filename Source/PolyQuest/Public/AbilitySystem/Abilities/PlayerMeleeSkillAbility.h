@@ -56,10 +56,10 @@ protected:
 	virtual void PostCDOCompiled(const FPostCDOCompiledContext& Context) override;
 #endif
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Melee Skill")
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Melee Skill", meta = (ToolTip = "该快捷近战技能播放的动画 Montage 资产。"))
 	TObjectPtr<UAnimMontage> SkillMontage;
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Melee Skill")
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Melee Skill", meta = (ToolTip = "技能判定命中时施加的伤害 GameplayEffect 类。"))
 	TSubclassOf<UGameplayEffect> DamageGameplayEffectClass;
 
 private:

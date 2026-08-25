@@ -22,10 +22,10 @@ public:
 	virtual bool IsValidWeaponDefinition(FString& OutReason) const override;
 
 	/** The default projectile definition spawned by this bow when no custom projectile is selected. */
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Bow")
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Bow", meta = (ToolTip = "该弓默认发射的投射物数据定义资产（ProjectileDefinition）。"))
 	TObjectPtr<UProjectileDefinition> DefaultProjectileDefinition;
 
 	/** Socket name on the WeaponMesh from which projectiles are launched. */
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Bow")
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Bow", meta = (ToolTip = "武器显示网格体上用于生成投射物的发射插槽名称。"))
 	FName LaunchSocketName = TEXT("Socket_Arrow");
 };

@@ -55,19 +55,19 @@ protected:
 	/** Applies the authored global mesh Overlay briefly without altering base material slots. */
 	void TriggerHitFeedbackOverlay();
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "GAS")
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "GAS", meta = (ToolTip = "角色初始化或被 Controller 附身时默认授予的初始 Ability 列表。"))
 	TArray<TSubclassOf<UGameplayAbility>> StartupAbilities;
 
 	/** Invalid or exactly equal tags are intentionally treated as non-hostile by the narrow melee resolver. */
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Team", meta = (AllowPrivateAccess = "true"))
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Team", meta = (AllowPrivateAccess = "true", ToolTip = "角色所属战斗阵营 Gameplay Tag（如 Team.Player 或 Team.Enemy）。"))
 	FGameplayTag CombatTeamTag;
 
 	/** Translucent global Overlay applied for one short nonlethal hit-feedback flash. */
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Feedback", meta = (AllowPrivateAccess = "true"))
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Feedback", meta = (AllowPrivateAccess = "true", ToolTip = "角色受击时使网格体短暂高亮闪烁的全局材质覆层（Overlay Material）。"))
 	TObjectPtr<UMaterialInterface> HitFeedbackOverlayMaterial;
 
 	/** Duration for the hit-feedback Overlay before the prior Overlay is restored. */
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Feedback", meta = (AllowPrivateAccess = "true", ClampMin = "0.0", Units = "Seconds"))
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Feedback", meta = (AllowPrivateAccess = "true", ClampMin = "0.0", Units = "Seconds", ToolTip = "受击材质高亮闪烁持续时间（秒）。"))
 	float HitFeedbackOverlayDurationSeconds = 0.10f;
 
 private:

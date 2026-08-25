@@ -13,11 +13,11 @@ struct POLYQUEST_API FEnemyAttackSetEntry
 	GENERATED_BODY()
 
 	/** The static attack profile configuring Montage, Damage GE, AttackRange, and Cooldown. */
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Enemy Attack")
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Enemy Attack", meta = (ToolTip = "该攻击项引用的攻击动作配置数据资产（EnemyAttackProfile）。"))
 	TObjectPtr<UEnemyAttackProfile> AttackProfile = nullptr;
 
 	/** Positive selection weight relative to other eligible entries in this set. */
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Enemy Attack", meta = (ClampMin = "0.01"))
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Enemy Attack", meta = (ClampMin = "0.01", ToolTip = "在当前攻击集合中的相对抽取权重。"))
 	float SelectionWeight = 1.0f;
 };
 
@@ -67,12 +67,12 @@ private:
 	/**
 	 * The combat approach/engagement distance. The AI controller chases until reaching this distance before requesting attacks.
 	 */
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Enemy Attack", meta = (AllowPrivateAccess = "true", ClampMin = "0.01", Units = "Centimeters"))
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Enemy Attack", meta = (AllowPrivateAccess = "true", ClampMin = "0.01", Units = "Centimeters", ToolTip = "进入攻击意图评估的交战范围距离（厘米）；AI 追逐进入该距离后开始抽取并执行攻击项。"))
 	float EngagementRange = 200.0f;
 
 	/**
 	 * Candidate attacks available in this set.
 	 */
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Enemy Attack", meta = (AllowPrivateAccess = "true"))
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Enemy Attack", meta = (AllowPrivateAccess = "true", ToolTip = "该攻击集合包含的候选攻击配置及权重列表。"))
 	TArray<FEnemyAttackSetEntry> Entries;
 };

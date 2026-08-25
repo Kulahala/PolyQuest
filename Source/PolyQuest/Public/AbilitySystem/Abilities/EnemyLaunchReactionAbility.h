@@ -72,16 +72,16 @@ private:
 		LandingRecovery
 	};
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Enemy|Reaction", meta = (AllowPrivateAccess = "true"))
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Enemy|Reaction", meta = (AllowPrivateAccess = "true", ToolTip = "敌人击飞受击起飞与滞空姿态动画 Montage 资产。"))
 	TObjectPtr<UAnimMontage> TakeoffMontage;
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Enemy|Reaction", meta = (AllowPrivateAccess = "true"))
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Enemy|Reaction", meta = (AllowPrivateAccess = "true", ToolTip = "敌人击飞受击落地恢复动画 Montage 资产。"))
 	TObjectPtr<UAnimMontage> LandingRecoveryMontage;
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Enemy|Reaction", meta = (AllowPrivateAccess = "true"))
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Enemy|Reaction", meta = (AllowPrivateAccess = "true", ToolTip = "击飞受击时沿受击水平方向施加的初速度（厘米/秒）。"))
 	float LaunchHorizontalSpeed = 450.0f;
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Enemy|Reaction", meta = (AllowPrivateAccess = "true"))
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Enemy|Reaction", meta = (AllowPrivateAccess = "true", ToolTip = "击飞受击时施加的向上垂直初速度（厘米/秒）。"))
 	float LaunchVerticalSpeed = 550.0f;
 
 	UPROPERTY(Transient)

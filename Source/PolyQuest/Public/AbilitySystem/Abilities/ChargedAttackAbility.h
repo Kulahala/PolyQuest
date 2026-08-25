@@ -49,28 +49,28 @@ public:
 		bool bWasCancelled) override;
 
 protected:
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Charged Attack")
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Charged Attack", meta = (ToolTip = "蓄力攻击动画 Montage 资产。"))
 	TObjectPtr<UAnimMontage> ChargedAttackMontage;
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Charged Attack")
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Charged Attack", meta = (ToolTip = "蓄力攻击命中时施加的伤害 GameplayEffect 类。"))
 	TSubclassOf<UGameplayEffect> DamageGameplayEffectClass;
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Charged Attack", meta = (ClampMin = "0.0"))
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Charged Attack", meta = (ClampMin = "0.0", ToolTip = "蓄力攻击基础伤害数值（未蓄力倍率 1.0 时）。"))
 	float BaseDamage = 20.0f;
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Charged Attack|Charge", meta = (ClampMin = "0.0"))
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Charged Attack|Charge", meta = (ClampMin = "0.0", ToolTip = "蓄力时间下限（秒），松手蓄力时间低于此值按此基准计算。"))
 	float MinimumChargeDuration = 0.45f;
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Charged Attack|Charge", meta = (ClampMin = "0.0"))
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Charged Attack|Charge", meta = (ClampMin = "0.0", ToolTip = "达到最大蓄力伤害与削韧所需的最长蓄力时间（秒）。"))
 	float MaximumChargeDuration = 1.2f;
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Charged Attack|Charge", meta = (ClampMin = "1.0"))
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Charged Attack|Charge", meta = (ClampMin = "1.0", ToolTip = "满蓄力时的最大伤害倍率。"))
 	float MaximumDamageMultiplier = 1.8f;
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Charged Attack|Poise", meta = (ClampMin = "0.01"))
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Charged Attack|Poise", meta = (ClampMin = "0.01", ToolTip = "最低蓄力时的削韧数值。"))
 	float MinimumPoiseDamage = 25.0f;
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Charged Attack|Poise", meta = (ClampMin = "0.01"))
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Charged Attack|Poise", meta = (ClampMin = "0.01", ToolTip = "满蓄力时的最大削韧数值。"))
 	float MaximumPoiseDamage = 50.0f;
 
 private:

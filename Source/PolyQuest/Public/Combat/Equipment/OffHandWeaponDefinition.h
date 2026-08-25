@@ -24,7 +24,7 @@ public:
 	virtual bool IsValidWeaponDefinition(FString& OutReason) const override;
 
 	/** True when this committed off-hand weapon provides Shield presentation. */
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Presentation")
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Presentation", meta = (ToolTip = "该副手武器是否提供盾牌专属持握与防御动画姿态表现。"))
 	bool bProvidesShieldPresentation = false;
 };
 

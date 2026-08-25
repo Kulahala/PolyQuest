@@ -45,10 +45,10 @@ public:
 		bool bWasCancelled) override;
 
 protected:
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Sprint Attack")
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Sprint Attack", meta = (ToolTip = "冲刺攻击动画 Montage 资产。"))
 	TObjectPtr<UAnimMontage> SprintAttackMontage;
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Sprint Attack")
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Sprint Attack", meta = (ToolTip = "冲刺攻击判定命中时施加的伤害 GameplayEffect 类。"))
 	TSubclassOf<UGameplayEffect> DamageGameplayEffectClass;
 
 private:

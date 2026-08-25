@@ -1,125 +1,104 @@
-# TODO-03H4: Combat Delivery And Presentation Health Review v1
+# TODO-03H4A: Authoring Tooltip Metadata v1
 
 ## Plan State
 
-- Status: Completed read-first health review; no production repair was required and the closeout commit is documentation-only.
-- Baseline: `905c2e4` (`[Feature] 完成敌人根运动朝向与目标记忆`).
-- Objective: audit the completed combat-delivery and presentation boundaries before `TODO-03C: Ranged Enemy v1`, then either close confirmed healthy contracts without implementation changes or isolate each real blocker into a minimal approved repair slice.
-- This stage adds no player loop, weapon family, VFX system, asset migration, DataAsset field, Gameplay Tag, Input route, StateTree topology, generic framework, or authored Content change by default.
-- Preserve all current user WIP. `.gitignore`, `Config/**`, `Content/**`, maps, Blueprints, AnimBPs, GA/GE/Montage assets, `.uproject`, generated files, and unrelated source changes are not review findings or commit candidates unless a direct confirmed defect requires a separate Main scope decision.
+- Status: Completed. Gemini implemented the frozen Native Header metadata slice; Main completed the separate defect-first fresh review and the user authorized documentation closeout and commit after confirming the current-stage tests passed.
+- Baseline: `a6057ab` (`[Docs] 完成战斗投递与表现健康审查`).
+- Objective: make the current core combat authoring surface legible through concise Chinese Editor Tooltips, without changing gameplay behavior, tuning, serialization, asset wiring, or Blueprint graphs before `TODO-03H4B` and `TODO-03C`.
+- Pre-implementation static baseline: core Native headers contained rich English `/** ... */` comments but no explicit `ToolTip` property metadata. Rider offline property reads returned no usable CDO property list for representative `.uasset` files, so actual inherited-Native hover text and Blueprint-local variables remain user-owned Editor readback evidence.
+- Preserve all current user WIP. `.gitignore`, `Config/**`, `Content/**`, maps, Blueprints, AnimBPs, GA/GE/Montage assets, `.uproject`, generated files, and unrelated source changes are not automatic review or commit candidates.
 
 ## Route And Delegation
 
 Outer: `ue-stage-workflow`
-Primary: `ue5-debug-validation`
-Support: none initially
-Route reason: H4 is an evidence-led integration audit across already-completed native contracts. It must distinguish an observed gameplay defect from expected negative-test logging, authored-asset WIP, and speculative future scaling.
+Primary: `ue5-cpp-gameplay`
+Support: `ue5-blueprint-workflow`
+Route reason: the runtime surface is frozen; the Native portion is reflected `UPROPERTY` authoring metadata, while Blueprint-local authoring must be performed and read back in Unreal Editor.
 
 Plan explorers: 0
-Implementation executors: 0
+Implementation executors: 1 (Gemini only after its read-only plan review is accepted and the user explicitly authorizes execution)
 Complex Executor: none
 Main parallel work: none
-Reason: target/trace/trail/projectile/equipment/AI teardown boundaries overlap through shared Controller, AbilityTask, GAS, and presentation lifecycles. A broad audit has no safe independent implementation slice; Main owns the review conclusion and any later repair scope.
+Reason: the source work is a bounded metadata-only change. Main retains all authoring policy, public-contract ownership, Editor evidence interpretation, documentation, staging, and commit ownership; Gemini may write only the frozen Header metadata slice.
 
-## Review Surface And Primary Runtime Questions
+## Frozen Authoring Contract
 
-### 1. Delivery ownership and stale-callback safety
+### 1. Native Tooltip policy
 
-- Review `UAbilityTask_MeleeTraceWindow`, `UMeleeTraceSourceComponent`, `UMeleeWeaponTrailComponent`, relevant AnimNotify payload routing, and the multi-source Trace/Trail Automation suites.
-- Confirm one attack window remains the sole owner of endpoint sampling, shared target deduplication, and source-keyed trail requester cleanup; stale Notify/Task teardown must not close a successor window or trail.
-- Confirm invalid/degenerate endpoints fail closed before hit delivery and visual updates, without leaving active requesters/components behind.
+- Retain existing English C++ documentation comments. Add selected Chinese `meta = (ToolTip = "...")` text only where current core authoring requires a Chinese hover explanation; do not translate comments wholesale or mechanically duplicate every comment.
+- Tooltip language is Chinese plus exact technical identifiers such as `GA`, `GE`, Gameplay Tag, `bEnableTargetAssist`, or field names where they prevent ambiguity.
+- Every selected Tooltip states only the stable authoring contract: purpose, unit/range where relevant, required companion field or intentional fallback. It must not repeat mutable production balance values or claim unverified visual/runtime behavior.
+- Merge `ToolTip` into the existing metadata list. Do not change a property's name, type, default, visibility, Category, `Clamp*`, `UIMin/UIMax`, `Units`, `EditCondition`, replication, public API, Tag, Input route, or source implementation.
+- Metadata strings must not contain unescaped ASCII double quotes. Use unquoted identifiers, Chinese punctuation, or single quotes inside the explanatory text so UHT parsing remains unambiguous.
+- `ToolTip` examples establish wording style only:
+  - `TargetAssistMaxDistance`: maximum horizontal candidate distance in cm; effective only while `bEnableTargetAssist` is enabled.
+  - `HomingStartDelaySeconds`: straight-flight time in seconds before limited homing starts; requires `bEnableLimitedHoming`.
+  - `DodgeSprintHoldThresholdSeconds`: shared Dodge/Sprint input threshold in seconds; release below it requests Dodge and reaching it requests Sprint.
 
-### 2. Equipment composition and active-action teardown
+### 2. Native source scope
 
-- Review `UWeaponEquipmentComponent`, weapon definitions, Guard/Bow entry points, and transaction/Action Window/Mobile Bow Automation coverage.
-- Confirm an equipment transaction cannot leave a display, Trace source, granted spec, prepared slot, defense state, or effect handle from a displaced composition after a successful swap, rollback, death, or active-action rejection.
-- Preserve MainHand locomotion facts, committed OffHand Shield presentation, current Bow contract, and all existing GAS authority; do not redesign equipment.
+Contract owner: Main. Implementation writer: Gemini. In every listed Header, Gemini may modify only an existing current-core editable `UPROPERTY` metadata list to add or improve `ToolTip` text. No `.cpp`, `Build.cs`, Config, test, public function, field declaration shape, asset, or documentation edit is allowed.
 
-### 3. Bow, projectile, and presentation terminal paths
+- Weapon and trace authoring: `Combat/Equipment/WeaponDefinition.h`, `MeleeWeaponDefinition.h`, `BowWeaponDefinition.h`, `OffHandWeaponDefinition.h`, and `ProjectileDefinition.h`.
+  - Cover hand/locomotion presentation, display attachment/offsets, owner-mesh trace profile identity and markers, trace radius/subdivisions, Bow default projectile/launch Socket, OffHand Shield-presentation flag, projectile movement/collision, target assist, homing, and flight-trail terminal presentation.
+- Enemy data and Character/AI authoring: `AI/EnemyAIProfile.h`, `AI/EnemyAIController.h`, `Combat/Enemy/EnemyAttackProfile.h`, `EnemyAttackSet.h`, `Character/Enemy/EnemyCharacter.h`.
+  - Cover spacing/leash/sight, attack range/cooldown/guard stamina, Attack Set ownership, Poise recovery, and authored failure/relationship constraints.
+- Active Native ability authoring: current `EditDefaultsOnly` fields in `AbilitySystem/Abilities/` whose CDO is used by an asset under `Content/_Abilities/Player/**` or `Content/_Abilities/Enemy/**`.
+  - Cover authored Montage sections/references and required/optional GE links where the owner/fallback is not self-evident; Charged damage/charge/Poise values; Bow projectile/movement settings; Guard/Parry/Dodge/Sprint/Jump/Stamina links; and Player/Enemy reaction launch speeds.
+  - `EnemyMeleeAbility.h` is not a Tooltip target: its Montage, Damage GE, range, and cooldown are immutable runtime snapshots from `UEnemyAttackProfile`; authoring text belongs on `EnemyAttackProfile.h` and `EnemyAttackSet.h`.
+- Current Character/component authoring: `Character/BaseCharacter.h`, `Character/Player/PlayerCharacter.h`, `Combat/Melee/MeleeTraceSourceComponent.h`, and `Combat/Equipment/WeaponEquipmentComponent.h`.
+  - Cover only active editable combat, feedback, movement threshold, loadout/equipment, static-trace, and presentation fields. Input action bindings, runtime caches, test seams, and visible-only diagnostic state are not Tooltip targets unless they are currently edited as production authoring data.
+- A desired Tooltip outside this exact Native scope is a stop condition. Gemini returns the field, source evidence, and why it is current-core authoring data for a Main decision; it must not broaden the file list itself.
 
-- Review `UBowDrawFireAbility`, `ACombatProjectile`, `UProjectileDefinition`, targeting/homing helpers, and Lifecycle/TargetAssist/FlightTrail Automation coverage.
-- Confirm Bow's exact MoveSpeed effect handle, aim requester, cancel windows, montage/event tasks, and projectile spawn boundary converge safely through `EndAbility()`.
-- Confirm projectile collision/damage delivery remains immediate and exactly once while Flight Trail visual completion, timeout, external destruction, and world teardown remain bounded and cannot re-enable movement, homing, collision, or a second hit.
+### 3. User-owned Editor authoring
 
-### 4. Enemy combat presentation and target continuity
+- User writes Blueprint-local Tooltip/Description text only in the current core assets under:
+  - `Content/_DataAssets/{Weapon,Player_Combat,Enemy}/`
+  - `Content/_Abilities/{Player,Enemy}/`
+  - `Content/BP/Characters/Player/BP_Player.uasset` and `Content/BP/Characters/Enemy/BP_Enemy_Goblin.uasset`
+- Exclude `BP_test`, test fixtures, imported resources, unused/legacy assets, maps, AnimBPs, Montage/Notify tuning, and every asset outside those paths.
+- Target only author-editable local variables/references that control combat, movement, trace geometry, projectile targeting, Enemy AI, or presentation. Do not modify values, types, parent classes, `Instance Editable`/`Expose on Spawn` flags, event graphs, functions, or component topology.
+- Inherited Native properties receive their explanation from C++ metadata; do not create Blueprint shadow variables to add a Tooltip.
+- Built-in GameplayEffect Modifier rows are intentionally excluded. If an asset exposes a real Description field, the user may add the same concise authoring note; otherwise leave it alone. Do not introduce wrapper classes, replacement GE assets, or a generic documentation system.
 
-- Review `AEnemyAIController`, Enemy combat StateTree-facing call sites, hit-reaction/Root Motion handoff, Reposition move completion, and RootMotionFacing/CombatTargetRetention/CombatSpacing Automation coverage.
-- Confirm StateTree selects intent only; Controller owns CurrentTarget, Focus, Home leash, tactical pace, and Root Motion yaw handoff. Retained target loss must yield one deterministic TargetLost path, and late perception/teardown must not restore a stale target.
-- Preserve the completed 140-degree initial Sight rule, bounded retention, fixed v1 `300` tactical pace, and no Search/Hearing/LastKnownLocation behavior.
+## Execution Order
 
-### 5. Automation signal and evidence integrity
-
-- Classify current Automation logs as either expected negative assertion evidence, unexpected success-path signal noise, or a real product warning.
-- Inspect test fixtures only where they prove the production route. Do not turn a renderer/headless limitation, expected fail-closed warning, or user-owned asset absence into a production defect.
-- Do not claim manual compilation, Editor readback, PIE, visual, or asset validation unless the user separately supplies that evidence for this stage.
-
-## Approved Initial Files
-
-Read-only initial review surface:
-
-- `Source/PolyQuest/Public|Private/AbilitySystem/Tasks/AbilityTask_MeleeTraceWindow.*`
-- `Source/PolyQuest/Public|Private/Combat/Melee/MeleeTraceSourceComponent.*`
-- `Source/PolyQuest/Private/Combat/Melee/MeleeWeaponTrailComponent.*`
-- `Source/PolyQuest/Public|Private/Combat/Equipment/WeaponEquipmentComponent.*` and directly read weapon-definition contracts
-- `Source/PolyQuest/Public|Private/AbilitySystem/Abilities/BowDrawFireAbility.*`
-- `Source/PolyQuest/Public|Private/Combat/Projectile/CombatProjectile.*`, `ProjectileDefinition.*`, and direct targeting helpers
-- `Source/PolyQuest/Public|Private/AI/EnemyAIController.*` plus direct StateTree task/condition callers
-- Directly related Automation files: `MeleeMultiTraceSourceAutomationTests.cpp`, `MeleeWeaponTrailAutomationTests.cpp`, `WeaponEquipmentComponentAutomationTests.cpp`, `PlayerMobileBowAutomationTests.cpp`, `ProjectileLifecycleAutomationTests.cpp`, `ProjectileTargetAssistAutomationTests.cpp`, `ProjectileFlightTrailAutomationTests.cpp`, `EnemyRootMotionFacingAutomationTests.cpp`, `EnemyCombatTargetRetentionAutomationTests.cpp`, and only required fixtures/test helpers.
-- `AGENTS.md`, `ROADMAP.md`, `ARCHITECTURE.md`, and this active `plan.md` for contract/debt comparison.
-
-Any source, Config, asset, Blueprint, map, StateTree asset, public API, Tag, Input route, or Build.cs modification is a stop condition until Main records a narrow repair decision. H4 itself has no authorized production-code edits at plan acceptance.
-
-## Audit Order And Evidence Rules
-
-1. Freeze the current baseline and preserve unrelated WIP; use CodeGraph before raw source search and code-review-graph only as supplemental change/impact evidence.
-2. Trace each boundary from entry event to cleanup, including cancellation, interrupted montage/task callbacks, invalid data, actor teardown, and same-frame successor paths.
-3. Compare native source, directly relevant tests, current Roadmap debt, and user-provided Automation/PIE evidence. Source/static inspection is not runtime or visual proof.
-4. Run targeted Rider diagnostics and `git diff --check` only if H4 creates or approves a code repair. Do not invoke UBT, UAT, packaging, or Editor writes.
-5. Classify findings: P0-P2 block closeout and require a minimal repair plan; a P3 becomes Roadmap debt only when it has an affected boundary, current evidence, actual impact, closure trigger, and owning stage/release gate. Pure style observations and optional ideas remain out of the debt register.
-6. If no blocker remains, Main performs the stage Fresh Review, records stable facts in project documentation, and waits for explicit commit approval. If any repair changes runtime code, the user reruns the affected Automation and focused PIE route before that closeout.
+1. Gemini performs a first read-only review of this plan, the real Header fields, class/asset ownership, and active asset paths. It reports only P0-P2 blockers, required Main decisions, non-blocking refinements, and Editor/Automation feasibility; it does not edit, compile, write Editor state, stage, or commit.
+2. After user acceptance, Gemini rereads the approved plan and makes the frozen Header-only metadata change. It must preserve every runtime/serialization contract and follow the selected wording policy.
+3. Gemini runs targeted Rider `get_file_problems` or `lint_files` on each changed Header and `git diff --check`; it then supplies a strict implementation self-review with changed paths, exact Tooltip coverage, static results, unrun user gates, and remaining risks.
+4. User compiles `PolyQuestEditor (Development Editor)` and performs Editor readback plus Blueprint/GA/GE-local Tooltip authoring. Gemini never writes `.uasset` files or live Editor state in this stage.
+5. Main interprets the evidence, performs one independent defect-first Fresh Review, synchronizes completed-stage documentation, and prepares a scoped commit only after explicit user approval.
 
 ## Validation Matrix
 
-### Existing user evidence to interpret, not rerun by default
+### Static gate before user handoff
 
-- Current Editor Automation matrix: 18 suites, including the trace, trail, equipment, mobile Bow, projectile, and Enemy AI suites.
-- Focused Scene01 PIE evidence from their owning completed stages, including weapon trails, arrow flight trail, mobile Bow, Shield presentation, multi-source melee, and Enemy Root-Motion-facing/target retention.
+- Read final diff and each altered reflected declaration; ensure all new metadata is syntactically merged and no field behavior/default changes occur.
+- Rider reports zero Errors/Warnings for changed Headers; `git diff --check` passes.
+- CodeGraph/code-review-graph are supplemental only. Because the diff is metadata-only and Blueprints are dynamic assets, direct Header review plus Editor readback is the evidence for Tooltip coverage.
 
-### Only if H4 confirms and repairs a defect
+### User-owned compile and Editor readback
 
-1. User compiles the affected `PolyQuestEditor` target or otherwise explicitly reports the current-code build result.
-2. User reruns the exact affected Automation suite plus the full current matrix.
-3. User performs a focused Scene01 PIE repro/verification that distinguishes the original first-bad transition from the repaired outcome.
-4. Main completes a delta Fresh Review before documentation/commit.
+1. Compile `PolyQuestEditor (Development Editor)` and report the exact result.
+2. In the Details panel, hover representative Native fields on `DA_Weapon_Unarmed`, `DA_Projectile_Arrow`, `DA_EnemyAIProfile_GoblinMelee`, one `DA_EnemyAttackProfile_GoblinAxe*`, `GA_Player_Bow_DrawFire`, and `GA_Sword_ChargedAttack`.
+3. In `BP_Player` and `BP_Enemy_Goblin`, and the current Player/Enemy GA/GE assets, add/read back only approved Blueprint-local Tooltip/Description text. Confirm inherited Native fields show their C++ Tooltips rather than shadow variables.
+4. Confirm text is Chinese plus required technical identifiers, units and companion-field dependencies are correct, and no numeric value, asset reference, class parent, graph, Tag, or input mapping changed.
 
-## Existing Debt Handoff
+### Runtime scope
 
-- `TODO-03H4B` owns the header-hygiene candidates as isolated no-behavior micro-slices. `MeleeWeaponDefinition.h` may stop including `CombatLoadoutDefinition.h`, but its `.cpp` must include it directly because `IsValidWeaponDefinition()` calls `AssociatedLoadout->IsRouteTableValid()`; this is a Public-header dependency move, not removal of the C++ dependency. The four `GameplayAbilityTypes.h` candidates require individual self-sufficiency review and a clean compile; a direct public/reflected type use is valid reason to retain the include.
-- The Controller-owned fixed `300` Reposition pace remains a conditional future AI debt, not a slimming task. Trigger migration to `UEnemyAIProfile` authored pace plus a dedicated Enemy MoveSpeed GameplayEffect only if a second Enemy needs a distinct pace or Enemy MoveSpeed effects become real; never reuse Player `GE_Walk_MoveSpeed`.
-- Definition-wide Niagara System and Trace Radius remain the accepted symmetric-fist v1 contract. Per-source overrides are an adoption condition for a real asymmetric source, not an approved P3 cleanup or pre-authorized field addition.
-- `EnemyCombatSpacingTests.cpp` contains local state-machine simulations for some Approach/Reposition cases instead of driving the production Controller route. This is a P3 test-fidelity debt, not a current behavior defect. Its owner is `TODO-03C` only if that stage changes shared Approach/Reposition logic; then add a production `AEnemyAIController` / StateTree-facing fixture before accepting the change.
-- The prior AI3/AI3B protected-override Rider notice is not an accepted debt: no direct caller or gameplay impact was found, and H4 must not add a cleanup item merely to silence an IDE style preference.
+- PIE and Automation are not required for an accepted metadata-only result. If compilation, Editor readback, or accidental asset saving reveals a runtime/property regression, pause the stage and run only the affected compile, Automation, and PIE route before closeout.
 
-## Closeout And Commit Boundary
+## Non-Goals, Documentation, And Commit Boundary
 
-- With no repair, the eventual commit contains only H4 documentation updates. With a confirmed repair, commit scope is limited to the explicitly approved source/test/document paths for that repair; never absorb user WIP as a health-review side effect.
-- `ARCHITECTURE.md` receives only stable implemented ownership facts. `ROADMAP.md` receives only completed H4 evidence and genuine unresolved debt with a closure trigger. `README.md` changes only if its public summary materially changes.
+- No numeric rebalance, GE Modifier redesign, new DataAsset field, GameplayCue, generic settings/documentation framework, asset migration, localization pipeline, Blueprint graph work, UI widget work, module change, or `TODO-03H4B` cleanup is included.
+- The authored GE values remain the current Editor asset source of truth. Native Tooltip text may explain a GE's role but must not duplicate mutable multipliers, damage values, or timeout tuning into architecture/roadmap prose.
+- After validation, `ARCHITECTURE.md` remains unchanged unless a durable runtime contract unexpectedly changes; `README.md` remains unchanged. Main updates `ROADMAP.md` and this plan only at stage closeout.
+- Default commit scope is changed Native Header files plus synchronized project documentation. User-authored `Content/**` Tooltip/Description WIP remains excluded unless the user separately approves a stable authored-asset closure and its LFS pointer check.
 
-## Main Fresh Review And Closeout
+## Closeout Record — 2026-08-26
 
-### Findings
-
-- P0-P2: none found in the approved delivery, equipment, Bow/projectile, and Enemy Controller review surface.
-- P3, documentation/evidence correction: the initial executor-style report counted seventeen `*AutomationTests.cpp` files, but the repository contains eighteen Automation macro declarations; `EnemyCombatSpacingTests.cpp` was omitted by that glob. This is an audit-coverage correction, not a failed test or a product regression.
-- P3, validation fidelity: the omitted Combat Spacing suite uses local simulated state machines for parts of Approach/Reposition. The direct Root-Motion-facing and target-retention routes retain their existing coverage; only a future shared AI-spacing change must add the production-path fixture described above.
-
-### Evidence Accounting
-
-- Main used source/static inspection, CodeGraph call-path reads, direct test inspection, and a documentation-only code-review-graph check. The graph was built at an older SHA than `905c2e4`, so its zero-impact result was not treated as source-review coverage.
-- Existing user evidence interpreted by H4: eighteen Editor Automation suites and focused Scene01 PIE validation from the owning completed stages. H4 made no source or asset change, so it did not request or run a new compile, Automation pass, Editor readback, or PIE session.
-
-### Documentation And Commit Result
-
-- `ROADMAP.md` records H4 as complete, preserves only the concrete P3 closure conditions above, and keeps the accepted order `TODO-03H4A` -> `TODO-03H4B` -> `TODO-03C`.
-- `ARCHITECTURE.md` and `README.md` remain unchanged because this audit introduced no stable runtime contract or public-facing feature.
-- Commit scope: `plan.md` and `ROADMAP.md` only. All `.gitignore`, `Config/**`, `Content/**`, Blueprint, map, animation, and other user WIP remains excluded.
+- **Delivered surface:** 145 Chinese `ToolTip` metadata entries across 34 approved Native Public Headers. Existing English code comments, reflected field shapes, defaults, categories, clamps, units, edit conditions, runtime logic, Gameplay Tags, Inputs, Config, and assets remain unchanged.
+- **Main wording corrections:** clarified Enemy `AttackRange` as an AI execution/approach distance rather than collision range; removed an unsupported death-animation fallback claim for missing Physics Assets; documented current Sight retention, owner-mesh Trace mutual exclusion/default-source rules, target-assist pitch reference, and the Hit Feedback Overlay scope. An accidental BOM-only diff was restored.
+- **Static evidence:** Main direct diff review confirmed every changed Header content line is a `UPROPERTY` metadata declaration; metadata scan found no duplicate `ToolTip` key or unsafe ASCII quote; Rider error-only inspection reported zero Errors; `git diff --check` passed. Rider warning-level output on untouched declarations remains existing hygiene debt for the separate slimming/health route, not an H4A behavior change.
+- **User evidence:** the user confirmed the current-stage tests passed and explicitly authorized closeout/commit. This record does not invent a separate compile log, PIE result, or Editor hover screenshot beyond that confirmation.
+- **Documentation/commit boundary:** `ARCHITECTURE.md` and `README.md` remain unchanged because no runtime contract changed. The scoped commit includes only the 34 Native Headers, this completed plan, and `ROADMAP.md`; all user-owned `Content/**`, `Config/**`, project, map, Blueprint, AnimBP, GA/GE, Montage, and imported-asset WIP remain excluded.

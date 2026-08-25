@@ -38,13 +38,13 @@ public:
 		bool bWasCancelled) override;
 
 protected:
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Sprint")
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Sprint", meta = (ToolTip = "冲刺期间施加的移速加成 GameplayEffect 类。"))
 	TSubclassOf<UGameplayEffect> MoveSpeedGameplayEffectClass;
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Sprint")
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Sprint", meta = (ToolTip = "冲刺期间周期性消耗体力的 GameplayEffect 类。"))
 	TSubclassOf<UGameplayEffect> StaminaDrainGameplayEffectClass;
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Sprint")
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Sprint", meta = (ToolTip = "冲刺结束或体力耗尽后延迟体力恢复的 GameplayEffect 类。"))
 	TSubclassOf<UGameplayEffect> StaminaRegenDelayGameplayEffectClass;
 
 private:

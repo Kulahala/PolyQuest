@@ -51,7 +51,7 @@ protected:
 	virtual bool ShouldApplyStaminaRegenDelayOnEnd() const { return true; }
 
 	/** Default effect applied after a committed Stamina action ends to delay periodic recovery. */
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Stamina")
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Stamina", meta = (ToolTip = "体力消耗动作结束后延迟体力自然恢复的默认 GameplayEffect 类。"))
 	TSubclassOf<UGameplayEffect> StaminaRegenDelayGameplayEffectClass;
 
 private:

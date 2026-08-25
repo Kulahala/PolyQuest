@@ -46,31 +46,31 @@ private:
 	TWeakObjectPtr<UWeaponEquipmentComponent> CachedEquipmentComponent;
 
 	/** Optional static melee weapon definition used as a geometry provider on non-equipped (e.g. enemy) owners. */
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Melee Trace|Source", meta = (AllowPrivateAccess = "true"))
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Melee Trace|Source", meta = (AllowPrivateAccess = "true", ToolTip = "无装备组件所有者（如敌人固化配置）用于提供刀刃扫掠几何数据的静态武器定义资产。"))
 	TObjectPtr<UMeleeWeaponDefinition> StaticMeleeWeaponDefinition;
 
 	/** The actual weapon display component. This v1 name is shared by player and first-enemy fixed fixtures without equipment. */
-	UPROPERTY(VisibleDefaultsOnly, BlueprintReadOnly, Category = "Melee Trace|Source", meta = (AllowPrivateAccess = "true"))
+	UPROPERTY(VisibleDefaultsOnly, BlueprintReadOnly, Category = "Melee Trace|Source", meta = (AllowPrivateAccess = "true", ToolTip = "用于挂接判定点或外观的武器显示组件名称（默认为 WeaponMesh）。"))
 	FName WeaponDisplayComponentName = TEXT("WeaponMesh");
 
 	/** A non-colliding SceneComponent attached below WeaponDisplayComponentName at the blade root. */
-	UPROPERTY(VisibleDefaultsOnly, BlueprintReadOnly, Category = "Melee Trace|Source", meta = (AllowPrivateAccess = "true"))
+	UPROPERTY(VisibleDefaultsOnly, BlueprintReadOnly, Category = "Melee Trace|Source", meta = (AllowPrivateAccess = "true", ToolTip = "固定夹具模式下刀刃根部追踪组件名称（默认为 BladeTraceBase）。"))
 	FName BladeTraceBaseComponentName = TEXT("BladeTraceBase");
 
 	/** A non-colliding SceneComponent attached below WeaponDisplayComponentName at the blade tip. */
-	UPROPERTY(VisibleDefaultsOnly, BlueprintReadOnly, Category = "Melee Trace|Source", meta = (AllowPrivateAccess = "true"))
+	UPROPERTY(VisibleDefaultsOnly, BlueprintReadOnly, Category = "Melee Trace|Source", meta = (AllowPrivateAccess = "true", ToolTip = "固定夹具模式下刀刃尖端追踪组件名称（默认为 BladeTraceTip）。"))
 	FName BladeTraceTipComponentName = TEXT("BladeTraceTip");
 
 	/** Fixed-fixture sweep radius; equipped players read the weapon definition instead. */
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Melee Trace|Trace", meta = (AllowPrivateAccess = "true", ClampMin = "0.0"))
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Melee Trace|Trace", meta = (AllowPrivateAccess = "true", ClampMin = "0.0", ToolTip = "固定夹具模式下的近战球扫掠判定半径（厘米）；玩家装备武器时优先使用武器定义配置。"))
 	float TraceRadius = 12.0f;
 
 	/** Must match the project MeleeTrace trace channel in DefaultEngine.ini. */
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Melee Trace|Trace", meta = (AllowPrivateAccess = "true"))
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Melee Trace|Trace", meta = (AllowPrivateAccess = "true", ToolTip = "近战判定所使用的碰撞通道，必须与 DefaultEngine.ini 中的 MeleeTrace 匹配。"))
 	TEnumAsByte<ECollisionChannel> TraceChannel = ECC_GameTraceChannel1;
 
 	/** Fixed-fixture sphere-sweep samples; equipped players read the weapon definition instead. */
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Melee Trace|Trace", meta = (AllowPrivateAccess = "true", ClampMin = "1", ClampMax = "8"))
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Melee Trace|Trace", meta = (AllowPrivateAccess = "true", ClampMin = "1", ClampMax = "8", ToolTip = "固定夹具模式下刀刃根部到尖端的插值采样段数；玩家装备武器时优先使用武器定义配置。"))
 	int32 BladeSubdivisions = 4;
 
 	bool bConfigurationWarningIssued = false;

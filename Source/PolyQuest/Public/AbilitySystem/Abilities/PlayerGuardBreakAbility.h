@@ -47,7 +47,7 @@ public:
 #endif
 
 private:
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Player|Guard", meta = (AllowPrivateAccess = "true"))
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Player|Guard", meta = (AllowPrivateAccess = "true", ToolTip = "格挡耗尽体力被破防时播放的硬直动画 Montage 资产。"))
 	TObjectPtr<UAnimMontage> GuardBreakMontage;
 
 	UPROPERTY(Transient)

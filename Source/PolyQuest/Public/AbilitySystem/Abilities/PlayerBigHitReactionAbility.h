@@ -55,7 +55,7 @@ public:
 #endif
 
 private:
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Player|Reaction", meta = (AllowPrivateAccess = "true"))
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Player|Reaction", meta = (AllowPrivateAccess = "true", ToolTip = "玩家受到重击受击（Big Tier）时播放的全身受击动画 Montage 资产。"))
 	TObjectPtr<UAnimMontage> BigHitReactionMontage;
 
 	UPROPERTY(Transient)

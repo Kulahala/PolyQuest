@@ -107,35 +107,35 @@ protected:
 	UInputAction* TargetCycleAction;
 
 	/** Hold duration at which the shared Dodge/Sprint input resolves to Sprint intent. */
-	UPROPERTY(EditDefaultsOnly, Category="Input", meta=(ClampMin="0.01", UIMin="0.01"))
+	UPROPERTY(EditDefaultsOnly, Category="Input", meta=(ClampMin="0.01", UIMin="0.01", ToolTip="共享闪避/冲刺按键长按判定时间阈值（秒）；短于此时间释放触发闪避，达到此时间触发冲刺。"))
 	float DodgeSprintHoldThresholdSeconds = 0.15f;
 
 	/** Continuous periodic GameplayEffect that recovers Stamina when its tag requirements allow it. */
-	UPROPERTY(EditDefaultsOnly, Category="GAS|Stamina")
+	UPROPERTY(EditDefaultsOnly, Category="GAS|Stamina", meta=(ToolTip="玩家常驻周期性恢复体力的 GameplayEffect 类。"))
 	TSubclassOf<UGameplayEffect> StaminaRegenGameplayEffectClass;
 
 	/** Infinite move-speed effect retained while the Player is recovering from Stamina exhaustion. */
-	UPROPERTY(EditDefaultsOnly, Category="GAS|Stamina")
+	UPROPERTY(EditDefaultsOnly, Category="GAS|Stamina", meta=(ToolTip="玩家体力耗尽力竭期间施加的移速限制 GameplayEffect 类。"))
 	TSubclassOf<UGameplayEffect> ExhaustionMoveSpeedGameplayEffectClass;
 
 	/** Local camera shake played when this Player receives Small tier hit reaction damage. */
-	UPROPERTY(EditDefaultsOnly, Category="Combat|Feedback")
+	UPROPERTY(EditDefaultsOnly, Category="Combat|Feedback", meta=(ToolTip="玩家受到轻击受击（Small Tier）时触发的摄像机震屏效果类。"))
 	TSubclassOf<UCameraShakeBase> SmallHitFeedbackCameraShakeClass;
 
 	/** Local camera shake played when this Player receives Big tier hit reaction damage. */
-	UPROPERTY(EditDefaultsOnly, Category="Combat|Feedback")
+	UPROPERTY(EditDefaultsOnly, Category="Combat|Feedback", meta=(ToolTip="玩家受到重击受击（Big Tier）时触发的摄像机震屏效果类。"))
 	TSubclassOf<UCameraShakeBase> BigHitFeedbackCameraShakeClass;
 
 	/** Local camera shake played when this Player receives Launch tier hit reaction damage. */
-	UPROPERTY(EditDefaultsOnly, Category="Combat|Feedback")
+	UPROPERTY(EditDefaultsOnly, Category="Combat|Feedback", meta=(ToolTip="玩家受到击飞受击（Launch Tier）时触发的摄像机震屏效果类。"))
 	TSubclassOf<UCameraShakeBase> LaunchHitFeedbackCameraShakeClass;
 
 	/** The authored combat routes applied to this player at BeginPlay. */
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Loadout", meta = (AllowPrivateAccess = "true"))
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Loadout", meta = (AllowPrivateAccess = "true", ToolTip = "玩家初始生效的战斗输入路由资产（CombatLoadoutDefinition）。"))
 	TObjectPtr<UCombatLoadoutDefinition> InitialCombatLoadout;
 
 	/** Required default weapon equipped once at BeginPlay; missing is a fail-visible configuration error. */
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Equipment", meta = (AllowPrivateAccess = "true"))
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Equipment", meta = (AllowPrivateAccess = "true", ToolTip = "玩家 BeginPlay 时默认装备的武器定义资产（MeleeWeaponDefinition）。"))
 	TObjectPtr<UMeleeWeaponDefinition> DefaultEquippedWeapon;
 
 public:

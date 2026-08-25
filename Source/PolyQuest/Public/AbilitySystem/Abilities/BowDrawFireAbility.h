@@ -82,27 +82,27 @@ public:
 
 protected:
 	/** Authored bow animation montage (Draw -> Hold -> Release). */
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Bow|Animation")
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Bow|Animation", meta = (ToolTip = "弓箭拉弓、蓄力与释放完整流程的动画 Montage。"))
 	TObjectPtr<UAnimMontage> BowMontage;
 
 	/** Section name for the initial draw animation phase. */
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Bow|Animation")
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Bow|Animation", meta = (ToolTip = "拉弓起手阶段在 Montage 中的 Section 名称。"))
 	FName DrawSectionName = TEXT("Draw");
 
 	/** Section name for the held draw animation loop. */
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Bow|Animation")
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Bow|Animation", meta = (ToolTip = "拉满蓄力维持阶段在 Montage 中的 Section 名称。"))
 	FName HoldSectionName = TEXT("Hold");
 
 	/** Section name for the release animation phase. */
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Bow|Animation")
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Bow|Animation", meta = (ToolTip = "松手射出阶段在 Montage 中的 Section 名称。"))
 	FName ReleaseSectionName = TEXT("Release");
 
 	/** Optional projectile Actor class override; defaults to ACombatProjectile. */
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Bow|Projectile")
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Bow|Projectile", meta = (ToolTip = "可选的投射物 Actor 类重写，默认使用 ACombatProjectile。"))
 	TSubclassOf<ACombatProjectile> ProjectileClass;
 
 	/** Authored continuous move-speed GameplayEffect applied during the active mobile Bow lifecycle. */
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Bow|Movement")
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Bow|Movement", meta = (ToolTip = "拉弓移动期间施加的移动速度修饰 GameplayEffect 类。"))
 	TSubclassOf<UGameplayEffect> MobileBowMoveSpeedGameplayEffectClass;
 
 private:

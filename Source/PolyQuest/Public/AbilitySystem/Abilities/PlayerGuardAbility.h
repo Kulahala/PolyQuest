@@ -53,19 +53,19 @@ public:
 	bool TryGuardMeleeHit(AActor* AttackingActor, float GuardStaminaDamage);
 
 private:
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Player|Guard", meta = (AllowPrivateAccess = "true"))
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Player|Guard", meta = (AllowPrivateAccess = "true", ToolTip = "持盾/武器防御姿态的循环动画 Montage 资产。"))
 	TObjectPtr<UAnimMontage> GuardMontage;
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Player|Guard", meta = (AllowPrivateAccess = "true"))
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Player|Guard", meta = (AllowPrivateAccess = "true", ToolTip = "防御期间施加的移动速度减速 GameplayEffect 类。"))
 	TSubclassOf<UGameplayEffect> GuardMoveSpeedGameplayEffectClass;
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Player|Guard", meta = (AllowPrivateAccess = "true"))
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Player|Guard", meta = (AllowPrivateAccess = "true", ToolTip = "防御期间降低体力恢复速度的乘数 GameplayEffect 类。"))
 	TSubclassOf<UGameplayEffect> GuardStaminaRegenMultiplierGameplayEffectClass;
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Player|Guard", meta = (AllowPrivateAccess = "true"))
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Player|Guard", meta = (AllowPrivateAccess = "true", ToolTip = "成功格挡攻击时扣除体力的 GameplayEffect 类。"))
 	TSubclassOf<UGameplayEffect> GuardStaminaCostGameplayEffectClass;
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Player|Guard", meta = (AllowPrivateAccess = "true"))
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Player|Guard", meta = (AllowPrivateAccess = "true", ToolTip = "格挡消耗体力后重置体力自然恢复延迟的 GameplayEffect 类。"))
 	TSubclassOf<UGameplayEffect> StaminaRegenDelayGameplayEffectClass;
 
 	UPROPERTY(Transient)

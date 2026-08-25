@@ -52,47 +52,47 @@ public:
 	virtual bool IsValidWeaponDefinition(FString& OutReason) const;
 
 	/** Which hand slot this item occupies when equipped. */
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Slot")
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Slot", meta = (ToolTip = "装备占用手部槽位类型（主手单手/主手双手/副手）。"))
 	EWeaponHandSlot HandSlot = EWeaponHandSlot::MainHandOneHanded;
 
 	/** Base locomotion mode authored on this weapon definition. Default for unarmed and generic weapons. */
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Locomotion")
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Locomotion", meta = (ToolTip = "该武器族系的基础移动姿态模式（Default/LightSword/HeavySword/Bow）。"))
 	EWeaponLocomotionMode LocomotionMode = EWeaponLocomotionMode::Default;
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Display")
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Display", meta = (ToolTip = "装备时生成的武器显示静态网格体资产。"))
 	TObjectPtr<UStaticMesh> WeaponMesh;
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Display")
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Display", meta = (ToolTip = "武器显示网格体附着到角色骨骼网格体上的插槽名称（如 Weapon_R 或 Weapon_L）。"))
 	FName AttachSocketName = TEXT("Weapon_R");
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Display")
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Display", meta = (ToolTip = "武器显示网格体相对于附着插槽的局部位置偏移。"))
 	FVector DisplayLocationOffset = FVector::ZeroVector;
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Display")
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Display", meta = (ToolTip = "武器显示网格体相对于附着插槽的局部旋转偏移。"))
 	FRotator DisplayRotationOffset = FRotator::ZeroRotator;
 
 	/** Candidate grouping only: these ability classes join the same runtime candidate union as ExclusiveCombatActions. */
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Combat Actions")
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Combat Actions", meta = (ToolTip = "可复用战斗技能候选 Ability 类列表，运行时与独占列表合并为候选技能池。"))
 	TArray<TSubclassOf<UGameplayAbility>> ReusableCombatActions;
 
 	/** Compat-retained candidate grouping merged into the same runtime candidate union as ReusableCombatActions; no exclusivity rule is implemented in v1 (real exclusive selection belongs to TODO-03D1). */
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Combat Actions")
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Combat Actions", meta = (ToolTip = "专属战斗技能候选 Ability 类列表，运行时与可复用列表合并为候选技能池。"))
 	TArray<TSubclassOf<UGameplayAbility>> ExclusiveCombatActions;
 
 	/** The always-granted-while-equipped ability chain (Light/Charged/Sprint Attack per weapon family); validated disjoint from the candidate lists. */
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Combat Actions")
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Combat Actions", meta = (ToolTip = "装备此武器期间常驻授予的基础攻击 Ability 列表（如轻攻击/蓄力攻击/冲刺攻击），与候选列表互斥。"))
 	TArray<TSubclassOf<UGameplayAbility>> BaseGrantedActions;
 
 	/** The initial 1-4 layout; at most four entries, null entries are legal no-op slots, and duplicate non-null classes are rejected. */
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Prepared Slots")
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Prepared Slots", meta = (ToolTip = "初始 1-4 号快捷技能槽位配置，最多 4 项，项必须属于候选技能列表或留空。"))
 	TArray<TSubclassOf<UGameplayAbility>> DefaultPreparedActions;
 
 	/** Optional Defense Profile; effective as fallback from the main hand and as override from the off hand. */
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Defense")
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Defense", meta = (ToolTip = "可选防御配置资产；主手作为防御回退源，副手作为防御覆盖源。"))
 	TObjectPtr<UDefenseProfileDefinition> DefenseProfile;
 
 	/** The Base Input Profile consumed by the main hand (TODO-03A field name retained for asset compatibility). */
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Loadout")
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Loadout", meta = (ToolTip = "主手装备所使用的基础输入路由配置资产（Combat Loadout）。"))
 	TObjectPtr<UCombatLoadoutDefinition> AssociatedLoadout;
 };
 

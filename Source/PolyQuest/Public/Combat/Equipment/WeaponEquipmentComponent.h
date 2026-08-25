@@ -121,7 +121,7 @@ protected:
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 
 	/** The explicit Unarmed definition asset; configured on BP_Player. */
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Equipment")
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Equipment", meta = (ToolTip = "双手武器替换为副手武器等场景下使用的规范空手回退武器定义资产（DA_Weapon_Unarmed）。"))
 	TObjectPtr<UMeleeWeaponDefinition> UnarmedFallbackDefinition;
 
 private:

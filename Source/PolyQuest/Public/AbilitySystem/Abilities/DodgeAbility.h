@@ -67,10 +67,10 @@ public:
 #endif
 
 protected:
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Dodge")
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Dodge", meta = (ToolTip = "翻滚/闪避动作动画 Montage 资产。"))
 	TObjectPtr<UAnimMontage> DodgeMontage;
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Dodge")
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Dodge", meta = (ToolTip = "闪避无敌帧窗口期间施加的无敌状态 GameplayEffect 类。"))
 	TSubclassOf<UGameplayEffect> InvulnerabilityGameplayEffectClass;
 
 private:

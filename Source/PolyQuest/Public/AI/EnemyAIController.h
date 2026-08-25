@@ -251,20 +251,20 @@ private:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "AI|Components", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<UStateTreeAIComponent> StateTreeComponent;
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "AI|Sight", meta = (AllowPrivateAccess = "true", ClampMin = "0.0", Units = "Centimeters"))
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "AI|Sight", meta = (AllowPrivateAccess = "true", ClampMin = "0.0", Units = "Centimeters", ToolTip = "AI 视觉感知的最大初始发现半径（厘米）。"))
 	float SightRadius = 1500.0f;
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "AI|Sight", meta = (AllowPrivateAccess = "true", ClampMin = "0.0", Units = "Centimeters"))
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "AI|Sight", meta = (AllowPrivateAccess = "true", ClampMin = "0.0", Units = "Centimeters", ToolTip = "已发现目标的视觉感知保持半径（厘米），必须大于等于 SightRadius；失去视线后仍在此半径且未越过 Leash 时，战斗目标会暂时保留。"))
 	float LoseSightRadius = 1800.0f;
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "AI|Sight", meta = (AllowPrivateAccess = "true", ClampMin = "0.0", ClampMax = "180.0", Units = "Degrees"))
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "AI|Sight", meta = (AllowPrivateAccess = "true", ClampMin = "0.0", ClampMax = "180.0", Units = "Degrees", ToolTip = "AI 视觉感知圆锥的水平半角（度）。"))
 	float PeripheralVisionHalfAngleDegrees = 70.0f;
 
 	/** AttackSet EngagementRange cached at runtime. StateTree binds through GetMeleeRange rather than treating this as CDO tuning. */
 	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category = "AI|Combat", meta = (AllowPrivateAccess = "true", Units = "Centimeters"))
 	float MeleeRange = 0.0f;
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "AI|Home", meta = (AllowPrivateAccess = "true", ClampMin = "0.0", Units = "Centimeters"))
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "AI|Home", meta = (AllowPrivateAccess = "true", ClampMin = "0.0", Units = "Centimeters", ToolTip = "脱战返回出生点移动请求的到达容差半径（厘米）。"))
 	float HomeAcceptanceRadius = 50.0f;
 
 	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category = "AI|Target", meta = (AllowPrivateAccess = "true"))

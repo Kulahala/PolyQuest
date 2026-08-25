@@ -49,7 +49,7 @@ public:
 #endif
 
 private:
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Player|Reaction", meta = (AllowPrivateAccess = "true"))
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Player|Reaction", meta = (AllowPrivateAccess = "true", ToolTip = "玩家受到轻击受击（Small Tier）时播放的叠加层受击动画 Montage 资产。"))
 	TObjectPtr<UAnimMontage> SmallHitReactionMontage;
 
 	UPROPERTY(Transient)

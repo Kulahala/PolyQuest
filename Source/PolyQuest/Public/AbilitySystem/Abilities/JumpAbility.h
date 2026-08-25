@@ -43,6 +43,6 @@ protected:
 	virtual bool ShouldApplyStaminaRegenDelayOnEnd() const override { return false; }
 
 	/** Applied from takeoff until landing when Jump starts from an active Sprint. */
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Jump")
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Jump", meta = (ToolTip = "从冲刺状态起跳后在滞空期间维持水平冲刺速度的 GameplayEffect 类。"))
 	TSubclassOf<UGameplayEffect> SprintJumpAirSpeedGameplayEffectClass;
 };

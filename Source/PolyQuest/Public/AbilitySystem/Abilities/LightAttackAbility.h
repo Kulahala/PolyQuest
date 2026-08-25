@@ -36,10 +36,10 @@ public:
 		bool bWasCancelled) override;
 
 protected:
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combo")
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combo", meta = (ToolTip = "连续轻攻击连招段落配置数据资产（ComboChainDataAsset）。"))
 	TObjectPtr<UComboChainDataAsset> ComboDefinition;
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Attack")
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Attack", meta = (ToolTip = "轻攻击命中时施加的伤害 GameplayEffect 类。"))
 	TSubclassOf<UGameplayEffect> DamageGameplayEffectClass;
 
 private:

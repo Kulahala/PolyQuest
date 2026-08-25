@@ -48,7 +48,7 @@ public:
 #endif
 
 private:
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Enemy|Stance Break", meta = (AllowPrivateAccess = "true"))
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Enemy|Stance Break", meta = (AllowPrivateAccess = "true", ToolTip = "敌人韧性归零发生架势崩解（Stance Break）时播放的虚弱硬直动画 Montage 资产。"))
 	TObjectPtr<UAnimMontage> StanceBreakMontage;
 
 	UPROPERTY(Transient)

@@ -109,25 +109,25 @@ private:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "UI|Enemy", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<UWidgetComponent> EnemyHealthBarWidgetComponent;
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Enemy", meta = (AllowPrivateAccess = "true"))
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Enemy", meta = (AllowPrivateAccess = "true", ToolTip = "敌人使用的攻击集合配置资产（EnemyAttackSet）。"))
 	TObjectPtr<UEnemyAttackSet> AttackSet;
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "AI|Enemy", meta = (AllowPrivateAccess = "true"))
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "AI|Enemy", meta = (AllowPrivateAccess = "true", ToolTip = "敌人空间走位、重定位与警戒距离配置资产（EnemyAIProfile）。"))
 	TObjectPtr<UEnemyAIProfile> AIProfile;
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Enemy|Death", meta = (AllowPrivateAccess = "true"))
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Enemy|Death", meta = (AllowPrivateAccess = "true", ToolTip = "死亡时是否尝试开启物理布娃娃模拟；需要角色网格体与有效 Physics Asset，缺失时跳过布娃娃并记录 Warning。"))
 	bool bUseRagdollOnDeath = true;
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Enemy|Poise", meta = (AllowPrivateAccess = "true"))
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Enemy|Poise", meta = (AllowPrivateAccess = "true", ToolTip = "用于定时恢复韧性值的 Instant GameplayEffect 类。"))
 	TSubclassOf<UGameplayEffect> PoiseRecoveryGameplayEffectClass;
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Enemy|Poise", meta = (AllowPrivateAccess = "true", ClampMin = "0.0", Units = "Seconds"))
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Enemy|Poise", meta = (AllowPrivateAccess = "true", ClampMin = "0.0", Units = "Seconds", ToolTip = "受到削韧攻击后重新启动韧性自然恢复的延迟时间（秒）。"))
 	float PoiseRecoveryDelaySeconds = 2.0f;
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Enemy|Poise", meta = (AllowPrivateAccess = "true", ClampMin = "0.0"))
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Enemy|Poise", meta = (AllowPrivateAccess = "true", ClampMin = "0.0", ToolTip = "每秒恢复的韧性数值。"))
 	float PoiseRecoveryRate = 10.0f;
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Enemy|Poise", meta = (AllowPrivateAccess = "true", ClampMin = "0.01", Units = "Seconds"))
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Enemy|Poise", meta = (AllowPrivateAccess = "true", ClampMin = "0.01", Units = "Seconds", ToolTip = "韧性恢复定时器的 Tick 触发间隔（秒）。"))
 	float PoiseRecoveryTickIntervalSeconds = 0.1f;
 
 	FGameplayTag DeadStateTag;
