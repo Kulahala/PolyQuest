@@ -1,169 +1,124 @@
-# TODO-07B3: Projectile Flight Trail v1
+# TODO-03AI3B: Enemy Combat Target Retention v1
 
 ## Plan State
 
-- Status: Completed. The user confirmed focused PIE and the sixteen-suite Unreal Editor Automation matrix; the terminal-fade correction passed Main's delta Fresh Review after its non-finite-timeout, null-System silence, and Niagara completion-reentrancy repairs.
-- Baseline: c1934a3 ([Fix] 补齐 Locomotion 模式枚举空洞以修复动画蓝图混合分支 (Fill Locomotion Mode Enum Gap For AnimNode BlendListByEnum)). The existing uncommitted Projectile Flight Trail source/test work is this stage's active worktree, not unrelated WIP.
-- Objective: add one optional, data-driven Niagara flight trail to the existing ACombatProjectile. The first authored closure is a white arrow-tail trail that naturally finishes after a hit or lifespan expiry before its owner Actor is destroyed; future ordinary, fire, and frost Definitions can select different Niagara Systems without new Projectile Actor or Blueprint subclasses.
-- User decisions frozen for v1:
-  - Editor authors only one arrow-mesh Socket: FX_Trail, located at the arrow tail/fletching.
-  - Editor authors only the ordinary white flight-trail Niagara System in this slice.
-  - A configured System with a missing named Socket logs one focused Warning for that Projectile Actor and falls back to ProjectileMeshComponent root. It never invalidates the Definition, prevents launch, or changes combat delivery.
-  - A null System is an intentional silent visual no-op.
-  - A terminal flight trail stops emitting through Deactivate(), completes naturally, then destroys its still-owning Projectile Actor through OnSystemFinished or a Definition-authored timeout fallback. Detaching is visual-only while the Actor remains alive; ownership is never transferred.
-- Preserve all unrelated WIP. Do not modify, stage, move, delete, or infer product behavior from .gitignore, Config/**, Content/**, maps, Blueprints, AnimBPs, GA/GE/Montage assets, .uproject, or generated output.
+- Status: Completed. TODO-03AI3 and this blocking retention repair have passed their user-confirmed validation gates and Main's initial plus delta Fresh Reviews; this file remains as the completed-stage handoff record until the next accepted plan replaces it.
+- Baseline: 7b78187dfedd6af9f98c8240e234203683a8a40d ([Feature] 完成投射物飞行拖尾).
+- The uncommitted TODO-03AI3 Controller/header/test work already in the worktree is approved active-stage work, not unrelated WIP; preserve it.
+- Objective: after an Enemy acquires the Player as combat target, retain that target through a temporary negative sight stimulus caused by the Player moving behind it, while still clearing deterministically when the Player leaves the existing combat-memory distance or the Enemy breaks its Home leash.
+- Frozen v1 decisions:
+  - Initial discovery remains the existing 140-degree sight cone. Passive Enemies do not become globally 360-degree aware.
+  - Post-acquisition memory retains the current target only while it is valid, within existing LoseSightRadius in 2D, and the Enemy remains within existing Home LeashRadius.
+  - Existing LoseSightRadius is the v1 memory distance. Do not add a DataAsset field, config value, grace timer, or Gameplay Tag.
+  - Distance escape, Home-leash break, target invalidation/destruction, explicit clear, Enemy death, and UnPossess use the existing one-time ClearCurrentTarget(true) route.
+  - No Search state, LastKnownLocation, Hearing/Damage sense, target retargeting, StateTree topology, animation, or perception-asset edit is included.
+- Preserve all unrelated user WIP. Do not modify, stage, move, delete, or infer product behavior from .gitignore, Config/**, Content/**, maps, Blueprints, AnimBPs, GA/GE/Montage assets, .uproject, generated output, or any unlisted source file.
 
-~~~text
+## Route And Delegation
+
 Outer: ue-stage-workflow
 Primary: ue5-cpp-gameplay
-Support: unreal-niagara, ue5-debug-validation
-Route reason: this slice adds immutable Definition presentation data and one Actor-owned Niagara lifecycle while retaining the current Projectile movement, collision, homing, and GAS delivery contracts.
-~~~
+Support: ue5-debug-validation
+Route reason: this repair owns one Controller-held combat-target memory flag, its perception-to-StateTree event boundary, and a bounded revalidation loop. It does not alter perception assets, StateTree structure, or GAS ownership.
 
-~~~text
 Plan explorers: 0
 Implementation executors: 1 (Gemini only after its read-only plan review is accepted and the user explicitly authorizes execution)
 Complex Executor: one scoped lifecycle-sensitive C++ slice
 Main parallel work: none
-Reason: Definition data, Actor component lifetime, socket fallback, and headless Automation observation are one integrated lifecycle. Main owns the frozen public contract, documentation, validation interpretation, fresh review, staging, and commit; Gemini may write only the approved source/test slice.
-~~~
+Reason: negative perception, target ownership, Root-Motion-facing integration, periodic validation, and TargetLost cleanup are one Controller lifecycle. Main owns contract, stage status, validation interpretation, Fresh Review, documents, staging, and commit; Gemini writes only the frozen source/test slice.
 
 ## Evidence And Design Decision
 
-- UProjectileDefinition is already the immutable source for display Mesh, display transform, movement, collision, target assist, Homing, and Damage GE data. ACombatProjectile::InitializeProjectile() validates it, applies Mesh/transform, configures movement, and starts the runtime lifecycle.
-- ACombatProjectile has a CollisionComponent root, a collision-free ProjectileMeshComponent display child, and a UProjectileMovementComponent whose rotation follows velocity. It already destroys itself after a valid Pawn hit or a blocking impact, and its EndPlay() is the common destruction/lifespan teardown boundary.
-- The private Niagara module is already linked by PolyQuest.Build.cs for TODO-07B2. This stage must not change module dependencies.
-- Mesh Socket and Definition have separate responsibilities:
-  - the arrow Static Mesh owns where a physical tail effect begins;
-  - UProjectileDefinition owns which System plays and which optional Socket name it requests;
-  - ACombatProjectile owns component creation, attachment, activation, stopping, and destruction safety.
-- This is deliberately not a generic projectile-VFX slot system. No TArray of effect slots, no FX_Tip runtime route, no impact VFX, and no fire/frost asset authoring are added now.
+- AEnemyAIController::HandleTargetPerceptionUpdated currently calls ClearCurrentTarget(true) immediately whenever a negative FAIStimulus belongs to CurrentTarget. ClearCurrentTarget stops Reposition, clears Gameplay Focus, resets the Root-Motion handoff, and sends Event.AI.Target.Lost; the observed StateTree return-home behavior follows from that existing event path.
+- The exact negative stimulus source can be sight-cone loss, occlusion, or distance. PeripheralVisionHalfAngleDegrees = 70 makes the described launch-then-walk-behind case highly plausible, but this repair fixes the proven immediate-clear behavior rather than assuming one visual cause.
+- LoseSightRadius already belongs to Controller sight hysteresis and is configured into UAISenseConfig_Sight. Reusing it as bounded post-acquisition memory avoids a speculative second radius.
+- TODO-03AI3 clears Controller Gameplay Focus during active Root Motion without clearing CurrentTarget. Retention must preserve that target through sight loss so the Root-Motion handoff can resume safely.
 
 ## Frozen Runtime Contract
 
-### 1. Projectile Definition
+### 1. Bounded Combat Target Retention
 
-In Source/PolyQuest/Public/Combat/Equipment/ProjectileDefinition.h, add only these optional fields under Projectile|VFX:
+In Source/PolyQuest/Public/AI/EnemyAIController.h and Source/PolyQuest/Private/AI/EnemyAIController.cpp:
 
-1. TObjectPtr<UNiagaraSystem> FlightTrailSystem = nullptr
-2. FName FlightTrailSocketName = NAME_None
-3. float FlightTrailFinishTimeoutSeconds = 0.35f
+1. Add one private non-reflected boolean meaning current target has lost visual sight but remains retained by combat memory. Add a protected Tick(float DeltaSeconds) override and only private helpers needed to evaluate retention eligibility, process negative perception, and revalidate memory.
+2. Positive perception of a valid Player continues through SetCurrentTarget. It clears the lost-visual retention flag and retains existing focus and Root-Motion deferral behavior.
+3. A negative perception of the current Player target:
+   - retains target and sets the lost-visual flag only when HasValidCombatTarget, a valid possessed Pawn, FVector::Dist2D(Pawn, CurrentTarget) <= LoseSightRadius, and !IsExceedingLeash all hold;
+   - does not clear focus, stop navigation, send TargetLost, restart StateTree, or change Root-Motion yaw ownership in that retained case;
+   - otherwise calls unchanged ClearCurrentTarget(true) exactly once.
+   Negative perception for a non-current actor remains a no-op.
+4. Before Super::Tick(DeltaSeconds), revalidate only while the lost-visual flag is active. If target is invalid, no longer within LoseSightRadius, or Enemy now exceeds LeashRadius, call ClearCurrentTarget(true). If it remains valid, do nothing. This prevents permanent retained aggro after the Player runs away.
+5. ClearCurrentTarget, OnPossess, OnUnPossess, and existing Enemy-death cleanup reset the lost-visual flag. Do not add a second TargetLost event or duplicate StateTree transition.
+6. Preserve initial 140-degree acquisition, SightRadius, LoseSightRadius, perception affiliation, CurrentTarget ownership, Home leash calculation, TargetAcquired/TargetLost tags, StateTree topology, Approach/Reposition geometry, GAS, complete TODO-03AI3 Root-Motion-facing handoff, and the current fixed 300 Reposition pace.
 
-ProjectileDefinition.h contains only class UNiagaraSystem; for this field. CombatProjectile.h contains only class UNiagaraComponent; and class UNiagaraSystem;. NiagaraComponent.h and NiagaraSystem.h are included only by CombatProjectile.cpp. Do not add a hard-coded asset path, Gameplay Tag, Blueprint event, soft-loading path, mutable runtime state, or a VFX-profile abstraction.
+### 2. Test-Only Surface
 
-FlightTrailFinishTimeoutSeconds is the maximum post-Deactivate wait only, not the authored particle lifetime. It is meaningful only when FlightTrailSystem is non-null and must be exposed as a positive editable value. IsValidProjectileDefinition() remains a gameplay/data-integrity validator: it must not reject a null System, an empty Socket name, a missing Mesh Socket, or a bad presentation timeout. A null System is valid and silent. A non-null System plus a missing requested Socket is resolved at runtime as a visual fallback, not a rejected launch. A non-finite or non-positive timeout is normalized to the native 0.35-second fallback with one focused Warning for that Projectile Actor.
+Under WITH_DEV_AUTOMATION_TESTS, add only narrow wrappers/inspectors that invoke or observe the real production retention path:
 
-### 2. Projectile-Owned Niagara Component
+- submit a Player perception-result boolean through the same private helper used by HandleTargetPerceptionUpdated;
+- invoke the real retained-target revalidation path;
+- read whether current target is retained without visual sight.
 
-In Source/PolyQuest/Public/Combat/Projectile/CombatProjectile.h and Source/PolyQuest/Private/Combat/Projectile/CombatProjectile.cpp:
-
-1. Add one reflected UNiagaraComponent default subobject named FlightTrailComponent, exposed consistently with the existing collision, display, and movement components.
-2. Add the normal read-only native getter GetFlightTrailComponent(). It is not BlueprintCallable and creates no external lifecycle owner.
-3. In the constructor, attach it initially below ProjectileMeshComponent; set bAutoActivate = false, bAutoManageAttachment = false, and auto destroy off.
-4. Add virtual LifeSpanExpired() override plus exactly these private helpers:
-   - ConfigureAndStartFlightTrail(const UProjectileDefinition& Definition)
-   - StopFlightTrail()
-   - ResolveFlightTrailSocket(const UProjectileDefinition& Definition, FName& OutSocketName, bool& bOutUsedRootFallback)
-   - BeginTerminalFlightTrailFadeOut()
-   - FinishTerminalFlightTrailFadeOut()
-   - OnFlightTrailFinishTimeout()
-   - OnFlightTrailSystemFinished(UNiagaraComponent* FinishedComponent)
-   Add only the required cached timeout, terminal-fade boolean, and timer handle state. OnFlightTrailSystemFinished is a UFUNCTION bound once to FlightTrailComponent->OnSystemFinished in PostInitializeComponents and removed in EndPlay.
-5. InitializeProjectile() keeps its current null/invalid Definition rejection, display Mesh assignment, launch direction, movement, lifespan, source ignore, and Homing logic. After Mesh assignment and before returning success, it calls ConfigureAndStartFlightTrail().
-6. ConfigureAndStartFlightTrail() first converges any prior effect through StopFlightTrail(). With no System it returns silently. With a System it:
-   - resolves FlightTrailSocketName == NAME_None to OutSocketName = NAME_None and bOutUsedRootFallback = false. This is the normal display-component-root route and never logs;
-   - resolves a non-None Socket only when ProjectileMeshComponent has a Static Mesh and DoesSocketExist(SocketName) is true;
-   - resolves an explicitly requested but unavailable Socket, including a null Static Mesh, to OutSocketName = NAME_None and bOutUsedRootFallback = true;
-   - attaches both the normal root route and a valid Socket route with SnapToTargetNotIncludingScale, so authored Niagara width does not inherit DisplayScale;
-   - on bOutUsedRootFallback, emits at most one LogPolyQuest Warning per actor initialization and attaches to the display-component root;
-   - assigns the System and activates the single component.
-7. StopFlightTrail() is idempotent immediate teardown used only for failed/repeated initialization and EndPlay. It calls Deactivate(), clears its assigned System, and records inactive test state; it never destroys the default subobject or changes movement/collision state.
-8. BeginTerminalFlightTrailFadeOut() is the only hit/lifespan presentation route:
-   - it is guarded against re-entry, clears the normal lifespan timer, disables collision and contact delegates, stops ProjectileMovement and Homing, and disables the Actor tick;
-   - with no active Trail System it immediately calls FinishTerminalFlightTrailFadeOut(), which destroys the Actor;
-   - with an active Trail it detaches FlightTrailComponent using KeepWorldTransform while the Actor remains alive, hides only ProjectileMeshComponent after detachment, and calls Deactivate() without clearing the System;
-   - it waits for OnSystemFinished, while one timer bounded by CachedFlightTrailFinishTimeoutSeconds calls OnFlightTrailFinishTimeout() as a leak-prevention fallback;
-   - it does not call SetActorHiddenInGame, SetAutoDestroy(true), RemoveOwnedComponent, Rename/re-parent the component, DeactivateImmediate(), or Destroy() before the finish callback/timeout.
-9. A successful HandlePawnImpact() and HandleBlockingImpact() call BeginTerminalFlightTrailFadeOut() after their current one-time hit state is committed. LifeSpanExpired() calls the same route. OnSystemFinished ignores components other than FlightTrailComponent and ignores normal non-terminal completion. EndPlay() clears the timer and delegate binding, then calls immediate StopFlightTrail(); external Destroy and world teardown therefore remain immediate and safe.
-10. Do not add a tick, a second projectile actor path, UNiagaraFunctionLibrary::SpawnSystemAtLocation, GameplayCue, GPU readback, particle collision gameplay, new Tags, replication, or any change to target acquisition, Homing, movement, collision, damage hit resolver, Guard, or ASC ownership.
-
-### 3. Headless Automation Observation
-
-The real Niagara renderer is not a test dependency. Under WITH_DEV_AUTOMATION_TESTS in ACombatProjectile, add only these test-only observations:
-
-- SetTestFlightTrailTrackingEnabled(bool)
-- IsTestFlightTrailActive() const
-- GetTestFlightTrailSystem() const
-- GetTestFlightTrailAttachSocketName() const
-- DidTestFlightTrailUseRootFallback() const
-- IsTestTerminalFlightTrailFadeOutActive() const
-
-When tracking is enabled, ConfigureAndStartFlightTrail() must still resolve and perform the real component attachment decision, then record System, active state, resolved Socket, and fallback state without starting a renderer. In this test-only mode, a recorded active TestFlightTrailSystem counts as an active trail for BeginTerminalFlightTrailFadeOut(), so the real terminal state machine, timer, detach, and OnSystemFinished handler can be tested even though FlightTrailComponent has no renderer Asset. BeginTerminalFlightTrailFadeOut() records terminal state and StopFlightTrail() records inactive state. This mirrors the established TODO-07B2 no-GPU test pattern and is not a production fallback or alternate VFX route.
+They must not directly set retention state, target pointer, focus, range, leash result, or StateTree event. Existing TODO-03AI3 test-only wrappers remain unchanged unless a compilation-required declaration grouping is unavoidable.
 
 ## Approved Source And Test Surface
 
-**Contract owner: Main. Implementation writer: Gemini only after explicit execution authorization.** Any need to touch an unlisted header/public surface, Build.cs, Config, Gameplay Tag, input route, GAS/ASC contract, asset, map, Blueprint, AnimBP, Montage, or documentation is a stop condition requiring a Main decision.
+Contract owner: Main. Implementation writer: Gemini only after explicit execution authorization. Any need to touch an unlisted file, public production API, AEnemyCharacter, AIProfile, Config, Gameplay Tag, Input route, Ability, StateTree, asset, map, Blueprint, AnimBP, Montage, document, or current Root-Motion-facing test requires a Main scope decision.
 
-### Shared contracts, Main-owned and Gemini-writable only as frozen above
-
-- Source/PolyQuest/Public/Combat/Equipment/ProjectileDefinition.h
-  - Add only the three VFX fields and forward declaration. Do not modify ProjectileDefinition.cpp validation.
-
-- Source/PolyQuest/Public/Combat/Projectile/CombatProjectile.h
-- Source/PolyQuest/Private/Combat/Projectile/CombatProjectile.cpp
-  - Add only FlightTrailComponent, its getter, the seven frozen helper/handler methods, the LifeSpanExpired override, test-only observation state/accessors, and lifecycle calls in the exact functions named above.
-  - Preserve the current FCombatProjectileLaunchRequest shape, bInitialized, HitResolver request, movement configuration, Homing, source-ignore, collision response, and all existing logging/debug behavior.
-
-### Test-only surface
-
-- Add Source/PolyQuest/Private/Tests/ProjectileFlightTrailAutomationTests.cpp with Automation name PolyQuest.Projectile.FlightTrail.
-- Reuse the existing transient-world pattern. Construct the valid test Socket exactly as NewObject<UStaticMeshSocket>(TransientMesh), assign SocketName = FX_Trail, then call TransientMesh->AddSocket(Socket). Test Meshes/Sockets and a transient UNiagaraSystem must be created in test memory only; do not load, edit, or depend on Content Niagara assets, a viewport, GPU simulation, Blueprints, or map state.
-- Existing ProjectileLifecycleAutomationTests.cpp and ProjectileTargetAssistAutomationTests.cpp remain regression suites. Do not alter them unless a direct API assertion requires a narrow compatibility update.
-
-## Execution Order
-
-1. Preserve the existing Flight Trail field/component implementation and add the frozen Definition timeout field, terminal-fade declarations, and minimal forward declarations/includes.
-2. Replace only hit/lifespan immediate Trail destruction with terminal fade-out: stop gameplay immediately, detach Trail visually while retaining Actor ownership, Deactivate without clearing the System, and finish through OnSystemFinished or timeout.
-3. Update EndPlay to cancel fade timer/delegate and retain immediate teardown for external destruction/world shutdown.
-4. Extend the test-only observation seam and the isolated flight-trail Automation suite.
-5. Gemini performs source reread, direct caller/callee review, Rider static inspection on touched C++, and git diff --check; it must not compile, enter PIE, edit assets, update docs, stage, or commit.
-6. The user performs Socket/Niagara/DataAsset authoring, manual PolyQuestEditor compile, Automation, and PIE. Main interprets evidence and performs the separate Fresh Review.
+- Source/PolyQuest/Public/AI/EnemyAIController.h
+  - Add only protected Tick declaration, private retention state/helpers, and frozen test-only wrapper/inspector declarations.
+  - Preserve existing public APIs, CDO data, perception setup, Root-Motion-facing/pace members, and reflection visibility.
+- Source/PolyQuest/Private/AI/EnemyAIController.cpp
+  - Modify only Tick (new), HandleTargetPerceptionUpdated, SetCurrentTarget, ClearCurrentTarget, OnPossess, OnUnPossess, and minimal private retention helpers.
+  - Do not change UpdateControlRotation, TryRequestCooldownReposition, StopCooldownReposition, OnMoveCompleted, ConfigureSight, StateTree start/stop, target-selection rules, or existing logging except where direct retention behavior requires no log.
+- Add Source/PolyQuest/Private/Tests/EnemyCombatTargetRetentionAutomationTests.cpp with Automation name PolyQuest.Enemy.CombatTargetRetention.
+  - Reuse the transient valid Enemy Controller setup proven by EnemyRootMotionFacingAutomationTests: valid transient AttackSet/Profile, passive Enemy fixture, real Controller possession, and Player fixture.
+  - Do not modify CombatAutomationFixture, use Content assets, require NavMesh, or depend on renderer/viewport.
 
 ## Native Automation Contract
 
-PolyQuest.Projectile.FlightTrail must cover:
+PolyQuest.Enemy.CombatTargetRetention must prove:
 
-1. The Actor CDO has exactly one FlightTrailComponent with auto activation and auto destroy disabled.
-2. A valid Definition with no System initializes normally, leaves the component inactive/unassigned, emits no Warning, and remains immediate-destroy on hit/lifespan.
-3. A transient System plus a transient Mesh containing FX_Trail resolves that exact Socket, records active state, and uses no root fallback.
-4. A transient System with FlightTrailSocketName = NAME_None legitimately attaches to ProjectileMeshComponent root without Warning.
-5. A transient System requesting a missing Socket produces one expected negative Warning, remains launch-valid, records root fallback, and keeps movement/collision functional.
-6. A successful hostile Pawn impact and a blocking impact immediately commit their existing damage/block behavior, disable further movement/collision, hide only the projectile Mesh, retain the Actor during terminal Trail fade, and never deliver a second hit.
-7. Broadcast completion from FlightTrailComponent during terminal fade and assert one final Actor Destroy. Separately set a short transient timeout, advance the World, and assert timeout cleanup when no completion arrives.
-8. LifeSpanExpired enters the same terminal fade route. External Destroy and World teardown bypass lingering and clean immediately. These paths must not change hit delivery count, Damage GE application, speed, target assist, or Homing behavior.
+1. A front-side positive perception acquires the Player through real production target route.
+2. A negative perception of that Player while inside LoseSightRadius and Home leash retains CurrentTarget, marks lost-visual memory, and survives revalidation.
+3. A later positive perception clears only lost-visual memory and retains the same target.
+4. After an in-range negative perception, moving Player beyond LoseSightRadius then revalidating clears target through existing TargetLost route.
+5. After an in-range negative perception, moving Enemy beyond Home leash then revalidating clears target through existing TargetLost route.
+6. Negative perception for another Player never affects current target.
+7. UnPossess and explicit clear reset retained-memory without a stale later restoration.
+8. With active transient Root Motion, an in-range negative perception preserves CurrentTarget; existing TODO-03AI3 Controller update still owns yaw and does not reintroduce focus during Root Motion.
 
-Run the new suite plus all existing fifteen Automation suites in the Unreal Editor. Focused regression minimum: PolyQuest.Projectile.Lifecycle, PolyQuest.Projectile.TargetAssist, PolyQuest.Combat.HitReaction, and PolyQuest.Melee.WeaponTrail; the full matrix must remain green.
+Run this new suite, PolyQuest.Enemy.RootMotionFacing, PolyQuest.Enemy.CombatSpacing, PolyQuest.Combat.HitReaction, and complete current Automation matrix. The full matrix must remain green.
+
+## Execution Order
+
+1. Add minimal Controller retained-memory state, bounded eligibility helper, and Tick revalidation before modifying perception behavior.
+2. Route positive/negative perception and existing clear/possess teardown through frozen state transitions.
+3. Add isolated headless Automation suite and only named test seams.
+4. Gemini rereads final diff and direct callers/callees, runs Rider errors-only inspection on three touched C++ files using solution-relative paths, and runs git diff --check. It must not compile, enter PIE, edit assets, update documents, stage, or commit.
+5. User manually compiles PolyQuestEditor, runs targeted/full Automation, and validates PIE. Main interprets evidence and performs separate Fresh Review across TODO-03AI3 plus this repair.
 
 ## User-Owned Editor And PIE Contract
 
-1. On the Static Mesh referenced by DA_Projectile_Arrow, create one Socket named FX_Trail at the arrow tail/fletching and save it. Do not create FX_Tip in this stage.
-2. Create one white world-space Niagara Ribbon/trail System that follows the arrow flight path, has no collision/gameplay readback, and is visually continuous at the current projectile speed and Homing turns. Its Emitter State Inactive Response must be Complete, not Kill; use 0.20-0.30-second particle life, alpha Scale Color from 1 to 0, and Scale Ribbon Width from 1 to 0.
-3. In DA_Projectile_Arrow, assign that System to FlightTrailSystem, set FlightTrailSocketName = FX_Trail, and set FlightTrailFinishTimeoutSeconds to at least the longest residual particle life plus margin (initial 0.35 seconds).
-4. Manually compile PolyQuestEditor.
-5. In Scene01, validate straight shots, high-speed continuity, valid locked Homing turns, a no-target straight shot, wall impact, hostile Pawn impact, lifespan expiry, and leaving PIE. The white trail must begin at the arrow tail, follow turns without visible shearing, stop spawning at terminal contact, then visibly narrow/fade before Actor teardown. Verify the collision/damage result is immediate even while the visual tail remains.
-6. Report Editor readback, compile, targeted/full Automation, and PIE visual evidence separately.
+1. Do not alter PeripheralVisionHalfAngleDegrees, SightRadius, LoseSightRadius, StateTree, or authored assets. Confirm current values only by readback.
+2. Manually compile PolyQuestEditor.
+3. In Scene01, approach a passive Enemy from behind before it acquires Player: existing initial sight-cone behavior must remain; no new global 360-degree rule.
+4. Acquire combat from front, launch/hit Enemy, then move behind while inside current LoseSightRadius and Home leash: it must retain combat, not return Home, and retain TODO-03AI3 Root-Motion-facing behavior.
+5. From retained behind-target state, run beyond LoseSightRadius, then separately make Enemy exceed Home leash: each must do normal one-time disengage/return-home.
+6. Report Editor readback, compilation, focused/full Automation, and PIE evidence separately.
 
 ## Non-Goals, Documentation, And Commit Boundary
 
-- No fire/frost Systems or Definitions are authored this stage. A future elemental arrow only adds its own Niagara System and Definition assignment to this contract; it does not require another Projectile Actor.
-- No FX_Tip runtime attachment, generic multi-effect slot array, impact effect, Beam/AOE actor, GameplayCue, new Tag, second movement path, target-selection change, or serialization change is included. Do not detach a default subobject in an attempt to transfer ownership, set it to auto destroy, remove it from the Actor, or rename/re-parent it into the World.
-- After validation and Main Fresh Review, Main alone updates plan.md, ROADMAP.md, and ARCHITECTURE.md; update README.md only if its public status/evidence summary needs the completed stage.
-- Default commit scope is this stage's approved C++/Automation/docs only. Exclude Content/**, Config, maps, Blueprints, AnimBPs, GA/GE/Montage assets, imported resources, .uproject, generated folders, and all unrelated user WIP unless the user separately approves a stable asset closure.
+- No global 360-degree detection, dynamic peripheral-vision change, Search/Alert state, LastKnownLocation, hearing/damage sense, target grace timer, target swap, AIProfile field, GE_Walk_MoveSpeed reuse, Enemy MoveSpeed GE, DataAsset migration, StateTree edit, animation edit, GameplayCue, new Tag, ranged Enemy behavior, or persistence work is included.
+- Current fixed 300 Reposition pace remains a validated v1 implementation. TODO-03H4 owns future health check: migrate to UEnemyAIProfile-authored pace plus dedicated Enemy MoveSpeed effect only if a second Enemy needs another pace or Enemy MoveSpeed GameplayEffects become real.
+- After TODO-03AI3B validation and Main Fresh Review, Main alone closes both slices in plan.md, marks Roadmap accurately, updates ARCHITECTURE.md, and updates README.md only if its public evidence summary needs it.
+- Default eventual commit scope is approved TODO-03AI3 Controller/header/test files, this new Automation suite, and completed documents. Exclude Content/**, Config/**, maps, Blueprints, AnimBPs, GA/GE/Montage assets, imported resources, .uproject, generated folders, and all unrelated user WIP unless user separately approves stable closure.
 
 ## Closeout Record
 
-- **Implemented contract:** `UProjectileDefinition` now optionally authors one Niagara Flight Trail System, one attachment Socket name, and a terminal-fade timeout. `ACombatProjectile` remains the only owner of one inactive default `FlightTrailComponent`; it resolves the definition after mesh setup, preserves all existing movement/collision/Homing/GAS delivery behavior, and owns start, terminal fade, timeout fallback, and immediate teardown.
-- **Terminal safety:** null Systems are silent no-ops; a missing named Socket falls back to the display-component root with one focused warning. A non-finite or non-positive timeout with a configured System falls back to `0.35s`. On Pawn hit, blocking hit, or lifespan expiry, gameplay stops immediately while the detached trail completes naturally; the timer is installed before `Deactivate()` so a synchronous Niagara completion callback cannot leave a stale timer after Actor destruction.
-- **Validation evidence:** the user confirmed focused PIE and all sixteen current Editor Automation suites, including `PolyQuest.Projectile.FlightTrail`, `PolyQuest.Projectile.Lifecycle`, and `PolyQuest.Projectile.TargetAssist`. Main's scoped `git diff --check` passed; Rider errors-only inspection of the four C++/test paths returned zero errors.
-- **Review and debt handoff:** Main's initial Fresh Review found two P1 lifecycle issues and one P2 silent-no-op contract breach; all were repaired and the delta Fresh Review found no remaining P0-P2. No new accepted product debt was created. `TODO-03AI3` remains the next gameplay slice, followed by `TODO-03H4` before `TODO-03C`.
-- **Commit boundary:** include only the three approved C++ files, the new native Automation suite, and this documentation closure. User-owned Niagara, Static Mesh socket, DataAsset, Blueprint, map, Config, and all other `Content/**` WIP remain excluded.
+- **Implemented contract:** `AEnemyAIController` remains the sole owner of Enemy perception, `CurrentTarget`, Gameplay Focus, Home leash, tactical Reposition pace, and StateTree target events. Active Root Motion clears Gameplay Focus and returns before Controller yaw/control-rotation writes; after Root Motion ends, a valid target restores focus and Pawn yaw turns only through the bounded `800 degrees/second` recovery handoff. Cooldown Reposition temporarily captures and overrides only the controlled Enemy's `MaxWalkSpeed` to `300`, then restores the exact prior value on completion, failure, interruption, UnPossess, or death.
+- **Retention contract:** initial discovery remains the existing 140-degree Sight cone. A negative Sight stimulus for the current Player retains the target only inside `LoseSightRadius` and Home leash; the Controller's pre-`Super::Tick` revalidation clears through the existing one-time `TargetLost` route once either bound fails. Positive Sight clears only the retained-without-sight flag. `SetCurrentTarget()` now fails closed without a possessed Pawn, so a late positive perception callback after `UnPossess()` cannot restore a stale target into a later possession.
+- **Validation evidence:** the user confirmed focused Scene01 PIE for the Root-Motion-facing and retained-target player loop, then confirmed the complete 18-suite Editor Automation matrix after the late-perception safety repair, including `PolyQuest.Enemy.RootMotionFacing` and `PolyQuest.Enemy.CombatTargetRetention`. A separate manually logged `PolyQuestEditor (Development Editor)` build is not claimed; the recorded Editor Automation run is runtime evidence for the loaded current test code.
+- **Review:** Main's first defect-first Fresh Review found one P1: a late positive perception after `UnPossess()` could recreate `CurrentTarget` and bypass fresh Sight acquisition on a later possession. The central no-Pawn guard and the `UnPossess -> late positive -> re-Possess -> fresh positive` production-path regression were added. Main delta Fresh Review found no remaining P0/P1/P2. Rider errors-only inspection of the repaired Controller and retention test returned zero errors; scoped `git diff --check` passed. The Rider public-to-protected override notice is an accepted non-runtime style observation with no direct caller, not a Roadmap debt.
+- **Debt handoff:** no new accepted debt was created. `TODO-03H4` remains the canonical owner of the already-recorded future interaction between the fixed Controller-owned `300` Reposition override and any future Enemy MoveSpeed GameplayEffect/data-authored pace requirement.
+- **Commit boundary:** include only `EnemyAIController.h/.cpp`, `EnemyRootMotionFacingAutomationTests.cpp`, `EnemyCombatTargetRetentionAutomationTests.cpp`, and the synchronized project documents. Exclude all `Content/**`, `Config/**`, `.uproject`, generated files, and unrelated worktree changes.

@@ -179,19 +179,68 @@ public:
 
 	virtual void OnMoveCompleted(FAIRequestID RequestID, const FPathFollowingResult& Result) override;
 
+#if WITH_DEV_AUTOMATION_TESTS
+	/** Automation helper: sets combat target through production SetCurrentTarget route. */
+	void SetTestTargetForAutomation(APlayerCharacter* InTarget) { SetCurrentTarget(InTarget); }
+
+	/** Automation helper: clears combat target through production ClearCurrentTarget route. */
+	void ClearTestTargetForAutomation(bool bSendTargetLostEvent = false) { ClearCurrentTarget(bSendTargetLostEvent); }
+
+	/** Automation helper: processes perception for a player through the production perception route. */
+	void TriggerTestProcessTargetPerception(APlayerCharacter* InPlayer, bool bSuccessfullySensed) { ProcessTargetPerception(InPlayer, bSuccessfullySensed); }
+
+	/** Automation helper: triggers retained target revalidation check. */
+	void TriggerTestRevalidateRetainedTarget() { RevalidateRetainedCombatTarget(); }
+
+	/** Automation inspector: checks whether current target is retained without visual sight. */
+	bool IsTargetRetainedWithoutSightForTest() const { return bIsTargetRetainedWithoutSight; }
+
+	/** Automation helper: invokes production UpdateControlRotation with an explicit delta time. */
+	void TriggerTestUpdateControlRotation(float DeltaTime, bool bUpdatePawn = true) { UpdateControlRotation(DeltaTime, bUpdatePawn); }
+
+	/** Automation helper: triggers production Reposition pace override transition. */
+	bool TriggerTestBeginCooldownRepositionPace() { return BeginRepositionPaceOverride(); }
+
+	/** Automation inspector: checks whether Reposition pace override is active. */
+	bool IsRepositionPaceOverriddenForTest() const { return bHasOverriddenRepositionSpeed; }
+
+	/** Automation inspector: returns the captured original MaxWalkSpeed. */
+	float GetCapturedRepositionMaxWalkSpeedForTest() const { return OriginalRepositionMaxWalkSpeed; }
+
+	/** Automation inspector: checks whether facing recovery state is active. */
+	bool IsFacingRecoveryActiveForTest() const { return bIsFacingRecoveryActive; }
+#endif
+
 protected:
 	virtual void OnPossess(APawn* InPawn) override;
 	virtual void OnUnPossess() override;
+	virtual void Tick(float DeltaSeconds) override;
+	virtual void UpdateControlRotation(float DeltaTime, bool bUpdatePawn = true) override;
 
 private:
+	static constexpr float TacticalRepositionSpeed = 300.0f;
+	static constexpr float PostRootMotionRecoveryTurnRate = 800.0f;
+	static constexpr float FacingRecoveryThresholdDegrees = 0.01f;
+
 	UFUNCTION()
 	void HandleTargetPerceptionUpdated(AActor* Actor, FAIStimulus Stimulus);
 
 	void ConfigureSight();
 	bool IsControlledEnemyDead() const;
+	bool CanRetainCurrentTargetWithoutSight() const;
+	void ProcessTargetPerception(APlayerCharacter* PlayerCharacter, bool bSuccessfullySensed);
+	void RevalidateRetainedCombatTarget();
 	void SetCurrentTarget(APlayerCharacter* NewTarget);
 	void ClearCurrentTarget(bool bSendTargetLostEvent);
 	void SendStateTreeEvent(const FGameplayTag& EventTag) const;
+
+	bool HasControlledEnemyRootMotion() const;
+	void ApplyTargetFocus(APlayerCharacter* TargetToFocus);
+	void ClearTargetFocus();
+	void ResetRootMotionFacingHandoff();
+
+	bool BeginRepositionPaceOverride();
+	void RestoreRepositionPaceOverride();
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "AI|Components", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<UAIPerceptionComponent> EnemyPerceptionComponent;
@@ -252,4 +301,10 @@ private:
 	bool bIsApproaching = false;
 	FAIRequestID CurrentApproachRequestID = FAIRequestID::InvalidRequest;
 	float ApproachStartTime = 0.0f;
+
+	bool bWasRootMotionActive = false;
+	bool bIsFacingRecoveryActive = false;
+	bool bHasOverriddenRepositionSpeed = false;
+	float OriginalRepositionMaxWalkSpeed = 0.0f;
+	bool bIsTargetRetainedWithoutSight = false;
 };

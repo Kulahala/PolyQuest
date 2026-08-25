@@ -90,6 +90,8 @@ PolyQuest 是一个以 UE 5.8、C++ 与 GAS 为核心的新风格化单机动作
 
 `TODO-03B-4` 已完成可移动的玩家拉弓/保持/释放/收招路线：Bow Ability 保留既有瞄准、锁定优先、投射物、Dodge 窗口与跳跃封锁合同，但不再封锁普通移动输入。一个作者化 MoveSpeed GameplayEffect 的精确 Handle 覆盖完整 Bow 生命周期，只取消当前 Sprint，并经 `EndAbility()` 精确移除而不影响其他速度来源。用户已确认聚焦 PIE 与十四套 Editor Automation 全部通过。实际步速是本地 `Content/**` 中可调的作者化数据；原生 Automation 仅以隔离夹具验证 Handle 生命周期和 CharacterMovement 同步。
 
+`TODO-03AI3` / `TODO-03AI3B` 已完成首个敌人的 Root Motion 朝向所有权与有界目标记忆：Enemy 的 Root Motion 期间由动作独占 yaw，结束后才以受限速度平滑回正；冷却期的横移/贴身修正使用固定战术步速而普通追击保持原速度。敌人在正面发现 Player 后，即使 Player 暂时绕到背后，也只会在既有 `LoseSightRadius` 和出生地 Leash 内维持目标；超出任一边界仍走原有脱战/回城路线。用户确认了聚焦 Scene01 PIE，且在延迟感知回调安全修复后，十八套 Editor Automation 全部通过。该摘要不宣称另有单独记录的 Development Editor 手动编译。
+
 `TODO-02C3E` 已完成：确立了由 Damage GE 资产标签作者化的受击分类闭环契约（`Data.Reaction.Small`、`Data.Reaction.Big`、`Data.Reaction.Launch`，多标签冲突 Fail-Closed 保护），并实现了首个玩家与敌人的无打断轻受击（Small）。`FHitReactionClassifier` 提供纯无状态分类；`APlayerCharacter` 与 `AEnemyCharacter` 绑定权威生命值变化委托以分发目标受击事件；`UPlayerSmallHitReactionAbility` 与 `UEnemySmallHitReactionAbility` 通过 `ReactionOverlayGroup.ReactionOverlay` 插槽与动画蓝图 `spine_01` 分层混合叠加播放受击动作，不打断走位与当前技能执行；原有 `UEnemyHitReactionAbility` 重映射为 Enemy Big。8/8 项自动化测试全部通过，用户已在 Scene01 PIE 确认轻受击叠加与蓄力受击打断表现。
 
 `TODO-02C3F` 已完成玩家与敌人的地面非致死 Big 受击闭环。`UPlayerBigHitReactionAbility` 与保留名称的 `UEnemyHitReactionAbility` 先确认全身 Montage 启动，再取消符合条件的动作；Montage Root Motion 是唯一的平面位移所有者，角色在受击期间不能走出边缘，进入 Falling 会清理受击并恢复原有设置，Enemy StateTree 继续通过 `State.Action.HitReacting` 暂停攻击决策。`FHitReactionImpactResolver` 只快照 Fail-Closed 的本地攻击者方向，为后续表现升级保留单一来源，不改变当前 Root Motion 方向。遗留的 `Data.Reaction.Interrupt` 资产已迁移为 `Data.Reaction.Big`，旧 Interrupt/Enemy.Hit Tag 已在零引用资产扫描后删除。用户已确认 `PolyQuest.Combat.HitReaction` Automation 与 Scene01 PIE，包括无武器蓄力迁移回归。

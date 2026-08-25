@@ -8,6 +8,7 @@
 #include "Combat/Enemy/EnemyAttackProfile.h"
 #include "Combat/Enemy/EnemyAttackSet.h"
 #include "Engine/World.h"
+#include "GameFramework/CharacterMovementComponent.h"
 #include "Navigation/PathFollowingComponent.h"
 #include "Perception/AIPerceptionComponent.h"
 #include "Perception/AISenseConfig_Sight.h"
@@ -115,6 +116,8 @@ void AEnemyAIController::OnPossess(APawn* InPawn)
 	bHasValidAIProfile = false;
 	StopCooldownReposition(true);
 	ClearPendingAttackProfile();
+	ResetRootMotionFacingHandoff();
+	bIsTargetRetainedWithoutSight = false;
 
 	const AEnemyCharacter* EnemyCharacter = Cast<AEnemyCharacter>(InPawn);
 	if (EnemyCharacter && EnemyCharacter->IsDead())
@@ -205,6 +208,7 @@ void AEnemyAIController::OnUnPossess()
 	ClearPendingAttackProfile();
 	StopMovement();
 	ClearCurrentTarget(false);
+	ResetRootMotionFacingHandoff();
 	MeleeRange = 0.0f;
 	MeleeAttackCooldownEndTime = 0.0f;
 	CachedLeashRadius = 0.0f;
@@ -212,6 +216,12 @@ void AEnemyAIController::OnUnPossess()
 	bHasValidAIProfile = false;
 
 	Super::OnUnPossess();
+}
+
+void AEnemyAIController::Tick(float DeltaSeconds)
+{
+	RevalidateRetainedCombatTarget();
+	Super::Tick(DeltaSeconds);
 }
 
 APlayerCharacter* AEnemyAIController::GetCurrentTarget() const
@@ -384,6 +394,14 @@ bool AEnemyAIController::TryRequestCooldownReposition()
 		return false;
 	}
 
+	if (!BeginRepositionPaceOverride())
+	{
+		bLastRepositionSucceeded = false;
+		bLastRepositionUsedRightSide = bUseRightSide;
+		FailedAttemptsOnCurrentSide++;
+		return false;
+	}
+
 	FAIMoveRequest MoveRequest(RepositionPoint);
 	MoveRequest.SetAcceptanceRadius(AIProfile->GetRepositionAcceptanceRadius());
 	MoveRequest.SetUsePathfinding(true);
@@ -402,6 +420,7 @@ bool AEnemyAIController::TryRequestCooldownReposition()
 	}
 	else if (MoveResult.Code == EPathFollowingRequestResult::AlreadyAtGoal)
 	{
+		RestoreRepositionPaceOverride();
 		bIsRepositioning = false;
 		CurrentRepositionRequestID = FAIRequestID::InvalidRequest;
 		bLastRepositionUsedRightSide = bUseRightSide;
@@ -411,6 +430,7 @@ bool AEnemyAIController::TryRequestCooldownReposition()
 	}
 
 	// Immediate move failure
+	RestoreRepositionPaceOverride();
 	bIsRepositioning = false;
 	CurrentRepositionRequestID = FAIRequestID::InvalidRequest;
 	bLastRepositionUsedRightSide = bUseRightSide;
@@ -427,6 +447,8 @@ void AEnemyAIController::StopCooldownReposition(bool bResetAttempts)
 		bIsRepositioning = false;
 		CurrentRepositionRequestID = FAIRequestID::InvalidRequest;
 	}
+
+	RestoreRepositionPaceOverride();
 
 	if (bResetAttempts)
 	{
@@ -649,6 +671,7 @@ void AEnemyAIController::OnMoveCompleted(FAIRequestID RequestID, const FPathFoll
 
 	if (CurrentRepositionRequestID.IsValid() && RequestID == CurrentRepositionRequestID)
 	{
+		RestoreRepositionPaceOverride();
 		bIsRepositioning = false;
 		CurrentRepositionRequestID = FAIRequestID::InvalidRequest;
 		bLastRepositionSucceeded = Result.IsSuccess();
@@ -717,7 +740,7 @@ void AEnemyAIController::BeginAlert()
 
 	if (HasValidCombatTarget())
 	{
-		SetFocus(GetCurrentTarget());
+		ApplyTargetFocus(GetCurrentTarget());
 	}
 }
 
@@ -782,6 +805,7 @@ void AEnemyAIController::HandleControlledEnemyDeath()
 	StopCooldownReposition(true);
 	StopMovement();
 	ClearCurrentTarget(false);
+	ResetRootMotionFacingHandoff();
 	MeleeRange = 0.0f;
 	MeleeAttackCooldownEndTime = 0.0f;
 	CachedLeashRadius = 0.0f;
@@ -797,18 +821,73 @@ void AEnemyAIController::HandleTargetPerceptionUpdated(AActor* Actor, FAIStimulu
 	}
 
 	APlayerCharacter* PlayerCharacter = Cast<APlayerCharacter>(Actor);
-	if (!PlayerCharacter)
+	if (PlayerCharacter)
+	{
+		ProcessTargetPerception(PlayerCharacter, Stimulus.WasSuccessfullySensed());
+	}
+}
+
+bool AEnemyAIController::CanRetainCurrentTargetWithoutSight() const
+{
+	if (!HasValidCombatTarget())
+	{
+		return false;
+	}
+
+	const APawn* ControlledPawn = GetPawn();
+	const APlayerCharacter* Target = CurrentTarget.Get();
+	if (!ControlledPawn || !Target)
+	{
+		return false;
+	}
+
+	const float Distance2D = FVector::Dist2D(ControlledPawn->GetActorLocation(), Target->GetActorLocation());
+	if (Distance2D > LoseSightRadius)
+	{
+		return false;
+	}
+
+	if (IsExceedingLeash())
+	{
+		return false;
+	}
+
+	return true;
+}
+
+void AEnemyAIController::ProcessTargetPerception(APlayerCharacter* PlayerCharacter, bool bSuccessfullySensed)
+{
+	if (IsControlledEnemyDead() || !PlayerCharacter)
 	{
 		return;
 	}
 
-	if (Stimulus.WasSuccessfullySensed())
+	if (bSuccessfullySensed)
 	{
 		SetCurrentTarget(PlayerCharacter);
 		return;
 	}
 
 	if (CurrentTarget.Get() == PlayerCharacter)
+	{
+		if (CanRetainCurrentTargetWithoutSight())
+		{
+			bIsTargetRetainedWithoutSight = true;
+			return;
+		}
+
+		ClearCurrentTarget(true);
+	}
+}
+
+void AEnemyAIController::RevalidateRetainedCombatTarget()
+{
+	if (!bIsTargetRetainedWithoutSight)
+	{
+		return;
+	}
+
+	if (!CanRetainCurrentTargetWithoutSight())
 	{
 		ClearCurrentTarget(true);
 	}
@@ -840,29 +919,33 @@ bool AEnemyAIController::IsControlledEnemyDead() const
 
 void AEnemyAIController::SetCurrentTarget(APlayerCharacter* NewTarget)
 {
-	if (IsControlledEnemyDead() || !IsValid(NewTarget))
+	if (!GetPawn() || IsControlledEnemyDead() || !IsValid(NewTarget))
 	{
 		return;
 	}
 
+	bIsTargetRetainedWithoutSight = false;
+
 	if (CurrentTarget.Get() == NewTarget)
 	{
-		SetFocus(NewTarget);
+		ApplyTargetFocus(NewTarget);
 		return;
 	}
 
 	CurrentTarget = NewTarget;
-	SetFocus(NewTarget);
+	ApplyTargetFocus(NewTarget);
 	SendStateTreeEvent(TargetAcquiredEventTag);
 }
 
 void AEnemyAIController::ClearCurrentTarget(bool bSendTargetLostEvent)
 {
+	bIsTargetRetainedWithoutSight = false;
 	ClearPendingAttackProfile();
 	StopCooldownReposition(true);
 	const bool bHadTarget = CurrentTarget.Get() != nullptr;
 	CurrentTarget = nullptr;
-	ClearFocus(EAIFocusPriority::Gameplay);
+	ClearTargetFocus();
+	ResetRootMotionFacingHandoff();
 
 	if (bSendTargetLostEvent && bHadTarget)
 	{
@@ -872,8 +955,135 @@ void AEnemyAIController::ClearCurrentTarget(bool bSendTargetLostEvent)
 
 void AEnemyAIController::SendStateTreeEvent(const FGameplayTag& EventTag) const
 {
-	if (StateTreeComponent && EventTag.IsValid())
+	if (StateTreeComponent && StateTreeComponent->IsRunning() && EventTag.IsValid())
 	{
 		StateTreeComponent->SendStateTreeEvent(EventTag);
+	}
+}
+
+void AEnemyAIController::UpdateControlRotation(float DeltaTime, bool bUpdatePawn)
+{
+	APawn* ControlledPawn = GetPawn();
+	if (!ControlledPawn || IsControlledEnemyDead())
+	{
+		ResetRootMotionFacingHandoff();
+		Super::UpdateControlRotation(DeltaTime, bUpdatePawn);
+		return;
+	}
+
+	const bool bRootMotionActive = HasControlledEnemyRootMotion();
+	if (bRootMotionActive)
+	{
+		bWasRootMotionActive = true;
+		bIsFacingRecoveryActive = false;
+		ClearTargetFocus();
+		return;
+	}
+
+	if (bWasRootMotionActive)
+	{
+		bWasRootMotionActive = false;
+		if (HasValidCombatTarget())
+		{
+			SetFocus(GetCurrentTarget());
+			bIsFacingRecoveryActive = true;
+		}
+		else
+		{
+			bIsFacingRecoveryActive = false;
+		}
+	}
+
+	if (bIsFacingRecoveryActive)
+	{
+		if (!HasValidCombatTarget())
+		{
+			bIsFacingRecoveryActive = false;
+			Super::UpdateControlRotation(DeltaTime, bUpdatePawn);
+			return;
+		}
+
+		Super::UpdateControlRotation(DeltaTime, false);
+
+		const FRotator CurrentRotation = ControlledPawn->GetActorRotation();
+		const float TargetYaw = GetControlRotation().Yaw;
+		const float NewYaw = FMath::FixedTurn(CurrentRotation.Yaw, TargetYaw, PostRootMotionRecoveryTurnRate * DeltaTime);
+		ControlledPawn->SetActorRotation(FRotator(CurrentRotation.Pitch, NewYaw, CurrentRotation.Roll));
+
+		if (FMath::IsNearlyZero(FMath::FindDeltaAngleDegrees(NewYaw, TargetYaw), FacingRecoveryThresholdDegrees))
+		{
+			bIsFacingRecoveryActive = false;
+		}
+		return;
+	}
+
+	Super::UpdateControlRotation(DeltaTime, bUpdatePawn);
+}
+
+bool AEnemyAIController::HasControlledEnemyRootMotion() const
+{
+	const AEnemyCharacter* EnemyCharacter = Cast<AEnemyCharacter>(GetPawn());
+	return EnemyCharacter && EnemyCharacter->HasAnyRootMotion();
+}
+
+void AEnemyAIController::ApplyTargetFocus(APlayerCharacter* TargetToFocus)
+{
+	if (HasControlledEnemyRootMotion())
+	{
+		return;
+	}
+
+	if (TargetToFocus)
+	{
+		SetFocus(TargetToFocus);
+	}
+}
+
+void AEnemyAIController::ClearTargetFocus()
+{
+	ClearFocus(EAIFocusPriority::Gameplay);
+}
+
+void AEnemyAIController::ResetRootMotionFacingHandoff()
+{
+	bWasRootMotionActive = false;
+	bIsFacingRecoveryActive = false;
+}
+
+bool AEnemyAIController::BeginRepositionPaceOverride()
+{
+	if (bHasOverriddenRepositionSpeed)
+	{
+		return true;
+	}
+
+	const APawn* ControlledPawn = GetPawn();
+	const ACharacter* ControlledCharacter = Cast<ACharacter>(ControlledPawn);
+	UCharacterMovementComponent* MovementComponent = ControlledCharacter ? ControlledCharacter->GetCharacterMovement() : nullptr;
+	if (!MovementComponent)
+	{
+		return false;
+	}
+
+	OriginalRepositionMaxWalkSpeed = MovementComponent->MaxWalkSpeed;
+	MovementComponent->MaxWalkSpeed = TacticalRepositionSpeed;
+	bHasOverriddenRepositionSpeed = true;
+	return true;
+}
+
+void AEnemyAIController::RestoreRepositionPaceOverride()
+{
+	if (bHasOverriddenRepositionSpeed)
+	{
+		const APawn* ControlledPawn = GetPawn();
+		const ACharacter* ControlledCharacter = Cast<ACharacter>(ControlledPawn);
+		UCharacterMovementComponent* MovementComponent = ControlledCharacter ? ControlledCharacter->GetCharacterMovement() : nullptr;
+		if (MovementComponent && FMath::IsFinite(OriginalRepositionMaxWalkSpeed) && OriginalRepositionMaxWalkSpeed > 0.0f)
+		{
+			MovementComponent->MaxWalkSpeed = OriginalRepositionMaxWalkSpeed;
+		}
+
+		bHasOverriddenRepositionSpeed = false;
+		OriginalRepositionMaxWalkSpeed = 0.0f;
 	}
 }
