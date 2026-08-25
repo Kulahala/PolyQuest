@@ -29,6 +29,10 @@ enum class EWeaponLocomotionMode : uint8
 	Default = 0,
 	LightSword = 1,
 	HeavySword = 2,
+
+	/** Retains Bow's serialized value 4 while filling the index gap for BlendListByEnum. */
+	Deprecated_Reserved = 3 UMETA(Hidden),
+
 	Bow = 4
 };
 
