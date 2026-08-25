@@ -6,6 +6,7 @@
 
 class UGameplayEffect;
 class UStaticMesh;
+class UNiagaraSystem;
 
 /**
  * Immutable authored data definition for travelling combat projectiles.
@@ -92,4 +93,16 @@ public:
 	/** Maximum total accumulated deflection angle in degrees relative to the initial launch direction. Must be positive and finite. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Projectile|Homing", meta = (EditCondition = "bEnableLimitedHoming", ClampMin = "1.0", UIMin = "15.0", UIMax = "360.0"))
 	float HomingMaxTotalTurnDegrees = 60.0f;
+
+	/** Optional Niagara flight trail particle system. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Projectile|VFX")
+	TObjectPtr<UNiagaraSystem> FlightTrailSystem = nullptr;
+
+	/** Optional socket name on the projectile mesh for trail attachment. If None or missing, attaches to mesh root. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Projectile|VFX")
+	FName FlightTrailSocketName = NAME_None;
+
+	/** Maximum duration in seconds to wait for a detached flight trail to naturally finish before destroying the projectile actor. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Projectile|VFX", meta = (ClampMin = "0.01", UIMin = "0.1"))
+	float FlightTrailFinishTimeoutSeconds = 0.35f;
 };

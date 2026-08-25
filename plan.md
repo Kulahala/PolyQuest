@@ -1,176 +1,169 @@
-# TODO-03A6D: Multi-Source Melee Trace And Per-Window Selection v1
+# TODO-07B3: Projectile Flight Trail v1
 
 ## Plan State
 
-- Status: Completed. The user confirmed the post-review `PolyQuestEditor` Automation matrix and focused PIE; Main fresh review's right-only/left-only NotifyState regression passed in the final `PolyQuest.Melee.MultiTraceSource` run.
-- Baseline: `4f2f43d` (`[Feature] 完成副手表现与盾牌防御动作解耦 (Complete OffHand Presentation And Shield Guard Decoupling)`).
-- Objective: replace the Player's singular MainHand Blade Base/Tip assumption with a bounded authored multi-source contract selected by each `UAnimNotifyState_AttackTraceWindow`. The first playable closure is Unarmed `RightFist` and `LeftFist`; one window may select either hand or both hands without creating duplicate damage delivery.
-- Execution & Validation:
-  - C++ contracts implemented: `FOwnerMeshMeleeTraceSource`, `UWeaponEquipmentComponent` source-keyed marker maps, `UAnimNotifyState_AttackTraceWindow` per-window `TraceSourceNames` array with `OptionalObject2` event routing, `UAbilityTask_MeleeTraceWindow` all-or-nothing multi-source Phase 1/2/3 lifecycle with single-window damage deduplication, `UMeleeWeaponTrailComponent` source-keyed transient child Niagara components.
-  - Native Automation: post-review 15/15 automation suites passed (Success), including the expanded right-only/left-only coverage in `PolyQuest.Melee.MultiTraceSource`.
-  - User PIE: verified right punch, left punch, and dual-source damage deduplication and trail rendering in `Scene01`.
-- Preserve all unrelated WIP. Do not modify, stage, move, delete, or infer product behavior from `.gitignore`, `Config/**`, `Content/**`, maps, Blueprints, AnimBPs, GA/GE/Montage assets, `.uproject`, or generated output. The sole test-only exception is `Source/PolyQuest/Private/Tests/PlayerExhaustionAutomationTests.cpp`: its two local movement constants move into `RunTest()` to avoid colliding with the same anonymous-namespace names in `PlayerMobileBowAutomationTests.cpp` when UE Unity Build groups the translation units. It changes no assertion or product behavior and belongs to this source/test commit.
+- Status: Completed. The user confirmed focused PIE and the sixteen-suite Unreal Editor Automation matrix; the terminal-fade correction passed Main's delta Fresh Review after its non-finite-timeout, null-System silence, and Niagara completion-reentrancy repairs.
+- Baseline: c1934a3 ([Fix] 补齐 Locomotion 模式枚举空洞以修复动画蓝图混合分支 (Fill Locomotion Mode Enum Gap For AnimNode BlendListByEnum)). The existing uncommitted Projectile Flight Trail source/test work is this stage's active worktree, not unrelated WIP.
+- Objective: add one optional, data-driven Niagara flight trail to the existing ACombatProjectile. The first authored closure is a white arrow-tail trail that naturally finishes after a hit or lifespan expiry before its owner Actor is destroyed; future ordinary, fire, and frost Definitions can select different Niagara Systems without new Projectile Actor or Blueprint subclasses.
+- User decisions frozen for v1:
+  - Editor authors only one arrow-mesh Socket: FX_Trail, located at the arrow tail/fletching.
+  - Editor authors only the ordinary white flight-trail Niagara System in this slice.
+  - A configured System with a missing named Socket logs one focused Warning for that Projectile Actor and falls back to ProjectileMeshComponent root. It never invalidates the Definition, prevents launch, or changes combat delivery.
+  - A null System is an intentional silent visual no-op.
+  - A terminal flight trail stops emitting through Deactivate(), completes naturally, then destroys its still-owning Projectile Actor through OnSystemFinished or a Definition-authored timeout fallback. Detaching is visual-only while the Actor remains alive; ownership is never transferred.
+- Preserve all unrelated WIP. Do not modify, stage, move, delete, or infer product behavior from .gitignore, Config/**, Content/**, maps, Blueprints, AnimBPs, GA/GE/Montage assets, .uproject, or generated output.
 
-```text
+~~~text
 Outer: ue-stage-workflow
 Primary: ue5-cpp-gameplay
-Support: ue5-debug-validation, unreal-niagara
-Route reason: this stage changes one data-driven equipment contract, the shared AbilityTask trace lifecycle, gameplay-event payload routing, and source-keyed Niagara ownership while preserving the existing GAS resolver authority.
-```
+Support: unreal-niagara, ue5-debug-validation
+Route reason: this slice adds immutable Definition presentation data and one Actor-owned Niagara lifecycle while retaining the current Projectile movement, collision, homing, and GAS delivery contracts.
+~~~
 
-```text
+~~~text
 Plan explorers: 0
 Implementation executors: 1 (Gemini only after its read-only plan review is accepted and the user explicitly authorizes execution)
 Complex Executor: one scoped lifecycle-sensitive C++ slice
 Main parallel work: none
-Reason: named marker construction, task-wide hit dedupe, Notify identity, and Niagara requester teardown are one integrated lifecycle. Main owns the public contracts, plan, documentation, validation interpretation, fresh review, staging, and commit; Gemini may implement only the frozen source/test slice.
-```
+Reason: Definition data, Actor component lifetime, socket fallback, and headless Automation observation are one integrated lifecycle. Main owns the frozen public contract, documentation, validation interpretation, fresh review, staging, and commit; Gemini may write only the approved source/test slice.
+~~~
 
-## Evidence And Decisions
+## Evidence And Design Decision
 
-- `UAbilityTask_MeleeTraceWindow` currently owns exactly one previous Base/Tip pair and one task-local `DeliveredTargets` set. Creating one Task per fist would give each fist its own dedupe set and can damage the same target twice in one authored window. The implementation therefore keeps exactly one Task and one shared delivery set per active window.
-- `FGameplayEventData::OptionalObject` already carries the source `UAnimSequenceBase` and is used by all five melee abilities to reject stale Montage events. UE 5.8 provides `OptionalObject2`; `UAnimNotifyState_AttackTraceWindow` will place itself there without repurposing `OptionalObject`.
-- `UMeleeTraceSourceComponent` currently resolves only singular Player markers or a singular static/legacy Enemy path. `UWeaponEquipmentComponent` owns the transient Player marker lifetime, so named owner-mesh markers belong there rather than in a new Actor or a Tick-driven character system.
-- `UMeleeWeaponTrailComponent` has one requester and one Niagara endpoint pair. A multi-source Task would otherwise overwrite its own first hand. The user chose to reuse the current white Niagara System for both fists, so the component must own per-source requester state and additional child components.
-- Existing `PolyQuest.Build.cs` already has a private `Niagara` dependency. This stage must not change module dependencies, Gameplay Tags, input, ASC ownership, `FMeleeHitResolver`, damage GameplayEffects, or `ABaseCharacter` default-subobject topology.
+- UProjectileDefinition is already the immutable source for display Mesh, display transform, movement, collision, target assist, Homing, and Damage GE data. ACombatProjectile::InitializeProjectile() validates it, applies Mesh/transform, configures movement, and starts the runtime lifecycle.
+- ACombatProjectile has a CollisionComponent root, a collision-free ProjectileMeshComponent display child, and a UProjectileMovementComponent whose rotation follows velocity. It already destroys itself after a valid Pawn hit or a blocking impact, and its EndPlay() is the common destruction/lifespan teardown boundary.
+- The private Niagara module is already linked by PolyQuest.Build.cs for TODO-07B2. This stage must not change module dependencies.
+- Mesh Socket and Definition have separate responsibilities:
+  - the arrow Static Mesh owns where a physical tail effect begins;
+  - UProjectileDefinition owns which System plays and which optional Socket name it requests;
+  - ACombatProjectile owns component creation, attachment, activation, stopping, and destruction safety.
+- This is deliberately not a generic projectile-VFX slot system. No TArray of effect slots, no FX_Tip runtime route, no impact VFX, and no fire/frost asset authoring are added now.
 
 ## Frozen Runtime Contract
 
-### 1. Authored source data and equipment markers
+### 1. Projectile Definition
 
-1. Add `FOwnerMeshMeleeTraceSource` in `MeleeWeaponDefinition.h` with only:
-   - `FName TraceSourceName`
-   - `FName OwnerMeshSocketName`
-   - `FVector BladeBaseMarkerRelativeLocation`
-   - `FVector BladeTipMarkerRelativeLocation`
+In Source/PolyQuest/Public/Combat/Equipment/ProjectileDefinition.h, add only these optional fields under Projectile|VFX:
 
-2. Add these `UMeleeWeaponDefinition` fields:
-   - `TArray<FOwnerMeshMeleeTraceSource> OwnerMeshTraceSources`
-   - `FName DefaultOwnerMeshTraceSourceName`
-   - native `TryResolveTraceSourceName(FName RequestedSourceName, FName& OutResolvedSourceName) const`.
+1. TObjectPtr<UNiagaraSystem> FlightTrailSystem = nullptr
+2. FName FlightTrailSocketName = NAME_None
+3. float FlightTrailFinishTimeoutSeconds = 0.35f
 
-3. These fields are valid only with `bUseOwnerMeshSocketForTrace == true`:
-   - an empty array retains the existing one-pair legacy route and resolves only `NAME_None`;
-   - a nonempty array requires a non-None default that names exactly one entry;
-   - every entry requires a non-None unique name and socket, finite non-coincident Base/Tip offsets, and no duplicated source name;
-   - a non-owner-mesh weapon rejects a nonempty profile array or a non-None default source name.
+ProjectileDefinition.h contains only class UNiagaraSystem; for this field. CombatProjectile.h contains only class UNiagaraComponent; and class UNiagaraSystem;. NiagaraComponent.h and NiagaraSystem.h are included only by CombatProjectile.cpp. Do not add a hard-coded asset path, Gameplay Tag, Blueprint event, soft-loading path, mutable runtime state, or a VFX-profile abstraction.
 
-4. `UWeaponEquipmentComponent` replaces its singular transient marker members with two transient source-keyed maps, one for Base and one for Tip. It keeps the existing unnamed `TryGetBladeMarkers(OutBase, OutTip)` wrapper and adds the exact named overload `TryGetBladeMarkers(FName TraceSourceName, OutBase, OutTip)`.
+FlightTrailFinishTimeoutSeconds is the maximum post-Deactivate wait only, not the authored particle lifetime. It is meaningful only when FlightTrailSystem is non-null and must be exposed as a positive editable value. IsValidProjectileDefinition() remains a gameplay/data-integrity validator: it must not reject a null System, an empty Socket name, a missing Mesh Socket, or a bad presentation timeout. A null System is valid and silent. A non-null System plus a missing requested Socket is resolved at runtime as a visual fallback, not a rejected launch. A non-finite or non-positive timeout is normalized to the native 0.35-second fallback with one focused Warning for that Projectile Actor.
 
-5. On an owner-mesh weapon with profiles, `RunPreflight` verifies every named Socket exists on the actual Player mesh before replacement. `ApplyComposition` creates every new marker pair into temporary maps before granting abilities, then publishes the maps only with the successful composition. Failure destroys all temporary markers and follows the existing rollback route. `TeardownEquippedWeapons` destroys every pair and resets both maps.
+### 2. Projectile-Owned Niagara Component
 
-6. The old singular marker route remains the `NAME_None` entry for Sword, Heavy Sword, legacy Unarmed data, static Enemy fixtures, and any source list left empty. A requested unknown named source must never fall back to `NAME_None` or another hand.
+In Source/PolyQuest/Public/Combat/Projectile/CombatProjectile.h and Source/PolyQuest/Private/Combat/Projectile/CombatProjectile.cpp:
 
-### 2. Per-window source selection and AbilityTask lifecycle
+1. Add one reflected UNiagaraComponent default subobject named FlightTrailComponent, exposed consistently with the existing collision, display, and movement components.
+2. Add the normal read-only native getter GetFlightTrailComponent(). It is not BlueprintCallable and creates no external lifecycle owner.
+3. In the constructor, attach it initially below ProjectileMeshComponent; set bAutoActivate = false, bAutoManageAttachment = false, and auto destroy off.
+4. Add virtual LifeSpanExpired() override plus exactly these private helpers:
+   - ConfigureAndStartFlightTrail(const UProjectileDefinition& Definition)
+   - StopFlightTrail()
+   - ResolveFlightTrailSocket(const UProjectileDefinition& Definition, FName& OutSocketName, bool& bOutUsedRootFallback)
+   - BeginTerminalFlightTrailFadeOut()
+   - FinishTerminalFlightTrailFadeOut()
+   - OnFlightTrailFinishTimeout()
+   - OnFlightTrailSystemFinished(UNiagaraComponent* FinishedComponent)
+   Add only the required cached timeout, terminal-fade boolean, and timer handle state. OnFlightTrailSystemFinished is a UFUNCTION bound once to FlightTrailComponent->OnSystemFinished in PostInitializeComponents and removed in EndPlay.
+5. InitializeProjectile() keeps its current null/invalid Definition rejection, display Mesh assignment, launch direction, movement, lifespan, source ignore, and Homing logic. After Mesh assignment and before returning success, it calls ConfigureAndStartFlightTrail().
+6. ConfigureAndStartFlightTrail() first converges any prior effect through StopFlightTrail(). With no System it returns silently. With a System it:
+   - resolves FlightTrailSocketName == NAME_None to OutSocketName = NAME_None and bOutUsedRootFallback = false. This is the normal display-component-root route and never logs;
+   - resolves a non-None Socket only when ProjectileMeshComponent has a Static Mesh and DoesSocketExist(SocketName) is true;
+   - resolves an explicitly requested but unavailable Socket, including a null Static Mesh, to OutSocketName = NAME_None and bOutUsedRootFallback = true;
+   - attaches both the normal root route and a valid Socket route with SnapToTargetNotIncludingScale, so authored Niagara width does not inherit DisplayScale;
+   - on bOutUsedRootFallback, emits at most one LogPolyQuest Warning per actor initialization and attaches to the display-component root;
+   - assigns the System and activates the single component.
+7. StopFlightTrail() is idempotent immediate teardown used only for failed/repeated initialization and EndPlay. It calls Deactivate(), clears its assigned System, and records inactive test state; it never destroys the default subobject or changes movement/collision state.
+8. BeginTerminalFlightTrailFadeOut() is the only hit/lifespan presentation route:
+   - it is guarded against re-entry, clears the normal lifespan timer, disables collision and contact delegates, stops ProjectileMovement and Homing, and disables the Actor tick;
+   - with no active Trail System it immediately calls FinishTerminalFlightTrailFadeOut(), which destroys the Actor;
+   - with an active Trail it detaches FlightTrailComponent using KeepWorldTransform while the Actor remains alive, hides only ProjectileMeshComponent after detachment, and calls Deactivate() without clearing the System;
+   - it waits for OnSystemFinished, while one timer bounded by CachedFlightTrailFinishTimeoutSeconds calls OnFlightTrailFinishTimeout() as a leak-prevention fallback;
+   - it does not call SetActorHiddenInGame, SetAutoDestroy(true), RemoveOwnedComponent, Rename/re-parent the component, DeactivateImmediate(), or Destroy() before the finish callback/timeout.
+9. A successful HandlePawnImpact() and HandleBlockingImpact() call BeginTerminalFlightTrailFadeOut() after their current one-time hit state is committed. LifeSpanExpired() calls the same route. OnSystemFinished ignores components other than FlightTrailComponent and ignores normal non-terminal completion. EndPlay() clears the timer and delegate binding, then calls immediate StopFlightTrail(); external Destroy and world teardown therefore remain immediate and safe.
+10. Do not add a tick, a second projectile actor path, UNiagaraFunctionLibrary::SpawnSystemAtLocation, GameplayCue, GPU readback, particle collision gameplay, new Tags, replication, or any change to target acquisition, Homing, movement, collision, damage hit resolver, Guard, or ASC ownership.
 
-1. Add `TraceSourceNames` as an `EditAnywhere, BlueprintReadOnly` array on `UAnimNotifyState_AttackTraceWindow`, with a native read-only getter. The getter returns the authored array unchanged; only the Task normalizes an empty array into one default-source request. It is authored per NotifyState placement:
-   - empty array: one resolved default source;
-   - nonempty array: each name is explicit, non-None, and unique;
-   - `RightFist`, `LeftFist`, or `[RightFist, LeftFist]` selects the intended contact set.
+### 3. Headless Automation Observation
 
-2. The existing event helper gains an optional `OptionalObject2` argument. Only `UAnimNotifyState_AttackTraceWindow` passes `this`; all unrelated action-window events remain unchanged. `OptionalObject` continues to hold the Animation/Montage identity.
+The real Niagara renderer is not a test dependency. Under WITH_DEV_AUTOMATION_TESTS in ACombatProjectile, add only these test-only observations:
 
-3. Light Attack, Charged Attack, Sprint Attack, Player Melee Skill, and Enemy Melee retain their existing active-Montage identity checks. A Trace Begin/End event must additionally carry a valid `UAnimNotifyState_AttackTraceWindow` in `OptionalObject2`; an unrelated raw event is ignored.
+- SetTestFlightTrailTrackingEnabled(bool)
+- IsTestFlightTrailActive() const
+- GetTestFlightTrailSystem() const
+- GetTestFlightTrailAttachSocketName() const
+- DidTestFlightTrailUseRootFallback() const
+- IsTestTerminalFlightTrailFadeOutActive() const
 
-4. Each ability stores the active NotifyState identity only while its trace Task is open. A Begin starts a task with that NotifyState's source array. An End closes only the task started by the same NotifyState. Ability normal completion, cancellation, interruption, and teardown still call the existing unconditional close path.
-
-5. Add source-list overloads for both `UAbilityTask_MeleeTraceWindow::OpenMeleeTraceWindow` factory forms, each taking a final `const TArray<FName>& InTraceSourceNames`. Retain the two existing no-source-list factories as forwarding compatibility overloads with an empty list, while all new Notify-driven paths use the explicit source-list overload. No source data is read from Gameplay Tags, the weapon class name, `bUnarmed`, or input state.
-
-6. At `Activate`, the Task resolves and samples every selected source before setting `bWindowOpen` or starting any Trail. At every `TickTask`, it captures all current source endpoints before it updates Niagara or calls a single Sweep. If any selected source is unknown, duplicated, non-finite, missing, or coincident, it ends the entire Task before delivery for that frame.
-
-7. The Task retains one `FTraceSourceSample` per resolved source, each with previous Base/Tip points. It loops those samples in a deterministic array order but shares its current `DeliveredTargets` set across all sweeps. A target enters that set only after `FMeleeHitResolver::TryResolveHit` succeeds. Separate authored windows create separate Tasks and may hit again as before.
-
-8. `UMeleeTraceSourceComponent` gains name-aware resolution and endpoint APIs while retaining the current unnamed wrappers. Player equipment supports its resolved named profiles. Static-definition and legacy Enemy paths support only the default name and fail closed for a requested named source. Trace radius, channel, and blade subdivisions remain definition-wide values in this v1.
-
-### 3. Source-keyed Niagara ownership
-
-1. `UMeleeWeaponTrailComponent` updates its `StartTrail`, `UpdateTrail`, and `EndTrail` calls to include a resolved source key. `NAME_None` continues to use the existing root `UMeleeWeaponTrailComponent`, preserving all current one-source asset assignment and behavior.
-
-2. A named source uses a lazily created, registered `UNiagaraComponent` attached to the owning Character root. It copies the root component's configured Niagara System, disables auto activation, auto management, and auto destroy, and receives the existing `User.BladeBase` and `User.BladeTip` parameters.
-
-3. Store lazily created child components in a `UPROPERTY(Transient)` source-keyed map; requester records remain weak. Each source has its own weak requester token. The old Task can end only the key it owns, so stale teardown cannot stop a successor on the same source or the other hand. `EndPlay` explicitly deactivates and destroys every child before resetting source state; component/owner teardown remains idempotent.
-
-4. Check for the root Niagara System before creating a child. With no asset, Start/Update/End are silent visual no-ops, create no child component, retain no requester, and never alter hit delivery. The user-selected policy is that `RightFist` and `LeftFist` use the current white Niagara System when one is configured; no per-fist system field is added.
+When tracking is enabled, ConfigureAndStartFlightTrail() must still resolve and perform the real component attachment decision, then record System, active state, resolved Socket, and fallback state without starting a renderer. In this test-only mode, a recorded active TestFlightTrailSystem counts as an active trail for BeginTerminalFlightTrailFadeOut(), so the real terminal state machine, timer, detach, and OnSystemFinished handler can be tested even though FlightTrailComponent has no renderer Asset. BeginTerminalFlightTrailFadeOut() records terminal state and StopFlightTrail() records inactive state. This mirrors the established TODO-07B2 no-GPU test pattern and is not a production fallback or alternate VFX route.
 
 ## Approved Source And Test Surface
 
-**Contract owner: Main. Implementation writer: Gemini only after explicit execution authorization.** Any need to touch an unlisted public surface, Config, Build.cs, Gameplay Tag, Input route, Player/Enemy gameplay rule, asset, map, Blueprint, AnimBP, Montage, or documentation is a stop condition requiring a Main decision.
+**Contract owner: Main. Implementation writer: Gemini only after explicit execution authorization.** Any need to touch an unlisted header/public surface, Build.cs, Config, Gameplay Tag, input route, GAS/ASC contract, asset, map, Blueprint, AnimBP, Montage, or documentation is a stop condition requiring a Main decision.
 
-### Shared contracts, Main-owned and Gemini-writable only as frozen below
+### Shared contracts, Main-owned and Gemini-writable only as frozen above
 
-- `Source/PolyQuest/Public/Combat/Equipment/MeleeWeaponDefinition.h`
-- `Source/PolyQuest/Private/Combat/Equipment/MeleeWeaponDefinition.cpp`
-  - Add only `FOwnerMeshMeleeTraceSource`, the two profile fields, and profile validation/name resolution. Preserve all current display-mesh trace socket, TraceRadius, BladeSubdivisions, loadout, defense, and base weapon validation behavior.
+- Source/PolyQuest/Public/Combat/Equipment/ProjectileDefinition.h
+  - Add only the three VFX fields and forward declaration. Do not modify ProjectileDefinition.cpp validation.
 
-- `Source/PolyQuest/Public/Combat/Equipment/WeaponEquipmentComponent.h`
-- `Source/PolyQuest/Private/Combat/Equipment/WeaponEquipmentComponent.cpp`
-  - Replace only the marker storage/query implementation described above. Preserve current equip, world-pickup, prepared-slot, granted-handle, DefenseProfile, swap refusal, and rollback contracts.
-
-- `Source/PolyQuest/Public/Combat/Melee/MeleeTraceSourceComponent.h`
-- `Source/PolyQuest/Private/Combat/Melee/MeleeTraceSourceComponent.cpp`
-  - Add named source normalization and endpoint resolution only. Preserve current static mesh geometry validation, collision channel, trace-radius, subdivisions, warning policy, and legacy fixture behavior.
-
-- `Source/PolyQuest/Public/AbilitySystem/Tasks/AbilityTask_MeleeTraceWindow.h`
-- `Source/PolyQuest/Private/AbilitySystem/Tasks/AbilityTask_MeleeTraceWindow.cpp`
-  - Implement exactly one multi-source Task with shared hit dedupe and all-or-nothing sampling. Preserve `FMeleeHitResolver` as the only delivery route and all existing SetByCaller/GuardStamina request data.
-
-- `Source/PolyQuest/Private/Combat/Melee/MeleeWeaponTrailComponent.h`
-- `Source/PolyQuest/Private/Combat/Melee/MeleeWeaponTrailComponent.cpp`
-  - Implement only source-keyed VFX requester/child lifecycle. Do not rebase the component away from `UNiagaraComponent`, alter `ABaseCharacter`, create a VFX subsystem, or add a GameplayCue.
-
-- `Source/PolyQuest/Public/Animation/Combat/AnimNotifyState_ActionWindows.h`
-- `Source/PolyQuest/Private/Animation/Combat/AnimNotifyState_ActionWindows.cpp`
-  - Add the per-window array and `OptionalObject2` routing only. Do not change any other Notify semantic, Event Tag, or EventMagnitude behavior.
-
-- `Source/PolyQuest/Public/AbilitySystem/Abilities/LightAttackAbility.h/.cpp`
-- `Source/PolyQuest/Public/AbilitySystem/Abilities/ChargedAttackAbility.h/.cpp`
-- `Source/PolyQuest/Public/AbilitySystem/Abilities/SprintAttackAbility.h/.cpp`
-- `Source/PolyQuest/Public/AbilitySystem/Abilities/PlayerMeleeSkillAbility.h/.cpp`
-- `Source/PolyQuest/Public/AbilitySystem/Abilities/EnemyMeleeAbility.h/.cpp`
-  - Change only Trace Begin/End extraction, Notify identity tracking, and the private trace-open call to pass source arrays. Do not alter activation checks, Cost, damage values, Montage ownership, tags, movement, cancellation, or any other action window.
+- Source/PolyQuest/Public/Combat/Projectile/CombatProjectile.h
+- Source/PolyQuest/Private/Combat/Projectile/CombatProjectile.cpp
+  - Add only FlightTrailComponent, its getter, the seven frozen helper/handler methods, the LifeSpanExpired override, test-only observation state/accessors, and lifecycle calls in the exact functions named above.
+  - Preserve the current FCombatProjectileLaunchRequest shape, bInitialized, HitResolver request, movement configuration, Homing, source-ignore, collision response, and all existing logging/debug behavior.
 
 ### Test-only surface
 
-- Add `Source/PolyQuest/Private/Tests/MeleeMultiTraceSourceAutomationTests.cpp` with `PolyQuest.Melee.MultiTraceSource`.
-- Update `Source/PolyQuest/Private/Tests/TestMeleeTrailAbility.h/.cpp` only under `WITH_DEV_AUTOMATION_TESTS` with a helper that closes its default test Task and opens a real replacement Task using an explicit source-name list. It must not mock source resolution or hit delivery.
-- Under `WITH_DEV_AUTOMATION_TESTS`, make Trail observation source-keyed as well: independent requester, active flag, endpoint snapshot, and call counts per name. Retain the current no-argument observation accessors as `NAME_None` forwarding helpers so existing single-source tests stay narrow.
-- Update `PlayerExhaustionAutomationTests.cpp` only to scope `BaseMoveSpeed` and `ExhaustedMoveSpeed` inside `RunTest()` for Unity Build collision isolation from `PlayerMobileBowAutomationTests.cpp`; do not change its fixtures, assertions, or gameplay contract. Update `MeleeWeaponTrailAutomationTests.cpp`, `MeleeTraceSourceComponentAutomationTests.cpp`, and `WeaponEquipmentComponentAutomationTests.cpp` only when their existing assertions or direct API calls need migration or a narrow regression assertion. Do not alter `CombatAutomationFixture`, global test defaults, or unrelated suites.
+- Add Source/PolyQuest/Private/Tests/ProjectileFlightTrailAutomationTests.cpp with Automation name PolyQuest.Projectile.FlightTrail.
+- Reuse the existing transient-world pattern. Construct the valid test Socket exactly as NewObject<UStaticMeshSocket>(TransientMesh), assign SocketName = FX_Trail, then call TransientMesh->AddSocket(Socket). Test Meshes/Sockets and a transient UNiagaraSystem must be created in test memory only; do not load, edit, or depend on Content Niagara assets, a viewport, GPU simulation, Blueprints, or map state.
+- Existing ProjectileLifecycleAutomationTests.cpp and ProjectileTargetAssistAutomationTests.cpp remain regression suites. Do not alter them unless a direct API assertion requires a narrow compatibility update.
 
-## Automation And Validation Contract
+## Execution Order
 
-### Native Automation
+1. Preserve the existing Flight Trail field/component implementation and add the frozen Definition timeout field, terminal-fade declarations, and minimal forward declarations/includes.
+2. Replace only hit/lifespan immediate Trail destruction with terminal fade-out: stop gameplay immediately, detach Trail visually while retaining Actor ownership, Deactivate without clearing the System, and finish through OnSystemFinished or timeout.
+3. Update EndPlay to cancel fade timer/delegate and retain immediate teardown for external destruction/world shutdown.
+4. Extend the test-only observation seam and the isolated flight-trail Automation suite.
+5. Gemini performs source reread, direct caller/callee review, Rider static inspection on touched C++, and git diff --check; it must not compile, enter PIE, edit assets, update docs, stage, or commit.
+6. The user performs Socket/Niagara/DataAsset authoring, manual PolyQuestEditor compile, Automation, and PIE. Main interprets evidence and performs the separate Fresh Review.
 
-`PolyQuest.Melee.MultiTraceSource` uses the existing deferred Player fixture and re-equips a transient owner-mesh melee definition. The fixture's known valid `Weapon_R` Socket may be used for both test profiles with deliberately different local offsets, so native tests prove the source contract without mutating a loaded skeletal asset. Actual left/right skeletal placement remains a user Editor gate.
+## Native Automation Contract
 
-The suite must cover all of these without `AddExpectedError`, lowered log levels, mocked resolver delivery, Content Niagara assets, GPU simulation, or a viewport:
+PolyQuest.Projectile.FlightTrail must cover:
 
-1. A valid two-profile composition creates and resolves `RightFist` and `LeftFist`; an empty request resolves the configured `RightFist` default. The old unnamed query still resolves the default legacy path.
-2. A right-only and left-only real Task hit only the target on their corresponding prepared geometry.
-3. One dual-source Task can contact the same valid target through both source sweeps but applies exactly one successful delivery in that authored window.
-4. Unknown source, duplicate requested source, invalid profile, and active coincident endpoint fail closed. The active Task closes, every source-keyed trail request ends, and the failed tick causes no partial delivery.
-5. Both named sources can be tracked simultaneously with the same Task requester. A stale first Task ending after a second Task claims `RightFist` cannot stop the successor or `LeftFist`.
-6. The no-Niagara-asset Player path creates no child component/requester and continues to trace and resolve normally. Existing default sword and Enemy source paths retain their current behavior.
+1. The Actor CDO has exactly one FlightTrailComponent with auto activation and auto destroy disabled.
+2. A valid Definition with no System initializes normally, leaves the component inactive/unassigned, emits no Warning, and remains immediate-destroy on hit/lifespan.
+3. A transient System plus a transient Mesh containing FX_Trail resolves that exact Socket, records active state, and uses no root fallback.
+4. A transient System with FlightTrailSocketName = NAME_None legitimately attaches to ProjectileMeshComponent root without Warning.
+5. A transient System requesting a missing Socket produces one expected negative Warning, remains launch-valid, records root fallback, and keeps movement/collision functional.
+6. A successful hostile Pawn impact and a blocking impact immediately commit their existing damage/block behavior, disable further movement/collision, hide only the projectile Mesh, retain the Actor during terminal Trail fade, and never deliver a second hit.
+7. Broadcast completion from FlightTrailComponent during terminal fade and assert one final Actor Destroy. Separately set a short transient timeout, advance the World, and assert timeout cleanup when no completion arrives.
+8. LifeSpanExpired enters the same terminal fade route. External Destroy and World teardown bypass lingering and clean immediately. These paths must not change hit delivery count, Damage GE application, speed, target assist, or Homing behavior.
 
-Run the new suite plus all current fourteen Automation suites through the Unreal Editor front end, for fifteen successful suites total. At minimum inspect the regressions `PolyQuest.Melee.TraceSourceGeometry`, `PolyQuest.Melee.WeaponTrail`, and `PolyQuest.Equipment.TransactionMatrix`; the remaining suites must also remain green.
+Run the new suite plus all existing fifteen Automation suites in the Unreal Editor. Focused regression minimum: PolyQuest.Projectile.Lifecycle, PolyQuest.Projectile.TargetAssist, PolyQuest.Combat.HitReaction, and PolyQuest.Melee.WeaponTrail; the full matrix must remain green.
 
-### User-Owned Editor Authoring And PIE
+## User-Owned Editor And PIE Contract
 
-1. On the Skeleton actually used by `BP_Player`, create and save `Trace_RightFist` and `Trace_LeftFist` sockets at the fist contact regions. These names are authored data, not native hard-coded socket names.
-2. In `DA_Weapon_Unarmed`, retain `bUseOwnerMeshSocketForTrace`, add the `RightFist` and `LeftFist` profiles, assign the two sockets, copy the current right-hand offsets to `RightFist`, tune the left-hand offsets, and set `DefaultOwnerMeshTraceSourceName = RightFist`.
-3. In each Unarmed Montage's `UAnimNotifyState_AttackTraceWindow`, enter `RightFist`, `LeftFist`, or both based on the actual contact timing. The expected authoring targets are `AM_LightAttack01_Hand`, `AM_LightAttack02_Hand`, `AM_LightAttack03_Hand`, `AM_Unarmed_Charged`, and `AM_Unarmed_SprintAttack`. Keep all sword, heavy weapon, and Enemy Trace Window arrays empty.
-4. Confirm `BP_Player` still assigns its existing white `NS_MeleeWeaponTrail` to `MeleeWeaponTrail`; do not create a new Blueprint Actor or per-hand Blueprint component.
-5. Manually compile `PolyQuestEditor`. In `Scene01`, verify right-only punch, left-only punch, a controlled two-hand window, normal weapon trace, Enemy trace, interrupted attack cleanup, and no visible stale trail. Report Editor readback, compile, PIE, and Automation evidence separately.
+1. On the Static Mesh referenced by DA_Projectile_Arrow, create one Socket named FX_Trail at the arrow tail/fletching and save it. Do not create FX_Tip in this stage.
+2. Create one white world-space Niagara Ribbon/trail System that follows the arrow flight path, has no collision/gameplay readback, and is visually continuous at the current projectile speed and Homing turns. Its Emitter State Inactive Response must be Complete, not Kill; use 0.20-0.30-second particle life, alpha Scale Color from 1 to 0, and Scale Ribbon Width from 1 to 0.
+3. In DA_Projectile_Arrow, assign that System to FlightTrailSystem, set FlightTrailSocketName = FX_Trail, and set FlightTrailFinishTimeoutSeconds to at least the longest residual particle life plus margin (initial 0.35 seconds).
+4. Manually compile PolyQuestEditor.
+5. In Scene01, validate straight shots, high-speed continuity, valid locked Homing turns, a no-target straight shot, wall impact, hostile Pawn impact, lifespan expiry, and leaving PIE. The white trail must begin at the arrow tail, follow turns without visible shearing, stop spawning at terminal contact, then visibly narrow/fade before Actor teardown. Verify the collision/damage result is immediate even while the visual tail remains.
+6. Report Editor readback, compile, targeted/full Automation, and PIE visual evidence separately.
 
-## Non-Goals, Debt, And Commit Boundary
+## Non-Goals, Documentation, And Commit Boundary
 
-- Do not implement dual-wield attacks, offhand damage, shield hit tracing, separate fist Niagara assets, profile-specific radius/subdivisions, a general inventory system, GameplayCues, new Gameplay Tags, replication, or a second damage path. Future dual wield may reuse this source-name contract only after a separately accepted stage.
-- The live Unreal MCP endpoint was unavailable during planning, and Rider's offline asset index did not expose the Unarmed DataAsset values. The exact socket transform and each Montage window's hand assignment therefore remain user Editor evidence, not source-confirmed facts.
-- After user validation, Gemini provides an implementation self-review only. Main performs the separate defect-first fresh review, then updates `README.md`, `ARCHITECTURE.md`, `ROADMAP.md`, and this closeout record. Any confirmed unresolved risk must be recorded in `ROADMAP.md` with an owning stage and closure trigger.
-- Default commit scope is this stage's C++/Automation/docs only. Exclude all `Content/**`, Config, maps, Blueprint/AnimBP/GA/GE/Montage assets, imported resources, `.uproject`, generated folders, and unrelated WIP unless the user separately approves a stable asset closure.
+- No fire/frost Systems or Definitions are authored this stage. A future elemental arrow only adds its own Niagara System and Definition assignment to this contract; it does not require another Projectile Actor.
+- No FX_Tip runtime attachment, generic multi-effect slot array, impact effect, Beam/AOE actor, GameplayCue, new Tag, second movement path, target-selection change, or serialization change is included. Do not detach a default subobject in an attempt to transfer ownership, set it to auto destroy, remove it from the Actor, or rename/re-parent it into the World.
+- After validation and Main Fresh Review, Main alone updates plan.md, ROADMAP.md, and ARCHITECTURE.md; update README.md only if its public status/evidence summary needs the completed stage.
+- Default commit scope is this stage's approved C++/Automation/docs only. Exclude Content/**, Config, maps, Blueprints, AnimBPs, GA/GE/Montage assets, imported resources, .uproject, generated folders, and all unrelated user WIP unless the user separately approves a stable asset closure.
 
 ## Closeout Record
 
-- User validation: the post-review `PolyQuest.Melee.MultiTraceSource` and the remaining fourteen Automation suites all passed. The retained invalid-source, duplicate-source, and coincident-endpoint logs are intentional fail-closed negative coverage. The user also confirmed focused Scene01 PIE for right punch, left punch, dual-source deduplication, and trail rendering.
-- Main fresh review: no P0/P1 production defect was found. One P2 test-contract gap was repaired: Case 5 now executes both right-only and left-only NotifyState-selected real Tasks, asserts that the opposite source remains inactive, and verifies one delivery per separate authored window. The final targeted and full Automation matrix passed after that repair.
-- Deferred debt: the include-hygiene audit and conditional per-source Niagara/radius expansion are recorded under `TODO-03H4` with concrete adoption conditions. They are not current runtime defects.
-- Commit scope: include this stage's C++/Automation source plus `README.md`, `ARCHITECTURE.md`, `ROADMAP.md`, and this plan. Exclude every `Content/**` asset, Config, map, Blueprint/AnimBP/GA/GE/Montage asset, imported resource, `.uproject`, generated folder, and unrelated user WIP.
+- **Implemented contract:** `UProjectileDefinition` now optionally authors one Niagara Flight Trail System, one attachment Socket name, and a terminal-fade timeout. `ACombatProjectile` remains the only owner of one inactive default `FlightTrailComponent`; it resolves the definition after mesh setup, preserves all existing movement/collision/Homing/GAS delivery behavior, and owns start, terminal fade, timeout fallback, and immediate teardown.
+- **Terminal safety:** null Systems are silent no-ops; a missing named Socket falls back to the display-component root with one focused warning. A non-finite or non-positive timeout with a configured System falls back to `0.35s`. On Pawn hit, blocking hit, or lifespan expiry, gameplay stops immediately while the detached trail completes naturally; the timer is installed before `Deactivate()` so a synchronous Niagara completion callback cannot leave a stale timer after Actor destruction.
+- **Validation evidence:** the user confirmed focused PIE and all sixteen current Editor Automation suites, including `PolyQuest.Projectile.FlightTrail`, `PolyQuest.Projectile.Lifecycle`, and `PolyQuest.Projectile.TargetAssist`. Main's scoped `git diff --check` passed; Rider errors-only inspection of the four C++/test paths returned zero errors.
+- **Review and debt handoff:** Main's initial Fresh Review found two P1 lifecycle issues and one P2 silent-no-op contract breach; all were repaired and the delta Fresh Review found no remaining P0-P2. No new accepted product debt was created. `TODO-03AI3` remains the next gameplay slice, followed by `TODO-03H4` before `TODO-03C`.
+- **Commit boundary:** include only the three approved C++ files, the new native Automation suite, and this documentation closure. User-owned Niagara, Static Mesh socket, DataAsset, Blueprint, map, Config, and all other `Content/**` WIP remain excluded.

@@ -10,6 +10,8 @@ class USphereComponent;
 class UStaticMeshComponent;
 class UProjectileMovementComponent;
 class UProjectileDefinition;
+class UNiagaraComponent;
+class UNiagaraSystem;
 
 /** Launch initialization payload for a combat projectile. */
 struct POLYQUEST_API FCombatProjectileLaunchRequest
@@ -71,10 +73,13 @@ public:
 	bool InitializeProjectile(const FCombatProjectileLaunchRequest& LaunchRequest);
 
 	virtual void Tick(float DeltaSeconds) override;
+	virtual void LifeSpanExpired() override;
+	virtual void PostInitializeComponents() override;
 
 	USphereComponent* GetCollisionComponent() const { return CollisionComponent; }
 	UProjectileMovementComponent* GetMovementComponent() const { return MovementComponent; }
 	UStaticMeshComponent* GetMeshComponent() const { return ProjectileMeshComponent; }
+	UNiagaraComponent* GetFlightTrailComponent() const { return FlightTrailComponent; }
 
 #if WITH_DEV_AUTOMATION_TESTS
 	TSubclassOf<UGameplayEffect> GetTestCachedDamageGameplayEffectClass() const { return CachedDamageGameplayEffectClass; }
@@ -84,10 +89,15 @@ public:
 	float GetTestTotalTurnAngleDegrees() const { return TotalTurnAngleDegrees; }
 	AActor* GetTestTargetActor() const { return CachedTargetActor.Get(); }
 	const FVector& GetTestInitialLaunchDirection() const { return InitialLaunchDirection; }
+	void SetTestFlightTrailTrackingEnabled(const bool bEnable) { bTestFlightTrailTrackingEnabled = bEnable; }
+	bool IsTestFlightTrailActive() const { return bTestFlightTrailActive; }
+	const UNiagaraSystem* GetTestFlightTrailSystem() const { return TestFlightTrailSystem.Get(); }
+	FName GetTestFlightTrailAttachSocketName() const { return TestFlightTrailAttachSocketName; }
+	bool DidTestFlightTrailUseRootFallback() const { return bTestFlightTrailUsedRootFallback; }
+	bool IsTestTerminalFlightTrailFadeOutActive() const { return bTestTerminalFlightTrailFadeOutActive; }
 #endif
 
 protected:
-	virtual void PostInitializeComponents() override;
 	virtual void BeginPlay() override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 
@@ -108,11 +118,20 @@ protected:
 		FVector NormalImpulse,
 		const FHitResult& Hit);
 
+	UFUNCTION()
+	void OnFlightTrailSystemFinished(UNiagaraComponent* FinishedComponent);
+
 private:
 	void HandleBlockingImpact(const FHitResult& HitResult);
 	void HandlePawnImpact(AActor* HitActor, const FHitResult& HitResult);
 	void StopHomingAndFlyStraight();
 	void UpdateLimitedHoming(float DeltaSeconds);
+	void ConfigureAndStartFlightTrail(const UProjectileDefinition& Definition);
+	void StopFlightTrail();
+	void ResolveFlightTrailSocket(const UProjectileDefinition& Definition, FName& OutSocketName, bool& bOutUsedRootFallback);
+	void BeginTerminalFlightTrailFadeOut();
+	void FinishTerminalFlightTrailFadeOut();
+	void OnFlightTrailFinishTimeout();
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<USphereComponent> CollisionComponent;
@@ -123,6 +142,9 @@ private:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<UProjectileMovementComponent> MovementComponent;
 
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<UNiagaraComponent> FlightTrailComponent;
+
 	UPROPERTY(Transient)
 	TSubclassOf<UGameplayEffect> CachedDamageGameplayEffectClass;
 
@@ -130,6 +152,9 @@ private:
 	FVector InitialLaunchLocation = FVector::ZeroVector;
 	FVector InitialLaunchDirection = FVector::ForwardVector;
 	TWeakObjectPtr<AActor> CachedTargetActor = nullptr;
+
+	FTimerHandle FlightTrailFinishTimeoutTimerHandle;
+	float CachedFlightTrailFinishTimeoutSeconds = 0.35f;
 
 	float HomingElapsedTime = 0.0f;
 	float TotalTurnAngleDegrees = 0.0f;
@@ -140,7 +165,17 @@ private:
 	float CachedTargetAssistMaxDistance = 0.0f;
 	float CachedTargetAssistMaxHeightDelta = 0.0f;
 
+#if WITH_DEV_AUTOMATION_TESTS
+	TWeakObjectPtr<const UNiagaraSystem> TestFlightTrailSystem = nullptr;
+	FName TestFlightTrailAttachSocketName = NAME_None;
+	bool bTestFlightTrailTrackingEnabled = false;
+	bool bTestFlightTrailActive = false;
+	bool bTestFlightTrailUsedRootFallback = false;
+	bool bTestTerminalFlightTrailFadeOutActive = false;
+#endif
+
 	bool bHomingActive = false;
 	bool bHitDelivered = false;
 	bool bInitialized = false;
+	bool bTerminalFlightTrailFadeOutActive = false;
 };

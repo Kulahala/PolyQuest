@@ -7,6 +7,8 @@
 #include "Components/StaticMeshComponent.h"
 #include "DrawDebugHelpers.h"
 #include "GameFramework/ProjectileMovementComponent.h"
+#include "NiagaraComponent.h"
+#include "NiagaraSystem.h"
 #include "PolyQuest.h"
 
 ACombatProjectile::ACombatProjectile()
@@ -34,6 +36,12 @@ ACombatProjectile::ACombatProjectile()
 	ProjectileMeshComponent->SetCollisionResponseToChannel(ECC_Camera, ECR_Ignore);
 	ProjectileMeshComponent->SetGenerateOverlapEvents(false);
 
+	FlightTrailComponent = CreateDefaultSubobject<UNiagaraComponent>(TEXT("FlightTrailComponent"));
+	FlightTrailComponent->SetupAttachment(ProjectileMeshComponent);
+	FlightTrailComponent->bAutoActivate = false;
+	FlightTrailComponent->bAutoManageAttachment = false;
+	FlightTrailComponent->SetAutoDestroy(false);
+
 	MovementComponent = CreateDefaultSubobject<UProjectileMovementComponent>(TEXT("MovementComponent"));
 	MovementComponent->SetUpdatedComponent(CollisionComponent);
 	MovementComponent->InitialSpeed = 3000.0f;
@@ -54,6 +62,11 @@ void ACombatProjectile::PostInitializeComponents()
 		CollisionComponent->OnComponentBeginOverlap.AddUniqueDynamic(this, &ACombatProjectile::OnProjectileOverlap);
 		CollisionComponent->OnComponentHit.AddUniqueDynamic(this, &ACombatProjectile::OnProjectileHit);
 	}
+
+	if (FlightTrailComponent)
+	{
+		FlightTrailComponent->OnSystemFinished.AddUniqueDynamic(this, &ACombatProjectile::OnFlightTrailSystemFinished);
+	}
 }
 
 void ACombatProjectile::BeginPlay()
@@ -69,6 +82,18 @@ void ACombatProjectile::BeginPlay()
 
 void ACombatProjectile::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
+	if (UWorld* World = GetWorld())
+	{
+		World->GetTimerManager().ClearTimer(FlightTrailFinishTimeoutTimerHandle);
+	}
+
+	if (FlightTrailComponent)
+	{
+		FlightTrailComponent->OnSystemFinished.RemoveAll(this);
+	}
+
+	StopFlightTrail();
+
 	if (MovementComponent)
 	{
 		MovementComponent->RemoveTickPrerequisiteActor(this);
@@ -82,6 +107,11 @@ void ACombatProjectile::EndPlay(const EEndPlayReason::Type EndPlayReason)
 	}
 
 	Super::EndPlay(EndPlayReason);
+}
+
+void ACombatProjectile::LifeSpanExpired()
+{
+	BeginTerminalFlightTrailFadeOut();
 }
 
 void ACombatProjectile::Tick(float DeltaSeconds)
@@ -164,6 +194,8 @@ bool ACombatProjectile::InitializeProjectile(const FCombatProjectileLaunchReques
 		bHomingActive = false;
 		PrimaryActorTick.SetTickFunctionEnable(false);
 	}
+
+	ConfigureAndStartFlightTrail(*Def);
 
 	return true;
 }
@@ -402,7 +434,7 @@ void ACombatProjectile::HandlePawnImpact(AActor* HitActor, const FHitResult& Hit
 			}
 		}
 #endif
-		Destroy();
+		BeginTerminalFlightTrailFadeOut();
 	}
 	else
 	{
@@ -436,5 +468,204 @@ void ACombatProjectile::HandleBlockingImpact(const FHitResult& HitResult)
 #endif
 
 	bHitDelivered = true;
+	BeginTerminalFlightTrailFadeOut();
+}
+
+void ACombatProjectile::ResolveFlightTrailSocket(
+	const UProjectileDefinition& Definition,
+	FName& OutSocketName,
+	bool& bOutUsedRootFallback)
+{
+	if (Definition.FlightTrailSocketName.IsNone())
+	{
+		OutSocketName = NAME_None;
+		bOutUsedRootFallback = false;
+		return;
+	}
+
+	if (ProjectileMeshComponent && ProjectileMeshComponent->GetStaticMesh() && ProjectileMeshComponent->DoesSocketExist(Definition.FlightTrailSocketName))
+	{
+		OutSocketName = Definition.FlightTrailSocketName;
+		bOutUsedRootFallback = false;
+	}
+	else
+	{
+		OutSocketName = NAME_None;
+		bOutUsedRootFallback = true;
+		UE_LOG(
+			LogPolyQuest,
+			Warning,
+			TEXT("ACombatProjectile '%s' requested FlightTrailSocket '%s', but it was not found on mesh '%s'. Falling back to component root."),
+			*GetName(),
+			*Definition.FlightTrailSocketName.ToString(),
+			ProjectileMeshComponent && ProjectileMeshComponent->GetStaticMesh() ? *ProjectileMeshComponent->GetStaticMesh()->GetName() : TEXT("None"));
+	}
+}
+
+void ACombatProjectile::ConfigureAndStartFlightTrail(const UProjectileDefinition& Definition)
+{
+	StopFlightTrail();
+
+	if (!Definition.FlightTrailSystem)
+	{
+		return;
+	}
+
+	CachedFlightTrailFinishTimeoutSeconds = Definition.FlightTrailFinishTimeoutSeconds;
+	if (!FMath::IsFinite(CachedFlightTrailFinishTimeoutSeconds) || CachedFlightTrailFinishTimeoutSeconds <= 0.0f)
+	{
+		UE_LOG(
+			LogPolyQuest,
+			Warning,
+			TEXT("ACombatProjectile '%s' has non-positive or non-finite FlightTrailFinishTimeoutSeconds (%.3f); falling back to 0.35s."),
+			*GetName(),
+			CachedFlightTrailFinishTimeoutSeconds);
+		CachedFlightTrailFinishTimeoutSeconds = 0.35f;
+	}
+
+	if (!FlightTrailComponent || !ProjectileMeshComponent)
+	{
+		return;
+	}
+
+	FName ResolvedSocketName = NAME_None;
+	bool bUsedRootFallback = false;
+	ResolveFlightTrailSocket(Definition, ResolvedSocketName, bUsedRootFallback);
+
+	FlightTrailComponent->AttachToComponent(
+		ProjectileMeshComponent,
+		FAttachmentTransformRules::SnapToTargetNotIncludingScale,
+		ResolvedSocketName);
+
+#if WITH_DEV_AUTOMATION_TESTS
+	if (bTestFlightTrailTrackingEnabled)
+	{
+		TestFlightTrailSystem = Definition.FlightTrailSystem;
+		TestFlightTrailAttachSocketName = ResolvedSocketName;
+		bTestFlightTrailUsedRootFallback = bUsedRootFallback;
+		bTestFlightTrailActive = true;
+		return;
+	}
+#endif
+
+	FlightTrailComponent->SetAsset(Definition.FlightTrailSystem);
+	FlightTrailComponent->Activate();
+}
+
+void ACombatProjectile::StopFlightTrail()
+{
+	if (FlightTrailComponent)
+	{
+		FlightTrailComponent->Deactivate();
+		FlightTrailComponent->SetAsset(nullptr);
+	}
+
+#if WITH_DEV_AUTOMATION_TESTS
+	if (bTestFlightTrailTrackingEnabled)
+	{
+		bTestFlightTrailActive = false;
+		bTestTerminalFlightTrailFadeOutActive = false;
+	}
+#endif
+}
+
+void ACombatProjectile::BeginTerminalFlightTrailFadeOut()
+{
+	if (bTerminalFlightTrailFadeOutActive || IsActorBeingDestroyed())
+	{
+		return;
+	}
+
+	bTerminalFlightTrailFadeOutActive = true;
+	SetLifeSpan(0.0f);
+
+	if (CollisionComponent)
+	{
+		CollisionComponent->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+		CollisionComponent->OnComponentBeginOverlap.RemoveAll(this);
+		CollisionComponent->OnComponentHit.RemoveAll(this);
+	}
+
+	if (MovementComponent)
+	{
+		MovementComponent->StopMovementImmediately();
+		MovementComponent->SetComponentTickEnabled(false);
+		MovementComponent->RemoveTickPrerequisiteActor(this);
+	}
+
+	StopHomingAndFlyStraight();
+	PrimaryActorTick.SetTickFunctionEnable(false);
+
+#if WITH_DEV_AUTOMATION_TESTS
+	const bool bHasActiveTrail = bTestFlightTrailTrackingEnabled
+		? (TestFlightTrailSystem.IsValid() && bTestFlightTrailActive)
+		: (FlightTrailComponent && FlightTrailComponent->GetAsset() != nullptr && FlightTrailComponent->IsActive());
+	if (bTestFlightTrailTrackingEnabled && bHasActiveTrail)
+	{
+		bTestTerminalFlightTrailFadeOutActive = true;
+	}
+#else
+	const bool bHasActiveTrail = FlightTrailComponent && FlightTrailComponent->GetAsset() != nullptr && FlightTrailComponent->IsActive();
+#endif
+
+	if (!bHasActiveTrail)
+	{
+		FinishTerminalFlightTrailFadeOut();
+		return;
+	}
+
+	if (FlightTrailComponent)
+	{
+		FlightTrailComponent->DetachFromComponent(FDetachmentTransformRules::KeepWorldTransform);
+	}
+
+	if (ProjectileMeshComponent)
+	{
+		ProjectileMeshComponent->SetHiddenInGame(true);
+	}
+
+	if (UWorld* World = GetWorld())
+	{
+		World->GetTimerManager().SetTimer(
+			FlightTrailFinishTimeoutTimerHandle,
+			this,
+			&ACombatProjectile::OnFlightTrailFinishTimeout,
+			CachedFlightTrailFinishTimeoutSeconds,
+			false);
+	}
+
+	if (FlightTrailComponent)
+	{
+		FlightTrailComponent->Deactivate();
+	}
+}
+
+void ACombatProjectile::FinishTerminalFlightTrailFadeOut()
+{
+	if (UWorld* World = GetWorld())
+	{
+		World->GetTimerManager().ClearTimer(FlightTrailFinishTimeoutTimerHandle);
+	}
+
+	if (FlightTrailComponent)
+	{
+		FlightTrailComponent->OnSystemFinished.RemoveAll(this);
+	}
+
 	Destroy();
+}
+
+void ACombatProjectile::OnFlightTrailFinishTimeout()
+{
+	FinishTerminalFlightTrailFadeOut();
+}
+
+void ACombatProjectile::OnFlightTrailSystemFinished(UNiagaraComponent* FinishedComponent)
+{
+	if (FinishedComponent != FlightTrailComponent || !bTerminalFlightTrailFadeOutActive)
+	{
+		return;
+	}
+
+	FinishTerminalFlightTrailFadeOut();
 }
