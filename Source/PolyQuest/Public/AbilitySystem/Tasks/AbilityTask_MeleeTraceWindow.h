@@ -30,14 +30,16 @@ public:
 		float InAbilityLevel,
 		FGameplayTag InSetByCallerMagnitudeTag,
 		float InSetByCallerMagnitude,
-		float InGuardStaminaDamage = 0.0f);
+		float InGuardStaminaDamage = 0.0f,
+		const TArray<FName>& InTraceSourceNames = TArray<FName>());
 
 	static UAbilityTask_MeleeTraceWindow* OpenMeleeTraceWindow(
 		UGameplayAbility* OwningAbility,
 		UMeleeTraceSourceComponent* InTraceSource,
 		TSubclassOf<UGameplayEffect> InDamageGameplayEffectClass,
 		float InAbilityLevel,
-		const TMap<FGameplayTag, float>& InSetByCallerMagnitudes);
+		const TMap<FGameplayTag, float>& InSetByCallerMagnitudes,
+		const TArray<FName>& InTraceSourceNames = TArray<FName>());
 
 	virtual void Activate() override;
 	virtual void TickTask(float DeltaTime) override;
@@ -46,7 +48,13 @@ public:
 	bool IsTraceWindowOpen() const { return bWindowOpen; }
 
 private:
-	bool CaptureCurrentBladeEndpoints(FVector& OutBladeBase, FVector& OutBladeTip) const;
+	struct FTraceSourceSample
+	{
+		FName SourceName = NAME_None;
+		FVector PreviousBladeBase = FVector::ZeroVector;
+		FVector PreviousBladeTip = FVector::ZeroVector;
+	};
+
 	void TraceCurrentSegment();
 	void ResetWindowState();
 
@@ -56,15 +64,15 @@ private:
 	UPROPERTY()
 	TSubclassOf<UGameplayEffect> DamageGameplayEffectClass;
 
+	TArray<FName> RequestedTraceSourceNames;
+	TArray<FTraceSourceSample> ActiveSourceSamples;
+
 	FGameplayTag SetByCallerMagnitudeTag;
 	float AbilityLevel = 1.0f;
 	float SetByCallerMagnitude = 0.0f;
 	TMap<FGameplayTag, float> SetByCallerMagnitudes;
 	float GuardStaminaDamage = 0.0f;
-	FVector PreviousBladeBase = FVector::ZeroVector;
-	FVector PreviousBladeTip = FVector::ZeroVector;
 	TSet<TWeakObjectPtr<AActor>> DeliveredTargets;
 	TWeakObjectPtr<UMeleeWeaponTrailComponent> CachedTrailComponent;
 	bool bWindowOpen = false;
-	bool bHasPreviousBladeSample = false;
 };

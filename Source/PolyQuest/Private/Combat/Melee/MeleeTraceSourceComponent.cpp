@@ -72,16 +72,78 @@ int32 UMeleeTraceSourceComponent::GetBladeSubdivisions() const
 	return BladeSubdivisions;
 }
 
-bool UMeleeTraceSourceComponent::TryGetBladeEndpoints(FVector& OutBladeBase, FVector& OutBladeTip)
+bool UMeleeTraceSourceComponent::TryResolveTraceSourceName(FName RequestedName, FName& OutResolvedName) const
 {
+	OutResolvedName = NAME_None;
+
 	if (const UWeaponEquipmentComponent* EquipmentComponent = CachedEquipmentComponent.Get())
 	{
+		if (const UMeleeWeaponDefinition* EquippedWeapon = EquipmentComponent->GetEquippedMainHandMelee())
+		{
+			return EquippedWeapon->TryResolveTraceSourceName(RequestedName, OutResolvedName);
+		}
+	}
+
+	if (StaticMeleeWeaponDefinition)
+	{
+		if (RequestedName.IsNone())
+		{
+			OutResolvedName = NAME_None;
+			return true;
+		}
+		return false;
+	}
+
+	// Legacy fixture fallback supports only NAME_None / empty request
+	if (RequestedName.IsNone())
+	{
+		OutResolvedName = NAME_None;
+		return true;
+	}
+
+	return false;
+}
+
+bool UMeleeTraceSourceComponent::TryGetBladeEndpoints(FVector& OutBladeBase, FVector& OutBladeTip)
+{
+	return TryGetBladeEndpoints(NAME_None, OutBladeBase, OutBladeTip);
+}
+
+bool UMeleeTraceSourceComponent::TryGetBladeEndpoints(FName TraceSourceName, FVector& OutBladeBase, FVector& OutBladeTip)
+{
+	OutBladeBase = FVector::ZeroVector;
+	OutBladeTip = FVector::ZeroVector;
+
+	if (const UWeaponEquipmentComponent* EquipmentComponent = CachedEquipmentComponent.Get())
+	{
+		const UMeleeWeaponDefinition* EquippedWeapon = EquipmentComponent->GetEquippedMainHandMelee();
+		if (!EquippedWeapon)
+		{
+			WarnInvalidConfiguration(TEXT("the equipped weapon is not a valid melee weapon."));
+			return false;
+		}
+
+		FName ResolvedName = NAME_None;
+		if (!EquippedWeapon->TryResolveTraceSourceName(TraceSourceName, ResolvedName))
+		{
+			WarnInvalidConfiguration(FString::Printf(TEXT("the equipped melee weapon cannot resolve trace source '%s'."), *TraceSourceName.ToString()));
+			return false;
+		}
+
 		USceneComponent* EquippedBladeBase = nullptr;
 		USceneComponent* EquippedBladeTip = nullptr;
-		if (EquipmentComponent->TryGetBladeMarkers(EquippedBladeBase, EquippedBladeTip))
+		if (EquipmentComponent->TryGetBladeMarkers(ResolvedName, EquippedBladeBase, EquippedBladeTip))
 		{
 			OutBladeBase = EquippedBladeBase->GetComponentLocation();
 			OutBladeTip = EquippedBladeTip->GetComponentLocation();
+
+			if (!FMath::IsFinite(OutBladeBase.X) || !FMath::IsFinite(OutBladeBase.Y) || !FMath::IsFinite(OutBladeBase.Z) ||
+				!FMath::IsFinite(OutBladeTip.X) || !FMath::IsFinite(OutBladeTip.Y) || !FMath::IsFinite(OutBladeTip.Z))
+			{
+				WarnInvalidConfiguration(TEXT("the equipped weapon's blade markers resolve to non-finite world positions."));
+				return false;
+			}
+
 			if (OutBladeBase.Equals(OutBladeTip, KINDA_SMALL_NUMBER))
 			{
 				WarnInvalidConfiguration(TEXT("the equipped weapon's blade markers resolve to the same world position."));
@@ -91,6 +153,16 @@ bool UMeleeTraceSourceComponent::TryGetBladeEndpoints(FVector& OutBladeBase, FVe
 			bConfigurationWarningIssued = false;
 			return true;
 		}
+
+		WarnInvalidConfiguration(FString::Printf(TEXT("the equipped weapon failed to provide markers for source '%s'."), *ResolvedName.ToString()));
+		return false;
+	}
+
+	// Non-equipped owner (static definition or legacy fixture): supports only NAME_None or empty request
+	if (!TraceSourceName.IsNone())
+	{
+		WarnInvalidConfiguration(FString::Printf(TEXT("named trace source '%s' is not supported on non-equipped owners."), *TraceSourceName.ToString()));
+		return false;
 	}
 
 	if (StaticMeleeWeaponDefinition)
@@ -178,6 +250,14 @@ bool UMeleeTraceSourceComponent::TryGetBladeEndpoints(FVector& OutBladeBase, FVe
 
 	OutBladeBase = BladeBase->GetComponentLocation();
 	OutBladeTip = BladeTip->GetComponentLocation();
+
+	if (!FMath::IsFinite(OutBladeBase.X) || !FMath::IsFinite(OutBladeBase.Y) || !FMath::IsFinite(OutBladeBase.Z) ||
+		!FMath::IsFinite(OutBladeTip.X) || !FMath::IsFinite(OutBladeTip.Y) || !FMath::IsFinite(OutBladeTip.Z))
+	{
+		WarnInvalidConfiguration(TEXT("BladeTraceBase and BladeTraceTip resolve to non-finite world positions."));
+		return false;
+	}
+
 	if (OutBladeBase.Equals(OutBladeTip, KINDA_SMALL_NUMBER))
 	{
 		WarnInvalidConfiguration(TEXT("BladeTraceBase and BladeTraceTip resolve to the same world position."));

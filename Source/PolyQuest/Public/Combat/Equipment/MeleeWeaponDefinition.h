@@ -5,6 +5,24 @@
 #include "Combat/Input/CombatLoadoutDefinition.h"
 #include "MeleeWeaponDefinition.generated.h"
 
+USTRUCT(BlueprintType)
+struct POLYQUEST_API FOwnerMeshMeleeTraceSource
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Trace Source")
+	FName TraceSourceName = NAME_None;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Trace Source")
+	FName OwnerMeshSocketName = NAME_None;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Trace Source")
+	FVector BladeBaseMarkerRelativeLocation = FVector::ZeroVector;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Trace Source")
+	FVector BladeTipMarkerRelativeLocation = FVector::ZeroVector;
+};
+
 /**
  * The compatible melee subclass of UWeaponDefinition: blade trace markers in
  * weapon-mesh or owner-socket local space, sweep shape, and the BaseGrantedActions
@@ -42,6 +60,17 @@ public:
 	/** Blade-tip marker spawned relative to the display mesh, or to the owner-mesh socket when bUseOwnerMeshSocketForTrace is set; must differ from the base marker. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Trace Markers")
 	FVector BladeTipMarkerRelativeLocation = FVector::ZeroVector;
+
+	/** Authored named owner-mesh contact sources (e.g. RightFist, LeftFist). Valid only with bUseOwnerMeshSocketForTrace. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Trace Profiles")
+	TArray<FOwnerMeshMeleeTraceSource> OwnerMeshTraceSources;
+
+	/** Default trace source name resolved when no explicit source is requested or for legacy queries. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Trace Profiles")
+	FName DefaultOwnerMeshTraceSourceName = NAME_None;
+
+	/** Resolves a requested trace source name to a valid authored profile source name. */
+	bool TryResolveTraceSourceName(FName RequestedSourceName, FName& OutResolvedSourceName) const;
 
 	/** Named Static Mesh socket for the blade root/base marker. If set, BladeTipSocketName must also be set and resolve to a valid socket on WeaponMesh. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Trace Sockets")

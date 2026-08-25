@@ -1,6 +1,7 @@
 #include "Tests/TestMeleeTrailAbility.h"
 
 #include "AbilitySystem/Tasks/AbilityTask_MeleeTraceWindow.h"
+#include "Animation/Combat/AnimNotifyState_ActionWindows.h"
 #include "Character/BaseCharacter.h"
 #include "Combat/Melee/MeleeTraceSourceComponent.h"
 #include "Tests/TestProjectileDamageGE.h"
@@ -35,7 +36,9 @@ void UTestMeleeTrailAbility::ActivateAbility(
 		DamageEffect,
 		1.0f,
 		FGameplayTag(),
-		0.0f);
+		0.0f,
+		0.0f,
+		TestTraceSourceNames);
 
 	if (TraceWindowTask)
 	{
@@ -61,5 +64,65 @@ void UTestMeleeTrailAbility::EndAbility(
 
 void UTestMeleeTrailAbility::EndTestAbility()
 {
+	ActiveTraceNotifyState.Reset();
 	K2_EndAbility();
+}
+
+void UTestMeleeTrailAbility::HandleTestTraceWindowBegin(const UAnimNotifyState_AttackTraceWindow* NotifyState)
+{
+	if (!NotifyState)
+	{
+		return;
+	}
+
+	if (TraceWindowTask)
+	{
+		if (ActiveTraceNotifyState.IsValid() && ActiveTraceNotifyState.Get() == NotifyState)
+		{
+			return;
+		}
+
+		TraceWindowTask->EndTask();
+		TraceWindowTask = nullptr;
+		ActiveTraceNotifyState.Reset();
+	}
+
+	ActiveTraceNotifyState = NotifyState;
+
+	ABaseCharacter* Character = Cast<ABaseCharacter>(GetAvatarActorFromActorInfo());
+	UMeleeTraceSourceComponent* TraceSource = Character ? Character->GetMeleeTraceSource() : nullptr;
+	TSubclassOf<UGameplayEffect> DamageEffect = TestDamageEffectClass ? TestDamageEffectClass : TSubclassOf<UGameplayEffect>(UTestProjectileDamageGE::StaticClass());
+
+	if (Character && TraceSource)
+	{
+		TraceWindowTask = UAbilityTask_MeleeTraceWindow::OpenMeleeTraceWindow(
+			this,
+			TraceSource,
+			DamageEffect,
+			1.0f,
+			FGameplayTag(),
+			0.0f,
+			0.0f,
+			NotifyState->GetTraceSourceNames());
+
+		if (TraceWindowTask)
+		{
+			TraceWindowTask->ReadyForActivation();
+		}
+	}
+}
+
+void UTestMeleeTrailAbility::HandleTestTraceWindowEnd(const UAnimNotifyState_AttackTraceWindow* NotifyState)
+{
+	if (!NotifyState || NotifyState != ActiveTraceNotifyState.Get())
+	{
+		return;
+	}
+
+	ActiveTraceNotifyState.Reset();
+	if (TraceWindowTask)
+	{
+		TraceWindowTask->EndTask();
+		TraceWindowTask = nullptr;
+	}
 }

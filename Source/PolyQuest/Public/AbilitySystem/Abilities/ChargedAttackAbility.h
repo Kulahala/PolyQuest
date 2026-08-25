@@ -174,11 +174,13 @@ private:
 	bool IsGameplayEventFromActiveMontage(const FGameplayEventData& Payload) const;
 	bool IsPrimaryAttackInputEvent(const FGameplayEventData& Payload) const;
 	bool IsChargedReleaseHandoffEvent(const FGameplayEventData* Payload, const AActor* AvatarActor) const;
-	void OpenTraceWindow();
+	void OpenTraceWindow(const TArray<FName>& InTraceSourceNames);
 	void CloseTraceWindow();
 	void SetCharging(bool bShouldCharge);
 	void SetDodgeCancelable(bool bShouldBeCancelable);
 	void RestoreBaselineMontageRate();
+
+	TWeakObjectPtr<const class UAnimNotifyState_AttackTraceWindow> ActiveTraceNotifyState;
 
 #if WITH_DEV_AUTOMATION_TESTS
 public:

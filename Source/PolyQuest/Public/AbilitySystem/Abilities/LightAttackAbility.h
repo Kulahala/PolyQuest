@@ -154,8 +154,10 @@ private:
 	bool IsGameplayEventFromActiveMontage(const FGameplayEventData& Payload) const;
 	bool IsPrimaryAttackInputEvent(const FGameplayEventData& Payload) const;
 	void TryConsumeBufferedComboContinuation();
-	void OpenTraceWindow();
+	void OpenTraceWindow(const TArray<FName>& InTraceSourceNames);
 	void CloseTraceWindow();
 	void SetDodgeCancelable(bool bShouldBeCancelable);
 	void RestoreBaselineMontageRate();
+
+	TWeakObjectPtr<const class UAnimNotifyState_AttackTraceWindow> ActiveTraceNotifyState;
 };

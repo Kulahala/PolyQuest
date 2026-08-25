@@ -109,6 +109,8 @@ private:
 	bool ValidateActivationSetup(const FGameplayAbilityActorInfo* ActorInfo) const;
 	bool IsGameplayEventFromActiveMontage(const FGameplayEventData& Payload) const;
 	void EndFromMontage(bool bWasCancelled);
-	void OpenTraceWindow();
+	void OpenTraceWindow(const TArray<FName>& InTraceSourceNames);
 	void CloseTraceWindow();
+
+	TWeakObjectPtr<const class UAnimNotifyState_AttackTraceWindow> ActiveTraceNotifyState;
 };

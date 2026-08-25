@@ -1,131 +1,176 @@
-# TODO-03A6C: OffHand Presentation And Shield Guard Locomotion Decoupling v1
+# TODO-03A6D: Multi-Source Melee Trace And Per-Window Selection v1
 
 ## Plan State
 
-- Status: Completed. The user confirmed the post-cleanup Editor compilation/readback, fourteen-suite Automation matrix, and focused PIE; Main completed one defect-first fresh review with no P0-P2. The user has approved documentation closeout and this scoped commit.
-- Baseline: `cade92a54fcf7a968d4e13be77279f94223a40eb` (`[Feature] 完成可移动玩家拉弓 (Complete Mobile Player Bow Draw)`).
-- Objective: separate MainHand base locomotion, durable Shield-equipped presentation, and active Shield Guard presentation so Shield Guard can be selected without encoding every MainHand/OffHand pair as a new locomotion mode.
-- Preserve every unrelated user WIP. Do not modify, stage, move, delete, infer behavior from, or include `Content/**`, Config, maps, Blueprints, input, AnimBPs, GA/GE/Montage assets, `.uproject`, generated output, or imported-resource changes unless the user later explicitly approves their stable closure.
+- Status: Completed. The user confirmed the post-review `PolyQuestEditor` Automation matrix and focused PIE; Main fresh review's right-only/left-only NotifyState regression passed in the final `PolyQuest.Melee.MultiTraceSource` run.
+- Baseline: `4f2f43d` (`[Feature] 完成副手表现与盾牌防御动作解耦 (Complete OffHand Presentation And Shield Guard Decoupling)`).
+- Objective: replace the Player's singular MainHand Blade Base/Tip assumption with a bounded authored multi-source contract selected by each `UAnimNotifyState_AttackTraceWindow`. The first playable closure is Unarmed `RightFist` and `LeftFist`; one window may select either hand or both hands without creating duplicate damage delivery.
+- Execution & Validation:
+  - C++ contracts implemented: `FOwnerMeshMeleeTraceSource`, `UWeaponEquipmentComponent` source-keyed marker maps, `UAnimNotifyState_AttackTraceWindow` per-window `TraceSourceNames` array with `OptionalObject2` event routing, `UAbilityTask_MeleeTraceWindow` all-or-nothing multi-source Phase 1/2/3 lifecycle with single-window damage deduplication, `UMeleeWeaponTrailComponent` source-keyed transient child Niagara components.
+  - Native Automation: post-review 15/15 automation suites passed (Success), including the expanded right-only/left-only coverage in `PolyQuest.Melee.MultiTraceSource`.
+  - User PIE: verified right punch, left punch, and dual-source damage deduplication and trail rendering in `Scene01`.
+- Preserve all unrelated WIP. Do not modify, stage, move, delete, or infer product behavior from `.gitignore`, `Config/**`, `Content/**`, maps, Blueprints, AnimBPs, GA/GE/Montage assets, `.uproject`, or generated output. The sole test-only exception is `Source/PolyQuest/Private/Tests/PlayerExhaustionAutomationTests.cpp`: its two local movement constants move into `RunTest()` to avoid colliding with the same anonymous-namespace names in `PlayerMobileBowAutomationTests.cpp` when UE Unity Build groups the translation units. It changes no assertion or product behavior and belongs to this source/test commit.
 
 ```text
 Outer: ue-stage-workflow
 Primary: ue5-cpp-gameplay
-Support: ue5-blueprint-workflow, ue5-debug-validation
-Route reason: this stage changes one committed equipment-state query and one MainHand-only locomotion query, while the user-owned AnimBP consumes those facts with the established Shield Guard Gameplay Tag.
+Support: ue5-debug-validation, unreal-niagara
+Route reason: this stage changes one data-driven equipment contract, the shared AbilityTask trace lifecycle, gameplay-event payload routing, and source-keyed Niagara ownership while preserving the existing GAS resolver authority.
 ```
 
 ```text
 Plan explorers: 0
 Implementation executors: 1 (Gemini only after its read-only plan review is accepted and the user explicitly authorizes execution)
-Complex Executor: Gemini external executor for one frozen Equipment query and Automation slice
+Complex Executor: one scoped lifecycle-sensitive C++ slice
 Main parallel work: none
-Reason: committed OffHand state, public BlueprintPure queries, asset-facing Guard-state consumption, and transaction regression coverage are one integrated contract. Main owns the plan, contract decisions, documentation, validation interpretation, fresh review, staging, and commit; Gemini may write only the frozen source/test slice.
+Reason: named marker construction, task-wide hit dedupe, Notify identity, and Niagara requester teardown are one integrated lifecycle. Main owns the public contracts, plan, documentation, validation interpretation, fresh review, staging, and commit; Gemini may implement only the frozen source/test slice.
 ```
 
 ## Evidence And Decisions
 
-- The first 03A6C implementation has already made `UWeaponEquipmentComponent::GetResolvedLocomotionMode()` MainHand-only, but the residual `RequiredMainHandLocomotionMode` / `CompositionLocomotionMode` fields still participate in `UOffHandWeaponDefinition::IsValidWeaponDefinition()`. `UWeaponEquipmentComponent::RunPreflight()` calls that validation for every prospective OffHand, so these are live equipment-preflight dependencies rather than harmless unused metadata.
-- The user has saved the actual Shield DataAsset with both residual fields set together to `Default`, while retaining `Provides Shield Presentation = true`, `Locomotion Mode = Default`, `Hand Slot = Off Hand`, its Defense Profile, and its granted actions. That prepares a narrow source cleanup without changing current authored gameplay behavior.
-- `PolyQuest.Equipment.TransactionMatrix` still assigns and tests the residual pair, so enum removal, OffHand validation removal, and matrix migration must happen as one atomic source/test slice.
-- The current Player's `WeaponEquipment` component is `VisibleAnywhere, BlueprintReadOnly`, so `ABP_Player_Dungeon` can consume a new component query without a new Player API, delegate, Tick, or replicated state.
-- Offline Rider CDO readback confirms `GA_PlayerShieldGuard` overrides its `ActivationOwnedTags` to exactly `State.Action.Guarding.Shield`; `GA_Guard_Sowrd` has no such override. The child tag hierarchically satisfies existing generic `State.Action.Guarding` checks, so Guard gameplay authority does not require a native change.
-- `Ability.Defense.Guard.Shield` identifies the defensive ability route supplied by a Defense Profile. It is not evidence that a Shield is currently equipped. Conversely, generic `State.Action.Guarding` cannot choose the Shield-only locomotion because single-sword Guard also owns it.
-- The existing full-body `BS_Shield_Walk_Run` is the accepted active Shield Guard branch. It must remain distinct from the single-sword upper-body Guard route because the Shield stance includes torso, hips, and lower-body orientation.
+- `UAbilityTask_MeleeTraceWindow` currently owns exactly one previous Base/Tip pair and one task-local `DeliveredTargets` set. Creating one Task per fist would give each fist its own dedupe set and can damage the same target twice in one authored window. The implementation therefore keeps exactly one Task and one shared delivery set per active window.
+- `FGameplayEventData::OptionalObject` already carries the source `UAnimSequenceBase` and is used by all five melee abilities to reject stale Montage events. UE 5.8 provides `OptionalObject2`; `UAnimNotifyState_AttackTraceWindow` will place itself there without repurposing `OptionalObject`.
+- `UMeleeTraceSourceComponent` currently resolves only singular Player markers or a singular static/legacy Enemy path. `UWeaponEquipmentComponent` owns the transient Player marker lifetime, so named owner-mesh markers belong there rather than in a new Actor or a Tick-driven character system.
+- `UMeleeWeaponTrailComponent` has one requester and one Niagara endpoint pair. A multi-source Task would otherwise overwrite its own first hand. The user chose to reuse the current white Niagara System for both fists, so the component must own per-source requester state and additional child components.
+- Existing `PolyQuest.Build.cs` already has a private `Niagara` dependency. This stage must not change module dependencies, Gameplay Tags, input, ASC ownership, `FMeleeHitResolver`, damage GameplayEffects, or `ABaseCharacter` default-subobject topology.
 
 ## Frozen Runtime Contract
 
-1. Add `bProvidesShieldPresentation` to `UOffHandWeaponDefinition` as an `EditDefaultsOnly, BlueprintReadOnly` authoring field in `Weapon|Presentation`, defaulting to `false`. It means only: this committed OffHand should expose the v1 Shield presentation fact. It must not inspect Ability Tags, ASC state, DefenseProfile, inventory, or UI.
+### 1. Authored source data and equipment markers
 
-2. Add `UWeaponEquipmentComponent::HasShieldEquipped()` as one `BlueprintPure` public query. It returns `true` only when the committed `CurrentOffHandWeapon` is a valid `UOffHandWeaponDefinition` whose `bProvidesShieldPresentation` is true. It has no cache, delegate, Tick, tag mutation, equipment mutation, or runtime state of its own.
+1. Add `FOwnerMeshMeleeTraceSource` in `MeleeWeaponDefinition.h` with only:
+   - `FName TraceSourceName`
+   - `FName OwnerMeshSocketName`
+   - `FVector BladeBaseMarkerRelativeLocation`
+   - `FVector BladeTipMarkerRelativeLocation`
 
-3. Make `GetResolvedLocomotionMode()` MainHand-only. It still returns `Default` for a missing or invalid MainHand, otherwise the validated MainHand `Default` / `LightSword` / `HeavySword` / `Bow` mode. It must no longer inspect `CurrentOffHandWeapon` or return `SwordShield` for any equipment composition.
+2. Add these `UMeleeWeaponDefinition` fields:
+   - `TArray<FOwnerMeshMeleeTraceSource> OwnerMeshTraceSources`
+   - `FName DefaultOwnerMeshTraceSourceName`
+   - native `TryResolveTraceSourceName(FName RequestedSourceName, FName& OutResolvedSourceName) const`.
 
-4. Complete the residual composition cleanup in this stage. Remove `EWeaponLocomotionMode::SwordShield`, `UOffHandWeaponDefinition::RequiredMainHandLocomotionMode`, and `UOffHandWeaponDefinition::CompositionLocomotionMode`. Preserve the serialized numeric identity of Bow by declaring `EWeaponLocomotionMode::Bow = 4`; ordinal `3` has no valid enumerator and must fail closed in `UWeaponDefinition::IsValidWeaponDefinition()`. Do not introduce a deprecated alias, enum redirect, or a new composition field.
+3. These fields are valid only with `bUseOwnerMeshSocketForTrace == true`:
+   - an empty array retains the existing one-pair legacy route and resolves only `NAME_None`;
+   - a nonempty array requires a non-None default that names exactly one entry;
+   - every entry requires a non-None unique name and socket, finite non-coincident Base/Tip offsets, and no duplicated source name;
+   - a non-owner-mesh weapon rejects a nonempty profile array or a non-None default source name.
 
-5. `UOffHandWeaponDefinition::IsValidWeaponDefinition()` continues to require an OffHand slot, `LocomotionMode == Default`, and a WeaponMesh, but no longer validates any MainHand/OffHand locomotion pair. Its error text must not refer to composition overrides. This changes no DefenseProfile, BaseGrantedActions, transaction, pickup/drop, or committed-state rule.
+4. `UWeaponEquipmentComponent` replaces its singular transient marker members with two transient source-keyed maps, one for Base and one for Tip. It keeps the existing unnamed `TryGetBladeMarkers(OutBase, OutTip)` wrapper and adds the exact named overload `TryGetBladeMarkers(FName TraceSourceName, OutBase, OutTip)`.
 
-6. Do not add a Gameplay Tag or change `UPlayerGuardAbility`, Guard/Parry routing, DefenseProfile precedence, Guard Arc, Stamina, Guard Break, MoveSpeed, B2 lock-facing, input, replication, equipment transaction, pickup/drop, Bow, Dodge, attack, or hit-reaction logic.
+5. On an owner-mesh weapon with profiles, `RunPreflight` verifies every named Socket exists on the actual Player mesh before replacement. `ApplyComposition` creates every new marker pair into temporary maps before granting abilities, then publishes the maps only with the successful composition. Failure destroys all temporary markers and follows the existing rollback route. `TeardownEquippedWeapons` destroys every pair and resets both maps.
 
-7. Shield Guard selection remains a presentation conjunction owned by AnimBP:
+6. The old singular marker route remains the `NAME_None` entry for Sword, Heavy Sword, legacy Unarmed data, static Enemy fixtures, and any source list left empty. A requested unknown named source must never fall back to `NAME_None` or another hand.
 
-```text
-bUseShieldGuardLocomotion = HasShieldEquipped()
-    && ASC has matching State.Action.Guarding.Shield
-```
+### 2. Per-window source selection and AbilityTask lifecycle
 
-The exact Shield child tag is the required authored state. A generic Guard tag, `Ability.Defense.Guard.Shield`, a MainHand mode, or merely a left-hand mesh must not replace either half of this conjunction.
+1. Add `TraceSourceNames` as an `EditAnywhere, BlueprintReadOnly` array on `UAnimNotifyState_AttackTraceWindow`, with a native read-only getter. The getter returns the authored array unchanged; only the Task normalizes an empty array into one default-source request. It is authored per NotifyState placement:
+   - empty array: one resolved default source;
+   - nonempty array: each name is explicit, non-None, and unique;
+   - `RightFist`, `LeftFist`, or `[RightFist, LeftFist]` selects the intended contact set.
+
+2. The existing event helper gains an optional `OptionalObject2` argument. Only `UAnimNotifyState_AttackTraceWindow` passes `this`; all unrelated action-window events remain unchanged. `OptionalObject` continues to hold the Animation/Montage identity.
+
+3. Light Attack, Charged Attack, Sprint Attack, Player Melee Skill, and Enemy Melee retain their existing active-Montage identity checks. A Trace Begin/End event must additionally carry a valid `UAnimNotifyState_AttackTraceWindow` in `OptionalObject2`; an unrelated raw event is ignored.
+
+4. Each ability stores the active NotifyState identity only while its trace Task is open. A Begin starts a task with that NotifyState's source array. An End closes only the task started by the same NotifyState. Ability normal completion, cancellation, interruption, and teardown still call the existing unconditional close path.
+
+5. Add source-list overloads for both `UAbilityTask_MeleeTraceWindow::OpenMeleeTraceWindow` factory forms, each taking a final `const TArray<FName>& InTraceSourceNames`. Retain the two existing no-source-list factories as forwarding compatibility overloads with an empty list, while all new Notify-driven paths use the explicit source-list overload. No source data is read from Gameplay Tags, the weapon class name, `bUnarmed`, or input state.
+
+6. At `Activate`, the Task resolves and samples every selected source before setting `bWindowOpen` or starting any Trail. At every `TickTask`, it captures all current source endpoints before it updates Niagara or calls a single Sweep. If any selected source is unknown, duplicated, non-finite, missing, or coincident, it ends the entire Task before delivery for that frame.
+
+7. The Task retains one `FTraceSourceSample` per resolved source, each with previous Base/Tip points. It loops those samples in a deterministic array order but shares its current `DeliveredTargets` set across all sweeps. A target enters that set only after `FMeleeHitResolver::TryResolveHit` succeeds. Separate authored windows create separate Tasks and may hit again as before.
+
+8. `UMeleeTraceSourceComponent` gains name-aware resolution and endpoint APIs while retaining the current unnamed wrappers. Player equipment supports its resolved named profiles. Static-definition and legacy Enemy paths support only the default name and fail closed for a requested named source. Trace radius, channel, and blade subdivisions remain definition-wide values in this v1.
+
+### 3. Source-keyed Niagara ownership
+
+1. `UMeleeWeaponTrailComponent` updates its `StartTrail`, `UpdateTrail`, and `EndTrail` calls to include a resolved source key. `NAME_None` continues to use the existing root `UMeleeWeaponTrailComponent`, preserving all current one-source asset assignment and behavior.
+
+2. A named source uses a lazily created, registered `UNiagaraComponent` attached to the owning Character root. It copies the root component's configured Niagara System, disables auto activation, auto management, and auto destroy, and receives the existing `User.BladeBase` and `User.BladeTip` parameters.
+
+3. Store lazily created child components in a `UPROPERTY(Transient)` source-keyed map; requester records remain weak. Each source has its own weak requester token. The old Task can end only the key it owns, so stale teardown cannot stop a successor on the same source or the other hand. `EndPlay` explicitly deactivates and destroys every child before resetting source state; component/owner teardown remains idempotent.
+
+4. Check for the root Niagara System before creating a child. With no asset, Start/Update/End are silent visual no-ops, create no child component, retain no requester, and never alter hit delivery. The user-selected policy is that `RightFist` and `LeftFist` use the current white Niagara System when one is configured; no per-fist system field is added.
 
 ## Approved Source And Test Surface
 
-**Contract owner: Main. Implementation writer: Gemini only after explicit execution authorization.** A need to modify an unlisted header/public surface, Player/Guard Ability source, Gameplay Tag, Input route, Config, Build.cs, `.uproject`, or asset is a stop condition requiring Main review.
+**Contract owner: Main. Implementation writer: Gemini only after explicit execution authorization.** Any need to touch an unlisted public surface, Config, Build.cs, Gameplay Tag, Input route, Player/Enemy gameplay rule, asset, map, Blueprint, AnimBP, Montage, or documentation is a stop condition requiring a Main decision.
 
-- `Source/PolyQuest/Public/Combat/Equipment/OffHandWeaponDefinition.h`
-  - Contract owner: Main. Implementation writer: Gemini.
-  - Retain `bProvidesShieldPresentation`; remove only the two residual composition fields and their validation. Keep `HandSlot`, DefenseProfile ownership, required base `LocomotionMode == Default`, mesh validation, and every unrelated authored property unchanged.
+### Shared contracts, Main-owned and Gemini-writable only as frozen below
 
-- `Source/PolyQuest/Public/Combat/Equipment/WeaponDefinition.h`
-  - Contract owner: Main. Implementation writer: Gemini.
-  - Remove only the `SwordShield` enum member, make `Bow = 4` explicit, update the enum description, and collapse the base validation to a generic invalid-enum failure. Do not reorder or renumber `Default`, `LightSword`, `HeavySword`, or `Bow`; do not alter any other DataAsset field or validation rule.
+- `Source/PolyQuest/Public/Combat/Equipment/MeleeWeaponDefinition.h`
+- `Source/PolyQuest/Private/Combat/Equipment/MeleeWeaponDefinition.cpp`
+  - Add only `FOwnerMeshMeleeTraceSource`, the two profile fields, and profile validation/name resolution. Preserve all current display-mesh trace socket, TraceRadius, BladeSubdivisions, loadout, defense, and base weapon validation behavior.
 
 - `Source/PolyQuest/Public/Combat/Equipment/WeaponEquipmentComponent.h`
-  - Contract owner: Main. Implementation writer: Gemini.
-  - This file contains the already-authorized first 03A6C query change. The supplemental cleanup must not edit it.
-
 - `Source/PolyQuest/Private/Combat/Equipment/WeaponEquipmentComponent.cpp`
-  - Contract owner: Main. Implementation writer: Gemini.
-  - This file contains the already-authorized first 03A6C query change. The supplemental cleanup must not edit it.
+  - Replace only the marker storage/query implementation described above. Preserve current equip, world-pickup, prepared-slot, granted-handle, DefenseProfile, swap refusal, and rollback contracts.
 
-- `Source/PolyQuest/Private/Tests/WeaponEquipmentComponentAutomationTests.cpp`
-  - Contract owner: Main. Implementation writer: Gemini.
-  - Extend the existing `PolyQuest.Equipment.TransactionMatrix`; do not create a Content-independent replacement fixture or modify global fixture defaults.
-  - Remove all residual-pair setup and composition validation cases. Add only a raw ordinal-`3` fail-closed assertion and an assertion that `Bow` retains underlying numeric value `4`, while retaining the existing Shield-presentation, rollback, and Guard CDO Tag coverage. Do not add a `UPlayerGuardAbility` test accessor or change production Guard source solely for test access.
+- `Source/PolyQuest/Public/Combat/Melee/MeleeTraceSourceComponent.h`
+- `Source/PolyQuest/Private/Combat/Melee/MeleeTraceSourceComponent.cpp`
+  - Add named source normalization and endpoint resolution only. Preserve current static mesh geometry validation, collision channel, trace-radius, subdivisions, warning policy, and legacy fixture behavior.
 
-No `PlayerCharacter`, `PlayerGuardAbility`, `DefenseProfileDefinition`, `MeleeWeaponDefinition`, `WeaponEquipmentComponent.h/.cpp`, input, Gameplay Tag config, Build.cs, Config, or Content path is approved for modification by this supplemental cleanup. `PlayerExhaustionAutomationTests.cpp` is unrelated user-owned WIP and must remain untouched and unstaged.
+- `Source/PolyQuest/Public/AbilitySystem/Tasks/AbilityTask_MeleeTraceWindow.h`
+- `Source/PolyQuest/Private/AbilitySystem/Tasks/AbilityTask_MeleeTraceWindow.cpp`
+  - Implement exactly one multi-source Task with shared hit dedupe and all-or-nothing sampling. Preserve `FMeleeHitResolver` as the only delivery route and all existing SetByCaller/GuardStamina request data.
 
-## Automation Contract
+- `Source/PolyQuest/Private/Combat/Melee/MeleeWeaponTrailComponent.h`
+- `Source/PolyQuest/Private/Combat/Melee/MeleeWeaponTrailComponent.cpp`
+  - Implement only source-keyed VFX requester/child lifecycle. Do not rebase the component away from `UNiagaraComponent`, alter `ABaseCharacter`, create a VFX subsystem, or add a GameplayCue.
 
-Extend the existing transaction matrix with these assertions, without `AddExpectedError`, lowered log levels, or a test-only product fallback:
+- `Source/PolyQuest/Public/Animation/Combat/AnimNotifyState_ActionWindows.h`
+- `Source/PolyQuest/Private/Animation/Combat/AnimNotifyState_ActionWindows.cpp`
+  - Add the per-window array and `OptionalObject2` routing only. Do not change any other Notify semantic, Event Tag, or EventMagnitude behavior.
 
-- A committed OffHand configured with `bProvidesShieldPresentation = true` makes `HasShieldEquipped()` true; no OffHand and an otherwise valid generic OffHand with the default false field return false.
-- Unarmed + Shield resolves `Default` plus true Shield presentation; one-handed Sword + Shield resolves `LightSword` plus true Shield presentation; no valid runtime/asset path can select a composition locomotion mode.
-- `static_cast<EWeaponLocomotionMode>(3)` fails `UWeaponDefinition::IsValidWeaponDefinition()` with the generic invalid-enum path, and `static_cast<uint8>(EWeaponLocomotionMode::Bow)` remains `4`. This protects existing serialized Bow assets while proving removed SwordShield data cannot silently become a valid mode.
-- Equipping a TwoHanded Bow/Heavy weapon clears the OffHand and returns false; world-pickup Apply and Drop rollback restore both the MainHand-only locomotion result and the prior Shield-presentation fact with no drift.
-- `GA_PlayerShieldGuard` CDO has the exact child `State.Action.Guarding.Shield` and hierarchically matches generic `State.Action.Guarding`; `GA_Guard_Sowrd` does not have the exact Shield child and retains the generic Guard route. This is authored-asset static evidence, not a PIE assertion.
+- `Source/PolyQuest/Public/AbilitySystem/Abilities/LightAttackAbility.h/.cpp`
+- `Source/PolyQuest/Public/AbilitySystem/Abilities/ChargedAttackAbility.h/.cpp`
+- `Source/PolyQuest/Public/AbilitySystem/Abilities/SprintAttackAbility.h/.cpp`
+- `Source/PolyQuest/Public/AbilitySystem/Abilities/PlayerMeleeSkillAbility.h/.cpp`
+- `Source/PolyQuest/Public/AbilitySystem/Abilities/EnemyMeleeAbility.h/.cpp`
+  - Change only Trace Begin/End extraction, Notify identity tracking, and the private trace-open call to pass source arrays. Do not alter activation checks, Cost, damage values, Montage ownership, tags, movement, cancellation, or any other action window.
 
-Run the resulting `PolyQuest.Equipment.TransactionMatrix` plus the remaining thirteen suites through the Unreal Editor Automation front end:
+### Test-only surface
 
-`PolyQuest.Melee.TraceSourceGeometry`, `PolyQuest.Melee.WeaponTrail`, `PolyQuest.Player.ActionWindows`, `PolyQuest.Player.MobileBow`, `PolyQuest.Combat.HitReaction`, `PolyQuest.Enemy.AttackSetSelection`, `PolyQuest.Enemy.CombatSpacing`, `PolyQuest.UI.VitalHUD`, `PolyQuest.Player.Exhaustion`, `PolyQuest.Player.LockOn`, `PolyQuest.Projectile.Lifecycle`, `PolyQuest.Projectile.TargetAssist`, and `PolyQuest.Combat.HitFeedback`.
+- Add `Source/PolyQuest/Private/Tests/MeleeMultiTraceSourceAutomationTests.cpp` with `PolyQuest.Melee.MultiTraceSource`.
+- Update `Source/PolyQuest/Private/Tests/TestMeleeTrailAbility.h/.cpp` only under `WITH_DEV_AUTOMATION_TESTS` with a helper that closes its default test Task and opens a real replacement Task using an explicit source-name list. It must not mock source resolution or hit delivery.
+- Under `WITH_DEV_AUTOMATION_TESTS`, make Trail observation source-keyed as well: independent requester, active flag, endpoint snapshot, and call counts per name. Retain the current no-argument observation accessors as `NAME_None` forwarding helpers so existing single-source tests stay narrow.
+- Update `PlayerExhaustionAutomationTests.cpp` only to scope `BaseMoveSpeed` and `ExhaustedMoveSpeed` inside `RunTest()` for Unity Build collision isolation from `PlayerMobileBowAutomationTests.cpp`; do not change its fixtures, assertions, or gameplay contract. Update `MeleeWeaponTrailAutomationTests.cpp`, `MeleeTraceSourceComponentAutomationTests.cpp`, and `WeaponEquipmentComponentAutomationTests.cpp` only when their existing assertions or direct API calls need migration or a narrow regression assertion. Do not alter `CombatAutomationFixture`, global test defaults, or unrelated suites.
 
-All fourteen suites must succeed. Retained logs may only be established intentional-negative coverage; 03A6C adds no success-path configuration warning.
+## Automation And Validation Contract
 
-## User-Owned Editor Authoring
+### Native Automation
 
-After static preflight, the user owns every asset change and readback:
+`PolyQuest.Melee.MultiTraceSource` uses the existing deferred Player fixture and re-equips a transient owner-mesh melee definition. The fixture's known valid `Weapon_R` Socket may be used for both test profiles with deliberately different local offsets, so native tests prove the source contract without mutating a loaded skeletal asset. Actual left/right skeletal placement remains a user Editor gate.
 
-1. Completed preparation evidence: on the actual Shield `UOffHandWeaponDefinition`, the user set both residual fields together to `Default` and saved, while retaining `bProvidesShieldPresentation = true`. After source compilation, reopen it and confirm both residual fields are absent; keep the Shield presentation flag, base `LocomotionMode = Default`, Hand Slot, Defense Profile, and granted actions unchanged.
+The suite must cover all of these without `AddExpectedError`, lowered log levels, mocked resolver delivery, Content Niagara assets, GPU simulation, or a viewport:
 
-2. In `ABP_Player_Dungeon` Event Graph, preserve the existing cached `WeaponEquipment` and ASC acquisition route. Update the cached ordinary locomotion enum from the component's now MainHand-only `GetResolvedLocomotionMode()`, add `bHasShieldEquipped` from `HasShieldEquipped()`, and derive `bUseShieldGuardLocomotion` from that bool plus the existing ASC tag query for `State.Action.Guarding.Shield`. Do not create a parallel Equipment boolean, tag, or Blueprint-side inventory check.
+1. A valid two-profile composition creates and resolves `RightFist` and `LeftFist`; an empty request resolves the configured `RightFist` default. The old unnamed query still resolves the default legacy path.
+2. A right-only and left-only real Task hit only the target on their corresponding prepared geometry.
+3. One dual-source Task can contact the same valid target through both source sweeps but applies exactly one successful delivery in that authored window.
+4. Unknown source, duplicate requested source, invalid profile, and active coincident endpoint fail closed. The active Task closes, every source-keyed trail request ends, and the failed tick causes no partial delivery.
+5. Both named sources can be tracked simultaneously with the same Task requester. A stale first Task ending after a second Task claims `RightFist` cannot stop the successor or `LeftFist`.
+6. The no-Niagara-asset Player path creates no child component/requester and continues to trace and resolve normally. Existing default sword and Enemy source paths retain their current behavior.
 
-3. After source compilation, open `ABP_Player_Dungeon`, refresh/reconstruct every `Blend Poses by EWeaponLocomotionMode` node, and inspect the labelled enum pins rather than raw `BlendPose_N` array indices. Remove the obsolete `SwordShield` branch/reference. Confirm the remaining `Default`, `LightSword`, `HeavySword`, and `Bow` branches point to their correct existing assets, especially the Bow branch. Select full-body `BS_Shield_Walk_Run` only when `bUseShieldGuardLocomotion` is true. Route that result through the established final Reaction Overlay so Small Hit remains visible. The Shield Guard branch bypasses the single-sword `DefaultGroup.UpperBody` Guard visual branch; ordinary Sword/Shield locomotion does not acquire a new passive overlay.
+Run the new suite plus all current fourteen Automation suites through the Unreal Editor front end, for fifteen successful suites total. At minimum inspect the regressions `PolyQuest.Melee.TraceSourceGeometry`, `PolyQuest.Melee.WeaponTrail`, and `PolyQuest.Equipment.TransactionMatrix`; the remaining suites must also remain green.
 
-4. Preserve Bow's independent aim branch, the current Stride Warping placement on pure base locomotion, and all Root Motion policy. Do not add an Aim Offset, new Slot, passive shield hold layer, shield-back stowage, or a new Guard BlendSpace.
+### User-Owned Editor Authoring And PIE
 
-## Static Checks, User Validation, And Closeout
+1. On the Skeleton actually used by `BP_Player`, create and save `Trace_RightFist` and `Trace_LeftFist` sockets at the fist contact regions. These names are authored data, not native hard-coded socket names.
+2. In `DA_Weapon_Unarmed`, retain `bUseOwnerMeshSocketForTrace`, add the `RightFist` and `LeftFist` profiles, assign the two sockets, copy the current right-hand offsets to `RightFist`, tune the left-hand offsets, and set `DefaultOwnerMeshTraceSourceName = RightFist`.
+3. In each Unarmed Montage's `UAnimNotifyState_AttackTraceWindow`, enter `RightFist`, `LeftFist`, or both based on the actual contact timing. The expected authoring targets are `AM_LightAttack01_Hand`, `AM_LightAttack02_Hand`, `AM_LightAttack03_Hand`, `AM_Unarmed_Charged`, and `AM_Unarmed_SprintAttack`. Keep all sword, heavy weapon, and Enemy Trace Window arrays empty.
+4. Confirm `BP_Player` still assigns its existing white `NS_MeleeWeaponTrail` to `MeleeWeaponTrail`; do not create a new Blueprint Actor or per-hand Blueprint component.
+5. Manually compile `PolyQuestEditor`. In `Scene01`, verify right-only punch, left-only punch, a controlled two-hand window, normal weapon trace, Enemy trace, interrupted attack cleanup, and no visible stale trail. Report Editor readback, compile, PIE, and Automation evidence separately.
 
-- Before handoff, read the final query and direct transaction callers; use CodeGraph and file-scoped code-review-graph as supplemental evidence; run Rider Error-level inspection on all touched C++ paths and `git diff --check`. These are static checks only. The graph does not prove Blueprint branches or GameplayTag runtime ownership, so direct Automation/Editor readback remains required.
-- The user manually compiles `PolyQuestEditor`, runs the fourteen Automation suites, and records the result.
-- Editor readback confirms the actual Shield DataAsset no longer exposes the two removed fields, the Shield-presentation flag and DefenseProfile remain intact, the two Guard Blueprint CDO tag containers remain correct, and every `Blend Poses by EWeaponLocomotionMode` node has exactly the current labelled branches with Bow correctly wired. Do not delete `BS_SwordShield_Walk_Run` in this stage; after Reference Viewer proves it has zero referencers, asset deletion belongs to a separate approved Content-cleanup decision.
-- In `Scene01`, validate Unarmed + Shield and Sword + Shield ordinary locomotion retain their respective MainHand base routes; Shield Guard for both uses the full-body Shield BlendSpace; single-sword Guard stays upper-body only; Bow/Heavy clears Shield presentation; and release, attack/Dodge cancellation, Guard Break, Small Hit, death, and B2 locked movement leave no stale Shield Guard pose or yaw regression.
-- After user-confirmed compile, Automation, Editor readback, and PIE evidence, Main performs one defect-first fresh review. Then Main updates `README.md`, `ARCHITECTURE.md`, `ROADMAP.md`, and this `plan.md` with verified results. The closeout must record that the enum and OffHand composition fields were removed, that Bow keeps serialized value `4`, and that any now-unreferenced legacy Content asset still requires its own evidence-led cleanup approval.
+## Non-Goals, Debt, And Commit Boundary
 
-## Commit Boundary
-
-This user-approved commit includes only `WeaponDefinition.h`, `OffHandWeaponDefinition.h`, the already-approved `WeaponEquipmentComponent.h/.cpp`, `WeaponEquipmentComponentAutomationTests.cpp`, and the four synchronized project documents. It explicitly excludes every `Content/**` asset, Config, map, Blueprint, GA/GE/Montage, AnimBP, input, `.uproject`, generated output, imported resource, `PlayerExhaustionAutomationTests.cpp`, and unrelated user WIP.
+- Do not implement dual-wield attacks, offhand damage, shield hit tracing, separate fist Niagara assets, profile-specific radius/subdivisions, a general inventory system, GameplayCues, new Gameplay Tags, replication, or a second damage path. Future dual wield may reuse this source-name contract only after a separately accepted stage.
+- The live Unreal MCP endpoint was unavailable during planning, and Rider's offline asset index did not expose the Unarmed DataAsset values. The exact socket transform and each Montage window's hand assignment therefore remain user Editor evidence, not source-confirmed facts.
+- After user validation, Gemini provides an implementation self-review only. Main performs the separate defect-first fresh review, then updates `README.md`, `ARCHITECTURE.md`, `ROADMAP.md`, and this closeout record. Any confirmed unresolved risk must be recorded in `ROADMAP.md` with an owning stage and closure trigger.
+- Default commit scope is this stage's C++/Automation/docs only. Exclude all `Content/**`, Config, maps, Blueprint/AnimBP/GA/GE/Montage assets, imported resources, `.uproject`, generated folders, and unrelated WIP unless the user separately approves a stable asset closure.
 
 ## Closeout Record
 
-- Runtime contract: `EWeaponLocomotionMode` now exposes only `Default = 0`, `LightSword = 1`, `HeavySword = 2`, and `Bow = 4`. The removed ordinal `3` fails `UWeaponDefinition::IsValidWeaponDefinition()` together with every other invalid enum value, preserving the serialized Bow value without a deprecated alias or enum redirect. `UOffHandWeaponDefinition` retains required OffHand slot, base `LocomotionMode == Default`, display-mesh validation, and `bProvidesShieldPresentation`, but no MainHand/OffHand composition fields or preflight rule.
-- Presentation contract: `GetResolvedLocomotionMode()` reads only committed MainHand base locomotion. `HasShieldEquipped()` independently reads only the committed OffHand presentation flag. `ABP_Player_Dungeon` combines the latter with exact active `State.Action.Guarding.Shield` for full-body `BS_Shield_Walk_Run`; generic Guard and the Shield Guard ability tag are not equipped-Shield signals. The ordinary enum branch set is `Default`, `LightSword`, `HeavySword`, and `Bow`.
-- Automation and review: `PolyQuest.Equipment.TransactionMatrix` covers the ordinal-`3` failure, preserved Bow value, Shield/non-Shield OffHand presentation, TwoHanded clearing, and Apply/Drop rollback. The user confirmed all fourteen Editor Automation suites and focused Scene01 PIE after the final cleanup. Main re-read the enum, OffHand validation, preflight/commit path, transaction matrix, direct callers, and final diff; CodeGraph, code-review-graph, Rider inspection, and `git diff --check` supplied supplemental static evidence. Main found no P0-P2.
-- Asset boundary: the user removed the obsolete `SwordShield` AnimBP branch but retained `BS_SwordShield_Walk_Run` in local `Content/**`. It is not a current runtime selection path and is deliberately excluded from this commit. Any deletion requires a separately approved, Reference Viewer-backed Content cleanup.
-- Scope: no Player/Guard Ability, DefenseProfile, Gameplay Tag, input, transaction, pickup/drop, Bow, Stamina, B2 facing, Config, Blueprint, AnimBP source asset, map, or project-file contract changed outside the approved 03A6C surface. The unrelated `PlayerExhaustionAutomationTests.cpp` modification remains uncommitted user WIP.
+- User validation: the post-review `PolyQuest.Melee.MultiTraceSource` and the remaining fourteen Automation suites all passed. The retained invalid-source, duplicate-source, and coincident-endpoint logs are intentional fail-closed negative coverage. The user also confirmed focused Scene01 PIE for right punch, left punch, dual-source deduplication, and trail rendering.
+- Main fresh review: no P0/P1 production defect was found. One P2 test-contract gap was repaired: Case 5 now executes both right-only and left-only NotifyState-selected real Tasks, asserts that the opposite source remains inactive, and verifies one delivery per separate authored window. The final targeted and full Automation matrix passed after that repair.
+- Deferred debt: the include-hygiene audit and conditional per-source Niagara/radius expansion are recorded under `TODO-03H4` with concrete adoption conditions. They are not current runtime defects.
+- Commit scope: include this stage's C++/Automation source plus `README.md`, `ARCHITECTURE.md`, `ROADMAP.md`, and this plan. Exclude every `Content/**` asset, Config, map, Blueprint/AnimBP/GA/GE/Montage asset, imported resource, `.uproject`, generated folder, and unrelated user WIP.

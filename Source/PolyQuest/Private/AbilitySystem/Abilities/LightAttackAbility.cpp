@@ -6,6 +6,7 @@
 #include "Abilities/Tasks/AbilityTask_WaitGameplayEvent.h"
 #include "Animation/AnimInstance.h"
 #include "Animation/AnimMontage.h"
+#include "Animation/Combat/AnimNotifyState_ActionWindows.h"
 #include "Character/BaseCharacter.h"
 #include "Character/Player/PlayerCharacter.h"
 #include "Combat/ComboChainDataAsset.h"
@@ -267,18 +268,40 @@ void ULightAttackAbility::OnActiveMontageEnded(UAnimMontage* Montage, bool bInte
 
 void ULightAttackAbility::OnTraceWindowBegin(FGameplayEventData Payload)
 {
-	if (IsGameplayEventFromActiveMontage(Payload))
+	if (!IsGameplayEventFromActiveMontage(Payload))
 	{
-		OpenTraceWindow();
+		return;
 	}
+
+	const UAnimNotifyState_AttackTraceWindow* NotifyState = Cast<UAnimNotifyState_AttackTraceWindow>(Payload.OptionalObject2);
+	if (!NotifyState)
+	{
+		return;
+	}
+
+	if (TraceWindowTask && ActiveTraceNotifyState.IsValid() && ActiveTraceNotifyState.Get() != NotifyState)
+	{
+		CloseTraceWindow();
+	}
+
+	ActiveTraceNotifyState = NotifyState;
+	OpenTraceWindow(NotifyState->GetTraceSourceNames());
 }
 
 void ULightAttackAbility::OnTraceWindowEnd(FGameplayEventData Payload)
 {
-	if (IsGameplayEventFromActiveMontage(Payload))
+	if (!IsGameplayEventFromActiveMontage(Payload))
 	{
-		CloseTraceWindow();
+		return;
 	}
+
+	const UAnimNotifyState_AttackTraceWindow* NotifyState = Cast<UAnimNotifyState_AttackTraceWindow>(Payload.OptionalObject2);
+	if (!NotifyState || NotifyState != ActiveTraceNotifyState.Get())
+	{
+		return;
+	}
+
+	CloseTraceWindow();
 }
 
 void ULightAttackAbility::OnDodgeCancelWindowBegin(FGameplayEventData Payload)
@@ -584,7 +607,7 @@ void ULightAttackAbility::SetDodgeCancelable(bool bShouldBeCancelable)
 	bDodgeCancelable = false;
 }
 
-void ULightAttackAbility::OpenTraceWindow()
+void ULightAttackAbility::OpenTraceWindow(const TArray<FName>& InTraceSourceNames)
 {
 	if (bEndAbilityRequested)
 	{
@@ -603,7 +626,7 @@ void ULightAttackAbility::OpenTraceWindow()
 
 	ABaseCharacter* Character = Cast<ABaseCharacter>(GetAvatarActorFromActorInfo());
 	TraceWindowTask = Character
-		? UAbilityTask_MeleeTraceWindow::OpenMeleeTraceWindow(this, Character->GetMeleeTraceSource(), DamageGameplayEffectClass, GetAbilityLevel(), FGameplayTag(), 0.0f)
+		? UAbilityTask_MeleeTraceWindow::OpenMeleeTraceWindow(this, Character->GetMeleeTraceSource(), DamageGameplayEffectClass, GetAbilityLevel(), FGameplayTag(), 0.0f, 0.0f, InTraceSourceNames)
 		: nullptr;
 	if (TraceWindowTask)
 	{
@@ -617,6 +640,7 @@ void ULightAttackAbility::OpenTraceWindow()
 
 void ULightAttackAbility::CloseTraceWindow()
 {
+	ActiveTraceNotifyState.Reset();
 	if (TraceWindowTask)
 	{
 		TraceWindowTask->EndTask();

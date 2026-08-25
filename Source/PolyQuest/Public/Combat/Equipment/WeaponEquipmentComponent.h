@@ -70,8 +70,11 @@ public:
 	/** The equipped main hand when it is a melee definition; null otherwise. */
 	UMeleeWeaponDefinition* GetEquippedMainHandMelee() const;
 
-	/** Returns the live blade markers of the equipped melee main hand for trace sampling. */
+	/** Returns the live blade markers of the equipped melee main hand for trace sampling (default source). */
 	bool TryGetBladeMarkers(USceneComponent*& OutBladeBase, USceneComponent*& OutBladeTip) const;
+
+	/** Returns the live blade markers of the equipped melee main hand for a named trace source. */
+	bool TryGetBladeMarkers(FName TraceSourceName, USceneComponent*& OutBladeBase, USceneComponent*& OutBladeTip) const;
 
 	/** Resolves a named Socket on the current main-hand display mesh to a finite world transform. */
 	bool TryGetEquippedMainHandDisplaySocketTransform(FName SocketName, FTransform& OutTransform) const;
@@ -141,10 +144,10 @@ private:
 	TObjectPtr<UStaticMeshComponent> OffHandDisplayComponent;
 
 	UPROPERTY(Transient)
-	TObjectPtr<USceneComponent> MainHandBladeBaseMarker;
+	TMap<FName, TObjectPtr<USceneComponent>> MainHandBladeBaseMarkers;
 
 	UPROPERTY(Transient)
-	TObjectPtr<USceneComponent> MainHandBladeTipMarker;
+	TMap<FName, TObjectPtr<USceneComponent>> MainHandBladeTipMarkers;
 
 	/** The prepared 1-4 ability-class identities; index-aligned with PreparedSlotHandles. */
 	UPROPERTY(Transient)

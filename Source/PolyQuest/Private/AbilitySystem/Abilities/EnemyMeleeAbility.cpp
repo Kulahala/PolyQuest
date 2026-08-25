@@ -7,6 +7,7 @@
 #include "Abilities/Tasks/AbilityTask_WaitGameplayEvent.h"
 #include "Animation/AnimInstance.h"
 #include "Animation/AnimMontage.h"
+#include "Animation/Combat/AnimNotifyState_ActionWindows.h"
 #include "Character/BaseCharacter.h"
 #include "Character/Enemy/EnemyCharacter.h"
 #include "Combat/Enemy/EnemyAttackProfile.h"
@@ -246,18 +247,40 @@ void UEnemyMeleeAbility::OnActiveMontageEnded(UAnimMontage* Montage, bool bInter
 
 void UEnemyMeleeAbility::OnTraceWindowBegin(FGameplayEventData Payload)
 {
-	if (IsGameplayEventFromActiveMontage(Payload))
+	if (!IsGameplayEventFromActiveMontage(Payload))
 	{
-		OpenTraceWindow();
+		return;
 	}
+
+	const UAnimNotifyState_AttackTraceWindow* NotifyState = Cast<UAnimNotifyState_AttackTraceWindow>(Payload.OptionalObject2);
+	if (!NotifyState)
+	{
+		return;
+	}
+
+	if (TraceWindowTask && ActiveTraceNotifyState.IsValid() && ActiveTraceNotifyState.Get() != NotifyState)
+	{
+		CloseTraceWindow();
+	}
+
+	ActiveTraceNotifyState = NotifyState;
+	OpenTraceWindow(NotifyState->GetTraceSourceNames());
 }
 
 void UEnemyMeleeAbility::OnTraceWindowEnd(FGameplayEventData Payload)
 {
-	if (IsGameplayEventFromActiveMontage(Payload))
+	if (!IsGameplayEventFromActiveMontage(Payload))
 	{
-		CloseTraceWindow();
+		return;
 	}
+
+	const UAnimNotifyState_AttackTraceWindow* NotifyState = Cast<UAnimNotifyState_AttackTraceWindow>(Payload.OptionalObject2);
+	if (!NotifyState || NotifyState != ActiveTraceNotifyState.Get())
+	{
+		return;
+	}
+
+	CloseTraceWindow();
 }
 
 void UEnemyMeleeAbility::OnHyperArmorBegin(FGameplayEventData Payload)
@@ -325,7 +348,7 @@ void UEnemyMeleeAbility::EndFromMontage(bool bWasCancelled)
 	}
 }
 
-void UEnemyMeleeAbility::OpenTraceWindow()
+void UEnemyMeleeAbility::OpenTraceWindow(const TArray<FName>& InTraceSourceNames)
 {
 	if (bEndAbilityRequested)
 	{
@@ -344,7 +367,7 @@ void UEnemyMeleeAbility::OpenTraceWindow()
 
 	ABaseCharacter* Character = Cast<ABaseCharacter>(GetAvatarActorFromActorInfo());
 	TraceWindowTask = Character
-		? UAbilityTask_MeleeTraceWindow::OpenMeleeTraceWindow(this, Character->GetMeleeTraceSource(), ActiveDamageGameplayEffectClass, GetAbilityLevel(), FGameplayTag(), 0.0f, ActiveGuardStaminaDamage)
+		? UAbilityTask_MeleeTraceWindow::OpenMeleeTraceWindow(this, Character->GetMeleeTraceSource(), ActiveDamageGameplayEffectClass, GetAbilityLevel(), FGameplayTag(), 0.0f, ActiveGuardStaminaDamage, InTraceSourceNames)
 		: nullptr;
 	if (TraceWindowTask)
 	{
@@ -358,6 +381,7 @@ void UEnemyMeleeAbility::OpenTraceWindow()
 
 void UEnemyMeleeAbility::CloseTraceWindow()
 {
+	ActiveTraceNotifyState.Reset();
 	if (TraceWindowTask)
 	{
 		TraceWindowTask->EndTask();

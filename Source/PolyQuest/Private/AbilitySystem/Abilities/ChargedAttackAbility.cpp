@@ -7,6 +7,7 @@
 #include "Abilities/Tasks/AbilityTask_WaitGameplayEvent.h"
 #include "Animation/AnimInstance.h"
 #include "Animation/AnimMontage.h"
+#include "Animation/Combat/AnimNotifyState_ActionWindows.h"
 #include "Character/BaseCharacter.h"
 #include "Character/Player/PlayerCharacter.h"
 #include "Components/SkeletalMeshComponent.h"
@@ -325,18 +326,40 @@ void UChargedAttackAbility::OnHoldReady(FGameplayEventData Payload)
 
 void UChargedAttackAbility::OnTraceWindowBegin(FGameplayEventData Payload)
 {
-	if (bReleaseStarted && IsGameplayEventFromActiveMontage(Payload))
+	if (!bReleaseStarted || !IsGameplayEventFromActiveMontage(Payload))
 	{
-		OpenTraceWindow();
+		return;
 	}
+
+	const UAnimNotifyState_AttackTraceWindow* NotifyState = Cast<UAnimNotifyState_AttackTraceWindow>(Payload.OptionalObject2);
+	if (!NotifyState)
+	{
+		return;
+	}
+
+	if (TraceWindowTask && ActiveTraceNotifyState.IsValid() && ActiveTraceNotifyState.Get() != NotifyState)
+	{
+		CloseTraceWindow();
+	}
+
+	ActiveTraceNotifyState = NotifyState;
+	OpenTraceWindow(NotifyState->GetTraceSourceNames());
 }
 
 void UChargedAttackAbility::OnTraceWindowEnd(FGameplayEventData Payload)
 {
-	if (IsGameplayEventFromActiveMontage(Payload))
+	if (!IsGameplayEventFromActiveMontage(Payload))
 	{
-		CloseTraceWindow();
+		return;
 	}
+
+	const UAnimNotifyState_AttackTraceWindow* NotifyState = Cast<UAnimNotifyState_AttackTraceWindow>(Payload.OptionalObject2);
+	if (!NotifyState || NotifyState != ActiveTraceNotifyState.Get())
+	{
+		return;
+	}
+
+	CloseTraceWindow();
 }
 
 void UChargedAttackAbility::OnInputReleased(FGameplayEventData Payload)
@@ -483,7 +506,7 @@ bool UChargedAttackAbility::IsChargedReleaseHandoffEvent(const FGameplayEventDat
 		&& Payload->InstigatorTags.HasTagExact(PrimaryAttackInputTag);
 }
 
-void UChargedAttackAbility::OpenTraceWindow()
+void UChargedAttackAbility::OpenTraceWindow(const TArray<FName>& InTraceSourceNames)
 {
 	if (bEndAbilityRequested || !bReleaseStarted)
 	{
@@ -514,7 +537,8 @@ void UChargedAttackAbility::OpenTraceWindow()
 		Character->GetMeleeTraceSource(),
 		DamageGameplayEffectClass,
 		GetAbilityLevel(),
-		SetByCallerMagnitudes);
+		SetByCallerMagnitudes,
+		InTraceSourceNames);
 	if (TraceWindowTask)
 	{
 		TraceWindowTask->ReadyForActivation();
@@ -527,6 +551,7 @@ void UChargedAttackAbility::OpenTraceWindow()
 
 void UChargedAttackAbility::CloseTraceWindow()
 {
+	ActiveTraceNotifyState.Reset();
 	if (TraceWindowTask)
 	{
 		TraceWindowTask->EndTask();

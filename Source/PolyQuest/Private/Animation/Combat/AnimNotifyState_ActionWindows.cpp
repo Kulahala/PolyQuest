@@ -10,7 +10,7 @@
 
 namespace
 {
-	void SendGameplayEvent(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, const FName EventTagName, const TCHAR* NotifyName)
+	void SendGameplayEvent(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, const FName EventTagName, const TCHAR* NotifyName, const UObject* OptionalObject2 = nullptr)
 	{
 		AActor* Owner = MeshComp ? MeshComp->GetOwner() : nullptr;
 		IAbilitySystemInterface* AbilitySystemInterface = Cast<IAbilitySystemInterface>(Owner);
@@ -32,6 +32,7 @@ namespace
 		EventData.Instigator = Owner;
 		EventData.Target = Owner;
 		EventData.OptionalObject = Animation;
+		EventData.OptionalObject2 = OptionalObject2;
 		UAbilitySystemBlueprintLibrary::SendGameplayEventToActor(Owner, EventTag, EventData);
 	}
 
@@ -104,12 +105,12 @@ FString UAnimNotify_PlayerChargedAttackHoldReady::GetNotifyName_Implementation()
 
 void UAnimNotifyState_AttackTraceWindow::NotifyBegin(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, float, const FAnimNotifyEventReference&)
 {
-	SendGameplayEvent(MeshComp, Animation, TEXT("Event.Attack.TraceWindow.Begin"), TEXT("Attack trace window"));
+	SendGameplayEvent(MeshComp, Animation, TEXT("Event.Attack.TraceWindow.Begin"), TEXT("Attack trace window"), this);
 }
 
 void UAnimNotifyState_AttackTraceWindow::NotifyEnd(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, const FAnimNotifyEventReference&)
 {
-	SendGameplayEvent(MeshComp, Animation, TEXT("Event.Attack.TraceWindow.End"), TEXT("Attack trace window"));
+	SendGameplayEvent(MeshComp, Animation, TEXT("Event.Attack.TraceWindow.End"), TEXT("Attack trace window"), this);
 }
 
 FString UAnimNotifyState_AttackTraceWindow::GetNotifyName_Implementation() const

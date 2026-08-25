@@ -48,6 +48,12 @@ public:
 	virtual void NotifyBegin(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, float TotalDuration, const FAnimNotifyEventReference& EventReference) override;
 	virtual void NotifyEnd(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, const FAnimNotifyEventReference& EventReference) override;
 	virtual FString GetNotifyName_Implementation() const override;
+
+	const TArray<FName>& GetTraceSourceNames() const { return TraceSourceNames; }
+
+	/** Explicit contact sources to trace during this window (e.g. RightFist, LeftFist). Empty resolves default weapon source. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Trace", meta = (AllowPrivateAccess = "true"))
+	TArray<FName> TraceSourceNames;
 };
 
 UCLASS()

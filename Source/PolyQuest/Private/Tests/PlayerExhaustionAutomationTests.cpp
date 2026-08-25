@@ -17,9 +17,6 @@
 
 namespace
 {
-	constexpr float BaseMoveSpeed = 500.0f;
-	constexpr float ExhaustedMoveSpeed = 350.0f;
-
 	void TickExhaustionTestWorld(UWorld* World, const float DeltaSeconds)
 	{
 		if (World)
@@ -52,6 +49,9 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FPlayerExhaustionAutomationTest, "PolyQuest.Pla
 
 bool FPlayerExhaustionAutomationTest::RunTest(const FString&)
 {
+	constexpr float BaseMoveSpeed = 500.0f;
+	constexpr float ExhaustedMoveSpeed = 350.0f;
+
 	if (!TestNotNull(TEXT("Engine is available for the exhaustion fixture"), GEngine))
 	{
 		return false;

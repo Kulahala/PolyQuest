@@ -487,9 +487,37 @@ UMeleeWeaponDefinition* UWeaponEquipmentComponent::GetEquippedMainHandMelee() co
 
 bool UWeaponEquipmentComponent::TryGetBladeMarkers(USceneComponent*& OutBladeBase, USceneComponent*& OutBladeTip) const
 {
-	OutBladeBase = MainHandBladeBaseMarker.Get();
-	OutBladeTip = MainHandBladeTipMarker.Get();
-	return Cast<UMeleeWeaponDefinition>(CurrentMainHandWeapon) && OutBladeBase && OutBladeTip;
+	return TryGetBladeMarkers(NAME_None, OutBladeBase, OutBladeTip);
+}
+
+bool UWeaponEquipmentComponent::TryGetBladeMarkers(FName TraceSourceName, USceneComponent*& OutBladeBase, USceneComponent*& OutBladeTip) const
+{
+	OutBladeBase = nullptr;
+	OutBladeTip = nullptr;
+
+	const UMeleeWeaponDefinition* MeleeDef = Cast<UMeleeWeaponDefinition>(CurrentMainHandWeapon);
+	if (!MeleeDef)
+	{
+		return false;
+	}
+
+	FName ResolvedName = NAME_None;
+	if (!MeleeDef->TryResolveTraceSourceName(TraceSourceName, ResolvedName))
+	{
+		return false;
+	}
+
+	if (const TObjectPtr<USceneComponent>* FoundBase = MainHandBladeBaseMarkers.Find(ResolvedName))
+	{
+		OutBladeBase = FoundBase->Get();
+	}
+
+	if (const TObjectPtr<USceneComponent>* FoundTip = MainHandBladeTipMarkers.Find(ResolvedName))
+	{
+		OutBladeTip = FoundTip->Get();
+	}
+
+	return OutBladeBase && OutBladeTip;
 }
 
 bool UWeaponEquipmentComponent::TryResolveInputIntent(const FGameplayTag& InputIntentTag, FGameplayTag& OutAbilityTag) const
@@ -640,6 +668,21 @@ bool UWeaponEquipmentComponent::RunPreflight(APlayerCharacter* PlayerCharacter, 
 		{
 			OutReason = FString::Printf(TEXT("the owner mesh does not contain socket '%s' for main hand."), *NewMainHand->AttachSocketName.ToString());
 			return false;
+		}
+
+		if (const UMeleeWeaponDefinition* MainMelee = Cast<UMeleeWeaponDefinition>(NewMainHand))
+		{
+			if (MainMelee->bUseOwnerMeshSocketForTrace && MainMelee->OwnerMeshTraceSources.Num() > 0)
+			{
+				for (const FOwnerMeshMeleeTraceSource& Source : MainMelee->OwnerMeshTraceSources)
+				{
+					if (!OwnerMesh->DoesSocketExist(Source.OwnerMeshSocketName))
+					{
+						OutReason = FString::Printf(TEXT("the owner mesh does not contain socket '%s' for trace source '%s'."), *Source.OwnerMeshSocketName.ToString(), *Source.TraceSourceName.ToString());
+						return false;
+					}
+				}
+			}
 		}
 	}
 
@@ -835,17 +878,23 @@ void UWeaponEquipmentComponent::TeardownEquippedWeapons()
 	PreparedSlotClasses.Reset();
 	PreparedSlotHandles.Reset();
 
-	if (MainHandBladeBaseMarker)
+	for (auto& Pair : MainHandBladeBaseMarkers)
 	{
-		MainHandBladeBaseMarker->DestroyComponent();
-		MainHandBladeBaseMarker = nullptr;
+		if (Pair.Value)
+		{
+			Pair.Value->DestroyComponent();
+		}
 	}
+	MainHandBladeBaseMarkers.Reset();
 
-	if (MainHandBladeTipMarker)
+	for (auto& Pair : MainHandBladeTipMarkers)
 	{
-		MainHandBladeTipMarker->DestroyComponent();
-		MainHandBladeTipMarker = nullptr;
+		if (Pair.Value)
+		{
+			Pair.Value->DestroyComponent();
+		}
 	}
+	MainHandBladeTipMarkers.Reset();
 
 	if (MainHandDisplayComponent)
 	{
@@ -913,31 +962,57 @@ bool UWeaponEquipmentComponent::ApplyComposition(APlayerCharacter* PlayerCharact
 	UStaticMeshComponent* NewMainHandDisplay = SpawnDisplay(MainHandDefinition);
 	UStaticMeshComponent* NewOffHandDisplay = SpawnDisplay(OffHandDefinition);
 
-	USceneComponent* NewBladeBaseMarker = nullptr;
-	USceneComponent* NewBladeTipMarker = nullptr;
+	TMap<FName, USceneComponent*> NewBladeBaseMarkers;
+	TMap<FName, USceneComponent*> NewBladeTipMarkers;
 	const UMeleeWeaponDefinition* MainHandMelee = Cast<UMeleeWeaponDefinition>(MainHandDefinition);
 	if (MainHandMelee && MainHandMelee->bUseOwnerMeshSocketForTrace)
 	{
-		// Unarmed hand-contact source: the markers resolve against the character mesh
-		// socket instead of a spawned display, and the trace path is unchanged.
-		NewBladeBaseMarker = NewObject<USceneComponent>(PlayerCharacter, NAME_None, RF_Transient);
-		NewBladeBaseMarker->RegisterComponent();
-		NewBladeBaseMarker->AttachToComponent(OwnerMesh, FAttachmentTransformRules::KeepRelativeTransform, MainHandDefinition->AttachSocketName);
-		NewBladeBaseMarker->SetRelativeLocation(MainHandMelee->BladeBaseMarkerRelativeLocation);
+		if (MainHandMelee->OwnerMeshTraceSources.Num() > 0)
+		{
+			for (const FOwnerMeshMeleeTraceSource& Source : MainHandMelee->OwnerMeshTraceSources)
+			{
+				USceneComponent* BaseMarker = NewObject<USceneComponent>(PlayerCharacter, NAME_None, RF_Transient);
+				BaseMarker->RegisterComponent();
+				BaseMarker->AttachToComponent(OwnerMesh, FAttachmentTransformRules::KeepRelativeTransform, Source.OwnerMeshSocketName);
+				BaseMarker->SetRelativeLocation(Source.BladeBaseMarkerRelativeLocation);
 
-		NewBladeTipMarker = NewObject<USceneComponent>(PlayerCharacter, NAME_None, RF_Transient);
-		NewBladeTipMarker->RegisterComponent();
-		NewBladeTipMarker->AttachToComponent(OwnerMesh, FAttachmentTransformRules::KeepRelativeTransform, MainHandDefinition->AttachSocketName);
-		NewBladeTipMarker->SetRelativeLocation(MainHandMelee->BladeTipMarkerRelativeLocation);
+				USceneComponent* TipMarker = NewObject<USceneComponent>(PlayerCharacter, NAME_None, RF_Transient);
+				TipMarker->RegisterComponent();
+				TipMarker->AttachToComponent(OwnerMesh, FAttachmentTransformRules::KeepRelativeTransform, Source.OwnerMeshSocketName);
+				TipMarker->SetRelativeLocation(Source.BladeTipMarkerRelativeLocation);
 
-		UE_LOG(LogPolyQuest, Verbose, TEXT("Weapon equipment on '%s' attached its melee markers to owner-mesh socket '%s' (owner-socket contact source)."), *GetNameSafe(GetOwner()), *MainHandDefinition->AttachSocketName.ToString());
+				NewBladeBaseMarkers.Add(Source.TraceSourceName, BaseMarker);
+				NewBladeTipMarkers.Add(Source.TraceSourceName, TipMarker);
+			}
+
+			UE_LOG(LogPolyQuest, Verbose, TEXT("Weapon equipment on '%s' attached %d owner-mesh trace source markers."), *GetNameSafe(GetOwner()), MainHandMelee->OwnerMeshTraceSources.Num());
+		}
+		else
+		{
+			// Unarmed hand-contact source: the markers resolve against the character mesh
+			// socket instead of a spawned display, and the trace path is unchanged.
+			USceneComponent* NewBladeBaseMarker = NewObject<USceneComponent>(PlayerCharacter, NAME_None, RF_Transient);
+			NewBladeBaseMarker->RegisterComponent();
+			NewBladeBaseMarker->AttachToComponent(OwnerMesh, FAttachmentTransformRules::KeepRelativeTransform, MainHandDefinition->AttachSocketName);
+			NewBladeBaseMarker->SetRelativeLocation(MainHandMelee->BladeBaseMarkerRelativeLocation);
+
+			USceneComponent* NewBladeTipMarker = NewObject<USceneComponent>(PlayerCharacter, NAME_None, RF_Transient);
+			NewBladeTipMarker->RegisterComponent();
+			NewBladeTipMarker->AttachToComponent(OwnerMesh, FAttachmentTransformRules::KeepRelativeTransform, MainHandDefinition->AttachSocketName);
+			NewBladeTipMarker->SetRelativeLocation(MainHandMelee->BladeTipMarkerRelativeLocation);
+
+			NewBladeBaseMarkers.Add(NAME_None, NewBladeBaseMarker);
+			NewBladeTipMarkers.Add(NAME_None, NewBladeTipMarker);
+
+			UE_LOG(LogPolyQuest, Verbose, TEXT("Weapon equipment on '%s' attached its melee markers to owner-mesh socket '%s' (owner-socket contact source)."), *GetNameSafe(GetOwner()), *MainHandDefinition->AttachSocketName.ToString());
+		}
 	}
 	else if (MainHandMelee && NewMainHandDisplay)
 	{
-		NewBladeBaseMarker = NewObject<USceneComponent>(PlayerCharacter, NAME_None, RF_Transient);
+		USceneComponent* NewBladeBaseMarker = NewObject<USceneComponent>(PlayerCharacter, NAME_None, RF_Transient);
 		NewBladeBaseMarker->RegisterComponent();
 
-		NewBladeTipMarker = NewObject<USceneComponent>(PlayerCharacter, NAME_None, RF_Transient);
+		USceneComponent* NewBladeTipMarker = NewObject<USceneComponent>(PlayerCharacter, NAME_None, RF_Transient);
 		NewBladeTipMarker->RegisterComponent();
 
 		if (MainHandMelee->UsesDisplayMeshTraceSockets())
@@ -953,6 +1028,9 @@ bool UWeaponEquipmentComponent::ApplyComposition(APlayerCharacter* PlayerCharact
 			NewBladeTipMarker->AttachToComponent(NewMainHandDisplay, FAttachmentTransformRules::KeepRelativeTransform);
 			NewBladeTipMarker->SetRelativeLocation(MainHandMelee->BladeTipMarkerRelativeLocation);
 		}
+
+		NewBladeBaseMarkers.Add(NAME_None, NewBladeBaseMarker);
+		NewBladeTipMarkers.Add(NAME_None, NewBladeTipMarker);
 	}
 
 	auto BaseGrants = [&GrantClass](const UWeaponDefinition* SlotDefinition) -> bool
@@ -1000,8 +1078,18 @@ bool UWeaponEquipmentComponent::ApplyComposition(APlayerCharacter* PlayerCharact
 		CurrentOffHandWeapon = OffHandDefinition;
 		MainHandDisplayComponent = NewMainHandDisplay;
 		OffHandDisplayComponent = NewOffHandDisplay;
-		MainHandBladeBaseMarker = NewBladeBaseMarker;
-		MainHandBladeTipMarker = NewBladeTipMarker;
+
+		MainHandBladeBaseMarkers.Reset();
+		for (const auto& Pair : NewBladeBaseMarkers)
+		{
+			MainHandBladeBaseMarkers.Add(Pair.Key, Pair.Value);
+		}
+		MainHandBladeTipMarkers.Reset();
+		for (const auto& Pair : NewBladeTipMarkers)
+		{
+			MainHandBladeTipMarkers.Add(Pair.Key, Pair.Value);
+		}
+
 		PreparedSlotClasses = MoveTemp(NewPreparedClasses);
 		PreparedSlotHandles = MoveTemp(NewPreparedHandles);
 		GrantedAbilitySpecHandles = MoveTemp(NewGrantedHandles);
@@ -1021,13 +1109,19 @@ bool UWeaponEquipmentComponent::ApplyComposition(APlayerCharacter* PlayerCharact
 		{
 			CharacterASC->ClearAbility(RollbackHandle);
 		}
-		if (NewBladeBaseMarker)
+		for (auto& Pair : NewBladeBaseMarkers)
 		{
-			NewBladeBaseMarker->DestroyComponent();
+			if (Pair.Value)
+			{
+				Pair.Value->DestroyComponent();
+			}
 		}
-		if (NewBladeTipMarker)
+		for (auto& Pair : NewBladeTipMarkers)
 		{
-			NewBladeTipMarker->DestroyComponent();
+			if (Pair.Value)
+			{
+				Pair.Value->DestroyComponent();
+			}
 		}
 		if (NewMainHandDisplay)
 		{

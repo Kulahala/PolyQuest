@@ -135,9 +135,11 @@ private:
 	void EndFromMontage(bool bWasCancelled);
 	bool IsGameplayEventFromActiveMontage(const FGameplayEventData& Payload) const;
 	void EnsureMeleeSkillCategoryTag();
-	void OpenTraceWindow();
+	void OpenTraceWindow(const TArray<FName>& InTraceSourceNames);
 	void CloseTraceWindow();
 	void SetDodgeCancelable(bool bShouldBeCancelable);
 	void SetRuntimeActionTags(bool bShouldApply);
 	void RestoreBaselineMontageRate();
+
+	TWeakObjectPtr<const class UAnimNotifyState_AttackTraceWindow> ActiveTraceNotifyState;
 };

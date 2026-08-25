@@ -25,8 +25,14 @@ public:
 
 	virtual void BeginPlay() override;
 
-	/** Returns false, with one focused warning, until the equipped markers or authored fixture names resolve valid samples. */
+	/** Returns false, with one focused warning, until the equipped markers or authored fixture names resolve valid samples (default source). */
 	bool TryGetBladeEndpoints(FVector& OutBladeBase, FVector& OutBladeTip);
+
+	/** Returns false, with one focused warning, until the equipped markers for the requested source resolve valid samples. */
+	bool TryGetBladeEndpoints(FName TraceSourceName, FVector& OutBladeBase, FVector& OutBladeTip);
+
+	/** Resolves a requested trace source name against the equipped weapon or static definition. */
+	bool TryResolveTraceSourceName(FName RequestedName, FName& OutResolvedName) const;
 
 	ECollisionChannel GetTraceChannel() const { return TraceChannel; }
 	float GetTraceRadius() const;

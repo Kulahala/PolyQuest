@@ -36,10 +36,19 @@ public:
 
 	UAbilityTask_MeleeTraceWindow* GetActiveTraceWindowTask() const { return TraceWindowTask; }
 
+	void HandleTestTraceWindowBegin(const class UAnimNotifyState_AttackTraceWindow* NotifyState);
+	void HandleTestTraceWindowEnd(const class UAnimNotifyState_AttackTraceWindow* NotifyState);
+	const class UAnimNotifyState_AttackTraceWindow* GetActiveTraceNotifyState() const { return ActiveTraceNotifyState.Get(); }
+
 	UPROPERTY()
 	TSubclassOf<UGameplayEffect> TestDamageEffectClass;
+
+	UPROPERTY()
+	TArray<FName> TestTraceSourceNames;
 
 private:
 	UPROPERTY()
 	TObjectPtr<UAbilityTask_MeleeTraceWindow> TraceWindowTask;
+
+	TWeakObjectPtr<const class UAnimNotifyState_AttackTraceWindow> ActiveTraceNotifyState;
 };
