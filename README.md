@@ -100,6 +100,8 @@ PolyQuest 是一个以 UE 5.8、C++ 与 GAS 为核心的新风格化单机动作
 
 `TODO-02C3I` 已完成击飞朝向表现修正：Player 与 Enemy 在 Takeoff Montage 启动前冻结受击方向和角色当时的 Yaw，Commit Notify 时从同一份快照同时得出“面向攻击者”的 Yaw 与“远离攻击者”的 CharacterMovement 速度，避免转身后重新取朝向导致的位移漂移。Enemy Controller 只在真实激活的 Enemy Launch Ability Spec 存在时让出 yaw，普通 Big 受击仍使用原有 AI 朝向规则。用户已确认二十套 Editor Automation 与聚焦 Scene01 PIE 通过；本摘要不额外声称独立的 Development Editor 编译记录，作者化受击资产仍为本地 WIP。
 
+`TODO-02C3J` 已完成击飞起飞前的平滑转向：Player 与 Enemy 不再在 Commit Notify 瞬间跳转朝向，而是在 Takeoff 中以固定有限速率沿最短角度转向攻击者；Commit 与转向完成任一方先到只记录状态，只有两者都满足时才一次性消费冻结的击飞速度并交给既有 CharacterMovement 抛射。Root Motion、异常掉落、取消、死亡、无效状态与暂停 Takeoff 异常结束都会 Fail-Closed，不会在空中继续抢写 yaw。用户确认 `PolyQuest.Combat.LaunchFacingSmoothing`、`PolyQuest.Combat.HitReaction` 与完整战斗/受击回归矩阵均通过，并在 Scene01 PIE 验证转向、抛射和落地恢复；GA、GE、Montage、AnimBP、Blueprint 等作者化资产仍是本地 WIP。
+
 `TODO-01C4` 已完成玩家专属的起身翻滚路线。现有 `ActionDodgeCancelWindow` 只会在匹配且仍活跃的 Player Launch `LandingRecovery` Montage 中授权普通的接地 Dodge；该阶段对 `State.Action.CanCancel.Dodge` 的 scoped loose-tag 贡献会在窗口结束和所有 Launch 清理路径中移除。Dodge 仍会先提交其正常 Cost，随后才取消 Launch，因此保留“当前 Stamina 大于 0 即可开始、Cost 后钳制到 0”的软透支规则；连续输入在 Dodge 自身恢复窗口到来前不会覆盖新起手。用户已确认 Automation 与聚焦 PIE，Montage/GA/GE 作者化资产继续保留为本地 WIP。
 
 `TODO-02C3H` 已完成仅限敌人的“落地后延迟姿态破坏”路线。Enemy Launch 的 Takeoff 真正启动后，Poise 归零会变为一个由 Enemy 持有的 pending intent，而不会在空中进入 Stance Break；只有自然完成 LandingRecovery、且 Launch 清理已释放 `State.Action.HitReacting` 后，才能分发现有的 Stance Break 事件。飞行期 Poise 恢复为正值会清除意图；死亡、teardown 或异常结束不会产生延迟破韧，存活且 Poise 为零的敌人则通过既有恢复 GameplayEffect 恢复 Poise。玩家 Guard/Parry 与立即生效的 Player Guard Break 故意保持不变。用户已确认 `PolyQuest.Combat.HitReaction` Automation 和聚焦 PIE；作者化资产仍是本地 WIP。

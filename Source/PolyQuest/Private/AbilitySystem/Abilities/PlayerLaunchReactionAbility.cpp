@@ -4,6 +4,7 @@
 #include "Abilities/Tasks/AbilityTask_PlayMontageAndWait.h"
 #include "Abilities/Tasks/AbilityTask_WaitDelay.h"
 #include "Abilities/Tasks/AbilityTask_WaitGameplayEvent.h"
+#include "AbilitySystem/Tasks/AbilityTask_TurnToFacing.h"
 #include "AbilitySystemComponent.h"
 #include "Animation/AnimInstance.h"
 #include "Animation/AnimMontage.h"
@@ -160,8 +161,14 @@ void UPlayerLaunchReactionAbility::ActivateAbility(
 		ImpactDirectionSnapshot = FHitReactionImpactResolver::ResolveImpactDirection(*TriggerEventData, PlayerCharacter);
 	}
 
-	BoundAnimInstance->OnMontageEnded.RemoveDynamic(this, &UPlayerLaunchReactionAbility::OnActiveMontageEnded);
-	BoundAnimInstance->OnMontageEnded.AddDynamic(this, &UPlayerLaunchReactionAbility::OnActiveMontageEnded);
+	SmoothingState.Reset();
+	SmoothingState.TryFreeze(ImpactDirectionSnapshot, ImpactReferenceYawSnapshot, LaunchHorizontalSpeed, LaunchVerticalSpeed);
+
+	if (BoundAnimInstance)
+	{
+		BoundAnimInstance->OnMontageEnded.RemoveDynamic(this, &UPlayerLaunchReactionAbility::OnActiveMontageEnded);
+		BoundAnimInstance->OnMontageEnded.AddDynamic(this, &UPlayerLaunchReactionAbility::OnActiveMontageEnded);
+	}
 	MontageTask->ReadyForActivation();
 
 	if (bEndAbilityRequested)
@@ -186,6 +193,39 @@ void UPlayerLaunchReactionAbility::ActivateAbility(
 
 	// 6. Cancel pre-existing combat actions after takeoff montage is confirmed active
 	CharacterASC->CancelAbilities(&AbilitiesToCancel, nullptr, this);
+
+	if (bEndAbilityRequested)
+	{
+		return;
+	}
+
+	// 7. Start facing smoothing task after previous abilities/root motion are cancelled
+	if (SmoothingState.HasFrozenLaunch())
+	{
+		FacingTurnTask = UAbilityTask_TurnToFacing::TurnToFacing(
+			this,
+			PlayerCharacter,
+			SmoothingState.GetStartYaw(),
+			SmoothingState.GetTargetYaw(),
+			FacingTurnRateDegreesPerSecond);
+
+		if (FacingTurnTask)
+		{
+			FacingTurnTask->OnTurnCompleted.AddUObject(this, &UPlayerLaunchReactionAbility::OnFacingTurnCompleted);
+			FacingTurnTask->OnTurnFailed.AddUObject(this, &UPlayerLaunchReactionAbility::OnFacingTurnFailed);
+			FacingTurnTask->ReadyForActivation();
+		}
+		else
+		{
+			UE_LOG(LogPolyQuest, Warning, TEXT("Player launch reaction activation aborted for '%s': failed to create facing turn AbilityTask."), *GetNameSafe(PlayerCharacter));
+			EndFromMontage(true);
+			return;
+		}
+	}
+	else
+	{
+		UE_LOG(LogPolyQuest, Verbose, TEXT("Player launch reaction facing freeze was skipped/failed for '%s' due to malformed context."), *GetNameSafe(PlayerCharacter));
+	}
 }
 
 void UPlayerLaunchReactionAbility::EndAbility(
@@ -202,6 +242,14 @@ void UPlayerLaunchReactionAbility::EndAbility(
 
 	bEndAbilityRequested = true;
 	APlayerCharacter* PlayerCharacter = BoundPlayerCharacter.IsValid() ? BoundPlayerCharacter.Get() : Cast<APlayerCharacter>(GetAvatarActorFromActorInfo());
+
+	if (FacingTurnTask)
+	{
+		FacingTurnTask->EndTask();
+		FacingTurnTask = nullptr;
+	}
+
+	SmoothingState.Reset();
 
 	if (bMovementModeDelegateBound && PlayerCharacter)
 	{
@@ -305,23 +353,76 @@ void UPlayerLaunchReactionAbility::OnLaunchCommitEventReceived(FGameplayEventDat
 		return;
 	}
 
-	float ResolvedFacingYaw = 0.0f;
-	FVector LaunchVelocity = FVector::ZeroVector;
-	if (!FHitReactionImpactResolver::TryBuildLaunchFacingAndVelocity(ImpactDirectionSnapshot, ImpactReferenceYawSnapshot, LaunchHorizontalSpeed, LaunchVerticalSpeed, ResolvedFacingYaw, LaunchVelocity))
+	if (!SmoothingState.TryReceiveCommit())
 	{
-		UE_LOG(LogPolyQuest, Warning, TEXT("Player launch reaction failed to compute launch velocity for '%s'; ending ability."), *GetNameSafe(PlayerCharacter));
+		UE_LOG(LogPolyQuest, Warning, TEXT("Player launch reaction failed to accept commit on frozen state for '%s'; ending ability."), *GetNameSafe(PlayerCharacter));
 		EndFromMontage(true);
 		return;
 	}
 
 	bCommitHandled = true;
-	CurrentPhase = ELaunchPhase::AwaitingAirborne;
+	CurrentPhase = ELaunchPhase::TurningToLaunch;
 
 	// Pause takeoff montage so it holds the airborne flight silhouette in flight
 	BoundAnimInstance->Montage_Pause(TakeoffMontage.Get());
 
-	const FRotator CurrentRotation = PlayerCharacter->GetActorRotation();
-	PlayerCharacter->SetActorRotation(FRotator(CurrentRotation.Pitch, ResolvedFacingYaw, CurrentRotation.Roll));
+	if (SmoothingState.IsTurnCompleted())
+	{
+		CommitFrozenLaunch();
+	}
+}
+
+void UPlayerLaunchReactionAbility::OnFacingTurnCompleted()
+{
+	FacingTurnTask = nullptr;
+	SmoothingState.MarkTurnCompleted();
+
+	if (SmoothingState.IsCommitReceived())
+	{
+		CommitFrozenLaunch();
+	}
+}
+
+void UPlayerLaunchReactionAbility::OnFacingTurnFailed()
+{
+	FacingTurnTask = nullptr;
+	UE_LOG(LogPolyQuest, Warning, TEXT("Player launch reaction facing turn task failed for '%s'; ending ability."), *GetNameSafe(BoundPlayerCharacter.Get()));
+	EndFromMontage(true);
+}
+
+void UPlayerLaunchReactionAbility::CommitFrozenLaunch()
+{
+	if (bEndAbilityRequested || CurrentPhase != ELaunchPhase::TurningToLaunch)
+	{
+		return;
+	}
+
+	APlayerCharacter* PlayerCharacter = BoundPlayerCharacter.IsValid() ? BoundPlayerCharacter.Get() : Cast<APlayerCharacter>(GetAvatarActorFromActorInfo());
+	UAbilitySystemComponent* CharacterASC = GetAbilitySystemComponentFromActorInfo();
+	UCharacterMovementComponent* MovementComponent = PlayerCharacter ? PlayerCharacter->GetCharacterMovement() : nullptr;
+
+	if (!PlayerCharacter || !CharacterASC || !MovementComponent || !BoundAnimInstance || !TakeoffMontage)
+	{
+		EndFromMontage(true);
+		return;
+	}
+
+	if (PlayerCharacter->HasAnyRootMotion())
+	{
+		UE_LOG(LogPolyQuest, Warning, TEXT("Player launch reaction commit aborted for '%s': active Root Motion detected; fail-closed ending ability."), *GetNameSafe(PlayerCharacter));
+		EndFromMontage(true);
+		return;
+	}
+
+	FVector LaunchVelocity = FVector::ZeroVector;
+	if (!SmoothingState.TryConsumeLaunchVelocity(LaunchVelocity))
+	{
+		UE_LOG(LogPolyQuest, Warning, TEXT("Player launch reaction failed to consume launch velocity for '%s'; ending ability."), *GetNameSafe(PlayerCharacter));
+		EndFromMontage(true);
+		return;
+	}
+
+	CurrentPhase = ELaunchPhase::AwaitingAirborne;
 
 	PlayerCharacter->LaunchCharacter(LaunchVelocity, true, true);
 
@@ -382,11 +483,11 @@ void UPlayerLaunchReactionAbility::OnMovementModeChanged(ACharacter* Character, 
 		return;
 	}
 
-	if (CurrentPhase == ELaunchPhase::Takeoff)
+	if (CurrentPhase == ELaunchPhase::Takeoff || CurrentPhase == ELaunchPhase::TurningToLaunch)
 	{
 		if (MovementComponent->IsFalling())
 		{
-			UE_LOG(LogPolyQuest, Warning, TEXT("Player launch reaction takeoff aborted for '%s': unexpected premature falling before commit; ending ability."), *GetNameSafe(Character));
+			UE_LOG(LogPolyQuest, Warning, TEXT("Player launch reaction aborted for '%s': unexpected premature falling before launch; ending ability."), *GetNameSafe(Character));
 			EndFromMontage(true);
 			return;
 		}
@@ -476,13 +577,26 @@ void UPlayerLaunchReactionAbility::OnActiveMontageEnded(UAnimMontage* Montage, b
 		return;
 	}
 
-	if (CurrentPhase == ELaunchPhase::Takeoff && !bCommitHandled && Montage == TakeoffMontage.Get())
+	if (Montage == TakeoffMontage.Get())
 	{
-		EndFromMontage(bInterrupted);
+		if (CurrentPhase == ELaunchPhase::Takeoff && !bCommitHandled)
+		{
+			EndFromMontage(bInterrupted);
+			return;
+		}
+		if (CurrentPhase == ELaunchPhase::TurningToLaunch)
+		{
+			EndFromMontage(true);
+			return;
+		}
 	}
-	else if (CurrentPhase == ELaunchPhase::LandingRecovery && Montage == LandingRecoveryMontage.Get())
+	else if (Montage == LandingRecoveryMontage.Get())
 	{
-		EndFromMontage(bInterrupted);
+		if (CurrentPhase == ELaunchPhase::LandingRecovery)
+		{
+			EndFromMontage(bInterrupted);
+			return;
+		}
 	}
 }
 
@@ -500,6 +614,7 @@ bool UPlayerLaunchReactionAbility::ValidateActivationSetup(const FGameplayAbilit
 		&& MovementComponent && MovementComponent->IsMovingOnGround()
 		&& LaunchHorizontalSpeed > 0.0f && FMath::IsFinite(LaunchHorizontalSpeed)
 		&& LaunchVerticalSpeed > 0.0f && FMath::IsFinite(LaunchVerticalSpeed)
+		&& FacingTurnRateDegreesPerSecond > 0.0f && FMath::IsFinite(FacingTurnRateDegreesPerSecond)
 		&& PlayerLaunchReactionAbilityTag.IsValid() && PlayerLaunchReactionEventTag.IsValid() && LaunchCommitEventTag.IsValid()
 		&& CancelWindowBeginEventTag.IsValid() && CancelWindowEndEventTag.IsValid() && DodgeCancelableStateTag.IsValid()
 		&& HitReactingStateTag.IsValid() && StunnedStateTag.IsValid() && DeadStateTag.IsValid() && HyperArmorStateTag.IsValid()

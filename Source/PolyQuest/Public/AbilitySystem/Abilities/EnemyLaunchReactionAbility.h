@@ -3,12 +3,14 @@
 #include "CoreMinimal.h"
 #include "Abilities/GameplayAbility.h"
 #include "Abilities/GameplayAbilityTypes.h"
+#include "AbilitySystem/Abilities/LaunchFacingSmoothingState.h"
 #include "GameplayTagContainer.h"
 #include "EnemyLaunchReactionAbility.generated.h"
 
 class ACharacter;
 class AEnemyCharacter;
 class UAbilityTask_PlayMontageAndWait;
+class UAbilityTask_TurnToFacing;
 class UAbilityTask_WaitDelay;
 class UAbilityTask_WaitGameplayEvent;
 class UAnimInstance;
@@ -16,7 +18,7 @@ class UAnimMontage;
 
 /**
  * Server-authoritative, multi-phase enemy launch hit reaction.
- * Lifecycle: Takeoff -> AwaitingAirborne -> Airborne -> LandingRecovery.
+ * Lifecycle: Takeoff -> TurningToLaunch -> AwaitingAirborne -> Airborne -> LandingRecovery.
  * Takeoff Montage provides full-body takeoff and airborne pose presentation.
  * On Event.Reaction.Launch.Commit, the Takeoff Montage is paused to hold the airborne flight silhouette,
  * while CharacterMovement exclusively drives all capsule displacement and physics falling.
@@ -58,6 +60,7 @@ public:
 	const FVector& GetImpactDirectionSnapshot() const { return ImpactDirectionSnapshot; }
 	float GetLaunchHorizontalSpeed() const { return LaunchHorizontalSpeed; }
 	float GetLaunchVerticalSpeed() const { return LaunchVerticalSpeed; }
+	float GetFacingTurnRateDegreesPerSecond() const { return FacingTurnRateDegreesPerSecond; }
 	bool GetTestLandingRecoveryCompletedNaturally() const { return bLandingRecoveryCompletedNaturally; }
 	void SetTestLandingRecoveryCompletedNaturally(bool bValue) { bLandingRecoveryCompletedNaturally = bValue; }
 #endif
@@ -67,6 +70,7 @@ private:
 	{
 		None,
 		Takeoff,
+		TurningToLaunch,
 		AwaitingAirborne,
 		Airborne,
 		LandingRecovery
@@ -84,11 +88,17 @@ private:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Enemy|Reaction", meta = (AllowPrivateAccess = "true", ToolTip = "击飞受击时施加的向上垂直初速度（厘米/秒）。"))
 	float LaunchVerticalSpeed = 550.0f;
 
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Enemy|Reaction", meta = (AllowPrivateAccess = "true", ClampMin = "0.0", ToolTip = "敌人击飞受击起飞阶段朝向攻击者的平滑转向速率（度/秒）。"))
+	float FacingTurnRateDegreesPerSecond = 1440.0f;
+
 	UPROPERTY(Transient)
 	TObjectPtr<UAbilityTask_WaitGameplayEvent> CommitEventTask;
 
 	UPROPERTY(Transient)
 	TObjectPtr<UAbilityTask_PlayMontageAndWait> MontageTask;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UAbilityTask_TurnToFacing> FacingTurnTask;
 
 	UPROPERTY(Transient)
 	TObjectPtr<UAbilityTask_WaitDelay> FallValidationTask;
@@ -113,6 +123,7 @@ private:
 	FGameplayTag EnemySmallHitReactionAbilityTag;
 	FGameplayTagContainer AbilitiesToCancel;
 
+	FLaunchFacingSmoothingState SmoothingState;
 	FVector ImpactDirectionSnapshot = FVector::ZeroVector;
 	float ImpactReferenceYawSnapshot = 0.0f;
 	ELaunchPhase CurrentPhase = ELaunchPhase::None;
@@ -125,6 +136,10 @@ private:
 
 	UFUNCTION()
 	void OnLaunchCommitEventReceived(FGameplayEventData Payload);
+
+	void OnFacingTurnCompleted();
+	void OnFacingTurnFailed();
+	void CommitFrozenLaunch();
 
 	UFUNCTION()
 	void OnFallValidationFinished();
