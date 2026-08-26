@@ -235,6 +235,7 @@ private:
 	void SendStateTreeEvent(const FGameplayTag& EventTag) const;
 
 	bool HasControlledEnemyRootMotion() const;
+	bool IsEnemyLaunchReactionActive() const;
 	void ApplyTargetFocus(APlayerCharacter* TargetToFocus);
 	void ClearTargetFocus();
 	void ResetRootMotionFacingHandoff();
@@ -274,6 +275,7 @@ private:
 	FVector HomeLocation = FVector::ZeroVector;
 
 	FGameplayTag EnemyMeleeAbilityTag;
+	FGameplayTag EnemyLaunchReactionAbilityTag;
 	FGameplayTag AttackingStateTag;
 	FGameplayTag HitReactingStateTag;
 	FGameplayTag StunnedStateTag;

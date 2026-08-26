@@ -97,6 +97,7 @@ void UPlayerLaunchReactionAbility::ActivateAbility(
 	ActiveMontage = nullptr;
 	BoundPlayerCharacter.Reset();
 	ImpactDirectionSnapshot = FVector::ZeroVector;
+	ImpactReferenceYawSnapshot = 0.0f;
 
 	UAbilitySystemComponent* CharacterASC = GetAbilitySystemComponentFromActorInfo();
 	APlayerCharacter* PlayerCharacter = Cast<APlayerCharacter>(GetAvatarActorFromActorInfo());
@@ -152,6 +153,13 @@ void UPlayerLaunchReactionAbility::ActivateAbility(
 	BoundPlayerCharacter = PlayerCharacter;
 	CurrentPhase = ELaunchPhase::Takeoff;
 
+	// Capture reference yaw and impact direction snapshot before starting montage task
+	ImpactReferenceYawSnapshot = PlayerCharacter->GetActorRotation().Yaw;
+	if (TriggerEventData)
+	{
+		ImpactDirectionSnapshot = FHitReactionImpactResolver::ResolveImpactDirection(*TriggerEventData, PlayerCharacter);
+	}
+
 	BoundAnimInstance->OnMontageEnded.RemoveDynamic(this, &UPlayerLaunchReactionAbility::OnActiveMontageEnded);
 	BoundAnimInstance->OnMontageEnded.AddDynamic(this, &UPlayerLaunchReactionAbility::OnActiveMontageEnded);
 	MontageTask->ReadyForActivation();
@@ -168,13 +176,7 @@ void UPlayerLaunchReactionAbility::ActivateAbility(
 		return;
 	}
 
-	// 3. Snapshot target-local impact direction
-	if (TriggerEventData)
-	{
-		ImpactDirectionSnapshot = FHitReactionImpactResolver::ResolveImpactDirection(*TriggerEventData, PlayerCharacter);
-	}
-
-	// 4. Stop current velocity
+	// 3. Stop current velocity
 	MovementComponent->StopMovementImmediately();
 
 	// 5. Bind MovementModeChangedDelegate
@@ -269,6 +271,8 @@ void UPlayerLaunchReactionAbility::EndAbility(
 	}
 
 	BoundPlayerCharacter.Reset();
+	ImpactDirectionSnapshot = FVector::ZeroVector;
+	ImpactReferenceYawSnapshot = 0.0f;
 	CurrentPhase = ELaunchPhase::None;
 	Super::EndAbility(Handle, ActorInfo, ActivationInfo, bReplicateEndAbility, bWasCancelled);
 }
@@ -301,9 +305,9 @@ void UPlayerLaunchReactionAbility::OnLaunchCommitEventReceived(FGameplayEventDat
 		return;
 	}
 
-	const float TargetYaw = PlayerCharacter->GetActorRotation().Yaw;
+	float ResolvedFacingYaw = 0.0f;
 	FVector LaunchVelocity = FVector::ZeroVector;
-	if (!FHitReactionImpactResolver::TryBuildLaunchVelocity(ImpactDirectionSnapshot, TargetYaw, LaunchHorizontalSpeed, LaunchVerticalSpeed, LaunchVelocity))
+	if (!FHitReactionImpactResolver::TryBuildLaunchFacingAndVelocity(ImpactDirectionSnapshot, ImpactReferenceYawSnapshot, LaunchHorizontalSpeed, LaunchVerticalSpeed, ResolvedFacingYaw, LaunchVelocity))
 	{
 		UE_LOG(LogPolyQuest, Warning, TEXT("Player launch reaction failed to compute launch velocity for '%s'; ending ability."), *GetNameSafe(PlayerCharacter));
 		EndFromMontage(true);
@@ -315,6 +319,9 @@ void UPlayerLaunchReactionAbility::OnLaunchCommitEventReceived(FGameplayEventDat
 
 	// Pause takeoff montage so it holds the airborne flight silhouette in flight
 	BoundAnimInstance->Montage_Pause(TakeoffMontage.Get());
+
+	const FRotator CurrentRotation = PlayerCharacter->GetActorRotation();
+	PlayerCharacter->SetActorRotation(FRotator(CurrentRotation.Pitch, ResolvedFacingYaw, CurrentRotation.Roll));
 
 	PlayerCharacter->LaunchCharacter(LaunchVelocity, true, true);
 

@@ -114,6 +114,7 @@ private:
 	FGameplayTagContainer AbilitiesToCancel;
 
 	FVector ImpactDirectionSnapshot = FVector::ZeroVector;
+	float ImpactReferenceYawSnapshot = 0.0f;
 	ELaunchPhase CurrentPhase = ELaunchPhase::None;
 	bool bCommitHandled = false;
 	bool bSavedCanWalkOffLedges = true;

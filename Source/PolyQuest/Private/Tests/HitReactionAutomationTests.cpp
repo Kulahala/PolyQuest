@@ -657,64 +657,229 @@ bool FHitReactionAutomationTest::RunTest(const FString& Parameters)
 		TestTrue(TEXT("Null Target returns ZeroVector"),
 			FHitReactionImpactResolver::ResolveImpactDirectionFromContext(ContextFrontHandle, nullptr, nullptr).IsZero());
 
-		// 4.8 TryBuildLaunchVelocity Pure Function Tests
+		// 4.8 TryBuildLaunchFacingAndVelocity Pure Function Tests
 		{
+			float OutFacingYaw = 0.0f;
 			FVector OutVel = FVector::ZeroVector;
 
-			// 4.8a Front attacker (1, 0, 0) with Yaw=0 -> Launch away = (-1, 0, 0) * 450, Z = 550
-			TestTrue(TEXT("TryBuildLaunchVelocity succeeds for front attacker at Yaw=0"),
-				FHitReactionImpactResolver::TryBuildLaunchVelocity(FVector(1.0f, 0.0f, 0.0f), 0.0f, 450.0f, 550.0f, OutVel));
+			// 4.8.1 Reference Yaw = 0 deg (Target facing +X)
+			// a) Front attacker (1, 0, 0) -> Facing points Front (0 deg), Velocity launches away (-450, 0, 550)
+			TestTrue(TEXT("TryBuildLaunchFacingAndVelocity succeeds for front attacker at Yaw=0"),
+				FHitReactionImpactResolver::TryBuildLaunchFacingAndVelocity(FVector(1.0f, 0.0f, 0.0f), 0.0f, 450.0f, 550.0f, OutFacingYaw, OutVel));
+			TestTrue(TEXT("Front attacker at Yaw=0 faces Front (Yaw ~0 deg)"),
+				FMath::IsNearlyZero(FMath::FindDeltaAngleDegrees(OutFacingYaw, 0.0f), 0.01f));
 			TestTrue(TEXT("Front attacker at Yaw=0 produces velocity (-450, 0, 550)"),
 				OutVel.Equals(FVector(-450.0f, 0.0f, 550.0f), 0.01f));
 
-			// 4.8b Front attacker (1, 0, 0) with Yaw=90 -> World away direction = (0, -1, 0)
-			TestTrue(TEXT("TryBuildLaunchVelocity succeeds for front attacker at Yaw=90"),
-				FHitReactionImpactResolver::TryBuildLaunchVelocity(FVector(1.0f, 0.0f, 0.0f), 90.0f, 450.0f, 550.0f, OutVel));
-			TestTrue(TEXT("Front attacker at Yaw=90 produces velocity (0, -450, 550)"),
-				OutVel.Equals(FVector(0.0f, -450.0f, 550.0f), 0.01f));
-
-			// 4.8c Back attacker (-1, 0, 0) with Yaw=0 -> Launch away = (+1, 0, 0) * 450, Z = 550
-			TestTrue(TEXT("TryBuildLaunchVelocity succeeds for back attacker at Yaw=0"),
-				FHitReactionImpactResolver::TryBuildLaunchVelocity(FVector(-1.0f, 0.0f, 0.0f), 0.0f, 450.0f, 550.0f, OutVel));
+			// b) Back attacker (-1, 0, 0) -> Facing points Back (180 deg), Velocity launches away (+450, 0, 550)
+			TestTrue(TEXT("TryBuildLaunchFacingAndVelocity succeeds for back attacker at Yaw=0"),
+				FHitReactionImpactResolver::TryBuildLaunchFacingAndVelocity(FVector(-1.0f, 0.0f, 0.0f), 0.0f, 450.0f, 550.0f, OutFacingYaw, OutVel));
+			TestTrue(TEXT("Back attacker at Yaw=0 faces Back (Yaw ~180 deg)"),
+				FMath::IsNearlyZero(FMath::FindDeltaAngleDegrees(OutFacingYaw, 180.0f), 0.01f));
 			TestTrue(TEXT("Back attacker at Yaw=0 produces velocity (+450, 0, 550)"),
 				OutVel.Equals(FVector(450.0f, 0.0f, 550.0f), 0.01f));
 
-			// 4.8d Non-unit vector with non-zero Z -> planarized and normalized
-			TestTrue(TEXT("TryBuildLaunchVelocity succeeds for unnormalized vector with Z component"),
-				FHitReactionImpactResolver::TryBuildLaunchVelocity(FVector(10.0f, 0.0f, 50.0f), 0.0f, 450.0f, 550.0f, OutVel));
+			// c) Right attacker (0, 1, 0) -> Facing points Right (90 deg), Velocity launches away (0, -450, 550)
+			TestTrue(TEXT("TryBuildLaunchFacingAndVelocity succeeds for right attacker at Yaw=0"),
+				FHitReactionImpactResolver::TryBuildLaunchFacingAndVelocity(FVector(0.0f, 1.0f, 0.0f), 0.0f, 450.0f, 550.0f, OutFacingYaw, OutVel));
+			TestTrue(TEXT("Right attacker at Yaw=0 faces Right (Yaw ~90 deg)"),
+				FMath::IsNearlyZero(FMath::FindDeltaAngleDegrees(OutFacingYaw, 90.0f), 0.01f));
+			TestTrue(TEXT("Right attacker at Yaw=0 produces velocity (0, -450, 550)"),
+				OutVel.Equals(FVector(0.0f, -450.0f, 550.0f), 0.01f));
+
+			// d) Left attacker (0, -1, 0) -> Facing points Left (-90 deg), Velocity launches away (0, +450, 550)
+			TestTrue(TEXT("TryBuildLaunchFacingAndVelocity succeeds for left attacker at Yaw=0"),
+				FHitReactionImpactResolver::TryBuildLaunchFacingAndVelocity(FVector(0.0f, -1.0f, 0.0f), 0.0f, 450.0f, 550.0f, OutFacingYaw, OutVel));
+			TestTrue(TEXT("Left attacker at Yaw=0 faces Left (Yaw ~ -90 deg)"),
+				FMath::IsNearlyZero(FMath::FindDeltaAngleDegrees(OutFacingYaw, -90.0f), 0.01f));
+			TestTrue(TEXT("Left attacker at Yaw=0 produces velocity (0, 450, 550)"),
+				OutVel.Equals(FVector(0.0f, 450.0f, 550.0f), 0.01f));
+
+			// 4.8.2 Rotated Reference Yaw Matrix (45 deg, 90 deg, 180 deg)
+			// a) Reference Yaw = 45 deg
+			TestTrue(TEXT("TryBuildLaunchFacingAndVelocity succeeds for front attacker at Yaw=45"),
+				FHitReactionImpactResolver::TryBuildLaunchFacingAndVelocity(FVector(1.0f, 0.0f, 0.0f), 45.0f, 450.0f, 550.0f, OutFacingYaw, OutVel));
+			TestTrue(TEXT("Front attacker at Yaw=45 faces 45 deg"),
+				FMath::IsNearlyZero(FMath::FindDeltaAngleDegrees(OutFacingYaw, 45.0f), 0.01f));
+			const float Cos45 = FMath::Cos(FMath::DegreesToRadians(45.0f));
+			const float Sin45 = FMath::Sin(FMath::DegreesToRadians(45.0f));
+			TestTrue(TEXT("Front attacker at Yaw=45 produces velocity (-450*cos45, -450*sin45, 550)"),
+				OutVel.Equals(FVector(-450.0f * Cos45, -450.0f * Sin45, 550.0f), 0.05f));
+
+			TestTrue(TEXT("TryBuildLaunchFacingAndVelocity succeeds for right attacker at Yaw=45"),
+				FHitReactionImpactResolver::TryBuildLaunchFacingAndVelocity(FVector(0.0f, 1.0f, 0.0f), 45.0f, 450.0f, 550.0f, OutFacingYaw, OutVel));
+			TestTrue(TEXT("Right attacker at Yaw=45 faces 135 deg"),
+				FMath::IsNearlyZero(FMath::FindDeltaAngleDegrees(OutFacingYaw, 135.0f), 0.01f));
+			const float Cos135 = FMath::Cos(FMath::DegreesToRadians(135.0f));
+			const float Sin135 = FMath::Sin(FMath::DegreesToRadians(135.0f));
+			TestTrue(TEXT("Right attacker at Yaw=45 produces velocity (-450*cos135, -450*sin135, 550)"),
+				OutVel.Equals(FVector(-450.0f * Cos135, -450.0f * Sin135, 550.0f), 0.05f));
+
+			// b) Reference Yaw = 90 deg (Target facing +Y)
+			TestTrue(TEXT("TryBuildLaunchFacingAndVelocity succeeds for front attacker at Yaw=90"),
+				FHitReactionImpactResolver::TryBuildLaunchFacingAndVelocity(FVector(1.0f, 0.0f, 0.0f), 90.0f, 450.0f, 550.0f, OutFacingYaw, OutVel));
+			TestTrue(TEXT("Front attacker at Yaw=90 faces 90 deg"),
+				FMath::IsNearlyZero(FMath::FindDeltaAngleDegrees(OutFacingYaw, 90.0f), 0.01f));
+			TestTrue(TEXT("Front attacker at Yaw=90 produces velocity (0, -450, 550)"),
+				OutVel.Equals(FVector(0.0f, -450.0f, 550.0f), 0.01f));
+
+			TestTrue(TEXT("TryBuildLaunchFacingAndVelocity succeeds for back attacker at Yaw=90"),
+				FHitReactionImpactResolver::TryBuildLaunchFacingAndVelocity(FVector(-1.0f, 0.0f, 0.0f), 90.0f, 450.0f, 550.0f, OutFacingYaw, OutVel));
+			TestTrue(TEXT("Back attacker at Yaw=90 faces -90 deg"),
+				FMath::IsNearlyZero(FMath::FindDeltaAngleDegrees(OutFacingYaw, -90.0f), 0.01f));
+			TestTrue(TEXT("Back attacker at Yaw=90 produces velocity (0, 450, 550)"),
+				OutVel.Equals(FVector(0.0f, 450.0f, 550.0f), 0.01f));
+
+			TestTrue(TEXT("TryBuildLaunchFacingAndVelocity succeeds for right attacker at Yaw=90"),
+				FHitReactionImpactResolver::TryBuildLaunchFacingAndVelocity(FVector(0.0f, 1.0f, 0.0f), 90.0f, 450.0f, 550.0f, OutFacingYaw, OutVel));
+			TestTrue(TEXT("Right attacker at Yaw=90 faces 180 deg"),
+				FMath::IsNearlyZero(FMath::FindDeltaAngleDegrees(OutFacingYaw, 180.0f), 0.01f));
+			TestTrue(TEXT("Right attacker at Yaw=90 produces velocity (450, 0, 550)"),
+				OutVel.Equals(FVector(450.0f, 0.0f, 550.0f), 0.01f));
+
+			TestTrue(TEXT("TryBuildLaunchFacingAndVelocity succeeds for left attacker at Yaw=90"),
+				FHitReactionImpactResolver::TryBuildLaunchFacingAndVelocity(FVector(0.0f, -1.0f, 0.0f), 90.0f, 450.0f, 550.0f, OutFacingYaw, OutVel));
+			TestTrue(TEXT("Left attacker at Yaw=90 faces 0 deg"),
+				FMath::IsNearlyZero(FMath::FindDeltaAngleDegrees(OutFacingYaw, 0.0f), 0.01f));
+			TestTrue(TEXT("Left attacker at Yaw=90 produces velocity (-450, 0, 550)"),
+				OutVel.Equals(FVector(-450.0f, 0.0f, 550.0f), 0.01f));
+
+			// c) Reference Yaw = 180 deg (Target facing -X)
+			TestTrue(TEXT("TryBuildLaunchFacingAndVelocity succeeds for front attacker at Yaw=180"),
+				FHitReactionImpactResolver::TryBuildLaunchFacingAndVelocity(FVector(1.0f, 0.0f, 0.0f), 180.0f, 450.0f, 550.0f, OutFacingYaw, OutVel));
+			TestTrue(TEXT("Front attacker at Yaw=180 faces 180 deg"),
+				FMath::IsNearlyZero(FMath::FindDeltaAngleDegrees(OutFacingYaw, 180.0f), 0.01f));
+			TestTrue(TEXT("Front attacker at Yaw=180 produces velocity (450, 0, 550)"),
+				OutVel.Equals(FVector(450.0f, 0.0f, 550.0f), 0.01f));
+
+			TestTrue(TEXT("TryBuildLaunchFacingAndVelocity succeeds for back attacker at Yaw=180"),
+				FHitReactionImpactResolver::TryBuildLaunchFacingAndVelocity(FVector(-1.0f, 0.0f, 0.0f), 180.0f, 450.0f, 550.0f, OutFacingYaw, OutVel));
+			TestTrue(TEXT("Back attacker at Yaw=180 faces 0 deg"),
+				FMath::IsNearlyZero(FMath::FindDeltaAngleDegrees(OutFacingYaw, 0.0f), 0.01f));
+			TestTrue(TEXT("Back attacker at Yaw=180 produces velocity (-450, 0, 550)"),
+				OutVel.Equals(FVector(-450.0f, 0.0f, 550.0f), 0.01f));
+
+			// 4.8.3 Unnormalized vector with non-zero Z -> planarized and normalized
+			TestTrue(TEXT("TryBuildLaunchFacingAndVelocity succeeds for unnormalized vector with Z component"),
+				FHitReactionImpactResolver::TryBuildLaunchFacingAndVelocity(FVector(10.0f, 0.0f, 50.0f), 0.0f, 450.0f, 550.0f, OutFacingYaw, OutVel));
+			TestTrue(TEXT("Unnormalized vector at Yaw=0 faces Front (0 deg)"),
+				FMath::IsNearlyZero(FMath::FindDeltaAngleDegrees(OutFacingYaw, 0.0f), 0.01f));
 			TestTrue(TEXT("Unnormalized vector produces correct normalized velocity (-450, 0, 550)"),
 				OutVel.Equals(FVector(-450.0f, 0.0f, 550.0f), 0.01f));
 
-			// 4.8e Fail-Closed: Zero direction vector
+			// 4.8.4 Fail-Closed Tests for TryBuildLaunchFacingAndVelocity
+			// a) Zero direction vector
 			TestFalse(TEXT("Zero direction returns false"),
-				FHitReactionImpactResolver::TryBuildLaunchVelocity(FVector::ZeroVector, 0.0f, 450.0f, 550.0f, OutVel));
+				FHitReactionImpactResolver::TryBuildLaunchFacingAndVelocity(FVector::ZeroVector, 0.0f, 450.0f, 550.0f, OutFacingYaw, OutVel));
+			TestEqual(TEXT("Zero direction resets OutFacingYaw to 0.0f"), OutFacingYaw, 0.0f);
 			TestTrue(TEXT("Zero direction resets OutVelocity to ZeroVector"), OutVel.IsZero());
 
-			// 4.8f Fail-Closed: NaN direction
+			// b) NaN direction
 			TestFalse(TEXT("NaN direction returns false"),
-				FHitReactionImpactResolver::TryBuildLaunchVelocity(FVector(NAN, 0.0f, 0.0f), 0.0f, 450.0f, 550.0f, OutVel));
+				FHitReactionImpactResolver::TryBuildLaunchFacingAndVelocity(FVector(NAN, 0.0f, 0.0f), 0.0f, 450.0f, 550.0f, OutFacingYaw, OutVel));
+			TestEqual(TEXT("NaN direction resets OutFacingYaw to 0.0f"), OutFacingYaw, 0.0f);
 			TestTrue(TEXT("NaN direction resets OutVelocity to ZeroVector"), OutVel.IsZero());
 
-			// 4.8g Fail-Closed: NaN Yaw
+			// c) Inf direction
+			TestFalse(TEXT("Inf direction returns false"),
+				FHitReactionImpactResolver::TryBuildLaunchFacingAndVelocity(FVector(INFINITY, 0.0f, 0.0f), 0.0f, 450.0f, 550.0f, OutFacingYaw, OutVel));
+			TestEqual(TEXT("Inf direction resets OutFacingYaw to 0.0f"), OutFacingYaw, 0.0f);
+			TestTrue(TEXT("Inf direction resets OutVelocity to ZeroVector"), OutVel.IsZero());
+
+			// d) NaN Yaw
 			TestFalse(TEXT("NaN Yaw returns false"),
-				FHitReactionImpactResolver::TryBuildLaunchVelocity(FVector(1.0f, 0.0f, 0.0f), NAN, 450.0f, 550.0f, OutVel));
+				FHitReactionImpactResolver::TryBuildLaunchFacingAndVelocity(FVector(1.0f, 0.0f, 0.0f), NAN, 450.0f, 550.0f, OutFacingYaw, OutVel));
+			TestEqual(TEXT("NaN Yaw resets OutFacingYaw to 0.0f"), OutFacingYaw, 0.0f);
 			TestTrue(TEXT("NaN Yaw resets OutVelocity to ZeroVector"), OutVel.IsZero());
 
-			// 4.8h Fail-Closed: Zero / negative / non-finite HorizontalSpeed
-			TestFalse(TEXT("Zero HorizontalSpeed returns false"),
-				FHitReactionImpactResolver::TryBuildLaunchVelocity(FVector(1.0f, 0.0f, 0.0f), 0.0f, 0.0f, 550.0f, OutVel));
-			TestFalse(TEXT("Negative HorizontalSpeed returns false"),
-				FHitReactionImpactResolver::TryBuildLaunchVelocity(FVector(1.0f, 0.0f, 0.0f), 0.0f, -450.0f, 550.0f, OutVel));
-			TestFalse(TEXT("NaN HorizontalSpeed returns false"),
-				FHitReactionImpactResolver::TryBuildLaunchVelocity(FVector(1.0f, 0.0f, 0.0f), 0.0f, NAN, 550.0f, OutVel));
+			// e) Inf Yaw
+			TestFalse(TEXT("Inf Yaw returns false"),
+				FHitReactionImpactResolver::TryBuildLaunchFacingAndVelocity(FVector(1.0f, 0.0f, 0.0f), INFINITY, 450.0f, 550.0f, OutFacingYaw, OutVel));
+			TestEqual(TEXT("Inf Yaw resets OutFacingYaw to 0.0f"), OutFacingYaw, 0.0f);
+			TestTrue(TEXT("Inf Yaw resets OutVelocity to ZeroVector"), OutVel.IsZero());
 
-			// 4.8i Fail-Closed: Zero / negative / non-finite VerticalSpeed
+			// f) Zero / negative / non-finite HorizontalSpeed
+			TestFalse(TEXT("Zero HorizontalSpeed returns false"),
+				FHitReactionImpactResolver::TryBuildLaunchFacingAndVelocity(FVector(1.0f, 0.0f, 0.0f), 0.0f, 0.0f, 550.0f, OutFacingYaw, OutVel));
+			TestEqual(TEXT("Zero HorizontalSpeed resets OutFacingYaw to 0.0f"), OutFacingYaw, 0.0f);
+			TestTrue(TEXT("Zero HorizontalSpeed resets OutVelocity to ZeroVector"), OutVel.IsZero());
+
+			TestFalse(TEXT("Negative HorizontalSpeed returns false"),
+				FHitReactionImpactResolver::TryBuildLaunchFacingAndVelocity(FVector(1.0f, 0.0f, 0.0f), 0.0f, -450.0f, 550.0f, OutFacingYaw, OutVel));
+			TestEqual(TEXT("Negative HorizontalSpeed resets OutFacingYaw to 0.0f"), OutFacingYaw, 0.0f);
+			TestTrue(TEXT("Negative HorizontalSpeed resets OutVelocity to ZeroVector"), OutVel.IsZero());
+
+			TestFalse(TEXT("NaN HorizontalSpeed returns false"),
+				FHitReactionImpactResolver::TryBuildLaunchFacingAndVelocity(FVector(1.0f, 0.0f, 0.0f), 0.0f, NAN, 550.0f, OutFacingYaw, OutVel));
+			TestEqual(TEXT("NaN HorizontalSpeed resets OutFacingYaw to 0.0f"), OutFacingYaw, 0.0f);
+			TestTrue(TEXT("NaN HorizontalSpeed resets OutVelocity to ZeroVector"), OutVel.IsZero());
+
+			TestFalse(TEXT("Inf HorizontalSpeed returns false"),
+				FHitReactionImpactResolver::TryBuildLaunchFacingAndVelocity(FVector(1.0f, 0.0f, 0.0f), 0.0f, INFINITY, 550.0f, OutFacingYaw, OutVel));
+			TestEqual(TEXT("Inf HorizontalSpeed resets OutFacingYaw to 0.0f"), OutFacingYaw, 0.0f);
+			TestTrue(TEXT("Inf HorizontalSpeed resets OutVelocity to ZeroVector"), OutVel.IsZero());
+
+			// g) Zero / negative / non-finite VerticalSpeed
 			TestFalse(TEXT("Zero VerticalSpeed returns false"),
-				FHitReactionImpactResolver::TryBuildLaunchVelocity(FVector(1.0f, 0.0f, 0.0f), 0.0f, 450.0f, 0.0f, OutVel));
+				FHitReactionImpactResolver::TryBuildLaunchFacingAndVelocity(FVector(1.0f, 0.0f, 0.0f), 0.0f, 450.0f, 0.0f, OutFacingYaw, OutVel));
+			TestEqual(TEXT("Zero VerticalSpeed resets OutFacingYaw to 0.0f"), OutFacingYaw, 0.0f);
+			TestTrue(TEXT("Zero VerticalSpeed resets OutVelocity to ZeroVector"), OutVel.IsZero());
+
 			TestFalse(TEXT("Negative VerticalSpeed returns false"),
-				FHitReactionImpactResolver::TryBuildLaunchVelocity(FVector(1.0f, 0.0f, 0.0f), 0.0f, 450.0f, -550.0f, OutVel));
+				FHitReactionImpactResolver::TryBuildLaunchFacingAndVelocity(FVector(1.0f, 0.0f, 0.0f), 0.0f, 450.0f, -550.0f, OutFacingYaw, OutVel));
+			TestEqual(TEXT("Negative VerticalSpeed resets OutFacingYaw to 0.0f"), OutFacingYaw, 0.0f);
+			TestTrue(TEXT("Negative VerticalSpeed resets OutVelocity to ZeroVector"), OutVel.IsZero());
+
 			TestFalse(TEXT("NaN VerticalSpeed returns false"),
-				FHitReactionImpactResolver::TryBuildLaunchVelocity(FVector(1.0f, 0.0f, 0.0f), 0.0f, 450.0f, NAN, OutVel));
+				FHitReactionImpactResolver::TryBuildLaunchFacingAndVelocity(FVector(1.0f, 0.0f, 0.0f), 0.0f, 450.0f, NAN, OutFacingYaw, OutVel));
+			TestEqual(TEXT("NaN VerticalSpeed resets OutFacingYaw to 0.0f"), OutFacingYaw, 0.0f);
+			TestTrue(TEXT("NaN VerticalSpeed resets OutVelocity to ZeroVector"), OutVel.IsZero());
+
+			TestFalse(TEXT("Inf VerticalSpeed returns false"),
+				FHitReactionImpactResolver::TryBuildLaunchFacingAndVelocity(FVector(1.0f, 0.0f, 0.0f), 0.0f, 450.0f, INFINITY, OutFacingYaw, OutVel));
+			TestEqual(TEXT("Inf VerticalSpeed resets OutFacingYaw to 0.0f"), OutFacingYaw, 0.0f);
+			TestTrue(TEXT("Inf VerticalSpeed resets OutVelocity to ZeroVector"), OutVel.IsZero());
+
+			// 4.8.5 TryBuildLaunchVelocity Forwarding Wrapper Regressions
+			{
+				FVector WrapperVel = FVector::ZeroVector;
+
+				TestTrue(TEXT("TryBuildLaunchVelocity wrapper succeeds for front attacker at Yaw=0"),
+					FHitReactionImpactResolver::TryBuildLaunchVelocity(FVector(1.0f, 0.0f, 0.0f), 0.0f, 450.0f, 550.0f, WrapperVel));
+				TestTrue(TEXT("Wrapper front attacker at Yaw=0 produces velocity (-450, 0, 550)"),
+					WrapperVel.Equals(FVector(-450.0f, 0.0f, 550.0f), 0.01f));
+
+				TestTrue(TEXT("TryBuildLaunchVelocity wrapper succeeds for front attacker at Yaw=90"),
+					FHitReactionImpactResolver::TryBuildLaunchVelocity(FVector(1.0f, 0.0f, 0.0f), 90.0f, 450.0f, 550.0f, WrapperVel));
+				TestTrue(TEXT("Wrapper front attacker at Yaw=90 produces velocity (0, -450, 550)"),
+					WrapperVel.Equals(FVector(0.0f, -450.0f, 550.0f), 0.01f));
+
+				TestTrue(TEXT("TryBuildLaunchVelocity wrapper succeeds for back attacker at Yaw=0"),
+					FHitReactionImpactResolver::TryBuildLaunchVelocity(FVector(-1.0f, 0.0f, 0.0f), 0.0f, 450.0f, 550.0f, WrapperVel));
+				TestTrue(TEXT("Wrapper back attacker at Yaw=0 produces velocity (+450, 0, 550)"),
+					WrapperVel.Equals(FVector(450.0f, 0.0f, 550.0f), 0.01f));
+
+				TestTrue(TEXT("TryBuildLaunchVelocity wrapper succeeds for unnormalized vector"),
+					FHitReactionImpactResolver::TryBuildLaunchVelocity(FVector(10.0f, 0.0f, 50.0f), 0.0f, 450.0f, 550.0f, WrapperVel));
+				TestTrue(TEXT("Wrapper unnormalized vector produces normalized velocity (-450, 0, 550)"),
+					WrapperVel.Equals(FVector(-450.0f, 0.0f, 550.0f), 0.01f));
+
+				TestFalse(TEXT("Wrapper zero direction fails closed"),
+					FHitReactionImpactResolver::TryBuildLaunchVelocity(FVector::ZeroVector, 0.0f, 450.0f, 550.0f, WrapperVel));
+				TestTrue(TEXT("Wrapper zero direction resets OutVelocity"), WrapperVel.IsZero());
+
+				TestFalse(TEXT("Wrapper NaN direction fails closed"),
+					FHitReactionImpactResolver::TryBuildLaunchVelocity(FVector(NAN, 0.0f, 0.0f), 0.0f, 450.0f, 550.0f, WrapperVel));
+				TestTrue(TEXT("Wrapper NaN direction resets OutVelocity"), WrapperVel.IsZero());
+
+				TestFalse(TEXT("Wrapper NaN Yaw fails closed"),
+					FHitReactionImpactResolver::TryBuildLaunchVelocity(FVector(1.0f, 0.0f, 0.0f), NAN, 450.0f, 550.0f, WrapperVel));
+				TestTrue(TEXT("Wrapper NaN Yaw resets OutVelocity"), WrapperVel.IsZero());
+
+				TestFalse(TEXT("Wrapper negative speed fails closed"),
+					FHitReactionImpactResolver::TryBuildLaunchVelocity(FVector(1.0f, 0.0f, 0.0f), 0.0f, -450.0f, 550.0f, WrapperVel));
+				TestTrue(TEXT("Wrapper negative speed resets OutVelocity"), WrapperVel.IsZero());
+			}
 		}
 	}
 

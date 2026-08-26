@@ -74,6 +74,7 @@ void UEnemyLaunchReactionAbility::ActivateAbility(
 	ActiveMontage = nullptr;
 	BoundEnemyCharacter.Reset();
 	ImpactDirectionSnapshot = FVector::ZeroVector;
+	ImpactReferenceYawSnapshot = 0.0f;
 
 	UAbilitySystemComponent* CharacterASC = GetAbilitySystemComponentFromActorInfo();
 	AEnemyCharacter* EnemyCharacter = Cast<AEnemyCharacter>(GetAvatarActorFromActorInfo());
@@ -120,6 +121,13 @@ void UEnemyLaunchReactionAbility::ActivateAbility(
 	BoundEnemyCharacter = EnemyCharacter;
 	CurrentPhase = ELaunchPhase::Takeoff;
 
+	// Capture reference yaw and impact direction snapshot before starting montage task
+	ImpactReferenceYawSnapshot = EnemyCharacter->GetActorRotation().Yaw;
+	if (TriggerEventData)
+	{
+		ImpactDirectionSnapshot = FHitReactionImpactResolver::ResolveImpactDirection(*TriggerEventData, EnemyCharacter);
+	}
+
 	BoundAnimInstance->OnMontageEnded.RemoveDynamic(this, &UEnemyLaunchReactionAbility::OnActiveMontageEnded);
 	BoundAnimInstance->OnMontageEnded.AddDynamic(this, &UEnemyLaunchReactionAbility::OnActiveMontageEnded);
 	MontageTask->ReadyForActivation();
@@ -139,19 +147,13 @@ void UEnemyLaunchReactionAbility::ActivateAbility(
 	// Begin stance break deferral only after takeoff montage is demonstrably active
 	EnemyCharacter->BeginLaunchStanceBreakDeferral();
 
-	// 3. Snapshot target-local impact direction
-	if (TriggerEventData)
-	{
-		ImpactDirectionSnapshot = FHitReactionImpactResolver::ResolveImpactDirection(*TriggerEventData, EnemyCharacter);
-	}
-
-	// 4. Stop AI navigation movement
+	// 3. Stop AI navigation movement
 	if (AAIController* AIController = EnemyCharacter->GetController<AAIController>())
 	{
 		AIController->StopMovement();
 	}
 
-	// 5. Stop current velocity
+	// 4. Stop current velocity
 	MovementComponent->StopMovementImmediately();
 
 	// 6. Bind MovementModeChangedDelegate
@@ -241,6 +243,8 @@ void UEnemyLaunchReactionAbility::EndAbility(
 	}
 
 	BoundEnemyCharacter.Reset();
+	ImpactDirectionSnapshot = FVector::ZeroVector;
+	ImpactReferenceYawSnapshot = 0.0f;
 	CurrentPhase = ELaunchPhase::None;
 
 	Super::EndAbility(Handle, ActorInfo, ActivationInfo, bReplicateEndAbility, bWasCancelled);
@@ -290,9 +294,9 @@ void UEnemyLaunchReactionAbility::OnLaunchCommitEventReceived(FGameplayEventData
 		return;
 	}
 
-	const float TargetYaw = EnemyCharacter->GetActorRotation().Yaw;
+	float ResolvedFacingYaw = 0.0f;
 	FVector LaunchVelocity = FVector::ZeroVector;
-	if (!FHitReactionImpactResolver::TryBuildLaunchVelocity(ImpactDirectionSnapshot, TargetYaw, LaunchHorizontalSpeed, LaunchVerticalSpeed, LaunchVelocity))
+	if (!FHitReactionImpactResolver::TryBuildLaunchFacingAndVelocity(ImpactDirectionSnapshot, ImpactReferenceYawSnapshot, LaunchHorizontalSpeed, LaunchVerticalSpeed, ResolvedFacingYaw, LaunchVelocity))
 	{
 		UE_LOG(LogPolyQuest, Warning, TEXT("Enemy launch reaction failed to compute launch velocity for '%s'; ending ability."), *GetNameSafe(EnemyCharacter));
 		EndFromMontage(true);
@@ -304,6 +308,9 @@ void UEnemyLaunchReactionAbility::OnLaunchCommitEventReceived(FGameplayEventData
 
 	// Pause takeoff montage so it holds the airborne flight silhouette in flight
 	BoundAnimInstance->Montage_Pause(TakeoffMontage.Get());
+
+	const FRotator CurrentRotation = EnemyCharacter->GetActorRotation();
+	EnemyCharacter->SetActorRotation(FRotator(CurrentRotation.Pitch, ResolvedFacingYaw, CurrentRotation.Roll));
 
 	EnemyCharacter->LaunchCharacter(LaunchVelocity, true, true);
 

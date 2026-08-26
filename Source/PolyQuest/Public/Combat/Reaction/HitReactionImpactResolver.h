@@ -25,6 +25,19 @@ public:
 		const AActor* TargetActor);
 
 	/**
+	 * Pure helper to build a world-space launch facing yaw (facing attacker) and velocity (away from attacker).
+	 * Inputs: target-local planar attacker direction (Target -> Attacker), target reference yaw, horizontal speed, and vertical speed.
+	 * Returns true and populates OutFacingYaw and OutLaunchVelocity on success; resets both to zero/ZeroVector and returns false on any invalid input.
+	 */
+	static bool TryBuildLaunchFacingAndVelocity(
+		const FVector& LocalAttackerDirection,
+		float ImpactReferenceYaw,
+		float HorizontalSpeed,
+		float VerticalSpeed,
+		float& OutFacingYaw,
+		FVector& OutLaunchVelocity);
+
+	/**
 	 * Pure helper to build a world-space launch velocity away from the attacker.
 	 * Inputs: target-local planar attacker direction (Target -> Attacker), target yaw, horizontal speed, and vertical speed.
 	 * Returns true and populates OutLaunchVelocity on success; resets to ZeroVector and returns false on any invalid input.

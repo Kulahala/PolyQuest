@@ -85,13 +85,15 @@ FVector FHitReactionImpactResolver::ResolveImpactDirectionFromContext(
 	return LocalDirection;
 }
 
-bool FHitReactionImpactResolver::TryBuildLaunchVelocity(
+bool FHitReactionImpactResolver::TryBuildLaunchFacingAndVelocity(
 	const FVector& LocalAttackerDirection,
-	float TargetYaw,
+	float ImpactReferenceYaw,
 	float HorizontalSpeed,
 	float VerticalSpeed,
+	float& OutFacingYaw,
 	FVector& OutLaunchVelocity)
 {
+	OutFacingYaw = 0.0f;
 	OutLaunchVelocity = FVector::ZeroVector;
 
 	if (!FMath::IsFinite(LocalAttackerDirection.X) || !FMath::IsFinite(LocalAttackerDirection.Y))
@@ -110,7 +112,7 @@ bool FHitReactionImpactResolver::TryBuildLaunchVelocity(
 		return false;
 	}
 
-	if (!FMath::IsFinite(TargetYaw))
+	if (!FMath::IsFinite(ImpactReferenceYaw))
 	{
 		return false;
 	}
@@ -125,23 +127,49 @@ bool FHitReactionImpactResolver::TryBuildLaunchVelocity(
 		return false;
 	}
 
-	const FRotator TargetRotation(0.0f, TargetYaw, 0.0f);
-	const FVector WorldLaunchDir = TargetRotation.RotateVector(-LocalPlanarDir);
+	const FRotator TargetRotation(0.0f, ImpactReferenceYaw, 0.0f);
+	const FVector WorldAttackerDir = TargetRotation.RotateVector(LocalPlanarDir);
+	if (!FMath::IsFinite(WorldAttackerDir.X) || !FMath::IsFinite(WorldAttackerDir.Y))
+	{
+		return false;
+	}
+
+	const float ResolvedFacingYaw = WorldAttackerDir.Rotation().Yaw;
+	if (!FMath::IsFinite(ResolvedFacingYaw))
+	{
+		return false;
+	}
+
+	const FVector WorldLaunchDir = -WorldAttackerDir;
 	if (!FMath::IsFinite(WorldLaunchDir.X) || !FMath::IsFinite(WorldLaunchDir.Y))
 	{
 		return false;
 	}
 
-	OutLaunchVelocity = FVector(
+	const FVector ResolvedLaunchVelocity(
 		WorldLaunchDir.X * HorizontalSpeed,
 		WorldLaunchDir.Y * HorizontalSpeed,
 		VerticalSpeed);
 
-	if (!FMath::IsFinite(OutLaunchVelocity.X) || !FMath::IsFinite(OutLaunchVelocity.Y) || !FMath::IsFinite(OutLaunchVelocity.Z))
+	if (!FMath::IsFinite(ResolvedLaunchVelocity.X) || !FMath::IsFinite(ResolvedLaunchVelocity.Y) || !FMath::IsFinite(ResolvedLaunchVelocity.Z))
 	{
+		OutFacingYaw = 0.0f;
 		OutLaunchVelocity = FVector::ZeroVector;
 		return false;
 	}
 
+	OutFacingYaw = ResolvedFacingYaw;
+	OutLaunchVelocity = ResolvedLaunchVelocity;
 	return true;
+}
+
+bool FHitReactionImpactResolver::TryBuildLaunchVelocity(
+	const FVector& LocalAttackerDirection,
+	float TargetYaw,
+	float HorizontalSpeed,
+	float VerticalSpeed,
+	FVector& OutLaunchVelocity)
+{
+	float IgnoredFacingYaw = 0.0f;
+	return TryBuildLaunchFacingAndVelocity(LocalAttackerDirection, TargetYaw, HorizontalSpeed, VerticalSpeed, IgnoredFacingYaw, OutLaunchVelocity);
 }

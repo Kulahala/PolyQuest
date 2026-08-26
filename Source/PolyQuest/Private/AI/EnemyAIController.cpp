@@ -26,6 +26,7 @@ AEnemyAIController::AEnemyAIController()
 	StateTreeComponent->SetStartLogicAutomatically(false);
 
 	EnemyMeleeAbilityTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Attack.Enemy.Melee")), false);
+	EnemyLaunchReactionAbilityTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Reaction.Enemy.Launch")), false);
 	AttackingStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Action.Attacking")), false);
 	HitReactingStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Action.HitReacting")), false);
 	StunnedStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Status.Stunned")), false);
@@ -781,6 +782,30 @@ bool AEnemyAIController::IsEnemyHitReactionActive() const
 		&& CharacterASC->HasMatchingGameplayTag(HitReactingStateTag);
 }
 
+bool AEnemyAIController::IsEnemyLaunchReactionActive() const
+{
+	const AEnemyCharacter* EnemyCharacter = Cast<AEnemyCharacter>(GetPawn());
+	const UAbilitySystemComponent* CharacterASC = EnemyCharacter ? EnemyCharacter->GetAbilitySystemComponent() : nullptr;
+	if (IsControlledEnemyDead() || !CharacterASC || !EnemyLaunchReactionAbilityTag.IsValid())
+	{
+		return false;
+	}
+
+	FGameplayTagContainer LaunchAbilityTags;
+	LaunchAbilityTags.AddTag(EnemyLaunchReactionAbilityTag);
+	TArray<FGameplayAbilitySpec*> LaunchSpecs;
+	CharacterASC->GetActivatableGameplayAbilitySpecsByAllMatchingTags(LaunchAbilityTags, LaunchSpecs, false);
+	for (const FGameplayAbilitySpec* Spec : LaunchSpecs)
+	{
+		if (Spec && Spec->IsActive())
+		{
+			return true;
+		}
+	}
+
+	return false;
+}
+
 bool AEnemyAIController::IsEnemyStunned() const
 {
 	const AEnemyCharacter* EnemyCharacter = Cast<AEnemyCharacter>(GetPawn());
@@ -977,6 +1002,11 @@ void AEnemyAIController::UpdateControlRotation(float DeltaTime, bool bUpdatePawn
 		bWasRootMotionActive = true;
 		bIsFacingRecoveryActive = false;
 		ClearTargetFocus();
+		return;
+	}
+
+	if (IsEnemyLaunchReactionActive())
+	{
 		return;
 	}
 

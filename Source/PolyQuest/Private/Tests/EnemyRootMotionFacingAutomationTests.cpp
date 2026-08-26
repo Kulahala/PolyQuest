@@ -11,7 +11,10 @@
 #include "Engine/World.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/RootMotionSource.h"
+#include "AbilitySystemComponent.h"
+#include "AbilitySystem/Abilities/EnemyLaunchReactionAbility.h"
 #include "GameplayEffect.h"
+#include "GameplayTagContainer.h"
 #include "Tests/CombatAutomationFixture.h"
 #include "UObject/Package.h"
 
@@ -281,6 +284,68 @@ bool FEnemyRootMotionFacingAutomationTest::RunTest(const FString& Parameters)
 			EnemyMovement->MaxWalkSpeed, 550.0f);
 		TestFalse(TEXT("Pace override flag remains false on idempotent restore"),
 			AIController->IsRepositionPaceOverriddenForTest());
+	}
+
+	// -------------------------------------------------------------------------
+	// SECTION 6: Active Hit Reaction Facing Arbitration & Launch Spec Isolation
+	// -------------------------------------------------------------------------
+	{
+		AIController->SetTestTargetForAutomation(Player);
+		TestEqual(TEXT("Target is Player for Section 6"), AIController->GetCurrentTarget(), Player);
+
+		UAbilitySystemComponent* EnemyASC = Enemy->GetAbilitySystemComponent();
+		TestNotNull(TEXT("Enemy ASC is valid for Section 6"), EnemyASC);
+
+		if (EnemyASC)
+		{
+			const FGameplayTag TagHitReacting = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Action.HitReacting")), false);
+			TestTrue(TEXT("State.Action.HitReacting tag is valid"), TagHitReacting.IsValid());
+
+			// 6.1 Loose State.Action.HitReacting does NOT suppress Controller target-facing (locks exclusion of Enemy Big from Launch gate)
+			EnemyASC->AddLooseGameplayTag(TagHitReacting);
+			Enemy->SetActorRotation(FRotator(0.0f, 90.0f, 0.0f));
+
+			AIController->TriggerTestUpdateControlRotation(0.1f, true);
+
+			TestTrue(TEXT("Enemy with loose HitReacting tag still faces Player target (Yaw ~0 deg)"),
+				FMath::IsNearlyZero(FMath::FindDeltaAngleDegrees(Enemy->GetActorRotation().Yaw, 0.0f), 1.0f));
+
+			EnemyASC->RemoveLooseGameplayTag(TagHitReacting);
+
+			// 6.2 Grant real UEnemyLaunchReactionAbility Spec and test active Spec arbitration
+			const FGameplayAbilitySpecHandle LaunchHandle = EnemyASC->GiveAbility(
+				FGameplayAbilitySpec(UEnemyLaunchReactionAbility::StaticClass(), 1, INDEX_NONE, Enemy));
+			FGameplayAbilitySpec* LaunchSpec = EnemyASC->FindAbilitySpecFromHandle(LaunchHandle);
+			TestNotNull(TEXT("Launch ability spec granted successfully"), LaunchSpec);
+
+			if (LaunchSpec)
+			{
+				LaunchSpec->ActiveCount = 1;
+				TestTrue(TEXT("Launch spec is active"), LaunchSpec->IsActive());
+
+				// Set non-target Yaw
+				Enemy->SetActorRotation(FRotator(0.0f, 135.0f, 0.0f));
+
+				AIController->TriggerTestUpdateControlRotation(0.1f, true);
+
+				// Yaw and Focus must remain untouched while Launch spec is active
+				TestTrue(TEXT("Enemy yaw is untouched while Launch spec is active (remains 135 deg)"),
+					FMath::IsNearlyZero(FMath::FindDeltaAngleDegrees(Enemy->GetActorRotation().Yaw, 135.0f), 0.01f));
+				TestEqual(TEXT("Gameplay focus is preserved during active Launch spec"),
+					AIController->GetFocusActor(), Cast<AActor>(Player));
+
+				// 6.3 Reset ActiveCount and verify target-facing resumes
+				LaunchSpec->ActiveCount = 0;
+				TestFalse(TEXT("Launch spec is inactive after reset"), LaunchSpec->IsActive());
+
+				AIController->TriggerTestUpdateControlRotation(0.5f, true);
+
+				TestTrue(TEXT("Enemy faces Player target again after Launch spec becomes inactive"),
+					FMath::IsNearlyZero(FMath::FindDeltaAngleDegrees(Enemy->GetActorRotation().Yaw, 0.0f), 1.0f));
+
+				EnemyASC->ClearAbility(LaunchHandle);
+			}
+		}
 	}
 
 	return true;
