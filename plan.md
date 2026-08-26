@@ -1,109 +1,102 @@
-# TODO-03A3C: World Pickup Drop Grounding And Presentation v1
+# TODO-03A3D: Equipped Weapon Display Scale v1
 
 ## Plan State
 
-- Status: Completed. This document records the accepted A3C plan and closeout after the user confirmed the implemented pickup grounding path in PIE and Automation.
-- Baseline: `6df9b78` (`[Feature] 完成击飞受击平滑转向 (Complete Launch Facing Smoothing)`) plus Main-owned, unstaged `ROADMAP.md` scheduling `TODO-03A3C` before `TODO-03C`; preserve all other user WIP.
-- Objective: make every definition-backed world weapon pickup use the same authorable display transform for placed and runtime-dropped instances, then place its Root so the final rendered mesh remains exactly `2cm` clear of the traced ground along that ground's normal.
-- User decision: on slopes, preserve the Definition-authored visual orientation. Only the Root location moves along the ground normal; no mesh rotation is derived from slope orientation.
-- Source evidence: `AWorldWeaponPickup::ProjectLocationToGround` currently returns only `ImpactPoint + ImpactNormal * 2.0f`; `StageDisplacedDrops` then deferred-spawns with `FRotator::ZeroRotator`. `UpdateVisualMesh` only assigns `WeaponMesh`, while `UWeaponDefinition` currently holds only hand-socket display offsets. The atomic `UWeaponEquipmentComponent::TryEquipWorldPickup` transaction already rolls back the composition when staging fails and must remain its sole transaction owner.
-- Player-facing success: after repeatedly swapping Sword and Shield, the displaced pickup uses its intended authored visual orientation and rests visibly above flat or sloped ground without bounce, falling physics, changed interaction range, or a temporary overlap/collision state.
-- Preserve all user WIP. `Content/**`, `Config/**`, `.uproject`, maps, Blueprints, AnimBPs, Gameplay Ability/Effect/Montage assets, imported resources, generated folders, and unrelated source are not executor or commit candidates.
+- Status: Completed. The user confirmed the stage Automation and focused PIE passed; Main fresh review found no P0-P2. No separately reported Development Editor compile result is claimed.
+- Baseline: `11a56d9` (`[Feature] 修复世界武器掉落落地表现 (Fix World Pickup Drop Grounding)`) plus Main-owned, unstaged `ROADMAP.md` scheduling `TODO-03A3D` before `TODO-02C3K` and `TODO-03C`.
+- Objective: add one definition-authored equipped-display scale so a weapon's held StaticMesh, its display-mesh Socket-derived melee sample positions, and the Bow's launch Socket remain spatially coherent when an author changes the weapon's visual size.
+- Player-facing success: an author can adjust `DisplayScale` on a Sword, Shield, or Bow DataAsset; the held mesh visibly changes size without changing its hand alignment rule, Sword trace markers still follow the scaled mesh sockets, and Bow projectile spawn origin follows the scaled launch Socket.
+- User decision: "同步放大" means the equipped display geometry and its presentation-derived positions scale together. It does not mean a runtime coupling between held presentation and the separate world-pickup presentation transform.
+- Preserve all user WIP. `Content/**`, `Config/**`, `.uproject`, maps, Blueprints, AnimBPs, Gameplay Ability/Effect/Montage assets, imported resources, generated folders, and unrelated source are not executor or commit candidates, except for the two explicitly adopted Shield Ability fixture assets below.
 
 ## Route And Delegation
 
 Outer: `ue-stage-workflow`
-Primary: `ue5-world-interaction`
-Support: `ue5-cpp-gameplay`, `ue5-debug-validation`
-Route reason: this is a deterministic world-interaction presentation fix at the pickup Actor / weapon Definition boundary. It must preserve the existing transactional equipment lifecycle while adding a narrow native geometry calculation and focused Automation proof.
+Primary: `ue5-cpp-gameplay`
+Support: none
+Route reason: this is a narrow DataAsset-to-runtime-`UStaticMeshComponent` presentation contract with no GAS, Tag, input, asset-migration, or component-hierarchy change.
 
 Plan explorers: 0
-Implementation executors: 1 (Gemini, after this plan's read-only review and Main acceptance)
+Implementation executors: 0 (Gemini unavailable; Main directly implemented the frozen three-file slice)
 Complex Executor: none
 Main parallel work: none
-Reason: the source boundary is small and already traced; a second Explorer would repeat the same call path. The executor writes only the frozen source/test slice, while Main retains public-contract, asset, documentation, staging, and integration ownership.
+Reason: the public Definition field, display-component application, and transaction fixture form one small, coupled slice. Gemini was unavailable, so Main retained the one-writer lifecycle and integration boundary.
 
-## Frozen Runtime And Authoring Contract
+Main owns the public contract, implementation, integration acceptance, documentation, staging, and commit. The three-file source/test implementation below is complete; no public surface beyond the named field, transaction ownership, Tags, Input, Config, assets, Blueprint state, Build.cs, or lifecycle rules changed.
 
-### Public Definition contract
+## Source Evidence And Frozen Contract
 
-Contract owner: Main. Implementation writer: Gemini only for the field and validation below.
+### Definition contract
 
-1. Add `FTransform WorldPickupDisplayTransform = FTransform::Identity` to `UWeaponDefinition` as `EditDefaultsOnly, BlueprintReadOnly` under `Weapon|World Pickup`, with a concise Chinese ToolTip. It is the StaticMeshComponent-relative location, rotation, and scale for a weapon's unequipped world representation.
-2. `WorldPickupDisplayTransform` is distinct from `DisplayLocationOffset` and `DisplayRotationOffset`; hand attachment data must not be reused for ground pickup presentation.
-3. Extend the inline `UWeaponDefinition::IsValidWeaponDefinition` with `WorldPickupDisplayTransform.ContainsNaN()` plus explicit `FMath::IsFinite` checks for every translation, quaternion, and scale component. Reject non-finite authoring before transaction teardown; Identity remains valid, preserving existing DataAssets until the user authors a non-identity presentation.
-4. No Gameplay Tag, Input, Ability, ASC, component ownership, serialization migration, new Definition subclass, or Blueprint-callable API is added.
+Contract owner: Main. Implementation writer: Main for the named `UWeaponDefinition` field and its inline validation.
 
-### Pickup lifecycle contract
+1. Add `FVector DisplayScale = FVector::OneVector` to `UWeaponDefinition` under `Weapon|Display`, with `EditDefaultsOnly`, `BlueprintReadOnly`, and a concise Chinese ToolTip: it controls only the equipped display mesh scale and its display-mesh Socket positions; `WorldPickupDisplayTransform` remains the separate unequipped presentation transform.
+2. Extend `UWeaponDefinition::IsValidWeaponDefinition()` to reject every non-finite component and every component that is not strictly greater than `0.0f`. The check order must make NaN/Inf fail closed before positivity comparison.
+3. `DisplayScale = FVector::OneVector` preserves all existing DataAssets until the user deliberately authors a different value. Non-uniform positive scaling is supported.
+4. Do not alter `WorldPickupDisplayTransform`, its validation, or its scale semantics. Matching world-pickup and equipped size is an author choice, not a runtime multiplication or synchronization rule.
 
-Contract owner: Main. Implementation writer: Gemini only for the named functions and private helper.
+### Equipped presentation contract
 
-1. `AWorldWeaponPickup::UpdateVisualMesh()` assigns both the Definition's `WeaponMesh` and `WorldPickupDisplayTransform` to `PickupMeshComponent`. A null Definition clears the mesh and restores the component's relative transform to Identity, preventing stale presentation reuse.
-2. Keep the public `ProjectLocationToGround(UWorld*, const FVector&, FVector&, const AActor*)` signature. Internally factor one private raw ground-trace helper returning `FHitResult`, so staging can retain `ImpactPoint` and `ImpactNormal`; the public wrapper retains its existing `+2cm` result for any future caller.
-3. Add a private, pure C++ `FWorldPickupGrounding` under `Private/Combat/Equipment/`, with no `UCLASS`, `USTRUCT`, generated header, or reflected API. Its sole static operation is `TryComputeGroundedRootLocation(...)`; it accepts a finite local `FBox`, the final relative display `FTransform`, a finite ground impact point/normal, and the fixed `2.0f` clearance. It transforms all eight box corners, finds the minimum dot product along the normalized ground normal, and returns:
-   `ImpactPoint + GroundNormal * (2.0f - MinimumProjection)`.
-   The helper initializes its output to zero and returns `false` for invalid bounds, zero/non-finite normals, non-finite transforms, non-finite clearance, or non-finite output.
-4. `StageDisplacedDrops` keeps its current horizontal scatter and uses zero Root rotation. For each definition it must trace ground, deferred-spawn the existing runtime class, call `InitializeDroppedPickup` so the final mesh/relative transform is available, obtain the unregistered mesh's local `FBox` through `WeaponMesh->GetBoundingBox()` (with a direct `Engine/StaticMesh.h` include), calculate the final Root location, and pass that final transform to `FinishSpawning`.
-5. A valid Definition without a `WeaponMesh` retains the old traced `ImpactPoint + Normal * 2cm` Root location because it has no visible bounds. A display-bearing definition whose bounds or grounding calculation is invalid destroys the current deferred actor plus every already staged provisional drop, clears the provisional list, and returns `false` so the existing full equipment rollback runs. No per-frame Tick, physics simulation, throw impulse, bounce, CCD, extra collision, or actor subclass is introduced.
-6. The existing `InteractionSphere` state, provisional `NoCollision -> QueryOnly` commit transition, `FormerOwnerRejectDuration`, `OnPickupConsumed`, and `TryEquipWorldPickup` ordering remain unchanged.
+Contract owner: Main. Implementation writer: Main in `UWeaponEquipmentComponent::ApplyComposition()`'s existing private `SpawnDisplay` lambda.
 
-## Approved Paths And Execution Order
+1. After the current attachment, `SetRelativeLocation(Definition->DisplayLocationOffset)`, and `SetRelativeRotation(Definition->DisplayRotationOffset)`, call `SetRelativeScale3D(Definition->DisplayScale)` on the new display component.
+2. The one existing lambda services both MainHand and OffHand, so Sword, Shield, and Bow use exactly the same application rule. Do not add a second display component, a new test seam, or a new public accessor.
+3. Do not multiply or otherwise alter `DisplayLocationOffset` or `DisplayRotationOffset`. They remain independent hand-alignment authoring controls around the same display origin.
+4. Keep display-mesh melee marker attachment unchanged: Socket markers retain `FAttachmentTransformRules::SnapToTargetNotIncludingScale`; legacy display-relative markers retain their current attachment rule. In UE 5.8 that rule snaps location/rotation while preserving the marker's own world scale, and `UStaticMeshComponent::GetSocketTransform(..., RTS_World)` resolves the scaled display component's actual Socket world transform. Therefore marker position and Bow origin inherit display scale without stretching marker components or changing collision thickness.
+5. Owner-SkeletalMesh trace sources, including the Unarmed body-contact route, remain attached directly to the character mesh and are intentionally unaffected. `TraceRadius` remains a collision-thickness value and is not scaled.
+6. Do not modify `TryGetEquippedMainHandDisplaySocketTransform()` or `UBowDrawFireAbility::SpawnProjectile()`. The existing query is already the narrow Bow integration point and must read the scaled live display Socket without a second Bow path.
 
-### Approved executor paths
+## Approved Paths And Executor Handoff
+
+### Approved implementation paths
 
 1. `Source/PolyQuest/Public/Combat/Equipment/WeaponDefinition.h`
-2. `Source/PolyQuest/Private/Combat/Equipment/WorldWeaponPickup.cpp`
-3. `Source/PolyQuest/Private/Combat/Equipment/WorldPickupGrounding.h`
-4. `Source/PolyQuest/Private/Combat/Equipment/WorldPickupGrounding.cpp`
-5. `Source/PolyQuest/Private/Tests/WorldPickupGroundingAutomationTests.cpp`
-6. `Source/PolyQuest/Private/Tests/WeaponEquipmentComponentAutomationTests.cpp`
+2. `Source/PolyQuest/Private/Combat/Equipment/WeaponEquipmentComponent.cpp`
+3. `Source/PolyQuest/Private/Tests/WeaponEquipmentComponentAutomationTests.cpp`
 
-`WorldWeaponPickup.h`, `WeaponEquipmentComponent.h/.cpp`, all Definition subclasses, Build.cs, Config, Gameplay Tags, map assets, Blueprints, DataAssets, and documents are prohibited Gemini targets. Needing any unlisted public surface, Blueprint/asset change, new Tag/Input/Config, transaction-order change, or physics behavior is a stop condition requiring Main evidence and a scope decision.
+`WeaponEquipmentComponent.h`, `BowDrawFireAbility.cpp`, all Definition subclasses, `WorldWeaponPickup.*`, `Build.cs`, Config, Gameplay Tags, DataAssets, Blueprints, maps, and documents are prohibited Gemini targets. No asset is edited through the filesystem or live Editor route.
 
-### Execution order
+### Execution record and remaining gates
 
-1. Gemini first reviews this plan read-only against `AWorldWeaponPickup`, `UWeaponDefinition`, the existing TransactionMatrix fixture, and the UE 5.8 StaticMesh local-bounds API. It returns P0-P2 findings, blocking gaps, non-blocking recommendations, and Automation feasibility without edits, builds, Editor access, staging, or commits.
-2. After Main accepts that review, Gemini implements the six approved source/test paths only. It must preserve every existing transaction branch and use a finite, non-reflected helper rather than a test-only production hook.
-3. Gemini runs Rider diagnostics on every touched C++ path, reviews its final diff and direct callers/callees, and runs `git diff --check`. Its handoff lists changed paths, static evidence, unrun user gates, strict self-review findings, and remaining risks.
-4. The user performs Editor authoring/readback, manual Development Editor compilation, Automation, and PIE. Main then performs the default defect-first fresh review before documentation closeout or any commit.
+1. Main reviewed the frozen paths, `UBowWeaponDefinition`, the transient Bow fixture, and UE 5.8 attachment-scale semantics before implementation. `SnapToTargetNotIncludingScale` preserves marker scale while the parent display Socket world location remains scale-aware.
+2. Main added the field/validation, applied it in the one existing `SpawnDisplay` lambda, and extended `PolyQuest.Equipment.TransactionMatrix` without adding a production test accessor or changing world-pickup transaction behavior.
+3. Rider file analysis reported zero errors for all touched C++ files, and `git diff --check` passed for the approved scope. Code-review-graph's generic test-gap label remained supplemental metadata only; direct test-source coverage was the acceptance evidence.
+4. The user confirmed the stage Automation and focused PIE gates passed. Main then completed the defect-first fresh review with no P0-P2 findings. No separate Development Editor compile result was reported.
+
+### Existing WIP boundary
+
+The two existing Shield Gameplay Ability fixture-path changes are adopted into this stage: the old `/Game/_Abilities/Player/Attack/Shield/` paths no longer resolve, while `Content/_Abilities/Weapon/Shield/GA_PlayerShieldGuard.uasset` and `GA_Guard_Sowrd.uasset` are the Automation-loaded current assets. Main does not edit the assets. The source test paths remain pointed at the new assets, and this closeout commits exactly those two authored fixtures with the source-path migration after a staged Git LFS pointer check.
 
 ## Validation Matrix
 
 ### Native Automation
 
-Add `PolyQuest.Equipment.WorldPickupGrounding` with no Content asset or renderer dependency.
+Extend the existing `PolyQuest.Equipment.TransactionMatrix` with its current real Hero/Sword/Shield fixture and Section 13 transient Bow mesh/Socket fixture.
 
-1. Identity bounds on a flat normal produce `2cm` clearance within `0.01cm` tolerance.
-2. Non-identity rotation, relative translation, and non-uniform scale still leave every transformed local-bound corner on or above the `2cm` support plane within `0.01cm` tolerance.
-3. A sloped normal moves only along that normal and does not alter the supplied display transform; this proves the selected stable-orientation policy without creating a map asset.
-4. Invalid bounds, zero/non-finite normals, non-finite transform values, and non-finite clearance fail closed with `OutRootLocation == FVector::ZeroVector`.
-
-Extend `PolyQuest.Equipment.TransactionMatrix` using its existing temporary World, Engine Cube floor, real Sword/Shield meshes, and transactional swaps:
-
-1. Give transient Sword and Shield definitions distinct finite `WorldPickupDisplayTransform` values.
-2. Run the existing real `TryEquipWorldPickup` displacement route and inspect spawned `UStaticMeshComponent` instances by type, not by a new production accessor.
-3. Assert the dropped mesh and relative transform match the displaced Definition and that its final flat-floor lower bound is at least `2cm` above the floor within an explicit `0.01cm` floating-point tolerance.
-4. Retain the existing Apply-failure, injected Drop-failure, collision staging, FormerOwner rejection, AbilitySpec rollback, and slot/locomotion regression assertions.
-5. Add a transient invalid `WorldPickupDisplayTransform` Definition validation assertion; preflight must reject it before teardown or drop staging.
+1. Give the transient Sword, Shield, and Bow definitions distinct finite non-unit `DisplayScale` values and deliberately keep their `WorldPickupDisplayTransform.Scale` values different.
+2. After real equipment composition, find the player-owned MainHand and OffHand `UStaticMeshComponent` instances and assert their relative scales equal their respective Definitions. Assert their relative location and rotation still equal the existing Definition offsets.
+3. With a scaled Sword, assert `TryGetBladeMarkers()` returns Base/Tip marker locations equal, within explicit floating-point tolerance, to the scaled `Trace_Base` and `Trace_Tip` live Socket world locations. Keep the existing distinct-endpoint assertion.
+4. Equip the existing transient `UBowWeaponDefinition` with a non-unit scale. Assert `TryGetEquippedMainHandDisplaySocketTransform(Socket_Bow_Launch, ...)` resolves to the display component's scaled Socket world position, derived from the component transform and the fixture's authored local Socket location.
+5. Equip Unarmed with a non-unit `DisplayScale` value and assert its trace markers remain parented to the player SkeletalMesh rather than any display component; no display mesh is created and no owner-mesh source is scaled.
+6. Add valid/invalid Definition checks for zero, negative, NaN, and Inf display-scale components. Invalid definitions must fail before teardown or staging.
+7. Reuse the existing re-equip and injected Apply/Drop-failure rollback paths to assert restored Sword/Shield displays use their original definition scales. Retain current world-pickup transform and rollback assertions, proving the two presentation axes remain independent.
 
 ### Static gate
 
-- Use CodeGraph for `UpdateVisualMesh`, `ProjectLocationToGround`, `StageDisplacedDrops`, `TryEquipWorldPickup`, `IsValidWeaponDefinition`, and both Automation suites. Use code-review-graph only as supplemental post-implementation impact evidence when its index matches the review baseline.
-- Run Rider `get_file_problems` or `lint_files` for every touched file; inspect direct includes, ensure the helper stays private/non-reflected, and run `git diff --check`.
-- Confirm no `UWeaponEquipmentComponent` source, GAS/ASC, Tag, Input, Config, Build.cs, Blueprint, DataAsset, map, collision policy, or physics change was made by the executor.
+- Use CodeGraph for `UWeaponDefinition::IsValidWeaponDefinition`, `ApplyComposition`, `TryGetBladeMarkers`, `TryGetEquippedMainHandDisplaySocketTransform`, `UBowDrawFireAbility::SpawnProjectile`, and the TransactionMatrix fixture. Use code-review-graph only as supplemental post-implementation evidence when its index matches the review baseline.
+- Run Rider `get_file_problems` or `lint_files` on every touched C++ file, inspect final includes, and run `git diff --check`.
+- Confirm no `WorldWeaponPickup`, GAS/ASC, Tag, Input, Config, Build.cs, Blueprint, DataAsset, collision, trace-radius, damage, or physics behavior changed.
 
-### User-owned Editor and runtime gate
+### User-owned Editor, compile, and PIE gate
 
 1. Compile `PolyQuestEditor (Development Editor)` manually and report the exact result.
-2. Run `PolyQuest.Equipment.WorldPickupGrounding`, `PolyQuest.Equipment.TransactionMatrix`, then the complete Editor Automation matrix.
-3. In the Editor, author `WorldPickupDisplayTransform` first on `DA_Weapon_Shield` to match the intended upright shield display. Inspect `DA_Weapon_LightSword`, `DA_Weapon_HeavySword`, `DA_Weapon_Axe`, and `DA_Weapon_Bow`; leave Identity when already correct and author a transform only where visual evidence requires it. Keep `DA_Weapon_Unarmed` at Identity with no display mesh.
-4. Read back `BP_WorldWeaponPickup`: it remains the single generic pickup Blueprint, with no new presentation child class or collision/physics override. Existing Scene01 pickup Actor Root transforms remain level placement only; normalize any non-identity Root rotation/scale rather than treating them as weapon presentation data.
-5. In `Scene01`, repeat Sword -> Shield and Shield -> Sword swaps on flat ground. Confirm displaced items retain the Definition-authored orientation, never visually pierce the floor, remain interactable after transaction commit, honor the former-owner cooldown, and do not bounce/fall. If Scene01 already has a suitable slope, repeat once there; otherwise the sloped-normal native Automation result is the accepted slope proof and no test ramp/map asset is created.
+2. Run `PolyQuest.Equipment.TransactionMatrix`, then the full Editor Automation matrix.
+3. In the Editor, set `DisplayScale` only on the intended Sword, Shield, and Bow DataAssets. Leave `(1,1,1)` where no correction is needed. Do not use Static Mesh `Build Scale` as an alternative implementation route.
+4. In `Scene01`, check Sword/Shield/Bow hand-held size and grip alignment, scaled Sword melee reach/trace behavior, Bow arrow spawn origin, repeated swap/re-equip, and the existing world-drop path. If a changed size needs grip tuning, adjust that weapon's existing `DisplayLocationOffset` separately; do not expect runtime scale to rewrite it.
+5. If the world pickup should visually match the held size, author its separate `WorldPickupDisplayTransform.Scale`; verify that choice remains independent from the held `DisplayScale`.
 
 ## Documentation, Debt, And Commit Boundary
 
-- Result: `UWeaponDefinition` now owns `WorldPickupDisplayTransform`; placed and deferred-spawned `AWorldWeaponPickup` instances apply it to their visual mesh. `FWorldPickupGrounding` projects every transformed local-bounds corner onto the normalized ground normal and returns the Root location that preserves the fixed `2cm` visual clearance. Invalid mesh bounds or transform data fail closed through the existing provisional-drop cleanup and equipment rollback path; a valid no-mesh definition preserves the former `ImpactPoint + Normal * 2cm` fallback.
-- Validation: the user confirmed the A3C Automation validation and focused Scene01 PIE pickup/drop behavior passed. This closeout does not claim a new separately reported Development Editor compilation result.
-- Review: Main's defect-first fresh review found no P0-P2. The only P3 was an unrelated Shield Gameplay Ability asset-path relocation in `WeaponEquipmentComponentAutomationTests.cpp`; the old local assets no longer exist and the new local assets do, so those two path edits remain unstaged user-owned Content-migration support rather than being reverted or included in this A3C commit.
-- Follow-up: `TODO-03A3D` owns equipped display scale. Toss trajectories, bounce, rolling, simulated physics, pickup animation, inventory, or persistent world drops remain separate feature decisions with their own lifecycle and validation contracts.
-- Commit boundary: include only the six approved A3C source/test paths and Main-owned `plan.md`, `ROADMAP.md`, and `ARCHITECTURE.md` updates. Exclude all user-owned `Content/**`, `Config/**`, `.uproject`, maps, Blueprints, DataAssets, imported assets, and the two Shield path-relocation lines unless a later migration closure explicitly adopts them.
+- `ARCHITECTURE.md` now records stable `DisplayScale` ownership and its deliberate separation from `WorldPickupDisplayTransform`; `ROADMAP.md` records A3D complete and the next accepted sequence as `TODO-02C3K` -> `TODO-03C`. This completed plan remains until the next accepted stage replaces it.
+- No new durable debt is created. Per-weapon size and grip values are mutable authoring tuning, not a native balance constant. Physics, dynamic pickup scaling, SkeletalMesh weapon presentation, or auto-normalized imported meshes each require a separate stage.
+- This commit includes only the three approved source/test paths, Main-owned documentation, and the two adopted Shield Ability fixtures. Every other current `Content/**`, Config, project, map, Blueprint, animation, and imported-resource WIP remains excluded. The shared test file is staged by explicit path only; `git add -A` is not used.

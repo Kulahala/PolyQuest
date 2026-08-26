@@ -112,6 +112,7 @@ bool FWeaponEquipmentComponentTransactionMatrixTest::RunTest(const FString& Para
 	SwordDef->BladeTipMarkerRelativeLocation = FVector(0, 0, 100);
 	SwordDef->TraceRadius = 10.0f;
 	SwordDef->BladeSubdivisions = 4;
+	SwordDef->DisplayScale = FVector(1.25f, 0.75f, 1.5f);
 	SwordDef->WorldPickupDisplayTransform = FTransform(FRotator(0.0f, 90.0f, 90.0f), FVector(0.0f, 0.0f, 5.0f), FVector(1.0f));
 
 	UMeleeWeaponDefinition* TwoHandedDef = NewObject<UMeleeWeaponDefinition>(GetTransientPackage(), TEXT("Test_TwoHanded"));
@@ -142,6 +143,7 @@ bool FWeaponEquipmentComponentTransactionMatrixTest::RunTest(const FString& Para
 	UnarmedDef->BladeTipMarkerRelativeLocation = FVector(0, 0, 20);
 	UnarmedDef->TraceRadius = 8.0f;
 	UnarmedDef->BladeSubdivisions = 2;
+	UnarmedDef->DisplayScale = FVector(1.5f, 0.5f, 1.25f);
 
 	UOffHandWeaponDefinition* ShieldDef = NewObject<UOffHandWeaponDefinition>(GetTransientPackage(), TEXT("Test_Shield"));
 	ShieldDef->HandSlot = EWeaponHandSlot::OffHand;
@@ -149,6 +151,7 @@ bool FWeaponEquipmentComponentTransactionMatrixTest::RunTest(const FString& Para
 	ShieldDef->AttachSocketName = TEXT("Weapon_L");
 	ShieldDef->WeaponMesh = ShieldMesh;
 	ShieldDef->bProvidesShieldPresentation = true;
+	ShieldDef->DisplayScale = FVector(0.8f, 1.2f, 1.4f);
 	ShieldDef->WorldPickupDisplayTransform = FTransform(FRotator(90.0f, 0.0f, 0.0f), FVector(10.0f, 0.0f, 0.0f), FVector(1.0f));
 
 	// Spawn test player and initialize mesh
@@ -196,6 +199,26 @@ bool FWeaponEquipmentComponentTransactionMatrixTest::RunTest(const FString& Para
 				OutPickups.Add(Pickup);
 			}
 		}
+	};
+
+	auto FindEquippedDisplay = [Player](UStaticMesh* ExpectedMesh, const FName ExpectedAttachSocket) -> UStaticMeshComponent*
+	{
+		if (!Player || !Player->GetMesh() || !ExpectedMesh)
+		{
+			return nullptr;
+		}
+
+		for (UStaticMeshComponent* StaticMeshComponent : TInlineComponentArray<UStaticMeshComponent*>(Player))
+		{
+			if (StaticMeshComponent && StaticMeshComponent->IsRegistered() && StaticMeshComponent->GetStaticMesh() == ExpectedMesh
+				&& StaticMeshComponent->GetAttachParent() == Player->GetMesh()
+				&& StaticMeshComponent->GetAttachSocketName() == ExpectedAttachSocket)
+			{
+				return StaticMeshComponent;
+			}
+		}
+
+		return nullptr;
 	};
 
 	// 2. Test Target Composition Construction & Conversions (Pure calculation)
@@ -257,6 +280,23 @@ bool FWeaponEquipmentComponentTransactionMatrixTest::RunTest(const FString& Para
 		TestEqual(TEXT("Equipped off hand is Shield"), EquipmentComp->GetCurrentOffHandWeapon(), Cast<UWeaponDefinition>(ShieldDef));
 		TestEqual(TEXT("Equipped active loadout is SwordLoadout"), Player->GetActiveCombatLoadout(), SwordLoadout);
 
+		UStaticMeshComponent* SwordDisplayComponent = FindEquippedDisplay(SwordMesh, SwordDef->AttachSocketName);
+		UStaticMeshComponent* ShieldDisplayComponent = FindEquippedDisplay(ShieldMesh, ShieldDef->AttachSocketName);
+		TestNotNull(TEXT("Equipped Sword display component is found"), SwordDisplayComponent);
+		TestNotNull(TEXT("Equipped Shield display component is found"), ShieldDisplayComponent);
+		if (SwordDisplayComponent)
+		{
+			TestTrue(TEXT("Equipped Sword display scale matches its definition"), SwordDisplayComponent->GetRelativeScale3D().Equals(SwordDef->DisplayScale, KINDA_SMALL_NUMBER));
+			TestTrue(TEXT("Equipped Sword display location remains its definition offset"), SwordDisplayComponent->GetRelativeLocation().Equals(SwordDef->DisplayLocationOffset, KINDA_SMALL_NUMBER));
+			TestTrue(TEXT("Equipped Sword display rotation remains its definition offset"), SwordDisplayComponent->GetRelativeRotation().Equals(SwordDef->DisplayRotationOffset, KINDA_SMALL_NUMBER));
+		}
+		if (ShieldDisplayComponent)
+		{
+			TestTrue(TEXT("Equipped Shield display scale matches its definition"), ShieldDisplayComponent->GetRelativeScale3D().Equals(ShieldDef->DisplayScale, KINDA_SMALL_NUMBER));
+			TestTrue(TEXT("Equipped Shield display location remains its definition offset"), ShieldDisplayComponent->GetRelativeLocation().Equals(ShieldDef->DisplayLocationOffset, KINDA_SMALL_NUMBER));
+			TestTrue(TEXT("Equipped Shield display rotation remains its definition offset"), ShieldDisplayComponent->GetRelativeRotation().Equals(ShieldDef->DisplayRotationOffset, KINDA_SMALL_NUMBER));
+		}
+
 		// Assert blade markers are attached to the authored Static Mesh sockets and resolve to distinct locations
 		USceneComponent* BladeBaseComp = nullptr;
 		USceneComponent* BladeTipComp = nullptr;
@@ -277,6 +317,11 @@ bool FWeaponEquipmentComponentTransactionMatrixTest::RunTest(const FString& Para
 		const FVector ValidSocketScale = ValidMainHandSocketTransform.GetScale3D();
 		TestTrue(TEXT("Main-hand display socket query returns the live world-space socket location"),
 			BladeBaseComp && ValidSocketLocation.Equals(BladeBaseComp->GetComponentLocation(), KINDA_SMALL_NUMBER));
+
+		FTransform ValidMainHandTipSocketTransform;
+		TestTrue(TEXT("Main-hand display socket query resolves scaled Trace_Tip"), EquipmentComp->TryGetEquippedMainHandDisplaySocketTransform(SocketNameTraceTip, ValidMainHandTipSocketTransform));
+		TestTrue(TEXT("Main-hand display socket query returns the scaled Trace_Tip marker location"),
+			BladeTipComp && ValidMainHandTipSocketTransform.GetLocation().Equals(BladeTipComp->GetComponentLocation(), KINDA_SMALL_NUMBER));
 		TestTrue(TEXT("Main-hand display socket query returns a finite transform"),
 			FMath::IsFinite(ValidSocketLocation.X) && FMath::IsFinite(ValidSocketLocation.Y) && FMath::IsFinite(ValidSocketLocation.Z)
 			&& FMath::IsFinite(ValidSocketRotation.X) && FMath::IsFinite(ValidSocketRotation.Y) && FMath::IsFinite(ValidSocketRotation.Z) && FMath::IsFinite(ValidSocketRotation.W)
@@ -413,6 +458,40 @@ bool FWeaponEquipmentComponentTransactionMatrixTest::RunTest(const FString& Para
 		const bool bNaNTransformPreflight = EquipmentComp->TestDirectPreflight(NaNTransformDef, nullptr, NaNTransformReason);
 		TestFalse(TEXT("Preflight rejects NaN WorldPickupDisplayTransform definition"), bNaNTransformPreflight);
 		TestTrue(TEXT("Preflight reason explains invalid WorldPickupDisplayTransform"), NaNTransformReason.Contains(TEXT("WorldPickupDisplayTransform")));
+
+		UMeleeWeaponDefinition* InvalidDisplayScaleDef = NewObject<UMeleeWeaponDefinition>(GetTransientPackage(), TEXT("Test_InvalidDisplayScaleDef"));
+		InvalidDisplayScaleDef->HandSlot = EWeaponHandSlot::MainHandOneHanded;
+		InvalidDisplayScaleDef->LocomotionMode = EWeaponLocomotionMode::LightSword;
+		InvalidDisplayScaleDef->AttachSocketName = TEXT("Weapon_R");
+		InvalidDisplayScaleDef->WeaponMesh = SwordMesh;
+		InvalidDisplayScaleDef->BladeBaseSocketName = SocketNameTraceBase;
+		InvalidDisplayScaleDef->BladeTipSocketName = SocketNameTraceTip;
+		InvalidDisplayScaleDef->AssociatedLoadout = SwordLoadout;
+		InvalidDisplayScaleDef->BaseGrantedActions.Add(UPrimaryAttackAbility::StaticClass());
+		InvalidDisplayScaleDef->ExclusiveCombatActions.Add(UPlayerGuardAbility::StaticClass());
+		InvalidDisplayScaleDef->DefaultPreparedActions.Add(UPlayerGuardAbility::StaticClass());
+		InvalidDisplayScaleDef->TraceRadius = 10.0f;
+		InvalidDisplayScaleDef->BladeSubdivisions = 4;
+
+		FString InvalidDisplayScaleReason;
+		InvalidDisplayScaleDef->DisplayScale = FVector::ZeroVector;
+		TestFalse(TEXT("IsValidWeaponDefinition rejects zero DisplayScale"), InvalidDisplayScaleDef->IsValidWeaponDefinition(InvalidDisplayScaleReason));
+		TestFalse(TEXT("Preflight rejects zero DisplayScale before teardown"), EquipmentComp->TestDirectPreflight(InvalidDisplayScaleDef, nullptr, InvalidDisplayScaleReason));
+		TestFalse(TEXT("Direct equip rejects zero DisplayScale before applying composition"), EquipmentComp->EquipWeapon(InvalidDisplayScaleDef));
+		TestEqual(TEXT("Main hand remains TwoHanded after zero DisplayScale rejection"), EquipmentComp->GetCurrentMainHandWeapon(), Cast<UWeaponDefinition>(TwoHandedDef));
+		TestNull(TEXT("Off hand remains null after zero DisplayScale rejection"), EquipmentComp->GetCurrentOffHandWeapon());
+
+		InvalidDisplayScaleDef->DisplayScale = FVector(-1.0f, 1.0f, 1.0f);
+		TestFalse(TEXT("IsValidWeaponDefinition rejects negative DisplayScale"), InvalidDisplayScaleDef->IsValidWeaponDefinition(InvalidDisplayScaleReason));
+		TestFalse(TEXT("Preflight rejects negative DisplayScale"), EquipmentComp->TestDirectPreflight(InvalidDisplayScaleDef, nullptr, InvalidDisplayScaleReason));
+
+		InvalidDisplayScaleDef->DisplayScale = FVector(NAN, 1.0f, 1.0f);
+		TestFalse(TEXT("IsValidWeaponDefinition rejects NaN DisplayScale"), InvalidDisplayScaleDef->IsValidWeaponDefinition(InvalidDisplayScaleReason));
+		TestFalse(TEXT("Preflight rejects NaN DisplayScale"), EquipmentComp->TestDirectPreflight(InvalidDisplayScaleDef, nullptr, InvalidDisplayScaleReason));
+
+		InvalidDisplayScaleDef->DisplayScale = FVector(INFINITY, 1.0f, 1.0f);
+		TestFalse(TEXT("IsValidWeaponDefinition rejects Inf DisplayScale"), InvalidDisplayScaleDef->IsValidWeaponDefinition(InvalidDisplayScaleReason));
+		TestFalse(TEXT("Preflight rejects Inf DisplayScale"), EquipmentComp->TestDirectPreflight(InvalidDisplayScaleDef, nullptr, InvalidDisplayScaleReason));
 	}
 
 	// 5. Test World Pickup Full Success Transactions (Normalizations and Drop Spawns)
@@ -959,6 +1038,7 @@ bool FWeaponEquipmentComponentTransactionMatrixTest::RunTest(const FString& Para
 		BowDef->DefaultProjectileDefinition = TransBowProjDef;
 		BowDef->AssociatedLoadout = BowLoadout;
 		BowDef->BaseGrantedActions.Add(UBowDrawFireAbility::StaticClass());
+		BowDef->DisplayScale = FVector(1.6f, 0.7f, 1.3f);
 
 		FString BowValidationReason;
 		TestTrue(TEXT("Transient BowDef passes IsValidWeaponDefinition"), BowDef->IsValidWeaponDefinition(BowValidationReason));
@@ -984,6 +1064,25 @@ bool FWeaponEquipmentComponentTransactionMatrixTest::RunTest(const FString& Para
 		TestEqual(TEXT("Unarmed equipped resolves LocomotionMode to Default"), EquipmentComp->GetResolvedLocomotionMode(), EWeaponLocomotionMode::Default);
 		TestFalse(TEXT("Unarmed baseline has no Shield presentation"), EquipmentComp->HasShieldEquipped());
 		TestNull(TEXT("OffHand remains null with Unarmed baseline"), EquipmentComp->GetCurrentOffHandWeapon());
+
+		USceneComponent* UnarmedBladeBase = nullptr;
+		USceneComponent* UnarmedBladeTip = nullptr;
+		TestTrue(TEXT("Unarmed trace markers resolve"), EquipmentComp->TryGetBladeMarkers(UnarmedBladeBase, UnarmedBladeTip));
+		TestTrue(TEXT("Unarmed BladeBase remains attached to the owner SkeletalMesh"), UnarmedBladeBase && UnarmedBladeBase->GetAttachParent() == Player->GetMesh());
+		TestTrue(TEXT("Unarmed BladeTip remains attached to the owner SkeletalMesh"), UnarmedBladeTip && UnarmedBladeTip->GetAttachParent() == Player->GetMesh());
+
+		bool bUnarmedDisplayExists = false;
+		for (UStaticMeshComponent* StaticMeshComponent : TInlineComponentArray<UStaticMeshComponent*>(Player))
+		{
+			if (StaticMeshComponent && StaticMeshComponent->IsRegistered() && StaticMeshComponent->GetStaticMesh()
+				&& StaticMeshComponent->GetAttachParent() == Player->GetMesh()
+				&& StaticMeshComponent->GetAttachSocketName() == UnarmedDef->AttachSocketName)
+			{
+				bUnarmedDisplayExists = true;
+				break;
+			}
+		}
+		TestFalse(TEXT("Unarmed DisplayScale does not create a display mesh"), bUnarmedDisplayExists);
 
 		// 13.3.2 Equip Sword -> LightSword
 		AWorldWeaponPickup* SwordPickup13 = World->SpawnActor<AWorldWeaponPickup>();
@@ -1031,6 +1130,18 @@ bool FWeaponEquipmentComponentTransactionMatrixTest::RunTest(const FString& Para
 		TestEqual(TEXT("Bow equipped resolves LocomotionMode to Bow"), EquipmentComp->GetResolvedLocomotionMode(), EWeaponLocomotionMode::Bow);
 		TestFalse(TEXT("Bow equipped has no Shield presentation"), EquipmentComp->HasShieldEquipped());
 		TestNull(TEXT("OffHand is null when Bow is equipped"), EquipmentComp->GetCurrentOffHandWeapon());
+
+		UStaticMeshComponent* BowDisplayComponent = FindEquippedDisplay(TransientBowMesh, BowDef->AttachSocketName);
+		TestNotNull(TEXT("Equipped Bow display component is found"), BowDisplayComponent);
+		if (BowDisplayComponent)
+		{
+			TestTrue(TEXT("Equipped Bow display scale matches its definition"), BowDisplayComponent->GetRelativeScale3D().Equals(BowDef->DisplayScale, KINDA_SMALL_NUMBER));
+
+			FTransform BowLaunchSocketTransform;
+			TestTrue(TEXT("Bow launch Socket query succeeds on scaled display"), EquipmentComp->TryGetEquippedMainHandDisplaySocketTransform(SocketNameBowLaunch, BowLaunchSocketTransform));
+			const FVector ExpectedLaunchLocation = BowDisplayComponent->GetComponentTransform().TransformPosition(LaunchSocket->RelativeLocation);
+			TestTrue(TEXT("Bow launch Socket world location inherits display scale"), BowLaunchSocketTransform.GetLocation().Equals(ExpectedLaunchLocation, KINDA_SMALL_NUMBER));
+		}
 
 		// 13.3.5 TwoHanded (Bow) -> Shield normalization -> Unarmed + Shield resolves to Default (plus Shield presentation)
 		AWorldWeaponPickup* NormShieldPickup = World->SpawnActor<AWorldWeaponPickup>();
@@ -1096,6 +1207,13 @@ bool FWeaponEquipmentComponentTransactionMatrixTest::RunTest(const FString& Para
 			FailDropBow->Destroy();
 		}
 
+		UStaticMeshComponent* RestoredSwordDisplay = FindEquippedDisplay(SwordMesh, SwordDef->AttachSocketName);
+		UStaticMeshComponent* RestoredShieldDisplay = FindEquippedDisplay(ShieldMesh, ShieldDef->AttachSocketName);
+		TestNotNull(TEXT("Rollback restores the Sword display component"), RestoredSwordDisplay);
+		TestNotNull(TEXT("Rollback restores the Shield display component"), RestoredShieldDisplay);
+		TestTrue(TEXT("Rollback restores the Sword definition scale"), RestoredSwordDisplay && RestoredSwordDisplay->GetRelativeScale3D().Equals(SwordDef->DisplayScale, KINDA_SMALL_NUMBER));
+		TestTrue(TEXT("Rollback restores the Shield definition scale"), RestoredShieldDisplay && RestoredShieldDisplay->GetRelativeScale3D().Equals(ShieldDef->DisplayScale, KINDA_SMALL_NUMBER));
+
 		// 13.4.3 Injected Apply Failure Rollback from single Sword (LightSword) -> Bow
 		AWorldWeaponPickup* ClearOffHandForSword = World->SpawnActor<AWorldWeaponPickup>();
 		ClearOffHandForSword->SetActorLocation(FVector(50.0f, 0.0f, 0.0f));
@@ -1132,10 +1250,10 @@ bool FWeaponEquipmentComponentTransactionMatrixTest::RunTest(const FString& Para
 			TestTrue(TEXT("Tag State.Action.Guarding is registered"), TagGenericGuarding.IsValid());
 			TestTrue(TEXT("Tag State.Action.Guarding.Shield is registered"), TagShieldGuarding.IsValid());
 
-			UClass* ShieldGuardClass = StaticLoadClass(UGameplayAbility::StaticClass(), nullptr, TEXT("/Game/_Abilities/Player/Attack/Shield/GA_PlayerShieldGuard.GA_PlayerShieldGuard_C"));
+			UClass* ShieldGuardClass = StaticLoadClass(UGameplayAbility::StaticClass(), nullptr, TEXT("/Game/_Abilities/Weapon/Shield/GA_PlayerShieldGuard.GA_PlayerShieldGuard_C"));
 			TestNotNull(TEXT("GA_PlayerShieldGuard blueprint class loaded"), ShieldGuardClass);
 
-			UClass* SwordGuardClass = StaticLoadClass(UGameplayAbility::StaticClass(), nullptr, TEXT("/Game/_Abilities/Player/Attack/Shield/GA_Guard_Sowrd.GA_Guard_Sowrd_C"));
+			UClass* SwordGuardClass = StaticLoadClass(UGameplayAbility::StaticClass(), nullptr, TEXT("/Game/_Abilities/Weapon/Shield/GA_Guard_Sowrd.GA_Guard_Sowrd_C"));
 			TestNotNull(TEXT("GA_Guard_Sowrd blueprint class loaded"), SwordGuardClass);
 
 			if (ShieldGuardClass && SwordGuardClass)

@@ -71,6 +71,9 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Display", meta = (ToolTip = "武器显示网格体相对于附着插槽的局部旋转偏移。"))
 	FRotator DisplayRotationOffset = FRotator::ZeroRotator;
 
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Display", meta = (ToolTip = "装备时武器显示网格体的缩放比例；显示网格 Socket、近战判定点和弓箭发射位置会随之缩放。世界拾取物缩放由 WorldPickupDisplayTransform 单独控制。"))
+	FVector DisplayScale = FVector::OneVector;
+
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|World Pickup", meta = (ToolTip = "武器在未装备（世界拾取物）状态下的相对显示变换（位置、旋转、缩放）。"))
 	FTransform WorldPickupDisplayTransform = FTransform::Identity;
 
@@ -102,6 +105,18 @@ public:
 inline bool UWeaponDefinition::IsValidWeaponDefinition(FString& OutReason) const
 {
 	OutReason.Empty();
+
+	if (!FMath::IsFinite(DisplayScale.X) || !FMath::IsFinite(DisplayScale.Y) || !FMath::IsFinite(DisplayScale.Z))
+	{
+		OutReason = TEXT("DisplayScale contains non-finite components.");
+		return false;
+	}
+
+	if (DisplayScale.X <= 0.0f || DisplayScale.Y <= 0.0f || DisplayScale.Z <= 0.0f)
+	{
+		OutReason = TEXT("DisplayScale components must be strictly positive.");
+		return false;
+	}
 
 	if (WorldPickupDisplayTransform.ContainsNaN())
 	{

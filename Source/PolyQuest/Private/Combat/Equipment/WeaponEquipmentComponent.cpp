@@ -944,6 +944,7 @@ bool UWeaponEquipmentComponent::ApplyComposition(APlayerCharacter* PlayerCharact
 		DisplayComponent->AttachToComponent(OwnerMesh, FAttachmentTransformRules::KeepRelativeTransform, Definition->AttachSocketName);
 		DisplayComponent->SetRelativeLocation(Definition->DisplayLocationOffset);
 		DisplayComponent->SetRelativeRotation(Definition->DisplayRotationOffset);
+		DisplayComponent->SetRelativeScale3D(Definition->DisplayScale);
 		return DisplayComponent;
 	};
 
