@@ -1,6 +1,7 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "Combat/Equipment/MeleeWeaponDefinition.h"
+#include "Combat/Input/CombatLoadoutDefinition.h"
 #include "Engine/StaticMesh.h"
 #include "Engine/StaticMeshSocket.h"
 

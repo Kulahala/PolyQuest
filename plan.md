@@ -1,121 +1,128 @@
-# TODO-02C4: Enemy Death Ragdoll Impact v1
+# TODO-03H4B: Native Slimming, Reuse, And Decoupling v1
 
 ## Plan State
 
-- Status: Completed. Gemini implemented the frozen Enemy lifecycle slice; Main repaired the review-found test-vacuity gap, completed the delta Fresh Review, and the user authorized documentation closeout and commit after confirming the current PIE and Automation gates.
-- Baseline: `218df1b` (`[Docs] 完成作者提示元数据 (Authoring Tooltip Metadata)`).
-- Objective: make a lethal Enemy hit produce one readable attacker-away ragdoll motion instead of the current zero-horizontal-momentum collapse, while retaining the existing Dead-tag teardown as the sole gameplay authority.
-- Player-facing scope: every current lethal Health GameplayEffect with a valid current attacker-direction context—melee, projectile, or future damage that follows the same GAS route—may contribute one ragdoll velocity change. Damage with no usable current context safely keeps the existing natural ragdoll fall.
-- Preserve all current user WIP. `Config/**`, `Content/**`, maps, Blueprints, AnimBPs, GA/GE/Montage assets, `.uproject`, generated files, and unrelated source changes are neither implementation nor commit candidates unless the user explicitly expands the scope.
+- Status: Completed. Slice A passed its user-confirmed twenty-suite Automation matrix and focused `Scene01` PIE, followed by Main delta Fresh Review with no P0-P2. Slice B passed its focused static review with no P0-P2, changes only the Public/Private include boundary, and the user confirmed the required `PolyQuestEditor (Development Editor)` compile. H4B now proceeds through its two approved scoped commits.
+- Baseline: `6dd8b84` (`[Feature] 敌人死亡布娃娃受击冲量 (Enemy Death Ragdoll Impact)`).
+- Objective: before `TODO-03C`, remove one proven cluster of duplicated Native melee Trace Window mechanics and one proven public-header dependency, without changing gameplay behavior, GAS ownership, serialized assets, or class paths.
+- Player-facing scope: Light Attack, Charged Attack, Sprint Attack, and Player Melee Skill must retain their current one-window-at-a-time, stale-Notify-safe, once-only melee delivery and terminal cleanup behavior after the shared mechanical code is reduced.
+- Preserve all current user WIP. `.gitignore`, `Config/**`, `Content/**`, maps, Blueprints, AnimBPs, GA/GE/Montage assets, `.uproject`, generated files, and unrelated source changes are neither implementation nor commit candidates.
 
 ## Route And Delegation
 
 Outer: `ue-stage-workflow`
 Primary: `ue5-cpp-gameplay`
-Support: `physics-tuning`, `ue5-debug-validation`
-Route reason: this is one native Enemy lifecycle change spanning a GAS Attribute callback, terminal teardown, SkeletalMesh physics startup, data-authored presentation values, and a deterministic non-Chaos Automation boundary.
+Support: `ue5-architecture`
+Route reason: this is a single-module C++ lifecycle refactor with a narrow Public/Private include-boundary cleanup; it has no authored-asset, gameplay-design, or module-split scope.
 
 Plan explorers: 0
-Implementation executors: 1 (Gemini only after its read-only plan review is accepted and the user explicitly authorizes execution)
+Implementation executors: 1 (Gemini, only after its plan review is accepted and the user explicitly authorizes execution)
 Complex Executor: one scoped lifecycle-sensitive implementation
 Main parallel work: none
-Reason: `OnHealthAttributeChanged -> SetDeadState -> HandleDeath -> StartDeathRagdoll` is one synchronous shared lifecycle. Splitting ownership would increase the risk of stale context, duplicate impulse, or teardown regressions. Main retains architecture, the frozen contract, documentation, validation interpretation, staging, and commit ownership.
+Reason: the four player Ability paths will call one shared private helper, so splitting writers would increase lifecycle drift risk. Main owns the contract, scope, validation interpretation, documentation, review, staging, and commits.
 
-## Frozen Runtime And Authoring Contract
+## Frozen Scope And Runtime Contract
 
-### 1. Enemy-owned authoring surface
+### Slice A — private player Trace Window lifecycle helper
 
-Contract owner: Main. Implementation writer: Gemini. The only product Header/API surface change is private authored state on `AEnemyCharacter`; no new public Blueprint function, Gameplay Tag, GameplayEffect, DataAsset, module dependency, or Config route is allowed.
+Contract owner: Main. Implementation writer: Gemini. This slice adds no Public API, reflected type, Gameplay Tag, Input route, DataAsset field, module dependency, or Blueprint class-path change.
 
-- Add private `EditDefaultsOnly`, `BlueprintReadOnly`, `AllowPrivateAccess` fields under `Combat|Enemy|Death`, each with concise Chinese ToolTips:
-  - `DeathRagdollImpulseBoneName`: `FName`, default `NAME_None`. It must name one actual simulated Physics Asset body when directional force is wanted; `NAME_None` is a legal silent no-directional-force default and must never fall back to the root body.
-  - `DeathRagdollHorizontalVelocityChange`: `float`, default `2000.0f`, `ClampMin = 0`, `Units = CentimetersPerSecond`.
-  - `DeathRagdollUpwardVelocityChange`: `float`, default `500.0f`, `ClampMin = 0`, same velocity unit.
-- These are velocity-change values, not mass-dependent force values: the runtime must use `AddImpulse(..., bVelChange = true)`. The naming must not call either field `ImpulseStrength`.
-- The initial generic `450 / 180 cm/s` estimate was replaced by the current `2000 / 500 cm/s` authored baseline after user-confirmed PIE showed that a single constrained Pelvis body did not produce readable whole-body motion at the lower setting. These are fallback CDO values, not a guarantee that an existing Blueprint override changes automatically.
-- The fields live on the Enemy Character CDO rather than `UEnemyAIProfile`, `UEnemyAttackProfile`, or a GameplayEffect: bone selection and ragdoll feel belong to the mesh/Physics Asset presentation archetype, not AI movement or the damage formula.
-- The native CDO deliberately supplies no default bone. The user configures a verified physical bone on `BP_Enemy_Goblin` after an Editor/Physics Asset readback; do not assume or hard-code `pelvis` without that evidence.
+1. Add a non-reflected, stateless `FMeleeTraceWindowLifecycle` under `Source/PolyQuest/Private/AbilitySystem/Abilities/` with a paired `.h/.cpp`.
+2. The helper owns only these existing mechanical operations:
+   - `OpenOrKeepScalar`: clear a closed retained Task, preserve an already-open Task, resolve the current Avatar's `ABaseCharacter` / `UMeleeTraceSourceComponent`, call the existing scalar `OpenMeleeTraceWindow` factory overload, call `ReadyForActivation()`, and clear a synchronously unopened Task.
+   - `OpenOrKeepMagnitudes`: perform the same sequence through the existing `TMap<FGameplayTag, float>` factory overload used by Charged Attack.
+   - `CloseAndClear`: reset the caller's active Trace Notify weak reference, call `EndTask()` only on its current Task, and clear that caller-owned Task pointer. Keep only this two-reference form: no Task-only overload is added because no approved call site needs it.
+3. The helper receives references to each Ability's existing `TObjectPtr<UAbilityTask_MeleeTraceWindow>` and `TWeakObjectPtr<const UAnimNotifyState_AttackTraceWindow>`; it does not own UObject lifetime, cache a Character/ASC/Notify, store `FGameplayEventData`, or introduce a second runtime state source.
+4. Convert only these existing `.cpp` call sites:
+   - `LightAttackAbility.cpp`
+   - `ChargedAttackAbility.cpp`
+   - `SprintAttackAbility.cpp`
+   - `PlayerMeleeSkillAbility.cpp`
+5. Retain each Ability's existing private `OpenTraceWindow(...)` and `CloseTraceWindow()` wrappers. They keep the local preconditions (including Charged's map construction) and forward the mechanical Task operation to `FMeleeTraceWindowLifecycle`; callers such as `EndAbility`, `StartComboEntry`, and Notify handlers do not expand helper parameters inline.
+6. Each Ability retains its own `OnTraceWindowBegin/End` payload validation, active-Montage identity check, stale-Notify comparison, `bEndAbilityRequested` gate, damage/cost logic, Cancel Window logic, input behavior, and full `EndAbility()` ownership.
+7. Charged Attack retains `bReleaseStarted` and its current Damage/Poise SetByCaller map construction. The scalar callers retain their exact invalid-tag/zero-magnitude and Guard Stamina arguments. The helper must use the same Task factory overload each caller uses today.
+8. `UEnemyMeleeAbility` is explicitly excluded. It has the similar pattern but lacks direct real-Ability lifecycle Automation coverage; adding AttackProfile/Enemy fixture machinery merely to include it would expand this slimming slice beyond its approved boundary.
 
-### 2. Lethal-context capture and terminal consumption
+### Slice B — proven header dependency cleanup
 
-- Add one private non-reflected value cache, `FVector PendingDeathRagdollVelocityChange`, initialized to zero. It may hold only a finite velocity vector; it must never retain `FGameplayEffectSpec*`, `FGameplayEffectModCallbackData*`, an Effect Context pointer, or an earlier hit's source.
-- In `AEnemyCharacter::OnHealthAttributeChanged`, inside the existing `NewValue <= 0` branch and before the first `SetDeadState()` call:
-  1. only when this is the first terminal transition (`!IsDead()`), clear the pending vector;
-  2. require a real Health decrease and current `ChangeData.GEModData`;
-  3. read only the current `EffectSpec.GetContext()` and use `FHitReactionImpactResolver::ResolveImpactDirectionFromContext()` unchanged;
-  4. require a finite current Enemy planar yaw, then convert its documented target-local `Target -> Attacker` planar direction to a finite world-space `Attacker -> Target` direction and build horizontal attacker-away velocity plus the configured upward velocity;
-  5. retain the result only when the direction is nonzero/finite, horizontal velocity change is strictly positive, upward velocity change is finite and nonnegative, and the full vector is finite.
-- Do not use `TryBuildLaunchVelocity()`: its contract requires a positive vertical speed and owns launch-reaction semantics. C4 may legitimately use zero upward change and owns death-ragdoll presentation only.
-- `SetDeadState()` remains immediately after this capture. The existing Dead-tag callback remains the only caller of terminal teardown; no death Ability, reaction tier gate, direct Health write, Root Motion route, or new damage path is introduced.
-- Do not remove `HandleDeath()`'s existing `StopMovementImmediately()` or `DisableMovement()`. They clear navigation/CharacterMovement state; ragdoll receives its independent velocity change only after simulation has been enabled.
+Contract owner: Main. Implementation writer: Gemini. This is a separate no-behavior micro-slice.
 
-### 3. Ragdoll injection and fail-closed behavior
-
-- `StartDeathRagdoll()` consumes and clears `PendingDeathRagdollVelocityChange` on every entry before any early return, so disabled ragdoll, missing Physics Asset, repeated calls, and teardown can never reuse a stale candidate.
-- Preserve the existing terminal setup order: disable fixed weapon display collision; disable Capsule collision/overlaps; apply the `Ragdoll` profile; enable mesh simulation; wake rigid bodies.
-- After physics is active, apply exactly one `SkeletalMesh->AddImpulse(ConsumedVelocityChange, DeathRagdollImpulseBoneName, true)` only if all of the following are true: ragdoll is enabled, not previously started, SkeletalMesh and Physics Asset are valid, the consumed vector is valid/nonzero, the authored bone name is non-None, `GetBodyInstance(BoneName)` returns a body, and the SkeletalMesh reports that named body as simulating physics.
-- A configured non-None bone that is missing or not simulated is a configuration fault: preserve the normal ragdoll without directional force and log one `LogPolyQuest` Warning per Enemy. `NAME_None`, missing current effect context, zero direction, zero/invalid velocity settings, disabled ragdoll, or teardown are normal no-impact paths and must not log.
-- Keep the existing missing Physics Asset warning/fallback behavior. Do not add corpse lifetime, destruction delay, Physics Asset filesystem edits, collision-profile redesign, animation replacement, player death, or a general impulse framework.
-
-### 4. Test-only seam and Automation surface
-
-- Add only narrow `#if WITH_DEV_AUTOMATION_TESTS` readback/configuration helpers on `AEnemyCharacter` for this stage: the most recent lethal candidate, the current pending value, and capture/consume counts. They must be unavailable in non-test builds and must not bypass production Health, Dead-tag, or ragdoll code paths.
-- The tests may set death-ragdoll authoring values through a test-only helper, but must not alter the shared fixture's default passive-enemy rule that disables real ragdoll. No test-only fake Physics Asset, body simulation bypass, production log suppression, or direct Health-callback/Attribute mutation to simulate damage or death is permitted. The existing fixture-style numeric Health setup is allowed only to establish the lethal baseline before a real GameplayEffect Spec delivers the damage.
-- Add `Source/PolyQuest/Private/Tests/EnemyDeathRagdollAutomationTests.cpp` as `PolyQuest.Enemy.DeathRagdoll`, reusing `FCombatAutomationFixture` and the existing native Health damage GE/spec route. Do not add a new test GE only for this stage unless the existing test GE cannot express a lethal Health decrease.
-- Required cases:
-  - a valid current lethal context captures exactly the configured attacker-away horizontal velocity and upward component;
-  - a prior nonlethal hit from attacker A cannot influence a later lethal hit from attacker B;
-  - invalid/empty current context, zero direction, invalid velocity configuration, and direct Dead-tag receipt yield no valid candidate;
-  - terminal processing consumes/clears the value once, and repeated Health/Dead callbacks do not capture or consume again;
-  - the normal no-asset/no-ragdoll fixture route remains silent and does not affect living Enemy hit reaction, Poise, AI, or damage delivery.
-- Automation proves callback ownership, current-context isolation, velocity construction, and once-only consumption. It does not claim real Chaos displacement, rigid-body tumble quality, or Physics Asset correctness; those are explicit user PIE gates.
+1. In `MeleeWeaponDefinition.h`, replace the direct `Combat/Input/CombatLoadoutDefinition.h` include with `class UCombatLoadoutDefinition;`.
+2. In `MeleeWeaponDefinition.cpp`, add the direct `Combat/Input/CombatLoadoutDefinition.h` include before the existing `AssociatedLoadout->IsRouteTableValid()` use.
+3. Do not remove `Abilities/GameplayAbilityTypes.h` from `LightAttackAbility.h`, `ChargedAttackAbility.h`, `SprintAttackAbility.h`, or `PlayerMeleeSkillAbility.h`: their reflected `UFUNCTION` declarations use `FGameplayEventData` by value, so the complete type remains required in those Public Headers. Record this as an audited retained dependency at closeout; do not create a false include-reduction diff.
 
 ## Approved Paths, Execution Order, And Stop Conditions
 
 ### Approved implementation paths
 
-1. `Source/PolyQuest/Public/Character/Enemy/EnemyCharacter.h`
-2. `Source/PolyQuest/Private/Character/Enemy/EnemyCharacter.cpp`
-3. `Source/PolyQuest/Private/Tests/EnemyDeathRagdollAutomationTests.cpp`
+1. `Source/PolyQuest/Private/AbilitySystem/Abilities/MeleeTraceWindowLifecycle.h`
+2. `Source/PolyQuest/Private/AbilitySystem/Abilities/MeleeTraceWindowLifecycle.cpp`
+3. `Source/PolyQuest/Private/AbilitySystem/Abilities/LightAttackAbility.cpp`
+4. `Source/PolyQuest/Private/AbilitySystem/Abilities/ChargedAttackAbility.cpp`
+5. `Source/PolyQuest/Private/AbilitySystem/Abilities/SprintAttackAbility.cpp`
+6. `Source/PolyQuest/Private/AbilitySystem/Abilities/PlayerMeleeSkillAbility.cpp`
+7. `Source/PolyQuest/Private/Tests/MeleeTraceWindowLifecycleAutomationTests.cpp`
+8. `Source/PolyQuest/Public/Combat/Equipment/MeleeWeaponDefinition.h`
+9. `Source/PolyQuest/Private/Combat/Equipment/MeleeWeaponDefinition.cpp`
 
-`FHitReactionImpactResolver`, `FCombatAutomationFixture`, `Build.cs`, `Config/**`, Blueprint/AnimBP/Physics Asset files, project documentation, staging, and commits are prohibited implementation targets. If the executor believes any unlisted file, public API, Tag, input route, asset write, Physics Asset edit, or lifecycle policy is necessary, it must stop and report concrete source evidence for a Main decision.
+`UEnemyMeleeAbility`, all Public Ability Headers, `UAbilityTask_MeleeTraceWindow`, `AnimNotifyState_ActionWindows`, `Build.cs`, `Config/**`, all assets, project documentation, staging, and commits are prohibited implementation targets. If any unlisted file, public/reflected API, Tag, Input, Config, asset, base-class reparenting, or additional test seam appears necessary, Gemini must stop and return exact source evidence for a Main decision.
 
 ### Execution order
 
-1. Gemini performs a read-only plan review over the three approved paths plus the direct `FHitReactionImpactResolver` and existing Health-damage test route. It reports P0-P2 findings, real gaps, non-blocking recommendations, and Automation/Editor feasibility only; it does not edit, compile, invoke the Editor, stage, or commit.
-2. After the user accepts that review, Gemini implements only the frozen C++/test slice. It rereads the plan and preserves every existing Dead, Hit Reaction, Poise, AI, movement, and ragdoll fallback contract.
-3. Gemini runs Rider `get_file_problems` or `lint_files` for touched C++ files plus `git diff --check`; it returns changed paths, static evidence, unrun user gates, strict self-review findings, and remaining risks. It must not claim compile, Editor, PIE, or visual evidence.
-4. The user performs the Editor authoring/readback, manual `PolyQuestEditor (Development Editor)` compile, Automation, and PIE gates below. Gemini does not write `.uasset` files or live Editor state.
-5. Main performs the separate defect-first Fresh Review after user evidence, then synchronizes documentation and prepares a scoped commit only with explicit user authorization.
+1. Gemini reviews this plan read-only against the listed paths, the direct Task factory, and existing trace Automation fixtures. It returns P0-P2 findings, blocking gaps, non-blocking recommendations, and test feasibility; it does not edit, compile, access Editor state, stage, or commit.
+2. After user acceptance, Gemini implements Slice A only and runs static checks. It must preserve all current player and task lifecycle semantics.
+3. The user compiles and runs the required Automation/PIE gate. Main completes a defect-first Fresh Review of Slice A before any commit.
+4. Gemini implements Slice B only after Slice A is accepted. The user compiles, Main performs the focused review, and no behavior test is skipped merely because this is header hygiene.
+5. Main synchronizes documentation and prepares the two scoped commits only after all gates are green and the user explicitly authorizes the commits.
 
 ## Validation Matrix
 
+### New Automation coverage
+
+Add `PolyQuest.Melee.TraceWindowLifecycle`, using the existing real ASC-hosted `UTestMeleeTrailAbility` and `FCombatAutomationFixture`; do not add production test accessors or change fixtures solely for this stage.
+
+- Scalar route: first open succeeds, a second open keeps the same active Task, a closed retained Task is replaced safely, a synchronous unopened/failed activation leaves a null Task, and close clears Task/Notify ownership.
+- Map route: Charged-style SetByCaller-map Task opens and closes through the same helper semantics.
+- Cleanup: close releases the active Trail requester and leaves no active Trace Window Task.
+- Existing `PolyQuest.Melee.MultiTraceSource` stale-Notify regression remains mandatory evidence that an old Notify End cannot close a successor window.
+
 ### Static gate before user handoff
 
-- Read the final diff and the direct lethal/death call chain; verify the context is transformed and copied before `SetDeadState()`, and the vector is consumed before every `StartDeathRagdoll()` early return.
-- Verify no callback-local pointer survives the Health delegate, no shared resolver semantic changes, no new warning occurs for normal missing-context/no-impact paths, and no test helper escapes `WITH_DEV_AUTOMATION_TESTS`.
-- Rider reports zero Errors for the touched C++ paths; `git diff --check` passes. CodeGraph/code-review-graph are supplemental source/impact evidence only, not runtime proof.
+- Read the final helper and all four caller diffs; verify every current gate and factory argument survives unchanged outside the centralized mechanical sequence.
+- Use Rider `get_file_problems` or `lint_files` on all touched C++ files, then run `git diff --check`.
+- Use CodeGraph for callers/callees and code-review-graph as supplemental impact evidence. If its index is stale, document direct source/diff review as the primary evidence.
+- Confirm neither slice changes `Source/PolyQuest/Public/AbilitySystem/Abilities/*.h`, Gameplay Tags, Config, module dependencies, or Content assets.
 
-### User-owned Editor, compile, and runtime gates
+### User-owned compile and runtime gate
 
-1. In `BP_Enemy_Goblin`, inspect the actually assigned SkeletalMesh and Physics Asset. Set `DeathRagdollImpulseBoneName` to one verified physical body, keep ragdoll enabled, and confirm the two velocity-change fields expose the intended units/tooltips. A serialized Blueprint value (for example the previous `750 / 280`) overrides the Native `2000 / 500` fallback and must be changed explicitly. Do not assume a bone name from documentation.
-2. Tune Physics Asset damping, constraints, and collision in Unreal Editor only. No generic damping/constraint number is a frozen product constant in this stage.
-3. Compile `PolyQuestEditor (Development Editor)` and report the exact result.
-4. Run the full Editor Automation matrix, including the new `PolyQuest.Enemy.DeathRagdoll` suite and the existing Hit Reaction, Projectile Lifecycle, Melee, Equipment, and Enemy AI regressions. Expected successful paths must be free of unhandled `LogPolyQuest` warnings.
-5. In `Scene01`, kill the Goblin from front, rear, and side with both a melee hit and an arrow. Confirm each corpse initially moves away from the actual attacker, gets only a light upward lift, then naturally slides/tumbles without jitter, explosion, persistent collision interference, or a living-Enemy behavior regression.
-6. Temporarily configure an invalid bone in Editor, confirm the Enemy still enters ordinary ragdoll safely with a single configuration warning and no directional launch, then restore the verified bone before closeout. Also confirm a missing/disabled ragdoll configuration preserves its pre-C4 fallback.
+1. Compile `PolyQuestEditor (Development Editor)` after each slice and report the exact result.
+2. Run the complete Editor Automation matrix: the current nineteen suites plus the new lifecycle suite, for an expected twenty-suite result, with mandatory focused suites:
+   - `PolyQuest.Melee.TraceWindowLifecycle`
+   - `PolyQuest.Melee.TraceSourceGeometry`
+   - `PolyQuest.Melee.MultiTraceSource`
+   - `PolyQuest.Melee.WeaponTrail`
+   - `PolyQuest.Player.ActionWindows`
+   - `PolyQuest.Equipment.TransactionMatrix`
+3. In `Scene01`, validate Light Combo, Charged release, Sprint Attack, and Player Melee Skill: each produces one valid hit window, closes cleanly on montage end/cancel, and does not leave Trail or trace state active. Also verify one ordinary Enemy melee attack remains unchanged as a regression observation.
 
-## Non-Goals, Documentation, And Commit Boundary
+## Documentation And Commit Boundary
 
-- Out of scope: per-reaction-tier death force, mass-scaled force, damage scaling, GameplayCue, death montage selection, Physics Asset asset changes by source control, corpse persistence/recovery, root-motion changes, player death, AI redesign, and `TODO-03H4B` slimming work.
-- `ARCHITECTURE.md` receives only the stable implemented ownership/lifecycle after compile, Automation, PIE, and Fresh Review evidence. `ROADMAP.md` moves C4 to Done only after the same gates; no unproven Physics tuning values go into architecture or roadmap text.
-- Default commit scope after accepted closeout: the three approved C++ paths plus Main-owned project documentation. All authored `Content/**`, including `BP_Enemy_Goblin` and any Physics Asset adjustments, remain user WIP and excluded unless the user separately approves a stable asset closure and its LFS pointer verification.
+- After both slices pass their gates and Fresh Review, Main updates `ROADMAP.md` and this `plan.md` with the completed H4B result, the intentional Enemy exclusion, and the retained `GameplayAbilityTypes.h` rationale.
+- `ARCHITECTURE.md` and `README.md` remain unchanged: this stage creates no durable runtime ownership or public product contract.
+- Keep two separate commit boundaries, each only after explicit user authorization:
+  1. `[Refactor] 复用玩家近战追踪窗口生命周期 (Reuse Player Melee Trace Lifecycle)` — Slice A source/test paths plus the then-current Main-owned plan record if appropriate.
+  2. `[Chore] 瘦身近战定义头文件依赖 (Slim Melee Definition Header Dependency)` — Slice B paths and final H4B documentation closeout.
+- No `.gitignore`, `Config/**`, `Content/**`, `.uproject`, map, Blueprint, AnimBP, GA/GE, Montage, imported asset, or user-authored Physics/animation WIP may be staged.
 
-## Closeout Record — 2026-08-26
+## Execution And Review Record
 
-- **Delivered surface:** `AEnemyCharacter` now captures one finite attacker-away velocity-change vector from the current lethal Health GameplayEffect Context before writing Dead, consumes that value before every ragdoll early return, and applies it once only to an explicitly authored simulated Physics Asset body after ragdoll physics starts. It adds no new Tag, death Ability, damage route, Root Motion route, corpse lifecycle, or Physics Asset source-file change.
-- **Authoring result:** the Native fallback is `2000 / 500 cm/s`; user Editor readback confirms `BP_Enemy_Goblin` currently enables ragdoll, selects `Pelvis`, and explicitly uses `20.0 / 5.0 m/s`. Those Blueprint/Physics Asset changes remain user-owned `Content/**` WIP and are excluded from this commit.
-- **Main delta Fresh Review:** no P0/P1/P2 remains after the new Automation suite was hardened to assert its fail-closed setup rather than silently skipping it. `NAME_None` remains a silent no-force route; a non-None invalid/non-simulated bone retains ordinary ragdoll and logs once. The test-only observation seam remains under `WITH_DEV_AUTOMATION_TESTS`.
-- **Static evidence:** CodeGraph/direct source review confirmed the current-context capture and one-time consumption chain; Rider error-only inspection found zero errors; `git diff --check` passed. Warning-level style suggestions are not behavior findings. The code-review graph index was older than the review baseline, so direct source/diff review remained the primary evidence.
-- **User evidence:** the user confirmed focused `Scene01` PIE and all nineteen named Editor Automation suites, including `PolyQuest.Enemy.DeathRagdoll`, passed. This record does not invent a separate build-log result beyond that user-provided runtime evidence.
-- **Documentation/commit boundary:** `ARCHITECTURE.md` and `ROADMAP.md` now record the stable implemented ownership and completion. `README.md` remains unchanged because this internal combat-presentation slice does not alter the public project overview. The scoped commit includes only the three approved C++ paths and these three Main-owned documents.
+- Slice A added the private, non-reflected `FMeleeTraceWindowLifecycle` and moved only the repeated Task open/keep/close mechanics from Light Attack, Charged Attack, Sprint Attack, and Player Melee Skill. Each Ability retained its own montage identity, stale-Notify, cancellation, damage/cost, and terminal `EndAbility()` ownership. `PolyQuest.Melee.TraceWindowLifecycle` now covers scalar/map open/keep/close behavior, active-Ability ownership, and scalar/map synchronous endpoint fail-closed cleanup.
+- Slice A user evidence: the complete twenty-suite Automation matrix, including `PolyQuest.Melee.TraceWindowLifecycle`, passed; the user also confirmed focused `Scene01` PIE for the four Player melee routes and an ordinary Enemy-melee smoke check. Main delta Fresh Review found no P0-P2. The only non-blocking observation is that the test does not explicitly assert `ActiveAbility->IsActive()` after its bootstrap Task ends; its active-Ability setup and resulting lifecycle coverage are otherwise sufficient, so this is not accepted Roadmap debt.
+- Slice B removed the direct `CombatLoadoutDefinition.h` include from `MeleeWeaponDefinition.h`, retained the harmless type forward declaration, and added the full include directly to `MeleeWeaponDefinition.cpp`, where `AssociatedLoadout->IsRouteTableValid()` is invoked. The four Public Ability `GameplayAbilityTypes.h` includes were audited and intentionally retained because their reflected `FGameplayEventData` by-value declarations need the complete type. Main focused Fresh Review found no P0-P2; Rider reported only pre-existing weak style suggestions and `git diff --check` passed.
+- `UEnemyMeleeAbility` remains intentionally outside this extraction. Its Trace Source already uses the shared Task/source pipeline, but its Ability snapshots `ActiveDamageGameplayEffectClass` and `ActiveGuardStaminaDamage` from an AI-selected `UEnemyAttackProfile` and currently lacks direct real-Ability trace-lifecycle Automation. Future adoption is a conditional Recommendation in `ROADMAP.md`, not deferred implementation work in this stage.
+- Final user gate completed: the user confirmed `PolyQuestEditor (Development Editor)` compilation after Slice B. Slice B has no runtime behavior change, so its compile is the required proof; it does not claim a repeat PIE or Automation run beyond Slice A's already accepted user evidence.
+
+## Non-Goals
+
+- No generic melee/attack base class, Ability reparenting, serialized asset migration, module split, public `UAbilityTask_MeleeTraceWindow` API change, `UEnemyMeleeAbility` extraction, GameplayCue, performance optimization, Niagara/Trace tuning, asset deletion, redirector cleanup, or automatic `Content/**` cleanup.
+- A measured bottleneck is required before changing ticking, allocations, traces, Niagara, or component lifetime; this stage does not perform performance work.

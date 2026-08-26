@@ -2,8 +2,9 @@
 
 #include "CoreMinimal.h"
 #include "Combat/Equipment/WeaponDefinition.h"
-#include "Combat/Input/CombatLoadoutDefinition.h"
 #include "MeleeWeaponDefinition.generated.h"
+
+class UCombatLoadoutDefinition;
 
 USTRUCT(BlueprintType)
 struct POLYQUEST_API FOwnerMeshMeleeTraceSource
