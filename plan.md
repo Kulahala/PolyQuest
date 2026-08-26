@@ -1,134 +1,109 @@
-# TODO-02C3J: Launch Facing Smoothing v1
+# TODO-03A3C: World Pickup Drop Grounding And Presentation v1
 
 ## Plan State
 
-- Status: Completed closeout. This document replaces the completed C3I plan and remains the most-recent-stage record until a later accepted plan replaces it. Main Fresh Review found one Public-header/Private-header boundary P2; the narrow header-path repair passed Main delta review.
-- Baseline: `0139372` (`[Feature] 完成击飞受击朝向所有权 (Complete Launch Reaction Facing Ownership)`) plus Main-owned, uncommitted `ROADMAP.md` scheduling `TODO-02C3J` before `TODO-03C`.
-- Objective: replace C3I's one-frame Player/Enemy Launch-facing snap with a short, fixed-rate pre-launch turn. The victim must still face the attacker and travel away from it, but the actor rotates visibly during Takeoff and only leaves the ground once the exact target yaw is reached.
-- User decisions: begin turning during Takeoff; default Player/Enemy rate is `1440.0 degrees/second`; if the authored Commit Notify arrives before the turn completes, pause Takeoff, finish the remaining ground turn at that same rate, then issue the existing launch once. A 180 degree residual turn is therefore at most approximately `0.125s`.
-- Source/asset evidence: both authored Launch GAs reference `AM_LaunchTakeoff`; its source sequence is `A_KnockDown_Begin_RootMotion_Sword`, whose current on-disk metadata reported `bEnableRootMotion=False` and `SequenceLength=0.700000`. This remained static asset evidence; the user subsequently confirmed the focused PIE route.
-- Player-facing success: side/back impacts show a smooth, finite Takeoff turn rather than a yaw snap; every valid Launch still faces the attacker exactly at departure, moves away with the unchanged frozen velocity, holds the existing air pose, lands/recoveries normally, and never rotates again after becoming airborne.
-- Preserve all user WIP. `.gitignore`, `Config/**`, `Content/**`, `.uproject`, maps, Blueprints, AnimBPs, Gameplay Ability/Effect/Montage assets, imported resources, generated folders, and unrelated source are not implementation or commit candidates.
+- Status: Completed. This document records the accepted A3C plan and closeout after the user confirmed the implemented pickup grounding path in PIE and Automation.
+- Baseline: `6df9b78` (`[Feature] 完成击飞受击平滑转向 (Complete Launch Facing Smoothing)`) plus Main-owned, unstaged `ROADMAP.md` scheduling `TODO-03A3C` before `TODO-03C`; preserve all other user WIP.
+- Objective: make every definition-backed world weapon pickup use the same authorable display transform for placed and runtime-dropped instances, then place its Root so the final rendered mesh remains exactly `2cm` clear of the traced ground along that ground's normal.
+- User decision: on slopes, preserve the Definition-authored visual orientation. Only the Root location moves along the ground normal; no mesh rotation is derived from slope orientation.
+- Source evidence: `AWorldWeaponPickup::ProjectLocationToGround` currently returns only `ImpactPoint + ImpactNormal * 2.0f`; `StageDisplacedDrops` then deferred-spawns with `FRotator::ZeroRotator`. `UpdateVisualMesh` only assigns `WeaponMesh`, while `UWeaponDefinition` currently holds only hand-socket display offsets. The atomic `UWeaponEquipmentComponent::TryEquipWorldPickup` transaction already rolls back the composition when staging fails and must remain its sole transaction owner.
+- Player-facing success: after repeatedly swapping Sword and Shield, the displaced pickup uses its intended authored visual orientation and rests visibly above flat or sloped ground without bounce, falling physics, changed interaction range, or a temporary overlap/collision state.
+- Preserve all user WIP. `Content/**`, `Config/**`, `.uproject`, maps, Blueprints, AnimBPs, Gameplay Ability/Effect/Montage assets, imported resources, generated folders, and unrelated source are not executor or commit candidates.
 
 ## Route And Delegation
 
 Outer: `ue-stage-workflow`
-Primary: `ue5-cpp-gameplay`
-Support: `ue5-debug-validation`
-Route reason: C3J changes a shared native GAS temporal lifecycle. The active Launch Ability must retain yaw and launch ownership while the existing Player/Enemy arbitration paths continue to suppress competing writers.
+Primary: `ue5-world-interaction`
+Support: `ue5-cpp-gameplay`, `ue5-debug-validation`
+Route reason: this is a deterministic world-interaction presentation fix at the pickup Actor / weapon Definition boundary. It must preserve the existing transactional equipment lifecycle while adding a narrow native geometry calculation and focused Automation proof.
 
 Plan explorers: 0
-Implementation executors: 1 (Gemini, completed the accepted source/test slice; documentation, staging, and commit ownership remained with Main)
-Complex Executor: one scoped lifecycle-sensitive implementation
+Implementation executors: 1 (Gemini, after this plan's read-only review and Main acceptance)
+Complex Executor: none
 Main parallel work: none
-Reason: the frozen snapshot, asynchronous yaw task, Commit arbitration, and exactly-once `LaunchCharacter` call are one atomic Player/Enemy contract. Splitting writers would make cancellation and callback ordering harder to verify.
+Reason: the source boundary is small and already traced; a second Explorer would repeat the same call path. The executor writes only the frozen source/test slice, while Main retains public-contract, asset, documentation, staging, and integration ownership.
 
-## Frozen Runtime Contract
+## Frozen Runtime And Authoring Contract
 
-### Scope and non-goals
+### Public Definition contract
 
-1. C3J applies only to `UPlayerLaunchReactionAbility` and `UEnemyLaunchReactionAbility`, through one narrow internal smoothing state and one AbilityTask. It is a user-priority presentation refinement after passing C3I validation, not a C3I defect repair.
-2. Do not change hit classification, `FHitReactionImpactResolver`, damage, Poise, launch horizontal/vertical speed, landing recovery, Player Dodge cancellation, Enemy deferred Stance Break, Tags, Input, StateTree, AI target ownership, Controller code, Character code, Motion Warping, network behavior, Config, or authored assets.
-3. `ImpactReferenceYawSnapshot` remains the canonical frozen pre-turn yaw and direction-conversion basis. Target yaw and launch velocity are calculated exactly once from that snapshot plus C3I's local `Target -> Attacker` direction. No later Actor rotation, target position, Lock-On state, AI Focus, or controller direction may recompute either value.
-4. `CharacterMovement::RotationRate`, Player locomotion rotation, Controller yaw, and Motion Warping are not C3J turn owners. Player `State.Action.HitReacting` suppression and the existing active Enemy Launch-Spec controller gate already prevent their normal writers while the Ability is active; do not alter them.
-5. Root Motion has higher priority. The new task must never write yaw while `ACharacter::HasAnyRootMotion()` is true, and `CommitFrozenLaunch()` must also reject active Root Motion. Treat that as a fail-closed task failure: end the Launch through the existing cancellation path with no `LaunchCharacter` call, rather than waiting indefinitely or fighting the animation. The current selected Takeoff sequence is explicitly non-Root-Motion.
+Contract owner: Main. Implementation writer: Gemini only for the field and validation below.
 
-### Internal frozen-state contract
+1. Add `FTransform WorldPickupDisplayTransform = FTransform::Identity` to `UWeaponDefinition` as `EditDefaultsOnly, BlueprintReadOnly` under `Weapon|World Pickup`, with a concise Chinese ToolTip. It is the StaticMeshComponent-relative location, rotation, and scale for a weapon's unequipped world representation.
+2. `WorldPickupDisplayTransform` is distinct from `DisplayLocationOffset` and `DisplayRotationOffset`; hand attachment data must not be reused for ground pickup presentation.
+3. Extend the inline `UWeaponDefinition::IsValidWeaponDefinition` with `WorldPickupDisplayTransform.ContainsNaN()` plus explicit `FMath::IsFinite` checks for every translation, quaternion, and scale component. Reject non-finite authoring before transaction teardown; Identity remains valid, preserving existing DataAssets until the user authors a non-identity presentation.
+4. No Gameplay Tag, Input, Ability, ASC, component ownership, serialization migration, new Definition subclass, or Blueprint-callable API is added.
 
-Contract owner: Main. Implementation writer: Gemini.
+### Pickup lifecycle contract
 
-- Add non-reflected `FLaunchFacingSmoothingState` under `Public/AbilitySystem/Abilities/` because the two Public Launch Ability headers hold it by value. It remains a C++-only internal lifecycle primitive, not a general turn framework or a Blueprint/reflection surface.
-- It owns only `StartYaw`, `TargetYaw`, `LaunchVelocity`, `bHasFrozenLaunch`, `bCommitReceived`, `bTurnCompleted`, and `bLaunchIssued`.
-- `TryFreeze(...)` resets first, delegates the mathematics to the unchanged `FHitReactionImpactResolver::TryBuildLaunchFacingAndVelocity`, and stores the successful target yaw/velocity. Invalid input leaves the state reset and returns false.
-- `TryReceiveCommit()` accepts only the first Commit on a valid frozen state. `MarkTurnCompleted()` records one valid completion. `TryConsumeLaunchVelocity(OutVelocity)` succeeds only after both accepted Commit and turn completion, copies the frozen velocity, marks `bLaunchIssued`, and can never succeed again. Every failure resets the out parameter to `FVector::ZeroVector`.
-- `Reset()` is idempotent and is called at every activation start and every `EndAbility()` exit. The helper neither accesses Actors nor calls `LaunchCharacter`.
+Contract owner: Main. Implementation writer: Gemini only for the named functions and private helper.
 
-### Facing AbilityTask contract
+1. `AWorldWeaponPickup::UpdateVisualMesh()` assigns both the Definition's `WeaponMesh` and `WorldPickupDisplayTransform` to `PickupMeshComponent`. A null Definition clears the mesh and restores the component's relative transform to Identity, preventing stale presentation reuse.
+2. Keep the public `ProjectLocationToGround(UWorld*, const FVector&, FVector&, const AActor*)` signature. Internally factor one private raw ground-trace helper returning `FHitResult`, so staging can retain `ImpactPoint` and `ImpactNormal`; the public wrapper retains its existing `+2cm` result for any future caller.
+3. Add a private, pure C++ `FWorldPickupGrounding` under `Private/Combat/Equipment/`, with no `UCLASS`, `USTRUCT`, generated header, or reflected API. Its sole static operation is `TryComputeGroundedRootLocation(...)`; it accepts a finite local `FBox`, the final relative display `FTransform`, a finite ground impact point/normal, and the fixed `2.0f` clearance. It transforms all eight box corners, finds the minimum dot product along the normalized ground normal, and returns:
+   `ImpactPoint + GroundNormal * (2.0f - MinimumProjection)`.
+   The helper initializes its output to zero and returns `false` for invalid bounds, zero/non-finite normals, non-finite transforms, non-finite clearance, or non-finite output.
+4. `StageDisplacedDrops` keeps its current horizontal scatter and uses zero Root rotation. For each definition it must trace ground, deferred-spawn the existing runtime class, call `InitializeDroppedPickup` so the final mesh/relative transform is available, obtain the unregistered mesh's local `FBox` through `WeaponMesh->GetBoundingBox()` (with a direct `Engine/StaticMesh.h` include), calculate the final Root location, and pass that final transform to `FinishSpawning`.
+5. A valid Definition without a `WeaponMesh` retains the old traced `ImpactPoint + Normal * 2cm` Root location because it has no visible bounds. A display-bearing definition whose bounds or grounding calculation is invalid destroys the current deferred actor plus every already staged provisional drop, clears the provisional list, and returns `false` so the existing full equipment rollback runs. No per-frame Tick, physics simulation, throw impulse, bounce, CCD, extra collision, or actor subclass is introduced.
+6. The existing `InteractionSphere` state, provisional `NoCollision -> QueryOnly` commit transition, `FormerOwnerRejectDuration`, `OnPickupConsumed`, and `TryEquipWorldPickup` ordering remain unchanged.
 
-Contract owner: Main. Implementation writer: Gemini.
+## Approved Paths And Execution Order
 
-- Add `UAbilityTask_TurnToFacing` under `AbilitySystem/Tasks` as a C++-only, Ability-owned tick task. Its narrow factory receives the owning Ability, `ACharacter`, frozen start yaw, frozen target yaw, and positive degrees-per-second rate. Declare native `DECLARE_MULTICAST_DELEGATE` completion/failure delegates and bind the two Launch Abilities with `AddUObject`; do not use dynamic delegates, `BlueprintAssignable`, `UFUNCTION` callback plumbing, or any other reflected callback surface.
-- Validate Actor, finite Start/Target Yaw, positive finite rate, and finite Tick delta. The task uses `FMath::FixedTurn` at the supplied rate, preserves the Actor's current Pitch/Roll on every write, and uses `FMath::Abs(FMath::FindDeltaAngleDegrees(CurrentYaw, TargetYaw))` for every tolerance/final-step decision so `+180/-180` follows the correct shortest arc. It snaps only the final sub-tolerance remainder to the exact frozen target yaw, then broadcasts completion once and ends.
-- If the target is already within the existing `0.01 degree` threshold, complete synchronously after setting the exact target yaw. Root Motion, destruction, invalid input, or invalid Tick state broadcast failure once and end without any further transform write. `OnDestroy()` only releases state; it must not synthesize success/failure after the owning Ability has cancelled it.
-- The task must set `bTickingTask = true`; it must use no TimerManager, component Tick, Character Tick, global delegate, GameplayCue, Tag, or asset reference.
+### Approved executor paths
 
-### Player and Enemy Launch lifecycle contract
+1. `Source/PolyQuest/Public/Combat/Equipment/WeaponDefinition.h`
+2. `Source/PolyQuest/Private/Combat/Equipment/WorldWeaponPickup.cpp`
+3. `Source/PolyQuest/Private/Combat/Equipment/WorldPickupGrounding.h`
+4. `Source/PolyQuest/Private/Combat/Equipment/WorldPickupGrounding.cpp`
+5. `Source/PolyQuest/Private/Tests/WorldPickupGroundingAutomationTests.cpp`
+6. `Source/PolyQuest/Private/Tests/WeaponEquipmentComponentAutomationTests.cpp`
 
-Contract owner: Main. Implementation writer: Gemini.
-
-- In both Launch Ability headers add a private `EditDefaultsOnly` `FacingTurnRateDegreesPerSecond = 1440.0f`, clamped non-negative with a concise Chinese Tooltip stating that it is the Takeoff pre-launch turn rate. It is the only new authorable field; it is inherited by the current data-only GAs, so no `.uasset` edit is part of this stage.
-- Add only private transient/internal members: `FacingTurnTask`, `FLaunchFacingSmoothingState`, and the `TurningToLaunch` phase needed between `Takeoff` and `AwaitingAirborne`. No Blueprint callable function, Config/Tag field, public production test hook, or data asset schema is allowed.
-- In `ActivateAbility`, preserve C3I validation, event listener setup, Montage task creation, Cost/Commit, and existing cancellation ordering. After the bound Character, Takeoff Montage, phase, and C3I impact snapshots are set, call `TryFreeze(...)` before `MontageTask->ReadyForActivation()`. After Takeoff is confirmed active and prior action/Root Motion owners are cancelled, create/bind/activate `FacingTurnTask`; the frozen state accepts a zero-time Commit Notify until that task reports turn completion.
-- If freezing fails, do not create a turn task and preserve the current C3I malformed-context behavior: Takeoff may begin, but the first valid Commit logs/ends fail-closed with no transform or launch. If task construction or later task execution fails, use the existing `EndFromMontage(true)` route; do not invent a new cleanup path.
-- During normal Takeoff, the task turns toward the frozen target. Completion before Commit only records `bTurnCompleted`; it does not launch early.
-- `OnLaunchCommitEventReceived` must first retain all C3I identity/active-Montage checks. It then accepts exactly one frozen-state Commit, switches to `TurningToLaunch`, and pauses `TakeoffMontage`. Immediately afterward it must call `CommitFrozenLaunch()` when `SmoothingState.IsTurnCompleted()` is already true, covering the valid `TurnCompleted -> Commit` order. It must not directly call `SetActorRotation` or `LaunchCharacter`.
-- Add one private `CommitFrozenLaunch()` in each Ability. It runs only in `TurningToLaunch`, checks the existing Avatar/ASC/Movement/Montage state plus no Root Motion, asks the smoothing state to consume the velocity, marks `AwaitingAirborne`, then performs the single existing `LaunchCharacter(LaunchVelocity, true, true)` call and preserves all existing falling-grace handling. A duplicate Commit, duplicate task completion, failed state consumption, cancellation, death, or interrupted Montage must never invoke it twice.
-- `OnFacingTurnCompleted` clears its task pointer, marks the shared state complete, and calls `CommitFrozenLaunch()` only if Commit was already received. `OnFacingTurnFailed` clears its task pointer and converges through `EndFromMontage(true)`.
-- Update Takeoff Montage-end handling so uncommitted Takeoff and unexpected Montage termination during `TurningToLaunch` both end through the current route. In both `OnMovementModeChanged` implementations, treat `TurningToLaunch` exactly like `Takeoff`: any `IsFalling()` result before `bLaunchIssued` is an unexpected pre-launch fall and must call `EndFromMontage(true)` without issuing a launch. Keep existing LandingRecovery completion behavior unchanged.
-- `EndAbility()` ends any live facing task before clearing the shared state, then retains all current delegate removal, montage shutdown, ledge restoration, Player Dodge cleanup, and Enemy Stance Break deferral disposition. No callback after teardown may mutate Actor rotation or issue a launch.
-
-## Approved Paths, Execution Order, And Stop Conditions
-
-### Approved implementation paths
-
-1. `Source/PolyQuest/Public/AbilitySystem/Abilities/LaunchFacingSmoothingState.h`
-2. `Source/PolyQuest/Private/AbilitySystem/Abilities/LaunchFacingSmoothingState.cpp`
-3. `Source/PolyQuest/Public/AbilitySystem/Tasks/AbilityTask_TurnToFacing.h`
-4. `Source/PolyQuest/Private/AbilitySystem/Tasks/AbilityTask_TurnToFacing.cpp`
-5. `Source/PolyQuest/Public/AbilitySystem/Abilities/PlayerLaunchReactionAbility.h`
-6. `Source/PolyQuest/Private/AbilitySystem/Abilities/PlayerLaunchReactionAbility.cpp`
-7. `Source/PolyQuest/Public/AbilitySystem/Abilities/EnemyLaunchReactionAbility.h`
-8. `Source/PolyQuest/Private/AbilitySystem/Abilities/EnemyLaunchReactionAbility.cpp`
-9. `Source/PolyQuest/Private/Tests/TestLaunchFacingSmoothingAbility.h`
-10. `Source/PolyQuest/Private/Tests/TestLaunchFacingSmoothingAbility.cpp`
-11. `Source/PolyQuest/Private/Tests/LaunchFacingSmoothingAutomationTests.cpp`
-12. `Source/PolyQuest/Private/Tests/HitReactionAutomationTests.cpp`
-
-`ROADMAP.md`, `plan.md`, `ARCHITECTURE.md`, `README.md`, all Config, all assets, Build.cs, `EnemyAIController`, all Character classes, `HitReactionImpactResolver`, StateTree tasks/assets, damage delivery, staging, and commits are prohibited Gemini targets. `UAbilityTask_TurnToFacing` is the sole accepted new native type; it must remain C++-only and use no reflected Blueprint callable API. Any need for a new Gameplay Tag, Config field, asset edit, Character/Controller modification, resolver alteration, public Blueprint/API surface, generic rotation framework, test-only production seam, or changed Root Motion policy is a stop condition requiring Main evidence and a new scope decision.
+`WorldWeaponPickup.h`, `WeaponEquipmentComponent.h/.cpp`, all Definition subclasses, Build.cs, Config, Gameplay Tags, map assets, Blueprints, DataAssets, and documents are prohibited Gemini targets. Needing any unlisted public surface, Blueprint/asset change, new Tag/Input/Config, transaction-order change, or physics behavior is a stop condition requiring Main evidence and a scope decision.
 
 ### Execution order
 
-1. Gemini reviews this plan read-only against the current C3I Ability lifecycle, actual `AM_LaunchTakeoff`/source-sequence metadata, `ACharacter::HasAnyRootMotion()` availability, existing AbilityTask conventions, and the proposed Automation fixture. It returns P0-P2 findings, blocking gaps, non-blocking recommendations, and Automation feasibility without editing, compiling, Editor access, staging, or committing.
-2. After review acceptance, Gemini implements the one indivisible source/test slice. It must not tune or save Launch GAs/Montages/AnimBPs, and it must not alter C3I's controller gate or resolver.
-3. Gemini runs Rider diagnostics across every touched C++ file, reads the final diff and direct caller/callee boundaries, and runs `git diff --check`. It returns changed paths, static evidence, unrun user gates, strict self-review findings, and remaining risks.
-4. The user performs Editor readback, manual Development Editor compilation, full Automation, and focused `Scene01` PIE. Main then performs the required defect-first Fresh Review before documentation closeout and any explicit commit approval.
+1. Gemini first reviews this plan read-only against `AWorldWeaponPickup`, `UWeaponDefinition`, the existing TransactionMatrix fixture, and the UE 5.8 StaticMesh local-bounds API. It returns P0-P2 findings, blocking gaps, non-blocking recommendations, and Automation feasibility without edits, builds, Editor access, staging, or commits.
+2. After Main accepts that review, Gemini implements the six approved source/test paths only. It must preserve every existing transaction branch and use a finite, non-reflected helper rather than a test-only production hook.
+3. Gemini runs Rider diagnostics on every touched C++ path, reviews its final diff and direct callers/callees, and runs `git diff --check`. Its handoff lists changed paths, static evidence, unrun user gates, strict self-review findings, and remaining risks.
+4. The user performs Editor authoring/readback, manual Development Editor compilation, Automation, and PIE. Main then performs the default defect-first fresh review before documentation closeout or any commit.
 
 ## Validation Matrix
 
 ### Native Automation
 
-Add `PolyQuest.Combat.LaunchFacingSmoothing` without Content-dependent Montage/Blueprint fixtures and without production test seams.
+Add `PolyQuest.Equipment.WorldPickupGrounding` with no Content asset or renderer dependency.
 
-- `FLaunchFacingSmoothingState`: valid cardinal/vector-derived freezes preserve StartYaw, TargetYaw, and attacker-away velocity; invalid direction/Yaw/speed leaves it reset; completion before Commit and Commit before completion cannot consume velocity; after both events one consume returns the exact frozen velocity; repeated Commit, completion, or consume cannot issue another launch token; `Reset()` restores the initial state.
-- `UTestLaunchFacingSmoothingAbility`: a LocalOnly, InstancedPerActor test host drives a real ASC-owned `UAbilityTask_TurnToFacing` against a fixture Player. World ticks prove `0 -> 180` progresses at `1440 degrees/second` (for example, `72 degrees` after `0.05s`), reaches exact `180` after the remaining duration, broadcasts completion once, and never moves again on later ticks. The same matrix covers the `+180/-180` shortest-arc boundary. A mid-turn ability end proves no later transform write or completion. Zero/negative/NaN rate and NaN target yaw prove one failure and no actor yaw mutation.
-- The test host may use `FLaunchFacingSmoothingState` to verify completion/Commit ordering and the exactly-once consume protocol, but it must not imitate or introduce a second Player/Enemy launch implementation. Production `LaunchCharacter` integration remains covered by source review and user PIE because the native automation fixture intentionally has no authored AnimInstance/Montage route.
-- Extend `PolyQuest.Combat.HitReaction` CDO checks to assert Player and Enemy default `FacingTurnRateDegreesPerSecond` are finite positive `1440.0f`. Retain all C3I Resolver/fail-closed tests unchanged.
-- Run `PolyQuest.Enemy.RootMotionFacing` unchanged as mandatory regression proof: the existing active Enemy Launch-Spec gate must preserve yaw/Focus while C3J's early turn is active and resume normal target-facing after the Spec ends.
+1. Identity bounds on a flat normal produce `2cm` clearance within `0.01cm` tolerance.
+2. Non-identity rotation, relative translation, and non-uniform scale still leave every transformed local-bound corner on or above the `2cm` support plane within `0.01cm` tolerance.
+3. A sloped normal moves only along that normal and does not alter the supplied display transform; this proves the selected stable-orientation policy without creating a map asset.
+4. Invalid bounds, zero/non-finite normals, non-finite transform values, and non-finite clearance fail closed with `OutRootLocation == FVector::ZeroVector`.
+
+Extend `PolyQuest.Equipment.TransactionMatrix` using its existing temporary World, Engine Cube floor, real Sword/Shield meshes, and transactional swaps:
+
+1. Give transient Sword and Shield definitions distinct finite `WorldPickupDisplayTransform` values.
+2. Run the existing real `TryEquipWorldPickup` displacement route and inspect spawned `UStaticMeshComponent` instances by type, not by a new production accessor.
+3. Assert the dropped mesh and relative transform match the displaced Definition and that its final flat-floor lower bound is at least `2cm` above the floor within an explicit `0.01cm` floating-point tolerance.
+4. Retain the existing Apply-failure, injected Drop-failure, collision staging, FormerOwner rejection, AbilitySpec rollback, and slot/locomotion regression assertions.
+5. Add a transient invalid `WorldPickupDisplayTransform` Definition validation assertion; preflight must reject it before teardown or drop staging.
 
 ### Static gate
 
-- Use CodeGraph for both Launch Ability activation/Commit/End paths, the new task, and `UpdateControlRotation`; use code-review-graph only as supplemental diff-impact evidence when its index matches the review baseline. Otherwise record direct source/diff review as primary evidence.
-- Run Rider `get_file_problems` or `lint_files` on every added/modified C++ path; inspect final headers/includes and all direct callbacks; run `git diff --check`.
-- Confirm no Config/Tag/Input/DataAsset/API/module/asset/Controller/Character/Resolver modification, no dynamic/reflected Task delegate surface, and no `LaunchCharacter` call outside the new per-Ability `CommitFrozenLaunch()` helper.
+- Use CodeGraph for `UpdateVisualMesh`, `ProjectLocationToGround`, `StageDisplacedDrops`, `TryEquipWorldPickup`, `IsValidWeaponDefinition`, and both Automation suites. Use code-review-graph only as supplemental post-implementation impact evidence when its index matches the review baseline.
+- Run Rider `get_file_problems` or `lint_files` for every touched file; inspect direct includes, ensure the helper stays private/non-reflected, and run `git diff --check`.
+- Confirm no `UWeaponEquipmentComponent` source, GAS/ASC, Tag, Input, Config, Build.cs, Blueprint, DataAsset, map, collision policy, or physics change was made by the executor.
 
 ### User-owned Editor and runtime gate
 
-1. Compile `PolyQuestEditor (Development Editor)` and report the exact result.
-2. Run the complete Editor Automation matrix, with `PolyQuest.Combat.LaunchFacingSmoothing`, `PolyQuest.Combat.HitReaction`, and `PolyQuest.Enemy.RootMotionFacing` mandatory.
-3. Read back both current Launch GAs: confirm they inherit `FacingTurnRateDegreesPerSecond = 1440.0`, retain existing `LaunchHorizontalSpeed = 800`, retain their current Landing Montage, and do not gain shadow Blueprint variables. Read back `AM_LaunchTakeoff`: confirm `Reaction Launch Commit` remains the departure Notify and its selected Sequence does not enable Root Motion. Do not edit an asset as part of this check.
-4. In `Scene01`, trigger Player and Enemy Launch from front, back, left, and right. Confirm Takeoff begins turning immediately; when Commit arrives early, the paused montage holds while residual yaw completes; departure happens once at exact attacker-facing yaw; velocity remains attacker-away; airborne yaw does not fight; landing recovery, Player Dodge cancellation, Enemy Focus/AI resumption, and Enemy Stance Break deferral remain correct.
-5. If a Montage writes yaw during the turn or flight, or if active Root Motion is observed, stop and return the exact Editor asset/readback. Do not compensate by changing Controller, `RotationRate`, Motion Warping, or source timing inside this stage.
+1. Compile `PolyQuestEditor (Development Editor)` manually and report the exact result.
+2. Run `PolyQuest.Equipment.WorldPickupGrounding`, `PolyQuest.Equipment.TransactionMatrix`, then the complete Editor Automation matrix.
+3. In the Editor, author `WorldPickupDisplayTransform` first on `DA_Weapon_Shield` to match the intended upright shield display. Inspect `DA_Weapon_LightSword`, `DA_Weapon_HeavySword`, `DA_Weapon_Axe`, and `DA_Weapon_Bow`; leave Identity when already correct and author a transform only where visual evidence requires it. Keep `DA_Weapon_Unarmed` at Identity with no display mesh.
+4. Read back `BP_WorldWeaponPickup`: it remains the single generic pickup Blueprint, with no new presentation child class or collision/physics override. Existing Scene01 pickup Actor Root transforms remain level placement only; normalize any non-identity Root rotation/scale rather than treating them as weapon presentation data.
+5. In `Scene01`, repeat Sword -> Shield and Shield -> Sword swaps on flat ground. Confirm displaced items retain the Definition-authored orientation, never visually pierce the floor, remain interactable after transaction commit, honor the former-owner cooldown, and do not bounce/fall. If Scene01 already has a suitable slope, repeat once there; otherwise the sloped-normal native Automation result is the accepted slope proof and no test ramp/map asset is created.
 
-## Debt Handoff And Commit Boundary
+## Documentation, Debt, And Commit Boundary
 
-- C3J creates no accepted follow-up by default. A future selected Root-Motion Launch asset or a request for eased/curve-driven turn profiles requires a separate stage; it must not weaken the current fixed-rate, Ability-owned, fail-closed ownership rule.
-- After accepted validation and Main Fresh Review, `ROADMAP.md`, `ARCHITECTURE.md`, and `README.md` are synchronized only with implemented stable behavior and recorded evidence. Retain this C3J plan/closeout record until the next accepted stage replaces it.
-- One scoped commit may include only the twelve approved source/test paths and Main-owned documentation closeout paths. It excludes all current `.gitignore`, Config, Content, `.uproject`, map, Blueprint, AnimBP, GA/GE, Montage, Physics Asset, imported-resource, and unrelated WIP.
-
-## Closeout Record
-
-- Implementation: Player and Enemy Launch now share the non-reflected `FLaunchFacingSmoothingState` and C++-only `UAbilityTask_TurnToFacing`. The frozen launch velocity is consumed once only after both the authored Commit event and the finite pre-launch turn have completed; Root Motion, invalid task state, cancellation, and premature Falling fail closed through the existing Ability cleanup.
-- Boundary repair: the state header moved from `Private/` to `Public/` and gained `POLYQUEST_API`, because both exported Public Ability headers store it by value. No Blueprint/reflection API, Tag, Config, asset, Controller, Character, Resolver, or gameplay-contract expansion was introduced.
-- Main review: the initial defect-first Fresh Review found the Public-header/Private-header P2. After the repair, Main delta review found no P0-P3 code defect. Rider reported zero errors, and `git diff --check` passed.
-- User validation: the user confirmed `PolyQuest.Combat.LaunchFacingSmoothing`, `PolyQuest.Combat.HitReaction`, and the complete combat/reaction regression matrix passed, plus focused Scene01 PIE covering smooth turn, physical launch, and landing recovery. This record does not claim a separately logged Development Editor build result.
-- Debt handoff: no new accepted debt. A future Root-Motion Launch asset or eased/curve-driven turn profile remains a separate stage and must preserve the fixed-rate Ability-owned fail-closed ownership contract.
+- Result: `UWeaponDefinition` now owns `WorldPickupDisplayTransform`; placed and deferred-spawned `AWorldWeaponPickup` instances apply it to their visual mesh. `FWorldPickupGrounding` projects every transformed local-bounds corner onto the normalized ground normal and returns the Root location that preserves the fixed `2cm` visual clearance. Invalid mesh bounds or transform data fail closed through the existing provisional-drop cleanup and equipment rollback path; a valid no-mesh definition preserves the former `ImpactPoint + Normal * 2cm` fallback.
+- Validation: the user confirmed the A3C Automation validation and focused Scene01 PIE pickup/drop behavior passed. This closeout does not claim a new separately reported Development Editor compilation result.
+- Review: Main's defect-first fresh review found no P0-P2. The only P3 was an unrelated Shield Gameplay Ability asset-path relocation in `WeaponEquipmentComponentAutomationTests.cpp`; the old local assets no longer exist and the new local assets do, so those two path edits remain unstaged user-owned Content-migration support rather than being reverted or included in this A3C commit.
+- Follow-up: `TODO-03A3D` owns equipped display scale. Toss trajectories, bounce, rolling, simulated physics, pickup animation, inventory, or persistent world drops remain separate feature decisions with their own lifecycle and validation contracts.
+- Commit boundary: include only the six approved A3C source/test paths and Main-owned `plan.md`, `ROADMAP.md`, and `ARCHITECTURE.md` updates. Exclude all user-owned `Content/**`, `Config/**`, `.uproject`, maps, Blueprints, DataAssets, imported assets, and the two Shield path-relocation lines unless a later migration closure explicitly adopts them.

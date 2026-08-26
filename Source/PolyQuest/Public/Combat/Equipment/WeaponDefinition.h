@@ -71,6 +71,9 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Display", meta = (ToolTip = "武器显示网格体相对于附着插槽的局部旋转偏移。"))
 	FRotator DisplayRotationOffset = FRotator::ZeroRotator;
 
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|World Pickup", meta = (ToolTip = "武器在未装备（世界拾取物）状态下的相对显示变换（位置、旋转、缩放）。"))
+	FTransform WorldPickupDisplayTransform = FTransform::Identity;
+
 	/** Candidate grouping only: these ability classes join the same runtime candidate union as ExclusiveCombatActions. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Combat Actions", meta = (ToolTip = "可复用战斗技能候选 Ability 类列表，运行时与独占列表合并为候选技能池。"))
 	TArray<TSubclassOf<UGameplayAbility>> ReusableCombatActions;
@@ -99,6 +102,33 @@ public:
 inline bool UWeaponDefinition::IsValidWeaponDefinition(FString& OutReason) const
 {
 	OutReason.Empty();
+
+	if (WorldPickupDisplayTransform.ContainsNaN())
+	{
+		OutReason = TEXT("WorldPickupDisplayTransform contains NaN or non-finite values.");
+		return false;
+	}
+
+	const FVector PickupTranslation = WorldPickupDisplayTransform.GetTranslation();
+	if (!FMath::IsFinite(PickupTranslation.X) || !FMath::IsFinite(PickupTranslation.Y) || !FMath::IsFinite(PickupTranslation.Z))
+	{
+		OutReason = TEXT("WorldPickupDisplayTransform contains non-finite translation components.");
+		return false;
+	}
+
+	const FQuat PickupRotation = WorldPickupDisplayTransform.GetRotation();
+	if (!FMath::IsFinite(PickupRotation.X) || !FMath::IsFinite(PickupRotation.Y) || !FMath::IsFinite(PickupRotation.Z) || !FMath::IsFinite(PickupRotation.W) || !PickupRotation.IsNormalized())
+	{
+		OutReason = TEXT("WorldPickupDisplayTransform contains non-finite or unnormalized rotation components.");
+		return false;
+	}
+
+	const FVector PickupScale = WorldPickupDisplayTransform.GetScale3D();
+	if (!FMath::IsFinite(PickupScale.X) || !FMath::IsFinite(PickupScale.Y) || !FMath::IsFinite(PickupScale.Z))
+	{
+		OutReason = TEXT("WorldPickupDisplayTransform contains non-finite scale components.");
+		return false;
+	}
 
 	if (AttachSocketName.IsNone())
 	{

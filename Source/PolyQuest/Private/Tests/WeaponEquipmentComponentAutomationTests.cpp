@@ -112,6 +112,7 @@ bool FWeaponEquipmentComponentTransactionMatrixTest::RunTest(const FString& Para
 	SwordDef->BladeTipMarkerRelativeLocation = FVector(0, 0, 100);
 	SwordDef->TraceRadius = 10.0f;
 	SwordDef->BladeSubdivisions = 4;
+	SwordDef->WorldPickupDisplayTransform = FTransform(FRotator(0.0f, 90.0f, 90.0f), FVector(0.0f, 0.0f, 5.0f), FVector(1.0f));
 
 	UMeleeWeaponDefinition* TwoHandedDef = NewObject<UMeleeWeaponDefinition>(GetTransientPackage(), TEXT("Test_TwoHanded"));
 	TwoHandedDef->HandSlot = EWeaponHandSlot::MainHandTwoHanded;
@@ -129,6 +130,7 @@ bool FWeaponEquipmentComponentTransactionMatrixTest::RunTest(const FString& Para
 	TwoHandedDef->BladeTipMarkerRelativeLocation = FVector(0, 0, 150);
 	TwoHandedDef->TraceRadius = 15.0f;
 	TwoHandedDef->BladeSubdivisions = 4;
+	TwoHandedDef->WorldPickupDisplayTransform = FTransform(FRotator(0.0f, 45.0f, 0.0f), FVector(0.0f, 5.0f, 10.0f), FVector(1.0f));
 
 	UMeleeWeaponDefinition* UnarmedDef = NewObject<UMeleeWeaponDefinition>(GetTransientPackage(), TEXT("Test_Unarmed"));
 	UnarmedDef->HandSlot = EWeaponHandSlot::MainHandOneHanded;
@@ -147,6 +149,7 @@ bool FWeaponEquipmentComponentTransactionMatrixTest::RunTest(const FString& Para
 	ShieldDef->AttachSocketName = TEXT("Weapon_L");
 	ShieldDef->WeaponMesh = ShieldMesh;
 	ShieldDef->bProvidesShieldPresentation = true;
+	ShieldDef->WorldPickupDisplayTransform = FTransform(FRotator(90.0f, 0.0f, 0.0f), FVector(10.0f, 0.0f, 0.0f), FVector(1.0f));
 
 	// Spawn test player and initialize mesh
 	APlayerCharacter* Player = World->SpawnActor<APlayerCharacter>();
@@ -391,6 +394,25 @@ bool FWeaponEquipmentComponentTransactionMatrixTest::RunTest(const FString& Para
 		// Clean up transient test sockets from SwordMesh
 		SwordMesh->RemoveSocket(CoincidentBaseSocket);
 		SwordMesh->RemoveSocket(CoincidentTipSocket);
+
+		// 3.4 Invalid WorldPickupDisplayTransform (NaN / Inf) preflight rejection
+		UMeleeWeaponDefinition* NaNTransformDef = NewObject<UMeleeWeaponDefinition>(GetTransientPackage(), TEXT("Test_NaNTransformDef"));
+		NaNTransformDef->HandSlot = EWeaponHandSlot::MainHandOneHanded;
+		NaNTransformDef->AttachSocketName = TEXT("Weapon_R");
+		NaNTransformDef->WeaponMesh = SwordMesh;
+		NaNTransformDef->BladeBaseSocketName = SocketNameTraceBase;
+		NaNTransformDef->BladeTipSocketName = SocketNameTraceTip;
+		NaNTransformDef->AssociatedLoadout = SwordLoadout;
+		NaNTransformDef->BaseGrantedActions.Add(UPrimaryAttackAbility::StaticClass());
+		NaNTransformDef->ExclusiveCombatActions.Add(UPlayerGuardAbility::StaticClass());
+		NaNTransformDef->DefaultPreparedActions.Add(UPlayerGuardAbility::StaticClass());
+		NaNTransformDef->WorldPickupDisplayTransform = FTransform(FQuat(NAN, 0.0f, 0.0f, 1.0f), FVector::ZeroVector, FVector::OneVector);
+
+		FString NaNTransformReason;
+		TestFalse(TEXT("IsValidWeaponDefinition rejects NaN WorldPickupDisplayTransform"), NaNTransformDef->IsValidWeaponDefinition(NaNTransformReason));
+		const bool bNaNTransformPreflight = EquipmentComp->TestDirectPreflight(NaNTransformDef, nullptr, NaNTransformReason);
+		TestFalse(TEXT("Preflight rejects NaN WorldPickupDisplayTransform definition"), bNaNTransformPreflight);
+		TestTrue(TEXT("Preflight reason explains invalid WorldPickupDisplayTransform"), NaNTransformReason.Contains(TEXT("WorldPickupDisplayTransform")));
 	}
 
 	// 5. Test World Pickup Full Success Transactions (Normalizations and Drop Spawns)
@@ -422,15 +444,69 @@ bool FWeaponEquipmentComponentTransactionMatrixTest::RunTest(const FString& Para
 		bool bFoundDroppedShield = false;
 		for (AWorldWeaponPickup* Drop : Drops51)
 		{
+			UStaticMeshComponent* MeshComp = Drop ? Drop->FindComponentByClass<UStaticMeshComponent>() : nullptr;
+			TestNotNull(TEXT("Dropped pickup has UStaticMeshComponent"), MeshComp);
+
 			if (Drop->GetWeaponDefinition() == SwordDef)
 			{
 				bFoundDroppedSword = true;
 				TestFalse(TEXT("Dropped sword rejects former owner during 0.5s cooldown"), Drop->CanInteract(Player));
+				if (MeshComp)
+				{
+					TestEqual(TEXT("Dropped sword mesh matches SwordDef"), MeshComp->GetStaticMesh().Get(), SwordMesh);
+					TestTrue(TEXT("Dropped sword relative transform matches SwordDef"), MeshComp->GetRelativeTransform().Equals(SwordDef->WorldPickupDisplayTransform, 1e-3f));
+
+					const FBox MeshBox = SwordMesh->GetBoundingBox();
+					const FVector Corners[8] = {
+						FVector(MeshBox.Min.X, MeshBox.Min.Y, MeshBox.Min.Z),
+						FVector(MeshBox.Min.X, MeshBox.Min.Y, MeshBox.Max.Z),
+						FVector(MeshBox.Min.X, MeshBox.Max.Y, MeshBox.Min.Z),
+						FVector(MeshBox.Min.X, MeshBox.Max.Y, MeshBox.Max.Z),
+						FVector(MeshBox.Max.X, MeshBox.Min.Y, MeshBox.Min.Z),
+						FVector(MeshBox.Max.X, MeshBox.Min.Y, MeshBox.Max.Z),
+						FVector(MeshBox.Max.X, MeshBox.Max.Y, MeshBox.Min.Z),
+						FVector(MeshBox.Max.X, MeshBox.Max.Y, MeshBox.Max.Z)
+					};
+
+					float LowestWorldZ = MAX_FLT;
+					for (int32 Index = 0; Index < 8; ++Index)
+					{
+						const FVector WorldPt = Drop->GetActorLocation() + SwordDef->WorldPickupDisplayTransform.TransformPosition(Corners[Index]);
+						LowestWorldZ = FMath::Min(LowestWorldZ, WorldPt.Z);
+					}
+					// Floor is at Z = 0.0f, expected clearance is 2.0cm
+					TestNearlyEqual(TEXT("Dropped sword lowest point is 2cm above floor"), LowestWorldZ, 2.0f, 0.01f);
+				}
 			}
 			else if (Drop->GetWeaponDefinition() == ShieldDef)
 			{
 				bFoundDroppedShield = true;
 				TestFalse(TEXT("Dropped shield rejects former owner during 0.5s cooldown"), Drop->CanInteract(Player));
+				if (MeshComp)
+				{
+					TestEqual(TEXT("Dropped shield mesh matches ShieldDef"), MeshComp->GetStaticMesh().Get(), ShieldMesh);
+					TestTrue(TEXT("Dropped shield relative transform matches ShieldDef"), MeshComp->GetRelativeTransform().Equals(ShieldDef->WorldPickupDisplayTransform, 1e-3f));
+
+					const FBox MeshBox = ShieldMesh->GetBoundingBox();
+					const FVector Corners[8] = {
+						FVector(MeshBox.Min.X, MeshBox.Min.Y, MeshBox.Min.Z),
+						FVector(MeshBox.Min.X, MeshBox.Min.Y, MeshBox.Max.Z),
+						FVector(MeshBox.Min.X, MeshBox.Max.Y, MeshBox.Min.Z),
+						FVector(MeshBox.Min.X, MeshBox.Max.Y, MeshBox.Max.Z),
+						FVector(MeshBox.Max.X, MeshBox.Min.Y, MeshBox.Min.Z),
+						FVector(MeshBox.Max.X, MeshBox.Min.Y, MeshBox.Max.Z),
+						FVector(MeshBox.Max.X, MeshBox.Max.Y, MeshBox.Min.Z),
+						FVector(MeshBox.Max.X, MeshBox.Max.Y, MeshBox.Max.Z)
+					};
+
+					float LowestWorldZ = MAX_FLT;
+					for (int32 Index = 0; Index < 8; ++Index)
+					{
+						const FVector WorldPt = Drop->GetActorLocation() + ShieldDef->WorldPickupDisplayTransform.TransformPosition(Corners[Index]);
+						LowestWorldZ = FMath::Min(LowestWorldZ, WorldPt.Z);
+					}
+					TestNearlyEqual(TEXT("Dropped shield lowest point is 2cm above floor"), LowestWorldZ, 2.0f, 0.01f);
+				}
 			}
 			Drop->Destroy();
 		}
@@ -458,6 +534,33 @@ bool FWeaponEquipmentComponentTransactionMatrixTest::RunTest(const FString& Para
 		if (Drops52.Num() > 0)
 		{
 			TestEqual(TEXT("Dropped pickup is TwoHanded"), Drops52[0]->GetWeaponDefinition(), Cast<UWeaponDefinition>(TwoHandedDef));
+			UStaticMeshComponent* MeshComp = Drops52[0]->FindComponentByClass<UStaticMeshComponent>();
+			TestNotNull(TEXT("Dropped TwoHanded has UStaticMeshComponent"), MeshComp);
+			if (MeshComp)
+			{
+				TestEqual(TEXT("Dropped TwoHanded mesh matches TwoHandedDef"), MeshComp->GetStaticMesh().Get(), SwordMesh);
+				TestTrue(TEXT("Dropped TwoHanded relative transform matches TwoHandedDef"), MeshComp->GetRelativeTransform().Equals(TwoHandedDef->WorldPickupDisplayTransform, 1e-3f));
+
+				const FBox MeshBox = SwordMesh->GetBoundingBox();
+				const FVector Corners[8] = {
+					FVector(MeshBox.Min.X, MeshBox.Min.Y, MeshBox.Min.Z),
+					FVector(MeshBox.Min.X, MeshBox.Min.Y, MeshBox.Max.Z),
+					FVector(MeshBox.Min.X, MeshBox.Max.Y, MeshBox.Min.Z),
+					FVector(MeshBox.Min.X, MeshBox.Max.Y, MeshBox.Max.Z),
+					FVector(MeshBox.Max.X, MeshBox.Min.Y, MeshBox.Min.Z),
+					FVector(MeshBox.Max.X, MeshBox.Min.Y, MeshBox.Max.Z),
+					FVector(MeshBox.Max.X, MeshBox.Max.Y, MeshBox.Min.Z),
+					FVector(MeshBox.Max.X, MeshBox.Max.Y, MeshBox.Max.Z)
+				};
+
+				float LowestWorldZ = MAX_FLT;
+				for (int32 Index = 0; Index < 8; ++Index)
+				{
+					const FVector WorldPt = Drops52[0]->GetActorLocation() + TwoHandedDef->WorldPickupDisplayTransform.TransformPosition(Corners[Index]);
+					LowestWorldZ = FMath::Min(LowestWorldZ, WorldPt.Z);
+				}
+				TestNearlyEqual(TEXT("Dropped TwoHanded lowest point is 2cm above floor"), LowestWorldZ, 2.0f, 0.01f);
+			}
 			Drops52[0]->Destroy();
 		}
 	}

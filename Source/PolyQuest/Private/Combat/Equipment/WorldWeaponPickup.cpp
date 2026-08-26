@@ -3,8 +3,10 @@
 #include "AbilitySystemComponent.h"
 #include "Character/Player/PlayerCharacter.h"
 #include "Combat/Equipment/WeaponDefinition.h"
+#include "Combat/Equipment/WorldPickupGrounding.h"
 #include "Components/SphereComponent.h"
 #include "Components/StaticMeshComponent.h"
+#include "Engine/StaticMesh.h"
 #include "Engine/World.h"
 #include "PolyQuest.h"
 
@@ -128,34 +130,49 @@ void AWorldWeaponPickup::UpdateVisualMesh()
 		return;
 	}
 
-	UStaticMesh* DesiredMesh = WeaponDefinition ? WeaponDefinition->WeaponMesh.Get() : nullptr;
-	PickupMeshComponent->SetStaticMesh(DesiredMesh);
+	if (WeaponDefinition)
+	{
+		PickupMeshComponent->SetStaticMesh(WeaponDefinition->WeaponMesh.Get());
+		PickupMeshComponent->SetRelativeTransform(WeaponDefinition->WorldPickupDisplayTransform);
+	}
+	else
+	{
+		PickupMeshComponent->SetStaticMesh(nullptr);
+		PickupMeshComponent->SetRelativeTransform(FTransform::Identity);
+	}
+}
+
+namespace
+{
+	bool LineTraceGround(UWorld* World, const FVector& SourceLocation, FHitResult& OutHitResult, const AActor* IgnoreActor)
+	{
+		if (!World)
+		{
+			return false;
+		}
+
+		constexpr float TraceDownDistance = 300.0f;
+		const FVector TraceStart = SourceLocation;
+		const FVector TraceEnd = SourceLocation - FVector(0.0f, 0.0f, TraceDownDistance);
+
+		FCollisionQueryParams QueryParams(TEXT("PickupGroundProjection"), false, IgnoreActor);
+
+		const bool bHit = World->LineTraceSingleByChannel(
+			OutHitResult,
+			TraceStart,
+			TraceEnd,
+			ECC_Visibility,
+			QueryParams);
+
+		return bHit && OutHitResult.bBlockingHit;
+	}
 }
 
 bool AWorldWeaponPickup::ProjectLocationToGround(UWorld* World, const FVector& SourceLocation, FVector& OutGroundLocation, const AActor* IgnoreActor)
 {
-	if (!World)
-	{
-		return false;
-	}
-
-	constexpr float TraceDownDistance = 300.0f;
 	constexpr float NormalOffsetDistance = 2.0f;
-
-	const FVector TraceStart = SourceLocation;
-	const FVector TraceEnd = SourceLocation - FVector(0.0f, 0.0f, TraceDownDistance);
-
-	FCollisionQueryParams QueryParams(TEXT("PickupGroundProjection"), false, IgnoreActor);
 	FHitResult HitResult;
-
-	const bool bHit = World->LineTraceSingleByChannel(
-		HitResult,
-		TraceStart,
-		TraceEnd,
-		ECC_Visibility,
-		QueryParams);
-
-	if (bHit && HitResult.bBlockingHit)
+	if (LineTraceGround(World, SourceLocation, HitResult, IgnoreActor))
 	{
 		OutGroundLocation = HitResult.ImpactPoint + (HitResult.ImpactNormal * NormalOffsetDistance);
 		return true;
@@ -205,11 +222,10 @@ bool AWorldWeaponPickup::StageDisplacedDrops(APlayerCharacter* PlayerCharacter, 
 		}
 
 		const FVector ProjectionSource = PlayerLocation + HorizontalOffset + FVector(0.0f, 0.0f, 50.0f);
-		FVector GroundSpawnLocation;
-		if (!ProjectLocationToGround(World, ProjectionSource, GroundSpawnLocation, PlayerCharacter))
+		FHitResult HitResult;
+		if (!LineTraceGround(World, ProjectionSource, HitResult, PlayerCharacter))
 		{
-			UE_LOG(LogPolyQuest, Warning, TEXT("AWorldWeaponPickup: Ground projection failed for displaced definition '%s' near '%s'."), *GetNameSafe(DisplacedDef), *GetNameSafe(PlayerCharacter));
-			// Clean up any already spawned provisional drops
+			UE_LOG(LogPolyQuest, Warning, TEXT("AWorldWeaponPickup: Ground projection trace failed for displaced definition '%s' near '%s'."), *GetNameSafe(DisplacedDef), *GetNameSafe(PlayerCharacter));
 			for (AWorldWeaponPickup* SpawnedDrop : OutProvisionalDrops)
 			{
 				if (SpawnedDrop)
@@ -221,10 +237,10 @@ bool AWorldWeaponPickup::StageDisplacedDrops(APlayerCharacter* PlayerCharacter, 
 			return false;
 		}
 
-		const FTransform SpawnTransform(FRotator::ZeroRotator, GroundSpawnLocation);
+		const FTransform InitialSpawnTransform(FRotator::ZeroRotator, HitResult.ImpactPoint);
 		AWorldWeaponPickup* NewDrop = World->SpawnActorDeferred<AWorldWeaponPickup>(
 			GetClass(),
-			SpawnTransform,
+			InitialSpawnTransform,
 			nullptr,
 			nullptr,
 			ESpawnActorCollisionHandlingMethod::AlwaysSpawn);
@@ -244,8 +260,46 @@ bool AWorldWeaponPickup::StageDisplacedDrops(APlayerCharacter* PlayerCharacter, 
 		}
 
 		NewDrop->InitializeDroppedPickup(DisplacedDef, PlayerCharacter, FormerOwnerRejectDuration);
+
+		FVector FinalRootLocation = FVector::ZeroVector;
+		constexpr float FixedClearance = 2.0f;
+		bool bGroundingSuccess = false;
+
+		if (const UStaticMesh* Mesh = DisplacedDef->WeaponMesh.Get())
+		{
+			const FBox LocalBox = Mesh->GetBoundingBox();
+			bGroundingSuccess = FWorldPickupGrounding::TryComputeGroundedRootLocation(
+				LocalBox,
+				DisplacedDef->WorldPickupDisplayTransform,
+				HitResult.ImpactPoint,
+				HitResult.ImpactNormal,
+				FixedClearance,
+				FinalRootLocation);
+		}
+		else
+		{
+			FinalRootLocation = HitResult.ImpactPoint + (HitResult.ImpactNormal * FixedClearance);
+			bGroundingSuccess = true;
+		}
+
+		if (!bGroundingSuccess)
+		{
+			UE_LOG(LogPolyQuest, Warning, TEXT("AWorldWeaponPickup: Grounding calculation failed for displaced definition '%s' near '%s'."), *GetNameSafe(DisplacedDef), *GetNameSafe(PlayerCharacter));
+			NewDrop->Destroy();
+			for (AWorldWeaponPickup* SpawnedDrop : OutProvisionalDrops)
+			{
+				if (SpawnedDrop)
+				{
+					SpawnedDrop->Destroy();
+				}
+			}
+			OutProvisionalDrops.Reset();
+			return false;
+		}
+
 		NewDrop->SetInteractionEnabled(false);
-		NewDrop->FinishSpawning(SpawnTransform);
+		const FTransform FinalSpawnTransform(FRotator::ZeroRotator, FinalRootLocation);
+		NewDrop->FinishSpawning(FinalSpawnTransform);
 
 		OutProvisionalDrops.Add(NewDrop);
 	}
