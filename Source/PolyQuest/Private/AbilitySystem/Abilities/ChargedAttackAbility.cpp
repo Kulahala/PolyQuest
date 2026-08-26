@@ -1,6 +1,6 @@
 #include "AbilitySystem/Abilities/ChargedAttackAbility.h"
 
-#include "AbilitySystem/Tasks/AbilityTask_MeleeTraceWindow.h"
+#include "AbilitySystem/Abilities/MeleeTraceWindowLifecycle.h"
 #include "AbilitySystemComponent.h"
 #include "Abilities/GameplayAbilityTriggerType.h"
 #include "Abilities/Tasks/AbilityTask_PlayMontageAndWait.h"
@@ -513,50 +513,22 @@ void UChargedAttackAbility::OpenTraceWindow(const TArray<FName>& InTraceSourceNa
 		return;
 	}
 
-	if (TraceWindowTask && !TraceWindowTask->IsTraceWindowOpen())
-	{
-		TraceWindowTask = nullptr;
-	}
-
-	if (TraceWindowTask)
-	{
-		return;
-	}
-
-	ABaseCharacter* Character = Cast<ABaseCharacter>(GetAvatarActorFromActorInfo());
-	if (!Character)
-	{
-		return;
-	}
-
 	TMap<FGameplayTag, float> SetByCallerMagnitudes;
 	SetByCallerMagnitudes.Add(DamageDataTag, -BaseDamage * DamageMultiplier);
 	SetByCallerMagnitudes.Add(PoiseDataTag, PoiseDamageMagnitude);
-	TraceWindowTask = UAbilityTask_MeleeTraceWindow::OpenMeleeTraceWindow(
+
+	FMeleeTraceWindowLifecycle::OpenOrKeepMagnitudes(
 		this,
-		Character->GetMeleeTraceSource(),
+		TraceWindowTask,
 		DamageGameplayEffectClass,
 		GetAbilityLevel(),
 		SetByCallerMagnitudes,
 		InTraceSourceNames);
-	if (TraceWindowTask)
-	{
-		TraceWindowTask->ReadyForActivation();
-		if (!TraceWindowTask->IsTraceWindowOpen())
-		{
-			TraceWindowTask = nullptr;
-		}
-	}
 }
 
 void UChargedAttackAbility::CloseTraceWindow()
 {
-	ActiveTraceNotifyState.Reset();
-	if (TraceWindowTask)
-	{
-		TraceWindowTask->EndTask();
-		TraceWindowTask = nullptr;
-	}
+	FMeleeTraceWindowLifecycle::CloseAndClear(TraceWindowTask, ActiveTraceNotifyState);
 }
 
 void UChargedAttackAbility::SetCharging(bool bShouldCharge)

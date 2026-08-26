@@ -1,6 +1,6 @@
 #include "AbilitySystem/Abilities/SprintAttackAbility.h"
 
-#include "AbilitySystem/Tasks/AbilityTask_MeleeTraceWindow.h"
+#include "AbilitySystem/Abilities/MeleeTraceWindowLifecycle.h"
 #include "AbilitySystemComponent.h"
 #include "Abilities/Tasks/AbilityTask_PlayMontageAndWait.h"
 #include "Abilities/Tasks/AbilityTask_WaitGameplayEvent.h"
@@ -313,38 +313,20 @@ void USprintAttackAbility::OpenTraceWindow(const TArray<FName>& InTraceSourceNam
 		return;
 	}
 
-	if (TraceWindowTask && !TraceWindowTask->IsTraceWindowOpen())
-	{
-		TraceWindowTask = nullptr;
-	}
-
-	if (TraceWindowTask)
-	{
-		return;
-	}
-
-	ABaseCharacter* Character = Cast<ABaseCharacter>(GetAvatarActorFromActorInfo());
-	TraceWindowTask = Character
-		? UAbilityTask_MeleeTraceWindow::OpenMeleeTraceWindow(this, Character->GetMeleeTraceSource(), DamageGameplayEffectClass, GetAbilityLevel(), FGameplayTag(), 0.0f, 0.0f, InTraceSourceNames)
-		: nullptr;
-	if (TraceWindowTask)
-	{
-		TraceWindowTask->ReadyForActivation();
-		if (!TraceWindowTask->IsTraceWindowOpen())
-		{
-			TraceWindowTask = nullptr;
-		}
-	}
+	FMeleeTraceWindowLifecycle::OpenOrKeepScalar(
+		this,
+		TraceWindowTask,
+		DamageGameplayEffectClass,
+		GetAbilityLevel(),
+		FGameplayTag(),
+		0.0f,
+		0.0f,
+		InTraceSourceNames);
 }
 
 void USprintAttackAbility::CloseTraceWindow()
 {
-	ActiveTraceNotifyState.Reset();
-	if (TraceWindowTask)
-	{
-		TraceWindowTask->EndTask();
-		TraceWindowTask = nullptr;
-	}
+	FMeleeTraceWindowLifecycle::CloseAndClear(TraceWindowTask, ActiveTraceNotifyState);
 }
 
 void USprintAttackAbility::OnRateWindowBegin(FGameplayEventData Payload)
