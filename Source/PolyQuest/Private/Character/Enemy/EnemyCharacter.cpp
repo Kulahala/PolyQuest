@@ -5,18 +5,23 @@
 #include "Abilities/GameplayAbilityTypes.h"
 #include "AbilitySystem/CharacterAttributeSet.h"
 #include "AbilitySystemComponent.h"
+#include "Combat/Melee/CombatTeamAgent.h"
 #include "Combat/Reaction/HitReactionClassifier.h"
 #include "Combat/Reaction/HitReactionImpactResolver.h"
 #include "Components/CapsuleComponent.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "Components/WidgetComponent.h"
 #include "Engine/World.h"
+#include "Framework/PolyQuestPlayerController.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "GameplayEffect.h"
 #include "GameplayEffectExtension.h"
 #include "GameplayEffectTypes.h"
 #include "GameplayTagContainer.h"
+#include "Kismet/GameplayStatics.h"
+#include "NiagaraFunctionLibrary.h"
 #include "PolyQuest.h"
+#include "Sound/SoundBase.h"
 #include "TimerManager.h"
 #include "UI/EnemyHealthBarWidget.h"
 
@@ -259,7 +264,25 @@ void AEnemyCharacter::OnHealthAttributeChanged(const FOnAttributeChangeData& Cha
 		return;
 	}
 
+	const FGameplayEffectSpec& EffectSpec = ChangeData.GEModData->EffectSpec;
+
+	// Deduplicate multi-modifier execution within the same GameplayEffectSpec instance.
+	// When GAS executes a single GE Spec with multiple modifiers on Health, the first modifier callback
+	// occurs before ModifiedAttribute is registered in EffectSpec; subsequent modifiers in the same GE execution
+	// find ModifiedAttribute already recorded. Independent GE applications always start with an empty ModifiedAttributes array.
+	if (EffectSpec.GetModifiedAttribute(UCharacterAttributeSet::GetHealthAttribute()) != nullptr)
+	{
+		return;
+	}
+
 	TriggerHitFeedbackOverlay();
+
+	FGameplayTagContainer AssetTags;
+	EffectSpec.GetAllAssetTags(AssetTags);
+
+	const EHitReactionTier ReactionTier = FHitReactionClassifier::ClassifyReactionTier(AssetTags);
+
+	HandleCombatImpactFeedback(EffectSpec, ReactionTier);
 
 	const bool bIsStunned = StunnedStateTag.IsValid() && CharacterASC->HasMatchingGameplayTag(StunnedStateTag);
 	if (bIsStunned)
@@ -268,15 +291,10 @@ void AEnemyCharacter::OnHealthAttributeChanged(const FOnAttributeChangeData& Cha
 		return;
 	}
 
-	const FGameplayEffectSpec& EffectSpec = ChangeData.GEModData->EffectSpec;
 	const bool bIsSameSpecPoiseBreak = MatchesActivePoiseBreakingEffectSource(EffectSpec);
 	const bool bCurrentEffectExecutedPoiseModifier = EffectSpec.GetModifiedAttribute(UCharacterAttributeSet::GetPoiseAttribute()) != nullptr;
 	ClearActivePoiseBreakingEffectSource();
 
-	FGameplayTagContainer AssetTags;
-	EffectSpec.GetAllAssetTags(AssetTags);
-
-	const EHitReactionTier ReactionTier = FHitReactionClassifier::ClassifyReactionTier(AssetTags);
 	if (ReactionTier == EHitReactionTier::Invalid)
 	{
 		UE_LOG(LogPolyQuest, Warning, TEXT("Enemy '%s' received invalid multi-tier hit reaction tags from effect '%s'; skipping reaction event."),
@@ -325,6 +343,113 @@ void AEnemyCharacter::OnHealthAttributeChanged(const FOnAttributeChangeData& Cha
 	ReactionEventData.EventMagnitude = ChangeData.OldValue - ChangeData.NewValue;
 	ReactionEventData.ContextHandle = EffectSpec.GetContext();
 	CharacterASC->HandleGameplayEvent(TargetEventTag, &ReactionEventData);
+}
+
+void AEnemyCharacter::HandleCombatImpactFeedback(const FGameplayEffectSpec& EffectSpec, EHitReactionTier ReactionTier)
+{
+	const FGameplayEffectContextHandle ContextHandle = EffectSpec.GetContext();
+	AActor* InstigatorActor = ContextHandle.GetInstigator();
+	if (!InstigatorActor)
+	{
+		return;
+	}
+
+	if (!InstigatorActor->GetClass()->ImplementsInterface(UCombatTeamAgent::StaticClass()))
+	{
+		return;
+	}
+
+	const FGameplayTag InstigatorTeamTag = ICombatTeamAgent::Execute_GetCombatTeamTag(InstigatorActor);
+	static const FGameplayTag PlayerTeamTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Team.Player")), false);
+	if (!InstigatorTeamTag.IsValid() || !PlayerTeamTag.IsValid() || !InstigatorTeamTag.MatchesTagExact(PlayerTeamTag))
+	{
+		return;
+	}
+
+	float HitStopDuration = SmallImpactHitStopDurationSeconds;
+	float HitStopTimeDilation = SmallImpactHitStopTimeDilation;
+
+	if (ReactionTier == EHitReactionTier::Big)
+	{
+		HitStopDuration = BigImpactHitStopDurationSeconds;
+		HitStopTimeDilation = BigImpactHitStopTimeDilation;
+	}
+	else if (ReactionTier == EHitReactionTier::Launch)
+	{
+		HitStopDuration = LaunchImpactHitStopDurationSeconds;
+		HitStopTimeDilation = LaunchImpactHitStopTimeDilation;
+	}
+
+	if (UWorld* World = GetWorld())
+	{
+		if (APolyQuestPlayerController* PC = Cast<APolyQuestPlayerController>(World->GetFirstPlayerController()))
+		{
+			PC->RequestCombatImpactHitStop(HitStopDuration, HitStopTimeDilation);
+#if WITH_DEV_AUTOMATION_TESTS
+			TestCombatImpactHitStopRequestCount++;
+			TestLastImpactHitStopDuration = HitStopDuration;
+			TestLastImpactHitStopTimeDilation = HitStopTimeDilation;
+#endif
+		}
+	}
+
+	const FHitResult* ContextHitResult = ContextHandle.GetHitResult();
+	FVector SoundLocation = GetActorLocation();
+	if (ContextHitResult
+		&& FMath::IsFinite(ContextHitResult->ImpactPoint.X)
+		&& FMath::IsFinite(ContextHitResult->ImpactPoint.Y)
+		&& FMath::IsFinite(ContextHitResult->ImpactPoint.Z))
+	{
+		SoundLocation = ContextHitResult->ImpactPoint;
+	}
+
+#if WITH_DEV_AUTOMATION_TESTS
+	TestImpactSoundDispatchCount++;
+	TestLastImpactSoundLocation = SoundLocation;
+#endif
+
+	if (ImpactSound)
+	{
+		UGameplayStatics::PlaySoundAtLocation(GetWorld(), ImpactSound, SoundLocation);
+	}
+
+	if (ContextHitResult
+		&& ContextHitResult->GetActor() == this
+		&& FMath::IsFinite(ContextHitResult->ImpactPoint.X)
+		&& FMath::IsFinite(ContextHitResult->ImpactPoint.Y)
+		&& FMath::IsFinite(ContextHitResult->ImpactPoint.Z)
+		&& FMath::IsFinite(ContextHitResult->ImpactNormal.X)
+		&& FMath::IsFinite(ContextHitResult->ImpactNormal.Y)
+		&& FMath::IsFinite(ContextHitResult->ImpactNormal.Z)
+		&& !ContextHitResult->ImpactNormal.IsNearlyZero())
+	{
+		const FVector NormalizedNormal = ContextHitResult->ImpactNormal.GetSafeNormal();
+		if (!NormalizedNormal.IsNearlyZero())
+		{
+			const FRotator BloodRotation = FRotationMatrix::MakeFromZ(NormalizedNormal).Rotator();
+
+#if WITH_DEV_AUTOMATION_TESTS
+			TestImpactBloodDispatchCount++;
+			TestLastImpactBloodLocation = ContextHitResult->ImpactPoint;
+			TestLastImpactBloodNormal = NormalizedNormal;
+			TestLastImpactBloodRotation = BloodRotation;
+#endif
+
+			if (ImpactBloodSystem)
+			{
+				UNiagaraFunctionLibrary::SpawnSystemAtLocation(
+					GetWorld(),
+					ImpactBloodSystem,
+					ContextHitResult->ImpactPoint,
+					BloodRotation,
+					FVector(1.0f),
+					true,
+					true,
+					ENCPoolMethod::None,
+					true);
+			}
+		}
+	}
 }
 
 void AEnemyCharacter::BeginLaunchStanceBreakDeferral()

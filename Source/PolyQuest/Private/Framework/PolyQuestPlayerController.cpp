@@ -1,6 +1,3 @@
-// Copyright Epic Games, Inc. All Rights Reserved.
-
-
 #include "Framework/PolyQuestPlayerController.h"
 #include "AbilitySystemComponent.h"
 #include "AbilitySystem/CharacterAttributeSet.h"
@@ -9,11 +6,13 @@
 #include "EnhancedInputSubsystems.h"
 #include "Engine/LocalPlayer.h"
 #include "InputMappingContext.h"
+#include "Kismet/GameplayStatics.h"
 #include "PolyQuest.h"
 #include "UI/PlayerVitalHUDWidget.h"
 
 APolyQuestPlayerController::APolyQuestPlayerController()
 {
+	PrimaryActorTick.bCanEverTick = true;
 	bShowMouseCursor = true;
 	bEnableClickEvents = true;
 	bEnableMouseOverEvents = true;
@@ -39,6 +38,12 @@ void APolyQuestPlayerController::BeginPlay()
 	}
 }
 
+void APolyQuestPlayerController::Tick(float DeltaSeconds)
+{
+	Super::Tick(DeltaSeconds);
+	UpdateCombatImpactHitStop();
+}
+
 void APolyQuestPlayerController::OnPossess(APawn* InPawn)
 {
 	Super::OnPossess(InPawn);
@@ -59,6 +64,7 @@ void APolyQuestPlayerController::OnUnPossess()
 
 void APolyQuestPlayerController::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
+	RestoreCombatImpactHitStop();
 	UnbindCurrentPawn();
 
 	if (PlayerVitalHUDInstance)
@@ -68,6 +74,18 @@ void APolyQuestPlayerController::EndPlay(const EEndPlayReason::Type EndPlayReaso
 	}
 
 	Super::EndPlay(EndPlayReason);
+}
+
+void APolyQuestPlayerController::Destroyed()
+{
+	RestoreCombatImpactHitStop();
+	Super::Destroyed();
+}
+
+void APolyQuestPlayerController::BeginDestroy()
+{
+	RestoreCombatImpactHitStop();
+	Super::BeginDestroy();
 }
 
 void APolyQuestPlayerController::SetupInputComponent()
@@ -241,6 +259,122 @@ void APolyQuestPlayerController::RefreshVitalHUD()
 void APolyQuestPlayerController::OnAttributeChanged(const FOnAttributeChangeData&)
 {
 	RefreshVitalHUD();
+}
+
+void APolyQuestPlayerController::RequestCombatImpactHitStop(float DurationSeconds, float TimeDilation)
+{
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return;
+	}
+
+	CachedCombatImpactWorld = World;
+
+	if (!FMath::IsFinite(DurationSeconds) || DurationSeconds <= 0.0f
+		|| !FMath::IsFinite(TimeDilation) || TimeDilation <= 0.0f || TimeDilation > 1.0f)
+	{
+		return;
+	}
+
+	const double CurrentRealTime = World->GetRealTimeSeconds();
+	const float LiveGlobalDilation = UGameplayStatics::GetGlobalTimeDilation(World);
+
+	if (!bHitStopActive)
+	{
+		PreHitStopGlobalTimeDilation = LiveGlobalDilation;
+		CurrentAppliedTimeDilation = TimeDilation;
+		HitStopExpireRealTimeSeconds = CurrentRealTime + static_cast<double>(DurationSeconds);
+		bHitStopActive = true;
+
+		UGameplayStatics::SetGlobalTimeDilation(World, TimeDilation);
+		CurrentAppliedTimeDilation = UGameplayStatics::GetGlobalTimeDilation(World);
+		return;
+	}
+
+	// If another system modified global dilation away from our recorded applied value,
+	// relinquish the old request without writing a restore and capture the new baseline.
+	if (!FMath::IsNearlyEqual(LiveGlobalDilation, CurrentAppliedTimeDilation, KINDA_SMALL_NUMBER))
+	{
+		PreHitStopGlobalTimeDilation = LiveGlobalDilation;
+		CurrentAppliedTimeDilation = TimeDilation;
+		HitStopExpireRealTimeSeconds = CurrentRealTime + static_cast<double>(DurationSeconds);
+		bHitStopActive = true;
+
+		UGameplayStatics::SetGlobalTimeDilation(World, TimeDilation);
+		CurrentAppliedTimeDilation = UGameplayStatics::GetGlobalTimeDilation(World);
+		return;
+	}
+
+	// Monotonic arbitration while active: lower dilation wins, later real-time expiry wins.
+	const float TargetDilation = FMath::Min(CurrentAppliedTimeDilation, TimeDilation);
+	const double TargetExpiry = FMath::Max(HitStopExpireRealTimeSeconds, CurrentRealTime + static_cast<double>(DurationSeconds));
+
+	CurrentAppliedTimeDilation = TargetDilation;
+	HitStopExpireRealTimeSeconds = TargetExpiry;
+
+	UGameplayStatics::SetGlobalTimeDilation(World, TargetDilation);
+	CurrentAppliedTimeDilation = UGameplayStatics::GetGlobalTimeDilation(World);
+}
+
+void APolyQuestPlayerController::UpdateCombatImpactHitStop()
+{
+	if (!bHitStopActive)
+	{
+		return;
+	}
+
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		bHitStopActive = false;
+		return;
+	}
+
+	const float LiveGlobalDilation = UGameplayStatics::GetGlobalTimeDilation(World);
+	if (!FMath::IsNearlyEqual(LiveGlobalDilation, CurrentAppliedTimeDilation, KINDA_SMALL_NUMBER))
+	{
+		bHitStopActive = false;
+		PreHitStopGlobalTimeDilation = 1.0f;
+		CurrentAppliedTimeDilation = 1.0f;
+		HitStopExpireRealTimeSeconds = 0.0;
+		return;
+	}
+
+	const double CurrentRealTime = World->GetRealTimeSeconds();
+	if (CurrentRealTime >= HitStopExpireRealTimeSeconds)
+	{
+		RestoreCombatImpactHitStop();
+	}
+}
+
+void APolyQuestPlayerController::RestoreCombatImpactHitStop()
+{
+	if (!bHitStopActive)
+	{
+		return;
+	}
+
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		World = CachedCombatImpactWorld.Get();
+	}
+
+	if (World)
+	{
+		const float LiveGlobalDilation = UGameplayStatics::GetGlobalTimeDilation(World);
+		if (FMath::IsNearlyEqual(LiveGlobalDilation, CurrentAppliedTimeDilation, KINDA_SMALL_NUMBER))
+		{
+			UGameplayStatics::SetGlobalTimeDilation(World, PreHitStopGlobalTimeDilation);
+		}
+	}
+
+	bHitStopActive = false;
+	PreHitStopGlobalTimeDilation = 1.0f;
+	CurrentAppliedTimeDilation = 1.0f;
+	HitStopExpireRealTimeSeconds = 0.0;
+	CachedCombatImpactWorld.Reset();
 }
 
 #if WITH_DEV_AUTOMATION_TESTS

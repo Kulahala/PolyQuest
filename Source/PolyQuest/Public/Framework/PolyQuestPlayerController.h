@@ -24,6 +24,12 @@ class POLYQUEST_API APolyQuestPlayerController : public APlayerController
 public:
 	APolyQuestPlayerController();
 
+	/**
+	 * Requests a controller-owned combat impact hit-stop with monotonic overlap arbitration.
+	 * Time dilation restoration is scheduled against unscaled real-time seconds.
+	 */
+	void RequestCombatImpactHitStop(float DurationSeconds, float TimeDilation);
+
 #if WITH_DEV_AUTOMATION_TESTS
 	UPlayerVitalHUDWidget* GetTestPlayerVitalHUDInstance() const { return PlayerVitalHUDInstance; }
 	void SetTestPlayerVitalHUDInstance(UPlayerVitalHUDWidget* InInstance) { PlayerVitalHUDInstance = InInstance; }
@@ -40,6 +46,11 @@ public:
 	void TriggerTestBindToPawn(APawn* InPawn) { BindToPawn(InPawn); }
 	void TriggerTestUnbindCurrentPawn() { UnbindCurrentPawn(); }
 	void TriggerTestRefreshVitalHUD() { RefreshVitalHUD(); }
+	bool IsTestHitStopActive() const { return bHitStopActive; }
+	float GetTestPreHitStopGlobalTimeDilation() const { return PreHitStopGlobalTimeDilation; }
+	float GetTestCurrentAppliedTimeDilation() const { return CurrentAppliedTimeDilation; }
+	double GetTestHitStopExpireRealTimeSeconds() const { return HitStopExpireRealTimeSeconds; }
+	void TriggerTestRestoreCombatImpactHitStop() { RestoreCombatImpactHitStop(); }
 #endif
 
 protected:
@@ -56,9 +67,12 @@ protected:
 	TObjectPtr<UPlayerVitalHUDWidget> PlayerVitalHUDInstance;
 
 	virtual void BeginPlay() override;
+	virtual void Tick(float DeltaSeconds) override;
 	virtual void OnPossess(APawn* InPawn) override;
 	virtual void OnUnPossess() override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
+	virtual void Destroyed() override;
+	virtual void BeginDestroy() override;
 
 	/** Input mapping context setup */
 	virtual void SetupInputComponent() override;
@@ -69,6 +83,8 @@ private:
 	void UnbindCurrentPawn();
 	void RefreshVitalHUD();
 	void OnAttributeChanged(const FOnAttributeChangeData& ChangeData);
+	void UpdateCombatImpactHitStop();
+	void RestoreCombatImpactHitStop();
 
 	FDelegateHandle HealthChangedHandle;
 	FDelegateHandle MaxHealthChangedHandle;
@@ -78,4 +94,10 @@ private:
 	TWeakObjectPtr<APlayerCharacter> BoundPlayerCharacter;
 	TWeakObjectPtr<UAbilitySystemComponent> BoundAbilitySystemComponent;
 	bool bHasLoggedMissingHUDClass = false;
+
+	bool bHitStopActive = false;
+	float PreHitStopGlobalTimeDilation = 1.0f;
+	float CurrentAppliedTimeDilation = 1.0f;
+	double HitStopExpireRealTimeSeconds = 0.0;
+	TWeakObjectPtr<UWorld> CachedCombatImpactWorld;
 };

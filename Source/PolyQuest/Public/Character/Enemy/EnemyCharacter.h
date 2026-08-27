@@ -12,6 +12,9 @@ class UGameplayEffect;
 class UAbilitySystemComponent;
 class UWidgetComponent;
 class UEnemyHealthBarWidget;
+class USoundBase;
+class UNiagaraSystem;
+enum class EHitReactionTier : uint8;
 struct FGameplayEffectSpec;
 struct FOnAttributeChangeData;
 
@@ -65,6 +68,16 @@ public:
 	FVector GetTestPendingDeathRagdollVelocityChange() const;
 	int32 GetTestDeathRagdollCaptureCount() const;
 	int32 GetTestDeathRagdollConsumeCount() const;
+
+	int32 GetTestCombatImpactHitStopRequestCount() const { return TestCombatImpactHitStopRequestCount; }
+	float GetTestLastImpactHitStopDuration() const { return TestLastImpactHitStopDuration; }
+	float GetTestLastImpactHitStopTimeDilation() const { return TestLastImpactHitStopTimeDilation; }
+	int32 GetTestImpactSoundDispatchCount() const { return TestImpactSoundDispatchCount; }
+	FVector GetTestLastImpactSoundLocation() const { return TestLastImpactSoundLocation; }
+	int32 GetTestImpactBloodDispatchCount() const { return TestImpactBloodDispatchCount; }
+	FVector GetTestLastImpactBloodLocation() const { return TestLastImpactBloodLocation; }
+	FVector GetTestLastImpactBloodNormal() const { return TestLastImpactBloodNormal; }
+	FRotator GetTestLastImpactBloodRotation() const { return TestLastImpactBloodRotation; }
 #endif
 
 	/** Native-only lifecycle hooks for pairing with Launch hit reaction stance break deferral. */
@@ -114,6 +127,7 @@ private:
 	void OnUIMaxHealthAttributeChanged(const FOnAttributeChangeData& ChangeData);
 	void RefreshEnemyHealthBar();
 	void HideEnemyHealthBar();
+	void HandleCombatImpactFeedback(const FGameplayEffectSpec& EffectSpec, EHitReactionTier ReactionTier);
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "UI|Enemy", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<UWidgetComponent> EnemyHealthBarWidgetComponent;
@@ -123,6 +137,30 @@ private:
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "AI|Enemy", meta = (AllowPrivateAccess = "true", ToolTip = "敌人空间走位、重定位与警戒距离配置资产（EnemyAIProfile）。"))
 	TObjectPtr<UEnemyAIProfile> AIProfile;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Enemy|ImpactFeedback", meta = (AllowPrivateAccess = "true", ToolTip = "玩家击中敌人时播放的共享受击肉体打击音效资产（USoundBase）。"))
+	TObjectPtr<USoundBase> ImpactSound;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Enemy|ImpactFeedback", meta = (AllowPrivateAccess = "true", ToolTip = "玩家击中敌人时在受击点生成的共享世界空间血液飞溅粒子系统（UNiagaraSystem）。"))
+	TObjectPtr<UNiagaraSystem> ImpactBloodSystem;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Enemy|ImpactFeedback", meta = (AllowPrivateAccess = "true", ClampMin = "0.0", Units = "Seconds", ToolTip = "轻度受击（Small）造成的全局命中顿帧持续时间（秒）。"))
+	float SmallImpactHitStopDurationSeconds = 0.02f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Enemy|ImpactFeedback", meta = (AllowPrivateAccess = "true", ClampMin = "0.01", ClampMax = "1.0", ToolTip = "轻度受击（Small）期间的全局时间膨胀比例（(0.0, 1.0]）。"))
+	float SmallImpactHitStopTimeDilation = 0.15f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Enemy|ImpactFeedback", meta = (AllowPrivateAccess = "true", ClampMin = "0.0", Units = "Seconds", ToolTip = "重度受击（Big）造成的全局命中顿帧持续时间（秒）。"))
+	float BigImpactHitStopDurationSeconds = 0.05f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Enemy|ImpactFeedback", meta = (AllowPrivateAccess = "true", ClampMin = "0.01", ClampMax = "1.0", ToolTip = "重度受击（Big）期间的全局时间膨胀比例（(0.0, 1.0]）。"))
+	float BigImpactHitStopTimeDilation = 0.05f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Enemy|ImpactFeedback", meta = (AllowPrivateAccess = "true", ClampMin = "0.0", Units = "Seconds", ToolTip = "击飞受击（Launch）造成的全局命中顿帧持续时间（秒）。"))
+	float LaunchImpactHitStopDurationSeconds = 0.04f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Enemy|ImpactFeedback", meta = (AllowPrivateAccess = "true", ClampMin = "0.01", ClampMax = "1.0", ToolTip = "击飞受击（Launch）期间的全局时间膨胀比例（(0.0, 1.0]）。"))
+	float LaunchImpactHitStopTimeDilation = 0.05f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Enemy|Death", meta = (AllowPrivateAccess = "true", ToolTip = "死亡时是否尝试开启物理布娃娃模拟；需要角色网格体与有效 Physics Asset，缺失时跳过布娃娃并记录 Warning。"))
 	bool bUseRagdollOnDeath = true;
@@ -184,5 +222,14 @@ private:
 	FVector LastDeathRagdollVelocityChange = FVector::ZeroVector;
 	int32 DeathRagdollCaptureCount = 0;
 	int32 DeathRagdollConsumeCount = 0;
+	int32 TestCombatImpactHitStopRequestCount = 0;
+	float TestLastImpactHitStopDuration = 0.0f;
+	float TestLastImpactHitStopTimeDilation = 0.0f;
+	int32 TestImpactSoundDispatchCount = 0;
+	FVector TestLastImpactSoundLocation = FVector::ZeroVector;
+	int32 TestImpactBloodDispatchCount = 0;
+	FVector TestLastImpactBloodLocation = FVector::ZeroVector;
+	FVector TestLastImpactBloodNormal = FVector::ZeroVector;
+	FRotator TestLastImpactBloodRotation = FRotator::ZeroRotator;
 #endif
 };
