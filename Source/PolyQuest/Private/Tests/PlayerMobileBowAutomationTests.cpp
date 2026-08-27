@@ -60,6 +60,7 @@ bool FPlayerMobileBowAutomationTest::RunTest(const FString&)
 	// -------------------------------------------------------------------------
 	const FGameplayTag TagAbilityPrimaryAttack = FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Attack.Primary")), false);
 	const FGameplayTag TagAttacking = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Action.Attacking")), false);
+	const FGameplayTag TagCharging = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Action.Charging")), false);
 	const FGameplayTag TagMovementBlock = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Input.Block.Movement")), false);
 	const FGameplayTag TagJumpBlock = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Input.Block.Jump")), false);
 	const FGameplayTag TagAbilitySprint = FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Movement.Sprint")), false);
@@ -68,20 +69,23 @@ bool FPlayerMobileBowAutomationTest::RunTest(const FString&)
 
 	TestTrue(TEXT("Tag Ability.Attack.Primary is valid"), TagAbilityPrimaryAttack.IsValid());
 	TestTrue(TEXT("Tag State.Action.Attacking is valid"), TagAttacking.IsValid());
+	TestTrue(TEXT("Tag State.Action.Charging is valid"), TagCharging.IsValid());
 	TestTrue(TEXT("Tag State.Input.Block.Movement is valid"), TagMovementBlock.IsValid());
 	TestTrue(TEXT("Tag State.Input.Block.Jump is valid"), TagJumpBlock.IsValid());
 	TestTrue(TEXT("Tag Ability.Movement.Sprint is valid"), TagAbilitySprint.IsValid());
 	TestTrue(TEXT("Tag State.Movement.Sprinting is valid"), TagSprinting.IsValid());
 	TestTrue(TEXT("Tag Team.Player is valid"), TagTeamPlayer.IsValid());
 
-	// 1.1 Bow CDO Tag Contract: owns Attacking and Jump Block, but NOT Movement Block
+	// 1.1 Bow CDO Tag Contract: owns Attacking and Jump Block, but NOT Movement Block or Charging
 	const UBowDrawFireAbility* BowCDO = UBowDrawFireAbility::StaticClass()->GetDefaultObject<UBowDrawFireAbility>();
 	TestNotNull(TEXT("Bow CDO exists"), BowCDO);
 	if (BowCDO)
 	{
 		TestTrue(TEXT("Bow CDO carries Ability.Attack.Primary in AbilityTags"), BowCDO->AbilityTags.HasTagExact(TagAbilityPrimaryAttack));
 		TestTrue(TEXT("Bow CDO carries State.Action.Attacking in AbilityTags"), BowCDO->AbilityTags.HasTagExact(TagAttacking));
+		TestFalse(TEXT("Bow CDO does NOT carry State.Action.Charging in AbilityTags"), BowCDO->AbilityTags.HasTagExact(TagCharging));
 		TestTrue(TEXT("Bow CDO carries State.Action.Attacking in ActivationOwnedTags"), BowCDO->GetTestActivationOwnedTags().HasTagExact(TagAttacking));
+		TestFalse(TEXT("Bow CDO does NOT carry State.Action.Charging in ActivationOwnedTags"), BowCDO->GetTestActivationOwnedTags().HasTagExact(TagCharging));
 		TestTrue(TEXT("Bow CDO carries State.Input.Block.Jump in ActivationOwnedTags"), BowCDO->GetTestActivationOwnedTags().HasTagExact(TagJumpBlock));
 		TestFalse(TEXT("Bow CDO does NOT carry State.Input.Block.Movement in ActivationOwnedTags"), BowCDO->GetTestActivationOwnedTags().HasTagExact(TagMovementBlock));
 	}
@@ -200,8 +204,14 @@ bool FPlayerMobileBowAutomationTest::RunTest(const FString&)
 	// SECTION 6: EndAbility Exact-Handle Cleanup & Base Speed Restoration
 	// -------------------------------------------------------------------------
 	// 6.1 Normal Completion Path (bWasCancelled = false)
+	BowAbility->TestSetCharging(true);
+	TestTrue(TEXT("Normal completion test establishes Charging on Bow instance"), BowAbility->GetTestChargingApplied());
+	TestTrue(TEXT("ASC owns State.Action.Charging before normal EndAbility"), ASC->HasMatchingGameplayTag(TagCharging));
+
 	BowAbility->EndAbility(BowSpecHandle, ASC->AbilityActorInfo.Get(), BowAbility->GetCurrentActivationInfo(), true, false);
 	TestFalse(TEXT("Normal EndAbility(bWasCancelled=false) clears Bow move speed handle"), BowAbility->HasTestMobileBowMoveSpeedEffectHandle());
+	TestFalse(TEXT("Normal EndAbility(bWasCancelled=false) clears Charging applied state"), BowAbility->GetTestChargingApplied());
+	TestFalse(TEXT("Normal EndAbility(bWasCancelled=false) removes State.Action.Charging from ASC"), ASC->HasMatchingGameplayTag(TagCharging));
 	TestTrue(TEXT("Base MoveSpeed 500 restored after normal EndAbility"), FMath::IsNearlyEqual(ASC->GetNumericAttribute(UCharacterAttributeSet::GetMoveSpeedAttribute()), BaseMoveSpeed));
 	TestTrue(TEXT("CharacterMovement MaxWalkSpeed 500 restored after normal EndAbility"), FMath::IsNearlyEqual(MovementComponent->MaxWalkSpeed, BaseMoveSpeed));
 
@@ -227,8 +237,14 @@ bool FPlayerMobileBowAutomationTest::RunTest(const FString&)
 	TestTrue(TEXT("MoveSpeed reduced to 300 for cancel test"), FMath::IsNearlyEqual(ASC->GetNumericAttribute(UCharacterAttributeSet::GetMoveSpeedAttribute()), MobileBowMoveSpeed));
 	TestTrue(TEXT("MaxWalkSpeed reduced to 300 for cancel test"), FMath::IsNearlyEqual(MovementComponent->MaxWalkSpeed, MobileBowMoveSpeed));
 
+	CancelBowAbility->TestSetCharging(true);
+	TestTrue(TEXT("Cancel test establishes Charging on independent Bow instance"), CancelBowAbility->GetTestChargingApplied());
+	TestTrue(TEXT("ASC owns State.Action.Charging before cancelled EndAbility"), ASC->HasMatchingGameplayTag(TagCharging));
+
 	CancelBowAbility->EndAbility(CancelBowSpecHandle, ASC->AbilityActorInfo.Get(), CancelBowAbility->GetCurrentActivationInfo(), true, true);
 	TestFalse(TEXT("Cancelled EndAbility(bWasCancelled=true) clears Bow move speed handle"), CancelBowAbility->HasTestMobileBowMoveSpeedEffectHandle());
+	TestFalse(TEXT("Cancelled EndAbility(bWasCancelled=true) clears Charging applied state"), CancelBowAbility->GetTestChargingApplied());
+	TestFalse(TEXT("Cancelled EndAbility(bWasCancelled=true) removes State.Action.Charging from ASC"), ASC->HasMatchingGameplayTag(TagCharging));
 	TestTrue(TEXT("Base MoveSpeed 500 restored after cancelled EndAbility"), FMath::IsNearlyEqual(ASC->GetNumericAttribute(UCharacterAttributeSet::GetMoveSpeedAttribute()), BaseMoveSpeed));
 	TestTrue(TEXT("CharacterMovement MaxWalkSpeed 500 restored after cancelled EndAbility"), FMath::IsNearlyEqual(MovementComponent->MaxWalkSpeed, BaseMoveSpeed));
 

@@ -102,8 +102,8 @@ APlayerCharacter::APlayerCharacter()
 	CameraBoom->SetUsingAbsoluteRotation(true);
 	CameraBoom->SetRelativeRotation(FRotator(-55.0f, -45.0f, 0.0f));
 	CameraBoom->bEnableCameraLag = true;
-	CameraBoom->CameraLagSpeed = 18.0f;
-	CameraBoom->CameraLagMaxDistance = 75.0f;
+	CameraBoom->CameraLagSpeed = 8.0f;
+	CameraBoom->CameraLagMaxDistance = 0.0f;
 	CameraBoom->bUseCameraLagSubstepping = true;
 	CameraBoom->CameraLagMaxTimeStep = 1.0f / 60.0f;
 	CameraBoom->bEnableCameraRotationLag = false;

@@ -1,180 +1,158 @@
-# TODO-02C3L: Four-Directional Small/Big Hit Reactions v1
+# TODO-03B-5: Bow Hold Locomotion Presentation v1
 
 ## Plan State
 
-- Status: Completed / Closed. The C3L source/test WIP removed the obsolete generic fallback contract after the user intentionally cleared the four legacy single-Montage fields.
-- Baseline: `47d627c` (`[Feature] 完成战斗命中反馈 (Complete Combat Impact Feedback)`).
-- Documentation closeout: Main synchronized `README.md`, `ARCHITECTURE.md`, `ROADMAP.md`, and this closeout record. No stage file is staged or committed by this plan.
-- Objective: make living Player and Enemy Small/Big reactions select an attacker-relative Front, Back, Left, or Right authored Montage from one complete required set, with no legacy single-Montage fallback.
-- Player-facing success: from any cardinal attack direction, the victim visibly plays the matching directional Small or Big reaction; diagonal attacks resolve deterministically to a nearest cardinal reaction; invalid impact data safely skips the reaction instead of playing a wrong directional asset; no Player/Enemy makes a preparatory turn toward the attacker before a Big reaction.
-- Scope decision: C3L is four-direction only. Eight-direction presentation is not prebuilt or partially generalized; it requires a separate accepted stage after compatible diagonal assets exist and focused PIE proves four-direction mapping visually inadequate.
+- Status: Completed / user-validated / ready for documentation closeout and commit.
+- Baseline: `4144e15` (`[Docs] Schedule Bow Hold Locomotion Stage`). Preserve the existing user-owned `Content/**` WIP and the separate unstaged `AGENTS.md` review-policy wording change.
+- Objective: keep Bow locomotion selected for the active Draw -> Hold -> Release action while making the UpperBody Montage bypass Hold-only, so the authored Draw and Release portions of `AM_Bow_Shoot` remain visible during movement.
+- Player-facing success: a moving player visibly draws the bow, uses the Bow locomotion route while the Bow action is active, suppresses the UpperBody layer only during Hold, and visibly releases the arrow. Early release, cancellation, interruption, and failed activation leave no residual Charging state.
 
 ## Route And Delegation
 
 Outer: `ue-stage-workflow`
 Primary: `ue5-cpp-gameplay`
-Support: none
-Route reason: this is a bounded native GAS presentation-selection change. It consumes the existing Health-event Context and changes only Montage choice; authority, damage, tags, movement, and authored assets retain their current owners.
+Support: `ue5-blueprint-workflow`
+Route reason: the runtime fix is a narrow existing-GAS-tag lifecycle adjustment in one Ability, paired with one user-authored AnimBP condition change. It does not require a new gameplay framework, input path, tag taxonomy, or animation system.
 
 Plan explorers: 0
-Implementation executors: 1 (Gemini, only after plan review and explicit Main handoff)
+Implementation executors: 1 (Gemini; completed the frozen native/test slice)
 Complex Executor: none
 Main parallel work: none
-Reason: the four Ability integrations and one shared pure selector form a small, coherent source/test slice. Documentation, asset authoring, validation interpretation, review, staging, and commit remain Main/User-owned.
+Reason: the allowed native slice is small and its lifecycle contract is frozen. Gemini can implement the exact private C++/test edits, while Main retains the shared tag contract, asset boundary, acceptance, documentation, staging, and commit ownership.
 
-Main owns the C3L contract, public/reflection boundary, shared resolver interpretation, documentation, acceptance, staging, and commit. Gemini may write only the approved C++/test paths below. It must stop and return evidence before touching an unlisted path, public API, GameplayTag, Config, Build.cs, asset, Blueprint, test fixture, or lifecycle rule.
+### Ownership And Handoff Boundary
+
+- Contract owner: Main. `State.Action.Attacking`, `State.Action.Charging`, Bow phase semantics, input/cancel ownership, asset routing contract, test acceptance, and documentation remain Main-owned.
+- Implementation writer: Gemini. It may modify only the three approved native/test files below, and only the explicitly named functions/tests.
+- User-owned Editor work: `ABP_Player_Dungeon`, `AM_Bow_Shoot` readback, all Blueprint/Montage saves, manual `PolyQuestEditor` compilation, Automation execution, and PIE.
+- No executor may modify `AGENTS.md`, `ROADMAP.md`, `ARCHITECTURE.md`, `README.md`, `plan.md`, `Config/**`, `Content/**`, `PlayerCharacter`, projectile code, or any public header.
 
 ## Existing Evidence
 
-1. `FHitReactionImpactResolver::ResolveImpactDirection()` already returns a finite, normalized target-local planar `Target -> Attacker` direction from the same `FGameplayEventData::ContextHandle` forwarded by Player and Enemy Health delegates. Instigator location takes priority over `ImpactNormal`; invalid input returns `FVector::ZeroVector`.
-2. The user intentionally cleared the four legacy serialized single-Montage fields after the original C3L PIE/Automation pass to prepare their removal. Their continued source-level validation is therefore a current authoring/runtime mismatch, not a compatibility requirement. `AM_SmallHitReaction_F` and `AM_BigHitReaction_F` are retained user-owned Front directional Montages, not generic fallbacks.
-3. Static asset inventory contains four candidate source sequences for each tier under `Content/_Animations/Weapon/LightSword/`: `A_Hit_[F/B/L/R]_React_Sword` and `A_Hit_[F/B/L/R]_Stagger_RootMotion_Sword`. This is file-inventory evidence only; Editor preview, Skeleton compatibility, Montage configuration, and PIE behavior remain user validation.
-4. Small is an overlay route with no movement/input cancellation. Big is a grounded full-body Root Motion interrupt route. Launch has its independent C3I/C3J target-facing and CharacterMovement trajectory contract.
+1. `UBowDrawFireAbility` is `InstancedPerActor` and ServerOnly. It owns `State.Action.Attacking` through `ActivationOwnedTags`, so that tag lasts for the entire active Bow Ability, not merely its Hold phase.
+2. The existing Ability validates `Draw`, `Hold`, and `Release` Montage sections and creates the semantic `Event.Attack.Bow.DrawReady` / `Event.Attack.Bow.Release` listeners before starting `AM_Bow_Shoot` at `Draw`.
+3. The final Ability applies the mobile MoveSpeed GE and enters `Drawing` without Charging. A valid `OnDrawReadyEvent()` changes to `Holding` and applies Charging; `TriggerRelease()` removes Charging before entering `Releasing` and jumping to `Release`; `EndAbility()` remains idempotent.
+4. User Editor readback established two independent authored booleans in `ABP_Player_Dungeon`: `Is Bow Aiming` is `ResolvedLocomotionMode == Bow && State.Action.Attacking` and selects the Bow locomotion BlendSpace; `Is Bow Holding` is `ResolvedLocomotionMode == Bow && State.Action.Charging` and participates in the UpperBody `AllowBlend` gate. The prior single predicate caused Draw and Release presentation to be suppressed.
+5. `State.Action.Charging`, `Event.Attack.Bow.DrawReady`, and `Event.Attack.Bow.Release` are already valid project tags. No Config edit is needed.
+6. Existing native fixtures already expose Bow state, `TestOnDrawReadyEvent`, `TestOnInputReleased`, `TestSetCharging`, and ASC tag state. `ProjectileLifecycleAutomationTests` already constructs a valid mock Bow Montage and exercises DrawReady/InputReleased event identity gates; `PlayerMobileBowAutomationTests` already proves one MoveSpeed GE handle persists through representative Draw/Hold/Release states and is cleaned by both normal and cancelled `EndAbility()` paths.
 
 ## Frozen Runtime Contract
 
-### Direction Semantics
+### Phase-To-Tag And AnimBP Meaning
 
-1. Direction names refer to the attacker's position in the target's local frame, never to the desired movement/displacement direction.
-2. The shared four-way selector receives only a local planar vector and uses these exact sectors:
-   - `Abs(X) >= Abs(Y)`: `X >= 0` selects Front; otherwise Back.
-   - `Abs(X) < Abs(Y)`: `Y >= 0` selects Right; otherwise Left.
-   - Exact 45-degree ties therefore use the X axis: Front for X-positive front diagonals and Back for X-negative back diagonals. The implementation must not change this tie-break rule.
-3. The selector must first copy `FVector(Local.X, Local.Y, 0.0f)` and use only that planar value for finite checks, near-zero rejection, absolute-value comparison, and sector selection. Z is always ignored.
-4. A complete Front/Back/Left/Right Montage set is mandatory. Zero, near-zero, NaN, Inf, missing `TriggerEventData`, a missing target, an incomplete set, or a null selected member produces no Montage selection. The Ability follows its existing immediate activation-failure cleanup without creating a Montage task; it must not substitute Front, a legacy field, or any other direction.
-5. Direction is evaluated once during the synchronous Ability activation. No `FGameplayEventData`, Context, Actor, or pointer into effect data survives that call.
+| Bow phase | `State.Action.Attacking` | `State.Action.Charging` | `Is Bow Aiming` (locomotion) | `Is Bow Holding` (layer gate) | UpperBody `AllowBlend` |
+| --- | --- | --- | --- | --- | --- |
+| Drawing | Present | Absent | True in Bow mode | False | True |
+| Holding after valid DrawReady | Present | Present | True in Bow mode | True | False |
+| Releasing | Present | Absent | True in Bow mode | False | True |
+| Inactive, cancelled, interrupted, failed | Absent after GAS cleanup | Absent | False | False | Normal non-Bow route |
 
-### Ownership And Non-Goals
+1. `State.Action.Attacking` remains the full Draw -> Hold -> Release action-arbitration tag and continues to drive `Is Bow Aiming`/Bow locomotion in Bow mode. It must not become a Hold-only tag and no cancellation/block matrix changes are approved.
+2. `State.Action.Charging` is the existing dynamic Bow Hold presentation gate and drives `Is Bow Holding`; it is not added during Drawing, and no new GameplayTag or tag hierarchy is introduced.
+3. In `OnDrawReadyEvent()`, after the existing active-Montage/identity validation succeeds, set `BowState` to `Holding`. If `bReleaseRequested` is already true, call the existing `TriggerRelease()` immediately and return without adding Charging. Otherwise call `SetCharging(true)` exactly once.
+4. Normal Holding input release continues through the existing `TriggerRelease()` path, which removes Charging before `BowState = Releasing` and before the Montage Section jump. `OnReleaseAnimEvent()` and projectile spawning are unchanged.
+5. `EndAbility()` remains the one idempotent terminal cleanup owner. It must still remove only this Bow Ability's MoveSpeed effect handle, remove Charging when present, clear cancellation/rate state, unregister the aim requester, stop/end its tasks, and reset phase state.
+6. The mobile MoveSpeed GE and `RegisterBowAimRequester()` retain their entire active-Ability lifetimes. This stage changes presentation gating only; it does not change move eligibility, aim facing, target assist, projectile direction/snapshot, Dodge windows, Jump block, or Sprint cancellation.
 
-1. Small remains `InstancedPerActor`, `ServerOnly`, non-interrupting, and overlay-only. It gains no movement/input block, cancellation, yaw, or CharacterMovement write.
-2. Big remains its existing grounded, full-body Root Motion route. It receives the selected Montage before task creation, but retains its existing action cancellation, velocity stop, ledge safety, Falling teardown, and unified EndAbility behavior.
-3. Big must not call `SetActorRotation`, change Controller rotation, change AI Focus, inject movement, alter Root Motion, or use C3I/C3J smoothing. Its current local Root Motion remains relative to the current actor facing.
-4. Launch is completely excluded: no change to its snapshot, turn task, commit Notify, velocity, takeoff, airborne, LandingRecovery, or AI yaw arbitration.
-5. No new GameplayTag, event, GE, damage route, GameplayCue, DataAsset, generic directional framework, input route, Config/Build.cs change, physics behavior, or asset migration is approved.
+### AnimBP Contract
 
-## Approved C++ And Test Slice
+1. In `ABP_Player_Dungeon`, retain `Is Bow Aiming = (ResolvedLocomotionMode == Bow && HasMatchingGameplayTag(State.Action.Attacking))` for Bow locomotion selection through Draw, Hold, and Release.
+2. Use the separate `Is Bow Holding = (ResolvedLocomotionMode == Bow && HasMatchingGameplayTag(State.Action.Charging))` only for the Hold presentation gate.
+3. Keep the authored `AllowBlend` relation `NOT (Is Shield Guarding OR Is Bow Holding)`. Draw and Release therefore keep the established UpperBody Montage route, while Holding alone bypasses that layer and presents `BS_Bow_Aim_Walk_Run` full body.
+4. Do not create a new AnimBP state machine, Montage-time polling, section-name inference, duplicate BlendSpace, or a third Bow locomotion/state boolean.
+5. `AM_Bow_Shoot` and `BS_Bow_Aim_Walk_Run` are validation surfaces, not native source edits. The user confirmed `DrawReady` at the Draw -> Hold boundary and the Release event in the Release segment before accepting the asset side.
 
-### Private Four-Way Selector
+## Approved Native And Asset Slice
 
-Amend these existing C3L private C++-only WIP files in place:
+### Gemini C++ / Test Whitelist
 
-1. `Source/PolyQuest/Private/Combat/Reaction/HitReactionFourWayMontageSelector.h`
-2. `Source/PolyQuest/Private/Combat/Reaction/HitReactionFourWayMontageSelector.cpp`
+1. `Source/PolyQuest/Private/AbilitySystem/Abilities/BowDrawFireAbility.cpp`
+   - Contract owner: Main; implementation writer: Gemini.
+   - Allowed functions: `ActivateAbility()` and `OnDrawReadyEvent()` only.
+   - Remove the post-MoveSpeed `SetCharging(true)` from activation. Add the Hold-only call in the valid DrawReady path after the early-release branch. Do not modify `SetCharging()`, `TriggerRelease()`, `EndAbility()`, public API, tags, task creation, input routing, or asset references.
 
-They define a narrow non-reflected `FHitReactionFourWayMontageSet` containing non-owning `UAnimMontage*` Front/Back/Left/Right candidates, `IsComplete()`, and `FHitReactionFourWayMontageSelector::SelectFromLocalAttackerDirection(...)`.
+2. `Source/PolyQuest/Private/Tests/ProjectileLifecycleAutomationTests.cpp`
+   - Contract owner: Main; implementation writer: Gemini.
+   - Extend the existing Bow event-gate section using its current transient Montage, Player/ASC, and existing test helpers. Explicitly set the event-test Bow instance's current ActorInfo before tag assertions rather than relying on whether the ASC supplied a primary instance. Assert invalid DrawReady inputs retain Drawing and no Charging; valid DrawReady produces Holding plus Charging; normal Holding release produces Releasing with Charging removed.
+   - The Early Release case must use a fresh `NewObject<UBowDrawFireAbility>` rooted on the current test Player, set its current ActorInfo and mock BowMontage, put it in Drawing, then send valid InputReleased followed by valid DrawReady. Assert Releasing plus an absent Charging tag. Do not reuse a preceding event-case instance because `bReleaseRequested` is private state reset only by the real activation/terminal lifecycle.
+   - Do not add a production/test-only API or new fixture class.
 
-- The selector takes only a local direction and the four-way set. It first planarizes to XY and returns the selected candidate only when the set is complete and that planar direction is finite/non-zero; otherwise it returns `nullptr`. It has no fallback parameter.
-- It does not receive a World, ASC, GameplayEffect, Actor, DataAsset, or Blueprint value; it only implements four-sector classification and pointer selection.
-- It is private to the runtime module, has no `UCLASS`, `USTRUCT`, `UENUM`, generated header, `POLYQUEST_API`, Blueprint exposure, logging, allocation, Tick, or mutable state.
-- It calls no transform/movement API. `FHitReactionImpactResolver` remains the existing sole owner of Context-to-local-direction resolution.
+3. `Source/PolyQuest/Private/Tests/PlayerMobileBowAutomationTests.cpp`
+   - Contract owner: Main; implementation writer: Gemini.
+   - Add the existing Charging tag to the test's resolved-tag preflight. Before each of the normal and cancelled `EndAbility()` calls in Section 6, use existing test helpers to establish Charging, assert it is present, then assert the same ASC no longer has Charging immediately after that exact terminal route. Preserve all MoveSpeed handle persistence and external-GE survival assertions.
 
-### Ability Authoring Surface And Activation
+4. `Source/PolyQuest/Private/Character/Player/PlayerCharacter.cpp`
+   - Contract owner: Main; implementation writer: Main under the user's explicit adjacent-presentation authorization.
+   - The only accepted change is the camera follow tuning `CameraLagSpeed: 18.0f -> 8.0f` and `CameraLagMaxDistance: 75.0f -> 0.0f`. It is documented as an independent camera presentation adjustment, not part of Bow GAS ownership or phase semantics. No other Player, camera, input, or facing behavior is in scope.
 
-Modify only these public/private pairs:
+### User-Owned Assets
 
-1. `Source/PolyQuest/Public/AbilitySystem/Abilities/PlayerSmallHitReactionAbility.h`
-2. `Source/PolyQuest/Private/AbilitySystem/Abilities/PlayerSmallHitReactionAbility.cpp`
-3. `Source/PolyQuest/Public/AbilitySystem/Abilities/EnemySmallHitReactionAbility.h`
-4. `Source/PolyQuest/Private/AbilitySystem/Abilities/EnemySmallHitReactionAbility.cpp`
-5. `Source/PolyQuest/Public/AbilitySystem/Abilities/PlayerBigHitReactionAbility.h`
-6. `Source/PolyQuest/Private/AbilitySystem/Abilities/PlayerBigHitReactionAbility.cpp`
-7. `Source/PolyQuest/Public/AbilitySystem/Abilities/EnemyHitReactionAbility.h`
-8. `Source/PolyQuest/Private/AbilitySystem/Abilities/EnemyHitReactionAbility.cpp`
+1. `Content/BP/Characters/Player/Animations/ABP_Player_Dungeon.uasset`
+   - User-authored result: retain `Is Bow Aiming = (Bow locomotion mode && State.Action.Attacking)` for locomotion, add/retain `Is Bow Holding = (Bow locomotion mode && State.Action.Charging)` for the Hold-only layer gate, and keep `AllowBlend = NOT (Is Shield Guarding OR Is Bow Holding)`.
 
-For each Ability:
+2. `Content/BP/Montages/Bow/AM_Bow_Shoot.uasset`
+   - Readback only. Confirm the existing `Draw`, `Hold`, and `Release` sections plus semantic DrawReady/Release notifies. Do not retime, replace, retarget, or otherwise edit it unless that confirmation exposes a separate asset defect for Main scope review.
 
-1. Remove the legacy single-Montage UPROPERTY from every Ability header and all runtime references to it:
-   - Small: `SmallHitReactionMontage`.
-   - Player Big: `BigHitReactionMontage`.
-   - Enemy Big: `HitReactionMontage`.
-   Do not rename, modify, or delete any Content asset while removing these native fields.
-2. Retain the four existing `EditDefaultsOnly, BlueprintReadOnly` private `TObjectPtr<UAnimMontage>` directional fields with `AllowPrivateAccess`, and revise their Chinese authoring ToolTips where needed. Every ToolTip must explicitly state "攻击者位于受击者本地[前/后/左/右]方时播放", state that the name does not describe victim displacement, and state that all four fields are required together. Use these exact naming families:
-   - Small: `FrontSmallHitReactionMontage`, `BackSmallHitReactionMontage`, `LeftSmallHitReactionMontage`, `RightSmallHitReactionMontage`.
-   - Player Big: `FrontBigHitReactionMontage`, `BackBigHitReactionMontage`, `LeftBigHitReactionMontage`, `RightBigHitReactionMontage`.
-   - Enemy Big: `FrontHitReactionMontage`, `BackHitReactionMontage`, `LeftHitReactionMontage`, `RightHitReactionMontage`.
-3. `ValidateActivationSetup()` must require all four directional fields through the private complete-set check. Missing authoring configuration fails activation clearly before task construction; partial configuration is invalid and has no degraded behavior.
-4. In `UPlayerSmallHitReactionAbility::ActivateAbility` and `UEnemySmallHitReactionAbility::ActivateAbility`, retain the named fourth parameter `const FGameplayEventData* TriggerEventData`. Do not alter the virtual signature.
-5. After basic Avatar/ASC/AnimInstance preflight and before `UAbilityTask_PlayMontageAndWait` construction, resolve the local direction with `FHitReactionImpactResolver::ResolveImpactDirection(*TriggerEventData, Avatar)` when an event exists. Build the private four-way set from this Ability's UPROPERTY fields, then select the actual Montage through the private selector.
-6. Create the task and set `ActiveMontage` only after a non-null selection. A failed selection follows the existing immediate activation-failure cleanup with no task construction. Startup validation and diagnostics must refer to `ActiveMontage.Get()`; in particular, the failed-start Warning must print `*GetNameSafe(ActiveMontage.Get())` rather than a removed legacy member.
-7. In `UPlayerBigHitReactionAbility` and `UEnemyHitReactionAbility`, preserve the existing pre-task `ImpactDirectionSnapshot` write from the same resolved value. Do not add snapshots to Small.
-8. Preserve every other lifecycle ordering, delegate binding, cancellation path, movement restoration rule, tag count, and StateTree/AI interaction unchanged.
+3. `Content/_Animations/Weapon/Bow/Locomotion/BS_Bow_Aim_Walk_Run.uasset`
+   - Readback only. No sample, speed, blend, or axis adjustment belongs to this stage.
 
-### Execution Order
+## Execution Order
 
-1. Amend the existing private selector to remove its fallback parameter and verify its includes remain private to the runtime module.
-2. Remove the four legacy UPROPERTY declarations and their runtime references, then make the existing sixteen directional properties a complete mandatory authoring set through validation and ToolTips.
-3. Integrate no-fallback selection in the two Small Abilities, then in the two Big Abilities; preserve each Big snapshot before task creation as part of that same edit.
-4. Add the pure selector coverage to `HitReactionAutomationTests.cpp` and retain all pre-existing resolver/event tests.
-5. Run static checks, inspect the scoped diff, and return the prescribed evidence without editing assets, documentation, staging, or committing.
-
-### Native Automation
-
-Modify only `Source/PolyQuest/Private/Tests/HitReactionAutomationTests.cpp`.
-
-1. Include the new private selector and construct transient Front/Back/Left/Right objects with `NewObject<UAnimMontage>(GetTransientPackage())`; do not load or depend on Content assets.
-2. Extend the existing impact-resolver section to cover selector behavior:
-   - four cardinals;
-   - exact four diagonal ties under the frozen X-axis rule;
-   - samples immediately on both sides of each boundary;
-   - unnormalized planar input and non-zero Z;
-   - incomplete sets and a missing selected member;
-   - zero, near-zero, NaN, and Inf input returning `nullptr`.
-3. Assert pointer identity for each valid selected dummy Montage. Assert `IsComplete()` rejects every incomplete set and the selector returns `nullptr` for incomplete or invalid input; no test may expect a fallback. Existing Context/instigator/ImpactNormal resolver tests remain intact and prove the preceding Context-to-local-direction contract.
-4. Do not add test seams, Blueprint test assets, test-only production fields, or a world/animation-playback fixture. Actual slot, Skeleton, Root Motion, and visual Montage selection remain Editor/PIE gates.
-
-## User-Owned Asset Authoring
-
-1. No asset change is authorized in this amendment. The user's existing `AM_SmallHitReaction_F` and `AM_BigHitReaction_F` are the Front entries of their respective directional sets; they are not deleted, renamed, or reassigned by C++.
-2. The user owns verification that all four directional fields are assigned in each GA. Small retains its current overlay Slot/blend contract, while Big retains its current full-body Slot and Root Motion contract; no Montage may turn the Actor manually.
-3. The four GA assets remain the authoring surface:
-   - `Content/_Abilities/Player/HitReaction/GA_PlayerSmallHitReaction.uasset`
-   - `Content/_Abilities/Player/HitReaction/GA_PlayerBigHitReaction.uasset`
-   - `Content/_Abilities/Enemy/HitReaction/GA_EnemySmallHitReaction.uasset`
-   - `Content/_Abilities/Enemy/HitReaction/GA_EnemyBigHitReaction.uasset`
-4. The old single default fields must no longer appear after recompilation. Do not solve a missing/invalid directional assignment through C++ asset-path logic, retargeting automation, another generic fallback, or a Front substitution.
+1. Gemini reads the current three whitelisted C++/test files and verifies the frozen calls/fixtures before editing.
+2. Move the Charging onset from activation to valid non-early-release DrawReady, then re-read the complete Ability lifecycle to prove release and terminal cleanup remain unmodified.
+3. Extend `ProjectileLifecycle` phase/event assertions and `PlayerMobileBow` terminal-cleanup assertions without adding headers, tags, or fixtures.
+4. Gemini performs Rider inspection and scoped static checks, returns changed paths plus self-review evidence, and stops without touching assets, docs, staging, or commits.
+5. User compiles native code, authors the two AnimBP booleans and `AllowBlend` relation, confirms the Montage event placement, runs focused Automation, and performs PIE. The user also confirmed the adjacent camera tuning through Editor readback.
+6. After accepted validation, Main performs one independent defect-first fresh review under the project review override, synchronizes documentation, and waits for explicit commit approval. A strict/adversarial review is additional work only if the user explicitly requests it.
 
 ## Validation Matrix
 
-### Static / Executor Evidence
+### Gemini Static Evidence
 
-1. Read final diffs and direct callers/callees; confirm all changes stay inside the eleven approved source/test files.
-2. Run Rider `get_file_problems` or `lint_files` on all touched C++ files; resolve newly introduced diagnostics.
-3. Run `git diff --check` and report the exact changed paths.
-4. Do not invoke UBT, Rider build, Editor compilation, PIE, live Editor writes, asset saves, staging, or commit.
+1. Read the final three-file diff and direct `UBowDrawFireAbility` callers/callees.
+2. Run Rider `get_file_problems` or `lint_files` for both touched test files and `BowDrawFireAbility.cpp`; resolve newly introduced errors or warnings.
+3. Run `git diff --check` and report exact changed paths. Do not run UBT, Visual Studio/Rider compilation, live Editor operations, PIE, staging, or commits.
 
-### User Gates
+### User Compile And Editor Readback
 
 1. Compile `PolyQuestEditor (Development Editor)` in Visual Studio 2022.
-2. In Editor, read back each GA's four required directional fields, confirm the removed legacy single field no longer appears, then verify Montage slot configuration and Root Motion configuration.
-3. Run `PolyQuest.Combat.HitReaction`, `PolyQuest.Enemy.RootMotionFacing`, `PolyQuest.Combat.LaunchFacingSmoothing`, and `PolyQuest.Combat.HitFeedback`; then run the wider existing combat/reaction regression matrix if the focused suite is clean.
-4. In `Scene01`, test Player and Enemy as victims from front/back/left/right plus all four diagonals for Small and Big:
-   - Small selects the correct overlay reaction, retains movement/action behavior, and does not rotate the Actor.
-   - Big selects the correct full-body reaction, has no pre-turn, preserves grounded Root Motion behavior, avoids ledge/falling regressions, and restores existing control/AI state at completion.
-   - Launch still smooth-turns only through C3J and launches away from the attacker; it shows no C3L montage-selection regression.
+2. In `AM_Bow_Shoot`, confirm valid `Draw`, `Hold`, and `Release` sections; verify `Event.Attack.Bow.DrawReady` fires at Draw completion and `Event.Attack.Bow.Release` remains in Release.
+3. In `ABP_Player_Dungeon`, compile the AnimBP and confirm `Is Bow Aiming == (Bow locomotion mode && State.Action.Attacking)`, `Is Bow Holding == (Bow locomotion mode && State.Action.Charging)`, and `AllowBlend == NOT (Is Shield Guarding OR Is Bow Holding)`.
+4. Confirm the user-read-back `CameraBoom` values are `CameraLagSpeed = 8.0f` and `CameraLagMaxDistance = 0.0f`; this is an adjacent presentation tuning check only.
+
+### Automation And PIE
+
+1. Run `PolyQuest.Projectile.Lifecycle`, `PolyQuest.Player.MobileBow`, and `PolyQuest.Player.ActionWindows`.
+2. Regress `PolyQuest.Projectile.TargetAssist` and `PolyQuest.Player.LockOn`, because their Bow-facing/Release snapshot contracts are deliberately unchanged.
+3. In Scene01, validate:
+   - hold LMB while moving: Draw pose plays first, then Hold uses Bow Aim locomotion;
+   - normal release from Hold: Release pose is visible and arrow delivery remains correct;
+   - early release during Draw: Draw completes into immediate Release without a visible/stale Aim locomotion phase;
+   - cancel/interruption: no residual Charging tag, Bow Aim locomotion, MoveSpeed effect, or aim requester;
+   - locked and unlocked target-assist shots preserve their current direction/target snapshot behavior.
 
 ## Documentation, Debt, And Commit Boundary
 
-1. After user validation and Main fresh review, Main updates `ARCHITECTURE.md`, `ROADMAP.md`, `README.md`, and this plan's closeout record. No executor edits project documentation.
-2. C3L has no accepted new runtime debt. The removal of the obsolete generic fallback is part of this stage, not a deferred migration. The conditional eight-direction follow-up is already canonically recorded in `ROADMAP.md`; it opens only with compatible diagonal assets plus PIE evidence that four-way mapping is visually inadequate.
-3. The intended source commit contains only the eleven C++/test files and Main-approved documentation. All `Content/**` assets, Blueprints, GA/GE, Montages, AnimBPs, maps, Config, project files, and unrelated WIP remain excluded unless the user explicitly approves a stable asset closure.
-4. No staging or commit occurs until the user explicitly authorizes it.
+1. User confirmed the focused Bow Automation matrix and Scene01 PIE; Main's independent defect-first fresh review found no P0-P2 or actionable P3 defect. Main has updated this plan's closeout record, marked `TODO-03B-5` done in `ROADMAP.md`, and synchronized `ARCHITECTURE.md`/`README.md` only for stable, implemented behavior.
+2. No new debt is accepted. If the DrawReady notify is absent, misplaced, or incompatible with the current montage, that is an authoring blocker for this stage, not permission to infer phases from Montage time or introduce a second runtime state source.
+3. The source/docs commit includes the three native/test files, the explicitly authorized `PlayerCharacter.cpp` camera tuning, and Main-owned documentation. `ABP_Player_Dungeon.uasset`, all other `Content/**` assets, Config, project files, maps, Blueprints, Montages, GA/GE, and unrelated WIP remain excluded by default. The current `AGENTS.md` policy change is a separate documentation change and is not included.
+4. The user has explicitly authorized staging and commit after this closeout.
 
-## Executor Stop Conditions
+## Gemini Stop Conditions
 
-Stop and return evidence to Main instead of expanding scope if any of the following is required:
+Return evidence to Main without expanding scope if any of the following is needed:
 
-1. A new GameplayTag, event, Context field, GE, Config value, Build.cs dependency, input route, or public Blueprint callable API.
-2. A change to Launch, AI yaw/Focus, CharacterMovement ownership, Root Motion policy, damage dispatch, C3K feedback, or existing reaction cancellation/teardown contract.
-3. Any Content asset creation, import, retarget, reparent, save, or Blueprint graph edit.
-4. Any additional production/test file beyond the whitelist, including a test-only Ability or fixture seam.
-5. A missing, invalid, or incompatible required directional Montage for either fixture; report the authoring gap rather than retaining a generic fallback or substituting another direction.
+1. A public header/test seam, new GameplayTag, Config edit, GameplayEffect, input route, PlayerCharacter edit, or any change outside the three native/test files.
+2. A modification to `SetCharging()`, `TriggerRelease()`, `EndAbility()`, target assist, projectile spawning, aim requester lifetime, CharacterMovement, or cancellation ownership.
+3. Any asset save, Montage/BlendSpace retime, AnimBP graph edit, import, retarget, Blueprint change, staging, commit, compilation, or PIE operation.
+4. A fixture limitation that makes the required state assertions impossible without adding a new production/test type; report it for Main scope decision rather than working around it.
+5. A missing or invalid DrawReady/Release authored event, section, or Editor routing condition; report the exact asset gap for user/Main resolution.
 
 ## Closeout Record
 
-- Implemented surface: the approved eleven C++/test files only. A private non-reflected `FHitReactionFourWayMontageSet` and selector own one complete Front/Back/Left/Right selection contract. The four legacy single-Montage UPROPERTY fields and fallback parameter are gone; no Content asset, Blueprint, Tag, Config, Build.cs, GameplayCue, damage route, Launch route, AI yaw policy, or C3K feedback behavior changed.
-- Runtime contract: valid target-local attacker directions choose one cardinal Montage with X-axis priority on exact diagonal ties. Incomplete configuration, zero/near-zero, NaN, and Inf input fail closed before a Montage task can be created. Small remains a non-interrupting overlay; Big keeps existing grounded Root Motion, cancellation, ledge/falling cleanup, and no-pre-turn ownership.
-- Validation: the user confirmed focused Editor readback/PIE and the combat/reaction Automation matrix. The final `PolyQuest.Combat.HitReaction` Editor log completed with `Success` after the P3 repair timestamps; its new selector coverage includes cardinals, ties, both boundary sides, XY projection, near-zero, non-finite directions, and every incomplete set.
-- Static evidence: `git diff --check` passed. Rider inspection reported no Errors; existing project weak warnings remain, and the new selector has one non-blocking `AbsY` if-init style suggestion with no behavior or contract impact.
-- Review: Main's defect-first review identified the duplicated complete-set rule and missing near-zero test; both were repaired. The final Main review and an independent `gpt-5.6-luna / xhigh` Fresh Reviewer found no P0-P2 or actionable introduced defect. The code-review graph baseline matched `47d627c` for tracked files; direct source review covered the two untracked selector files.
-- Debt handoff: no new runtime debt is accepted. The existing conditional eight-direction follow-up remains canonical in `ROADMAP.md`: open it only when compatible diagonal assets exist and focused PIE demonstrates that nearest-cardinal presentation is visually inadequate.
-- Commit boundary: a later source/docs commit may include only these eleven C++/test paths plus Main-owned `plan.md`, `ROADMAP.md`, `ARCHITECTURE.md`, and `README.md`. All `Content/**`, Config, project, map, Blueprint, AnimBP, Montage, GA/GE, and unrelated WIP remain excluded. No staging or commit has occurred.
+- Implemented surface: `BowDrawFireAbility.cpp` now adds `State.Action.Charging` only after a valid DrawReady event, keeps the existing `State.Action.Attacking` lifetime tag, and preserves the existing Release/EndAbility cleanup. `ProjectileLifecycleAutomationTests.cpp` and `PlayerMobileBowAutomationTests.cpp` cover invalid event gates, normal Hold release, early release, and exact Charging cleanup. `PlayerCharacter.cpp` contains only the separately authorized CameraBoom lag tuning.
+- Runtime/AnimBP contract: `Is Bow Aiming` remains the Attack-lifetime Bow locomotion selector; `Is Bow Holding` is the Hold-only Charging selector; `AllowBlend` bypasses the UpperBody layer only for Bow Holding (or the existing Shield Guard route). Draw and Release keep their authored UpperBody Montage presentation while movement remains available.
+- Validation: the user confirmed focused Automation and Scene01 PIE. Editor readback confirmed the two Boolean wiring and camera values (`8.0f` lag speed, `0.0f` max distance); no separate Main compilation claim is made here. Main's independent defect-first fresh review found no P0-P2 or actionable P3 defect. Main static evidence includes scoped CodeGraph/code-review-graph review, Rider diagnostics previously returning no errors on touched C++, and `git diff --check`.
+- Asset boundary: `ABP_Player_Dungeon.uasset` and other authored Content remain local mutable WIP and are intentionally excluded from the source/docs commit; the commit does not claim clean-checkout reproduction of the Editor fixture.
+- Debt handoff: no new Bow runtime debt accepted. A single active Bow Ability still owns its existing target-assist, projectile, Action Window, and cleanup contracts; camera tuning is independent presentation data.
+- Commit boundary: stage source (`BowDrawFireAbility.cpp`, the two Bow test files, and authorized `PlayerCharacter.cpp`) plus `plan.md`, `ROADMAP.md`, `ARCHITECTURE.md`, and `README.md`; preserve `AGENTS.md`, all Content/Config/project WIP, and unrelated changes. No asset, Config, or map files are staged.

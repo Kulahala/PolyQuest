@@ -526,12 +526,13 @@ bool FProjectileLifecycleAutomationTest::RunTest(const FString& Parameters)
 				if (!BowAbility)
 				{
 					BowAbility = NewObject<UBowDrawFireAbility>(Player, TEXT("Test_BowAbilityInstance"));
-					BowAbility->SetTestCurrentActorInfo(ASC->AbilityActorInfo.Get());
 				}
 				TestNotNull(TEXT("Bow ability instance created for event gate testing"), BowAbility);
 
 				if (BowAbility)
 				{
+					BowAbility->SetTestCurrentActorInfo(ASC->AbilityActorInfo.Get());
+
 					UAnimMontage* MockMontage = NewObject<UAnimMontage>(GetTransientPackage(), TEXT("Test_MockBowMontage"));
 					UAnimMontage* WrongMontage = NewObject<UAnimMontage>(GetTransientPackage(), TEXT("Test_WrongMontage"));
 					UAnimComposite* InnerSequence = NewObject<UAnimComposite>(GetTransientPackage(), TEXT("Test_BowInnerSequence"));
@@ -553,68 +554,91 @@ bool FProjectileLifecycleAutomationTest::RunTest(const FString& Parameters)
 					// --- 5.3a DrawReady Event Gates ---
 					BowAbility->SetTestBowStateDrawing();
 
-					// Missing Instigator: must not advance state
+					// Missing Instigator: must not advance state or add Charging tag
 					FGameplayEventData MissingInstigatorEvent;
 					MissingInstigatorEvent.Target = Player;
 					MissingInstigatorEvent.OptionalObject = MockMontage;
 					BowAbility->TestOnDrawReadyEvent(MissingInstigatorEvent);
 					TestEqual(TEXT("DrawReady with missing Instigator does not advance BowState"), BowAbility->GetTestBowState(), (uint8)1 /* Drawing */);
+					TestFalse(TEXT("DrawReady with missing Instigator does not add Charging tag"), ASC->HasMatchingGameplayTag(TagCharging));
 
-					// Missing Target: must not advance state
+					// Missing Target: must not advance state or add Charging tag
 					FGameplayEventData MissingTargetEvent;
 					MissingTargetEvent.Instigator = Player;
 					MissingTargetEvent.OptionalObject = MockMontage;
 					BowAbility->TestOnDrawReadyEvent(MissingTargetEvent);
 					TestEqual(TEXT("DrawReady with missing Target does not advance BowState"), BowAbility->GetTestBowState(), (uint8)1 /* Drawing */);
+					TestFalse(TEXT("DrawReady with missing Target does not add Charging tag"), ASC->HasMatchingGameplayTag(TagCharging));
 
-					// Wrong Instigator: must not advance state
+					// Wrong Instigator: must not advance state or add Charging tag
 					FGameplayEventData WrongInstigatorEvent;
 					WrongInstigatorEvent.Instigator = OtherActor;
 					WrongInstigatorEvent.Target = Player;
 					WrongInstigatorEvent.OptionalObject = MockMontage;
 					BowAbility->TestOnDrawReadyEvent(WrongInstigatorEvent);
 					TestEqual(TEXT("DrawReady with wrong Instigator does not advance BowState"), BowAbility->GetTestBowState(), (uint8)1 /* Drawing */);
+					TestFalse(TEXT("DrawReady with wrong Instigator does not add Charging tag"), ASC->HasMatchingGameplayTag(TagCharging));
 
-					// Wrong Target: must not advance state
+					// Wrong Target: must not advance state or add Charging tag
 					FGameplayEventData WrongTargetEvent;
 					WrongTargetEvent.Instigator = Player;
 					WrongTargetEvent.Target = OtherActor;
 					WrongTargetEvent.OptionalObject = MockMontage;
 					BowAbility->TestOnDrawReadyEvent(WrongTargetEvent);
 					TestEqual(TEXT("DrawReady with wrong Target does not advance BowState"), BowAbility->GetTestBowState(), (uint8)1 /* Drawing */);
+					TestFalse(TEXT("DrawReady with wrong Target does not add Charging tag"), ASC->HasMatchingGameplayTag(TagCharging));
 
-					// Wrong Montage: must not advance state
+					// Wrong Montage: must not advance state or add Charging tag
 					FGameplayEventData WrongMontageEvent;
 					WrongMontageEvent.Instigator = Player;
 					WrongMontageEvent.Target = Player;
 					WrongMontageEvent.OptionalObject = WrongMontage;
 					BowAbility->TestOnDrawReadyEvent(WrongMontageEvent);
 					TestEqual(TEXT("DrawReady with wrong Montage does not advance BowState"), BowAbility->GetTestBowState(), (uint8)1 /* Drawing */);
+					TestFalse(TEXT("DrawReady with wrong Montage does not add Charging tag"), ASC->HasMatchingGameplayTag(TagCharging));
 
-					// Foreign Sequence not in Montage: must not advance state
+					// Foreign Sequence not in Montage: must not advance state or add Charging tag
 					FGameplayEventData ForeignSequenceEvent;
 					ForeignSequenceEvent.Instigator = Player;
 					ForeignSequenceEvent.Target = Player;
 					ForeignSequenceEvent.OptionalObject = ForeignSequence;
 					BowAbility->TestOnDrawReadyEvent(ForeignSequenceEvent);
 					TestEqual(TEXT("DrawReady with foreign Sequence does not advance BowState"), BowAbility->GetTestBowState(), (uint8)1 /* Drawing */);
+					TestFalse(TEXT("DrawReady with foreign Sequence does not add Charging tag"), ASC->HasMatchingGameplayTag(TagCharging));
 
-					// Valid Montage Inner Sequence: successfully advances Drawing -> Holding
+					// Valid Montage Inner Sequence: successfully advances Drawing -> Holding and applies Charging tag
 					FGameplayEventData ValidInnerSequenceEvent;
 					ValidInnerSequenceEvent.Instigator = Player;
 					ValidInnerSequenceEvent.Target = Player;
 					ValidInnerSequenceEvent.OptionalObject = InnerSequence;
 					BowAbility->TestOnDrawReadyEvent(ValidInnerSequenceEvent);
 					TestEqual(TEXT("DrawReady with Montage inner Sequence advances to Holding"), BowAbility->GetTestBowState(), (uint8)2 /* Holding */);
+					TestTrue(TEXT("DrawReady with Montage inner Sequence applies Charging tag"), ASC->HasMatchingGameplayTag(TagCharging));
+					TestTrue(TEXT("BowAbility records Charging applied"), BowAbility->GetTestChargingApplied());
 
-					// Valid Direct Montage: successfully advances Drawing -> Holding
+					// Valid Direct Montage: successfully advances Drawing -> Holding and applies Charging tag
+					BowAbility->TestSetCharging(false);
 					BowAbility->SetTestBowStateDrawing();
+					TestFalse(TEXT("Clean pre-state has no Charging tag"), ASC->HasMatchingGameplayTag(TagCharging));
+
 					FGameplayEventData ValidDrawReadyEvent;
 					ValidDrawReadyEvent.Instigator = Player;
 					ValidDrawReadyEvent.Target = Player;
 					ValidDrawReadyEvent.OptionalObject = MockMontage;
 					BowAbility->TestOnDrawReadyEvent(ValidDrawReadyEvent);
 					TestEqual(TEXT("DrawReady with valid Avatar identity advances to Holding"), BowAbility->GetTestBowState(), (uint8)2 /* Holding */);
+					TestTrue(TEXT("DrawReady with valid Avatar identity applies Charging tag"), ASC->HasMatchingGameplayTag(TagCharging));
+					TestTrue(TEXT("BowAbility records Charging applied after valid DrawReady"), BowAbility->GetTestChargingApplied());
+
+					// Valid InputReleased during Holding: transitions Holding -> Releasing and removes Charging tag
+					FGameplayEventData ValidHoldingInputReleaseEvent;
+					ValidHoldingInputReleaseEvent.Instigator = Player;
+					ValidHoldingInputReleaseEvent.Target = Player;
+					ValidHoldingInputReleaseEvent.InstigatorTags.AddTag(TagInputPrimaryAttack);
+					BowAbility->TestOnInputReleased(ValidHoldingInputReleaseEvent);
+					TestEqual(TEXT("InputReleased during Holding advances to Releasing"), BowAbility->GetTestBowState(), (uint8)3 /* Releasing */);
+					TestFalse(TEXT("InputReleased during Holding removes Charging tag from ASC"), ASC->HasMatchingGameplayTag(TagCharging));
+					TestFalse(TEXT("BowAbility records Charging cleared after release"), BowAbility->GetTestChargingApplied());
 
 					// --- 5.3b InputReleased Event Gates ---
 					BowAbility->SetTestBowStateDrawing();
@@ -676,6 +700,29 @@ bool FProjectileLifecycleAutomationTest::RunTest(const FString& Parameters)
 					ValidInnerSeqReleaseAnimEvent.Target = Player;
 					ValidInnerSeqReleaseAnimEvent.OptionalObject = InnerSequence;
 					TestTrue(TEXT("Release event with Montage inner Sequence accepted by gate"), BowAbility->Test_IsGameplayEventFromActiveMontage(ValidInnerSeqReleaseAnimEvent));
+
+					// --- 5.3d Early Release During Drawing: Fresh Instance Lifecycle ---
+					UBowDrawFireAbility* EarlyReleaseBowAbility = NewObject<UBowDrawFireAbility>(Player, TEXT("Test_EarlyReleaseBowAbilityInstance"));
+					TestNotNull(TEXT("Fresh Bow ability instance created for early release testing"), EarlyReleaseBowAbility);
+					if (EarlyReleaseBowAbility)
+					{
+						EarlyReleaseBowAbility->SetTestCurrentActorInfo(ASC->AbilityActorInfo.Get());
+						EarlyReleaseBowAbility->SetTestBowMontage(MockMontage);
+						EarlyReleaseBowAbility->SetTestBowStateDrawing();
+
+						// 1. Send valid InputReleased during Drawing -> records release request, stays in Drawing, no Charging tag
+						EarlyReleaseBowAbility->TestOnInputReleased(ValidInputReleaseEvent);
+						TestTrue(TEXT("Early release records release request during Drawing"), EarlyReleaseBowAbility->GetTestReleaseRequested());
+						TestEqual(TEXT("Early release remains in Drawing state before DrawReady"), EarlyReleaseBowAbility->GetTestBowState(), (uint8)1 /* Drawing */);
+						TestFalse(TEXT("Early release has no Charging tag on ASC during Drawing"), ASC->HasMatchingGameplayTag(TagCharging));
+						TestFalse(TEXT("Early release ability has no Charging applied during Drawing"), EarlyReleaseBowAbility->GetTestChargingApplied());
+
+						// 2. Send valid DrawReady -> transitions directly into Releasing without ever applying Charging tag
+						EarlyReleaseBowAbility->TestOnDrawReadyEvent(ValidDrawReadyEvent);
+						TestEqual(TEXT("Early release transitions to Releasing on DrawReady"), EarlyReleaseBowAbility->GetTestBowState(), (uint8)3 /* Releasing */);
+						TestFalse(TEXT("Early release does not have Charging tag on ASC after transition to Releasing"), ASC->HasMatchingGameplayTag(TagCharging));
+						TestFalse(TEXT("Early release ability does not have Charging applied in Releasing"), EarlyReleaseBowAbility->GetTestChargingApplied());
+					}
 				}
 			}
 

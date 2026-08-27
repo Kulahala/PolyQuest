@@ -253,7 +253,6 @@ void UBowDrawFireAbility::ActivateAbility(
 		return;
 	}
 
-	SetCharging(true);
 	BowState = EBowState::Drawing;
 	bReleaseRequested = false;
 }
@@ -276,7 +275,10 @@ void UBowDrawFireAbility::OnDrawReadyEvent(FGameplayEventData Payload)
 	if (bReleaseRequested)
 	{
 		TriggerRelease();
+		return;
 	}
+
+	SetCharging(true);
 }
 
 void UBowDrawFireAbility::OnInputReleased(FGameplayEventData Payload)
