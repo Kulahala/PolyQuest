@@ -1,6 +1,6 @@
 # PolyQuest
 
-UE 5.8 C++ GAS-first single-player stylized action RPG.
+UE 5.8 C++/GAS-first single-player low-poly action RPG with a fixed elevated oblique perspective and deliberate, readable combat.
 
 ## Status
 
@@ -46,6 +46,8 @@ PolyQuest has completed its native first-enemy combat loop and weapon/AI combat 
 
 `TODO-02C3K` completes three-channel Player-to-Enemy impact feedback without adding a GameplayCue framework: `APolyQuestPlayerController` solely owns short global hit-stop through real-time expiry and external-owner-safe restoration, while `AEnemyCharacter` selects Small/Big/Launch preset strength and dispatches one shared flesh sound plus one unattached, auto-destroyed world-space blood Niagara burst from the existing Damage GE context. A single GE with multiple Health modifiers produces one impact, while independent same-context GE applications remain distinct. The user confirmed `PolyQuest.Combat.HitFeedback` and focused Scene01 PIE audio/visual validation; sound, Niagara, Blueprint, and Material assets remain local `Content/**` WIP.
 
+`TODO-02C3L` completes four-direction Player/Enemy Small/Big reaction presentation with no generic Montage fallback. Each Ability requires Front/Back/Left/Right authored Montages; a private pure selector turns the existing target-local `Target -> Attacker` direction into four equal cardinal sectors with deterministic X-axis diagonal ties. Incomplete authoring or zero, near-zero, NaN, or Inf direction safely ends the reaction before a Montage Task starts. Small keeps its non-interrupting overlay behavior, Big keeps its grounded Root Motion/no-pre-turn behavior, and Launch remains independent. The user confirmed focused Editor/PIE behavior and the combat/reaction Automation matrix; the final `PolyQuest.Combat.HitReaction` run after the static repair succeeded. Authored GA/Montage assets remain local `Content/**` WIP.
+
 `TODO-01C3` is complete: Bow Draw/Hold/Release/Recovery and Charged Hold expose interruption only through authored `ActionDodgeCancelWindow`; `State.Action.Charging` remains descriptive state rather than a Dodge exemption. Dodge now uses UE 5.8's `InstancedPerActor` re-trigger path: a successor must pass its grounded/Stamina/cancel preflight before the old segment cleans up, and only a matching Dodge recovery window permits that successor. Dodge owns scoped CancelWindow permission, RateWindow playback-rate, invulnerability, and cleanup; its per-Montage-instance task callbacks prevent a stopped predecessor from ending the new segment. User-confirmed Automation and Scene01 PIE cover the completed Slice B route.
 
 ## Technology
@@ -86,7 +88,7 @@ The user owns compilation, PIE validation, packaging, and commit approval unless
 
 ## 中文说明
 
-PolyQuest 是一个以 UE 5.8、C++ 与 GAS 为核心的新风格化单机动作 RPG 项目。首个敌人的完整战斗闭环与武器/AI 战斗体系已原生落地：输入意图路由、连段轻击、体力耗竭与恢复、Root Motion 闪避、短按/长按蓄力攻击、冲刺/跳跃/冲刺攻击、共享武器轨迹命中与 GAS 解析、首个敌人的 Sight/StateTree/近战循环（含攻击 Profile/触及/冷却）、终态死亡与布娃娃表现、分级 Small/Big/Launch 受击、地面 Root Motion 硬直与 CharacterMovement 击飞/落地恢复、仅由非致死 Health 伤害路径触发的 Mesh Overlay 红闪与严格三档玩家镜头抖动（`TODO-07B1` / `TODO-07B1A`）、玩家专属的 LandingRecovery-to-Dodge 作者化取消路线、敌人韧性削韧与延后姿态破坏、玩家方向性格挡与破防、Q 键定时弹反（经敌人韧性路径反制）、通知时序的敌人霸体、战斗 Notify 归属与命名审计、Light/Charged/Sprint Attack 的作者化 Montage 速率窗口、玩家作者化 Action Window 与闪避恢复连续链（`TODO-01C3`）、直接绑定 GameplayAbility 类的主手/双手/空手装备系统、按精确 Handle 激活的 `1-4` 战技与首个 `GA_Skill_Whirlwind`、世界武器拾取与原子掉落交换、静态网格体刀刃轨迹 Socket 标定、副手盾牌复合防御、普通敌人加权攻击集、敌人静态武器几何绑定与摄像机碰撞忽略保护、冷却重定位、距离感知加权近战接近与攻击执行、跨阶段武器与战斗健康/Automation 信号审查门（`TODO-03H1` / `TODO-03H2` / `TODO-03H3`），以及玩家弓箭的目标辅助、有限追踪与锁定目标优先（`TODO-03B-2` / `TODO-03B-3`）。用户已确认各阶段的本地 `PolyQuestEditor` 自动化测试矩阵与聚焦 PIE/Standalone 视觉路由。GA、GE、Montage、AnimBP、Blueprint、输入、DataAsset 和地图等作者化资产仍是本地高频 WIP，因此聚焦的源码/配置提交不宣称可以从干净检出完整复现这些夹具。
+PolyQuest 是一个以 UE 5.8、C++ 与 GAS 为核心的单机低多边形动作 RPG：采用固定高位斜视视角，以清晰的方向反馈、短促硬直与可读的攻防节奏为核心。首个敌人的完整战斗闭环与武器/AI 战斗体系已原生落地：输入意图路由、连段轻击、体力耗竭与恢复、Root Motion 闪避、短按/长按蓄力攻击、冲刺/跳跃/冲刺攻击、共享武器轨迹命中与 GAS 解析、首个敌人的 Sight/StateTree/近战循环（含攻击 Profile/触及/冷却）、终态死亡与布娃娃表现、分级 Small/Big/Launch 受击、地面 Root Motion 硬直与 CharacterMovement 击飞/落地恢复、仅由非致死 Health 伤害路径触发的 Mesh Overlay 红闪与严格三档玩家镜头抖动（`TODO-07B1` / `TODO-07B1A`）、玩家专属的 LandingRecovery-to-Dodge 作者化取消路线、敌人韧性削韧与延后姿态破坏、玩家方向性格挡与破防、Q 键定时弹反（经敌人韧性路径反制）、通知时序的敌人霸体、战斗 Notify 归属与命名审计、Light/Charged/Sprint Attack 的作者化 Montage 速率窗口、玩家作者化 Action Window 与闪避恢复连续链（`TODO-01C3`）、直接绑定 GameplayAbility 类的主手/双手/空手装备系统、按精确 Handle 激活的 `1-4` 战技与首个 `GA_Skill_Whirlwind`、世界武器拾取与原子掉落交换、静态网格体刀刃轨迹 Socket 标定、副手盾牌复合防御、普通敌人加权攻击集、敌人静态武器几何绑定与摄像机碰撞忽略保护、冷却重定位、距离感知加权近战接近与攻击执行、跨阶段武器与战斗健康/Automation 信号审查门（`TODO-03H1` / `TODO-03H2` / `TODO-03H3`），以及玩家弓箭的目标辅助、有限追踪与锁定目标优先（`TODO-03B-2` / `TODO-03B-3`）。用户已确认各阶段的本地 `PolyQuestEditor` 自动化测试矩阵与聚焦 PIE/Standalone 视觉路由。GA、GE、Montage、AnimBP、Blueprint、输入、DataAsset 和地图等作者化资产仍是本地高频 WIP，因此聚焦的源码/配置提交不宣称可以从干净检出完整复现这些夹具。
 
 `TODO-07B2` 已完成由精确 Trace Window 生命周期驱动的 Player/Enemy Niagara 近战武器拖尾，既有 Sweep/Resolver 伤害路径不变。用户已确认聚焦 `Scene01` PIE 视觉验收，以及包含 `PolyQuest.Melee.WeaponTrail` 的十三套 Unreal Editor Automation 全部通过；Niagara 资产和 Blueprint 绑定仍是本地 `Content/**` WIP，不作为干净检出的复现证据。
 
@@ -103,6 +105,8 @@ PolyQuest 是一个以 UE 5.8、C++ 与 GAS 为核心的新风格化单机动作
 `TODO-02C3I` 已完成击飞朝向表现修正：Player 与 Enemy 在 Takeoff Montage 启动前冻结受击方向和角色当时的 Yaw，Commit Notify 时从同一份快照同时得出“面向攻击者”的 Yaw 与“远离攻击者”的 CharacterMovement 速度，避免转身后重新取朝向导致的位移漂移。Enemy Controller 只在真实激活的 Enemy Launch Ability Spec 存在时让出 yaw，普通 Big 受击仍使用原有 AI 朝向规则。用户已确认二十套 Editor Automation 与聚焦 Scene01 PIE 通过；本摘要不额外声称独立的 Development Editor 编译记录，作者化受击资产仍为本地 WIP。
 
 `TODO-02C3J` 已完成击飞起飞前的平滑转向：Player 与 Enemy 不再在 Commit Notify 瞬间跳转朝向，而是在 Takeoff 中以固定有限速率沿最短角度转向攻击者；Commit 与转向完成任一方先到只记录状态，只有两者都满足时才一次性消费冻结的击飞速度并交给既有 CharacterMovement 抛射。Root Motion、异常掉落、取消、死亡、无效状态与暂停 Takeoff 异常结束都会 Fail-Closed，不会在空中继续抢写 yaw。用户确认 `PolyQuest.Combat.LaunchFacingSmoothing`、`PolyQuest.Combat.HitReaction` 与完整战斗/受击回归矩阵均通过，并在 Scene01 PIE 验证转向、抛射和落地恢复；GA、GE、Montage、AnimBP、Blueprint 等作者化资产仍是本地 WIP。
+
+`TODO-02C3L` 已完成 Player/Enemy Small/Big 的四方向受击表现选择。`FHitReactionImpactResolver` 仍是唯一的受击 Context 到目标本地 `Target -> Attacker` 方向来源；私有纯 C++ selector 只按 XY 把攻击者方位映射到 Front/Back/Left/Right 四个等角扇区，精确 45 度对角线固定使用 X 轴优先。四个方向 Montage 现在必须完整配置，旧的单 Montage 字段已移除；配置不完整、零/近零、NaN 或 Inf 方向会在创建 Montage Task 前 Fail-Closed。Small 保持不打断的叠加层行为，Big 保持接地 Root Motion、既有清理与不预转身合同，Launch、AI yaw、Tag、伤害、Poise 和 C3K 命中反馈均未改变。用户确认聚焦 Editor/PIE 与战斗/受击 Automation；修复后的最终 `PolyQuest.Combat.HitReaction` 运行成功。作者化 GA/Montage 资产仍是本地 `Content/**` WIP。
 
 `TODO-01C4` 已完成玩家专属的起身翻滚路线。现有 `ActionDodgeCancelWindow` 只会在匹配且仍活跃的 Player Launch `LandingRecovery` Montage 中授权普通的接地 Dodge；该阶段对 `State.Action.CanCancel.Dodge` 的 scoped loose-tag 贡献会在窗口结束和所有 Launch 清理路径中移除。Dodge 仍会先提交其正常 Cost，随后才取消 Launch，因此保留“当前 Stamina 大于 0 即可开始、Cost 后钳制到 0”的软透支规则；连续输入在 Dodge 自身恢复窗口到来前不会覆盖新起手。用户已确认 Automation 与聚焦 PIE，Montage/GA/GE 作者化资产继续保留为本地 WIP。
 

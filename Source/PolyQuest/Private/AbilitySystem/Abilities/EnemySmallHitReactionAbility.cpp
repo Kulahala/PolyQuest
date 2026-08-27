@@ -5,6 +5,8 @@
 #include "Animation/AnimInstance.h"
 #include "Animation/AnimMontage.h"
 #include "Character/Enemy/EnemyCharacter.h"
+#include "Combat/Reaction/HitReactionFourWayMontageSelector.h"
+#include "Combat/Reaction/HitReactionImpactResolver.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "PolyQuest.h"
 
@@ -46,7 +48,7 @@ void UEnemySmallHitReactionAbility::ActivateAbility(
 	const FGameplayAbilitySpecHandle Handle,
 	const FGameplayAbilityActorInfo* ActorInfo,
 	const FGameplayAbilityActivationInfo ActivationInfo,
-	const FGameplayEventData*)
+	const FGameplayEventData* TriggerEventData)
 {
 	bEndAbilityRequested = false;
 	BoundAnimInstance = nullptr;
@@ -59,12 +61,34 @@ void UEnemySmallHitReactionAbility::ActivateAbility(
 
 	if (!CharacterASC || !EnemyCharacter || !AnimInstance || !ValidateActivationSetup(ActorInfo))
 	{
-		UE_LOG(LogPolyQuest, Warning, TEXT("Enemy small hit reaction activation aborted for '%s': ASC, living enemy, AnimInstance, montage, and required tags are required."), *GetNameSafe(EnemyCharacter));
+		UE_LOG(LogPolyQuest, Warning, TEXT("Enemy small hit reaction activation aborted for '%s': ASC, living enemy, AnimInstance, complete four-way montages (Front, Back, Left, Right), and required tags are required."), *GetNameSafe(EnemyCharacter));
 		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
 		return;
 	}
 
-	MontageTask = UAbilityTask_PlayMontageAndWait::CreatePlayMontageAndWaitProxy(this, NAME_None, SmallHitReactionMontage);
+	FVector LocalImpactDirection = FVector::ZeroVector;
+	if (TriggerEventData)
+	{
+		LocalImpactDirection = FHitReactionImpactResolver::ResolveImpactDirection(*TriggerEventData, EnemyCharacter);
+	}
+
+	FHitReactionFourWayMontageSet MontageSet;
+	MontageSet.Front = FrontSmallHitReactionMontage;
+	MontageSet.Back = BackSmallHitReactionMontage;
+	MontageSet.Left = LeftSmallHitReactionMontage;
+	MontageSet.Right = RightSmallHitReactionMontage;
+
+	UAnimMontage* SelectedMontage = FHitReactionFourWayMontageSelector::SelectFromLocalAttackerDirection(
+		LocalImpactDirection, MontageSet);
+
+	if (!SelectedMontage)
+	{
+		UE_LOG(LogPolyQuest, Warning, TEXT("Enemy small hit reaction activation aborted for '%s': directional montage selection failed."), *GetNameSafe(EnemyCharacter));
+		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
+		return;
+	}
+
+	MontageTask = UAbilityTask_PlayMontageAndWait::CreatePlayMontageAndWaitProxy(this, NAME_None, SelectedMontage);
 	if (!MontageTask)
 	{
 		UE_LOG(LogPolyQuest, Warning, TEXT("Enemy small hit reaction activation aborted for '%s': failed to create a montage AbilityTask."), *GetNameSafe(EnemyCharacter));
@@ -80,7 +104,7 @@ void UEnemySmallHitReactionAbility::ActivateAbility(
 	}
 
 	BoundAnimInstance = AnimInstance;
-	ActiveMontage = SmallHitReactionMontage;
+	ActiveMontage = SelectedMontage;
 	BoundAnimInstance->OnMontageEnded.RemoveDynamic(this, &UEnemySmallHitReactionAbility::OnActiveMontageEnded);
 	BoundAnimInstance->OnMontageEnded.AddDynamic(this, &UEnemySmallHitReactionAbility::OnActiveMontageEnded);
 	MontageTask->ReadyForActivation();
@@ -92,7 +116,7 @@ void UEnemySmallHitReactionAbility::ActivateAbility(
 
 	if (!BoundAnimInstance || !ActiveMontage || !BoundAnimInstance->Montage_IsActive(ActiveMontage.Get()))
 	{
-		UE_LOG(LogPolyQuest, Warning, TEXT("Enemy small hit reaction activation aborted for '%s': montage '%s' did not start."), *GetNameSafe(EnemyCharacter), *GetNameSafe(SmallHitReactionMontage));
+		UE_LOG(LogPolyQuest, Warning, TEXT("Enemy small hit reaction activation aborted for '%s': montage '%s' did not start."), *GetNameSafe(EnemyCharacter), *GetNameSafe(ActiveMontage.Get()));
 		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
 		return;
 	}
@@ -150,7 +174,13 @@ bool UEnemySmallHitReactionAbility::ValidateActivationSetup(const FGameplayAbili
 	const USkeletalMeshComponent* SkeletalMesh = EnemyCharacter ? EnemyCharacter->GetMesh() : nullptr;
 	const UAnimInstance* AnimInstance = SkeletalMesh ? SkeletalMesh->GetAnimInstance() : nullptr;
 
-	return CharacterASC && EnemyCharacter && !EnemyCharacter->IsDead() && AnimInstance && SmallHitReactionMontage
+	FHitReactionFourWayMontageSet MontageSet;
+	MontageSet.Front = FrontSmallHitReactionMontage;
+	MontageSet.Back = BackSmallHitReactionMontage;
+	MontageSet.Left = LeftSmallHitReactionMontage;
+	MontageSet.Right = RightSmallHitReactionMontage;
+
+	return CharacterASC && EnemyCharacter && !EnemyCharacter->IsDead() && AnimInstance && MontageSet.IsComplete()
 		&& SmallHitReactionAbilityTag.IsValid() && SmallHitReactionEventTag.IsValid() && SmallHitReactingStateTag.IsValid()
 		&& StunnedStateTag.IsValid() && DeadStateTag.IsValid();
 }

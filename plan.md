@@ -1,186 +1,180 @@
-# TODO-02C3K: Combat Impact Feedback v1
+# TODO-02C3L: Four-Directional Small/Big Hit Reactions v1
 
 ## Plan State
 
-- Status: Completed / Closed. `PolyQuest.Combat.HitFeedback` passed its 23 numbered Automation coverage sections; the user confirmed focused PIE audio/visual verification. Two Main fresh-review P2 findings were remediated, revalidated through focused Automation/PIE, and cleared by a Main delta fresh review.
-- Baseline: `45811f8` (`[Feature] 支持装备武器显示缩放 (Add Equipped Weapon Display Scale)`).
-- Objective: make one confirmed Player-to-Enemy, nonlethal Health-damage event read as impact through a short global hit-stop, one shared impact sound, and one world-space enemy blood Niagara burst.
-- Player-facing success: Small, Big, and Launch damage feel materially different through bounded hit-stop intensity; all valid Player melee and projectile impacts play the same configured flesh sound; a valid impact point produces one short blood burst on the enemy surface; enemy attacks against the Player receive none of these new C3K channels.
-- User decisions frozen for v1:
-  - Hit-stop is global and applies only after the Player has successfully caused nonlethal Health damage to an Enemy.
-  - Presets are `Small = 0.02s / 0.15`, `Big = 0.05s / 0.05`, and `Launch = 0.04s / 0.05`, where the second value is global time dilation.
-  - `None` and invalid multi-tier reaction tags use the Small preset for base impact feedback. Existing invalid-tier Warning and reaction-event skip behavior remain unchanged.
-  - One shared sound and one shared blood Niagara System serve all tiers. C3K does not create three sound/VFX sets.
-  - Blood is a one-shot in world space at `FHitResult.ImpactPoint`, with the Niagara local `+Z` aligned to `ImpactNormal`, auto-destroyed, and never attached to a Character mesh, bone, or socket.
-- Preserve all user WIP. The current worktree has 322 unrelated changes. No existing `Content/**`, Config, map, Blueprint, GA/GE, Montage, AnimBP, imported resource, generated output, or unrelated source path is an implementation or commit candidate.
+- Status: Completed / Closed. The C3L source/test WIP removed the obsolete generic fallback contract after the user intentionally cleared the four legacy single-Montage fields.
+- Baseline: `47d627c` (`[Feature] 完成战斗命中反馈 (Complete Combat Impact Feedback)`).
+- Documentation closeout: Main synchronized `README.md`, `ARCHITECTURE.md`, `ROADMAP.md`, and this closeout record. No stage file is staged or committed by this plan.
+- Objective: make living Player and Enemy Small/Big reactions select an attacker-relative Front, Back, Left, or Right authored Montage from one complete required set, with no legacy single-Montage fallback.
+- Player-facing success: from any cardinal attack direction, the victim visibly plays the matching directional Small or Big reaction; diagonal attacks resolve deterministically to a nearest cardinal reaction; invalid impact data safely skips the reaction instead of playing a wrong directional asset; no Player/Enemy makes a preparatory turn toward the attacker before a Big reaction.
+- Scope decision: C3L is four-direction only. Eight-direction presentation is not prebuilt or partially generalized; it requires a separate accepted stage after compatible diagonal assets exist and focused PIE proves four-direction mapping visually inadequate.
 
 ## Route And Delegation
 
 Outer: `ue-stage-workflow`
 Primary: `ue5-cpp-gameplay`
-Support: `game-feel`, `unreal-niagara`
-Route reason: this is a narrow native C++ presentation response layered on top of the already-authoritative Health delegate. It needs explicit controller ownership and teardown for global time dilation, while the sound and Niagara burst remain authored presentation references rather than gameplay state.
+Support: none
+Route reason: this is a bounded native GAS presentation-selection change. It consumes the existing Health-event Context and changes only Montage choice; authority, damage, tags, movement, and authored assets retain their current owners.
 
 Plan explorers: 0
 Implementation executors: 1 (Gemini, only after plan review and explicit Main handoff)
-Complex Executor: one scoped lifecycle-sensitive implementation
+Complex Executor: none
 Main parallel work: none
-Reason: the Enemy Health callback, PlayerController-owned global-dilation lifetime, and Automation assertions form one coupled single-player lifecycle. Splitting them risks two owners for a global engine value.
+Reason: the four Ability integrations and one shared pure selector form a small, coherent source/test slice. Documentation, asset authoring, validation interpretation, review, staging, and commit remain Main/User-owned.
 
-Main owns the C3K runtime contract, public API, GAS/context interpretation, integration acceptance, documentation, staging, and commit. Gemini may write only the exact frozen five-file source/test slice below. It must stop for any additional public surface, Tag, Config, Build.cs, asset, Blueprint, test-fixture, lifecycle, or scope need.
+Main owns the C3L contract, public/reflection boundary, shared resolver interpretation, documentation, acceptance, staging, and commit. Gemini may write only the approved C++/test paths below. It must stop and return evidence before touching an unlisted path, public API, GameplayTag, Config, Build.cs, asset, Blueprint, test fixture, or lifecycle rule.
 
-## Source Evidence And Frozen Runtime Contract
+## Existing Evidence
 
-### Existing authority and event boundary
+1. `FHitReactionImpactResolver::ResolveImpactDirection()` already returns a finite, normalized target-local planar `Target -> Attacker` direction from the same `FGameplayEventData::ContextHandle` forwarded by Player and Enemy Health delegates. Instigator location takes priority over `ImpactNormal`; invalid input returns `FVector::ZeroVector`.
+2. The user intentionally cleared the four legacy serialized single-Montage fields after the original C3L PIE/Automation pass to prepare their removal. Their continued source-level validation is therefore a current authoring/runtime mismatch, not a compatibility requirement. `AM_SmallHitReaction_F` and `AM_BigHitReaction_F` are retained user-owned Front directional Montages, not generic fallbacks.
+3. Static asset inventory contains four candidate source sequences for each tier under `Content/_Animations/Weapon/LightSword/`: `A_Hit_[F/B/L/R]_React_Sword` and `A_Hit_[F/B/L/R]_Stagger_RootMotion_Sword`. This is file-inventory evidence only; Editor preview, Skeleton compatibility, Montage configuration, and PIE behavior remain user validation.
+4. Small is an overlay route with no movement/input cancellation. Big is a grounded full-body Root Motion interrupt route. Launch has its independent C3I/C3J target-facing and CharacterMovement trajectory contract.
 
-1. `AEnemyCharacter::OnHealthAttributeChanged()` is the only new C3K trigger point. It already rejects non-authority, teardown, destruction, lethal Health, healing/direct writes, missing `GEModData`, and dead state before its existing reaction dispatch.
-2. `FMeleeHitResolver` and `FCombatProjectileHitResolver` both add their already-resolved `FHitResult` to the Damage `FGameplayEffectContextHandle` before applying the GE. C3K consumes that existing context only; it does not add a second trace, overlap, damage application, notify, or hit-routing path.
-3. Existing Player target-side Overlay and CameraShake stay owned by `APlayerCharacter`. Enemy attacks against the Player keep that existing behavior and do not invoke new C3K hit-stop, sound, or blood.
-4. `PolyQuest.Build.cs` already exposes `Niagara` as a private dependency. No module or Build.cs change is approved.
+## Frozen Runtime Contract
 
-### Controller-owned global hit-stop
+### Direction Semantics
 
-Contract owner: Main. Implementation writer: Gemini. Shared public surface: `APolyQuestPlayerController`; no Blueprint-callable API, Tag, input route, Config value, or generic subsystem is added.
+1. Direction names refer to the attacker's position in the target's local frame, never to the desired movement/displacement direction.
+2. The shared four-way selector receives only a local planar vector and uses these exact sectors:
+   - `Abs(X) >= Abs(Y)`: `X >= 0` selects Front; otherwise Back.
+   - `Abs(X) < Abs(Y)`: `Y >= 0` selects Right; otherwise Left.
+   - Exact 45-degree ties therefore use the X axis: Front for X-positive front diagonals and Back for X-negative back diagonals. The implementation must not change this tie-break rule.
+3. The selector must first copy `FVector(Local.X, Local.Y, 0.0f)` and use only that planar value for finite checks, near-zero rejection, absolute-value comparison, and sector selection. Z is always ignored.
+4. A complete Front/Back/Left/Right Montage set is mandatory. Zero, near-zero, NaN, Inf, missing `TriggerEventData`, a missing target, an incomplete set, or a null selected member produces no Montage selection. The Ability follows its existing immediate activation-failure cleanup without creating a Montage task; it must not substitute Front, a legacy field, or any other direction.
+5. Direction is evaluated once during the synchronous Ability activation. No `FGameplayEventData`, Context, Actor, or pointer into effect data survives that call.
 
-1. Add one C++-only native request method to `APolyQuestPlayerController`:
+### Ownership And Non-Goals
 
-   ```cpp
-   void RequestCombatImpactHitStop(float DurationSeconds, float TimeDilation);
-   ```
+1. Small remains `InstancedPerActor`, `ServerOnly`, non-interrupting, and overlay-only. It gains no movement/input block, cancellation, yaw, or CharacterMovement write.
+2. Big remains its existing grounded, full-body Root Motion route. It receives the selected Montage before task creation, but retains its existing action cancellation, velocity stop, ledge safety, Falling teardown, and unified EndAbility behavior.
+3. Big must not call `SetActorRotation`, change Controller rotation, change AI Focus, inject movement, alter Root Motion, or use C3I/C3J smoothing. Its current local Root Motion remains relative to the current actor facing.
+4. Launch is completely excluded: no change to its snapshot, turn task, commit Notify, velocity, takeoff, airborne, LandingRecovery, or AI yaw arbitration.
+5. No new GameplayTag, event, GE, damage route, GameplayCue, DataAsset, generic directional framework, input route, Config/Build.cs change, physics behavior, or asset migration is approved.
 
-   It is not a `UFUNCTION`, Blueprint route, GameplayCue, timer, gameplay state, or reusable global-effects framework.
+## Approved C++ And Test Slice
 
-2. In the protected override section, add `virtual void Tick(float DeltaSeconds) override;` and private hit-stop state. In UE 5.8, `APlayerController::TickActor` invokes `PlayerTick` only when a `PlayerInput` exists but invokes `Tick` on the normal path regardless, so `Tick` is the sole C3K maintenance hook for both PIE and the no-`ULocalPlayer` Automation world. Do not also advance the same state from `PlayerTick`; that would make local controllers process expiry twice in one frame. The state records whether C3K currently owns a request, the global dilation captured before its first request, the actual dilation C3K last applied/read back, and a real-time expiry. Private helper names are implementation detail, but natural expiry and `EndPlay` must converge on one idempotent restore path.
+### Private Four-Way Selector
 
-3. Use `UWorld::GetRealTimeSeconds()` for expiry. Do not use `FTimerManager`, delay AbilityTasks, or scaled world time: those can be slowed by global dilation and leave a freeze active too long. `Tick` must call `Super::Tick(DeltaSeconds)` and then run the shared maintenance once. The maintenance ignores scaled `DeltaSeconds` for expiry and reads the current real-time clock.
+Amend these existing C3L private C++-only WIP files in place:
 
-4. Validate every request fail-closed: World exists, duration and dilation are finite, duration is strictly positive, and `0.0f < TimeDilation <= 1.0f`. Invalid requests do not change global dilation or retained state.
+1. `Source/PolyQuest/Private/Combat/Reaction/HitReactionFourWayMontageSelector.h`
+2. `Source/PolyQuest/Private/Combat/Reaction/HitReactionFourWayMontageSelector.cpp`
 
-5. On the first valid request, capture the current global dilation as the restoration value. Apply the requested dilation using `UGameplayStatics::SetGlobalTimeDilation`, then read back `GetGlobalTimeDilation(World)` and record the actual value as the controller-owned value so engine clamping cannot create a false external-override mismatch.
+They define a narrow non-reflected `FHitReactionFourWayMontageSet` containing non-owning `UAnimMontage*` Front/Back/Left/Right candidates, `IsComplete()`, and `FHitReactionFourWayMontageSelector::SelectFromLocalAttackerDirection(...)`.
 
-6. While active, overlap arbitration is monotonic:
-   - `AppliedDilation = min(current C3K applied dilation, requested dilation)`;
-   - `ExpiryRealTimeSeconds = max(current expiry, now + requested duration)`.
+- The selector takes only a local direction and the four-way set. It first planarizes to XY and returns the selected candidate only when the set is complete and that planar direction is finite/non-zero; otherwise it returns `nullptr`. It has no fallback parameter.
+- It does not receive a World, ASC, GameplayEffect, Actor, DataAsset, or Blueprint value; it only implements four-sector classification and pointer selection.
+- It is private to the runtime module, has no `UCLASS`, `USTRUCT`, `UENUM`, generated header, `POLYQUEST_API`, Blueprint exposure, logging, allocation, Tick, or mutable state.
+- It calls no transform/movement API. `FHitReactionImpactResolver` remains the existing sole owner of Context-to-local-direction resolution.
 
-   Thus a later Small hit cannot weaken or shorten an active Big/Launch stop, while later significant impacts may extend it.
+### Ability Authoring Surface And Activation
 
-7. Before extending an active request, and on every maintenance/expiry path, compare live dilation with the recorded applied value using `FMath::IsNearlyEqual(..., KINDA_SMALL_NUMBER)`. If another system has changed global dilation outside that tolerance, C3K relinquishes the old request without writing a restore. A later valid C3K request captures that external value as its new restoration baseline. On normal expiry or `EndPlay`, restore only when the live global dilation is still nearly equal to the controller-owned applied value; this preserves an external owner's intervening override.
+Modify only these public/private pairs:
 
-8. `EndPlay` must clear the C3K request through the same restore helper before existing HUD teardown and `Super::EndPlay`. A request arriving after expiry must first settle the old request through the same helper, then capture the now-live baseline. No active hit-stop state may survive controller destruction, map transition, PIE teardown, or Automation world cleanup.
+1. `Source/PolyQuest/Public/AbilitySystem/Abilities/PlayerSmallHitReactionAbility.h`
+2. `Source/PolyQuest/Private/AbilitySystem/Abilities/PlayerSmallHitReactionAbility.cpp`
+3. `Source/PolyQuest/Public/AbilitySystem/Abilities/EnemySmallHitReactionAbility.h`
+4. `Source/PolyQuest/Private/AbilitySystem/Abilities/EnemySmallHitReactionAbility.cpp`
+5. `Source/PolyQuest/Public/AbilitySystem/Abilities/PlayerBigHitReactionAbility.h`
+6. `Source/PolyQuest/Private/AbilitySystem/Abilities/PlayerBigHitReactionAbility.cpp`
+7. `Source/PolyQuest/Public/AbilitySystem/Abilities/EnemyHitReactionAbility.h`
+8. `Source/PolyQuest/Private/AbilitySystem/Abilities/EnemyHitReactionAbility.cpp`
 
-9. Under `WITH_DEV_AUTOMATION_TESTS`, expose only narrow test accessors/wrappers needed to drive a request and inspect active state, captured/applied dilation, and expiry. They must not exist in shipping behavior or become production gameplay controls.
+For each Ability:
 
-### Enemy impact-feedback selection and presentation
+1. Remove the legacy single-Montage UPROPERTY from every Ability header and all runtime references to it:
+   - Small: `SmallHitReactionMontage`.
+   - Player Big: `BigHitReactionMontage`.
+   - Enemy Big: `HitReactionMontage`.
+   Do not rename, modify, or delete any Content asset while removing these native fields.
+2. Retain the four existing `EditDefaultsOnly, BlueprintReadOnly` private `TObjectPtr<UAnimMontage>` directional fields with `AllowPrivateAccess`, and revise their Chinese authoring ToolTips where needed. Every ToolTip must explicitly state "攻击者位于受击者本地[前/后/左/右]方时播放", state that the name does not describe victim displacement, and state that all four fields are required together. Use these exact naming families:
+   - Small: `FrontSmallHitReactionMontage`, `BackSmallHitReactionMontage`, `LeftSmallHitReactionMontage`, `RightSmallHitReactionMontage`.
+   - Player Big: `FrontBigHitReactionMontage`, `BackBigHitReactionMontage`, `LeftBigHitReactionMontage`, `RightBigHitReactionMontage`.
+   - Enemy Big: `FrontHitReactionMontage`, `BackHitReactionMontage`, `LeftHitReactionMontage`, `RightHitReactionMontage`.
+3. `ValidateActivationSetup()` must require all four directional fields through the private complete-set check. Missing authoring configuration fails activation clearly before task construction; partial configuration is invalid and has no degraded behavior.
+4. In `UPlayerSmallHitReactionAbility::ActivateAbility` and `UEnemySmallHitReactionAbility::ActivateAbility`, retain the named fourth parameter `const FGameplayEventData* TriggerEventData`. Do not alter the virtual signature.
+5. After basic Avatar/ASC/AnimInstance preflight and before `UAbilityTask_PlayMontageAndWait` construction, resolve the local direction with `FHitReactionImpactResolver::ResolveImpactDirection(*TriggerEventData, Avatar)` when an event exists. Build the private four-way set from this Ability's UPROPERTY fields, then select the actual Montage through the private selector.
+6. Create the task and set `ActiveMontage` only after a non-null selection. A failed selection follows the existing immediate activation-failure cleanup with no task construction. Startup validation and diagnostics must refer to `ActiveMontage.Get()`; in particular, the failed-start Warning must print `*GetNameSafe(ActiveMontage.Get())` rather than a removed legacy member.
+7. In `UPlayerBigHitReactionAbility` and `UEnemyHitReactionAbility`, preserve the existing pre-task `ImpactDirectionSnapshot` write from the same resolved value. Do not add snapshots to Small.
+8. Preserve every other lifecycle ordering, delegate binding, cancellation path, movement restoration rule, tag count, and StateTree/AI interaction unchanged.
 
-Contract owner: Main. Implementation writer: Gemini. Shared GAS/context contract: C3K reads one already-applied `FGameplayEffectSpec` and never mutates its GE, Context, Tags, ability activation, reaction dispatch, death path, or damage result.
+### Execution Order
 
-1. In `AEnemyCharacter::OnHealthAttributeChanged`, preserve the existing gates and `TriggerHitFeedbackOverlay()` call. Immediately after the valid nonlethal Health-decrease / `GEModData` gate and that Overlay call, derive the reaction tier once from the existing `EffectSpec` Asset Tags without emitting the existing invalid-tier Warning yet.
+1. Amend the existing private selector to remove its fallback parameter and verify its includes remain private to the runtime module.
+2. Remove the four legacy UPROPERTY declarations and their runtime references, then make the existing sixteen directional properties a complete mandatory authoring set through validation and ToolTips.
+3. Integrate no-fallback selection in the two Small Abilities, then in the two Big Abilities; preserve each Big snapshot before task creation as part of that same edit.
+4. Add the pure selector coverage to `HitReactionAutomationTests.cpp` and retain all pre-existing resolver/event tests.
+5. Run static checks, inspect the scoped diff, and return the prescribed evidence without editing assets, documentation, staging, or committing.
 
-2. Invoke the new private C3K helper before the existing Stunned, Poise-broken, and reaction-event early returns. This deliberately makes a successful Health hit feel like impact even when a reaction Montage is suppressed.
+### Native Automation
 
-3. The helper must require that the Effect Context Instigator:
-   - is valid;
-   - implements `UCombatTeamAgent`; and
-   - returns the exact `Team.Player` tag.
+Modify only `Source/PolyQuest/Private/Tests/HitReactionAutomationTests.cpp`.
 
-   Enemy-sourced, untagged, invalid, or non-Player contexts are silent no-ops. Do not cast to a concrete Player class as a substitute for the Team contract.
+1. Include the new private selector and construct transient Front/Back/Left/Right objects with `NewObject<UAnimMontage>(GetTransientPackage())`; do not load or depend on Content assets.
+2. Extend the existing impact-resolver section to cover selector behavior:
+   - four cardinals;
+   - exact four diagonal ties under the frozen X-axis rule;
+   - samples immediately on both sides of each boundary;
+   - unnormalized planar input and non-zero Z;
+   - incomplete sets and a missing selected member;
+   - zero, near-zero, NaN, and Inf input returning `nullptr`.
+3. Assert pointer identity for each valid selected dummy Montage. Assert `IsComplete()` rejects every incomplete set and the selector returns `nullptr` for incomplete or invalid input; no test may expect a fallback. Existing Context/instigator/ImpactNormal resolver tests remain intact and prove the preceding Context-to-local-direction contract.
+4. Do not add test seams, Blueprint test assets, test-only production fields, or a world/animation-playback fixture. Actual slot, Skeleton, Root Motion, and visual Montage selection remain Editor/PIE gates.
 
-4. Map reaction tiers to the six authorable CDO values:
+## User-Owned Asset Authoring
 
-   | Tier | Duration | Dilation |
-   | --- | --- | --- |
-   | Small | `SmallImpactHitStopDurationSeconds = 0.02` | `SmallImpactHitStopTimeDilation = 0.15` |
-   | Big | `BigImpactHitStopDurationSeconds = 0.05` | `BigImpactHitStopTimeDilation = 0.05` |
-   | Launch | `LaunchImpactHitStopDurationSeconds = 0.04` | `LaunchImpactHitStopTimeDilation = 0.05` |
-   | None / Invalid | use the Small row | use the Small row |
-
-   `None` and `Invalid` are feedback mappings only. The existing later branch must continue to skip `None` reaction events, and an invalid multi-tier tag must still produce its existing Warning and skip the reaction event at the same behavior boundary as before. A Stunned Enemy still returns before that warning just as it does today.
-
-5. Resolve the local `APolyQuestPlayerController` through the World and request hit-stop only when that exact controller exists. A missing/wrong controller makes only the hit-stop request a silent no-op; it must not suppress an otherwise valid sound or blood route. Do not introduce a bare `APlayerController` fallback or a WorldSubsystem.
-
-6. Add these `EditDefaultsOnly`, `BlueprintReadOnly`, private CDO fields to `AEnemyCharacter` under `Combat|Enemy|ImpactFeedback`, using concise Chinese `ToolTip` metadata and header forward declarations only:
-   - one `TObjectPtr<USoundBase>` shared Player-on-Enemy impact sound;
-   - one `TObjectPtr<UNiagaraSystem>` shared enemy blood-impact System;
-   - Small/Big/Launch duration values with `Units = "Seconds"` and non-negative editor clamps;
-   - Small/Big/Launch time-dilation values with an editor range that excludes zero and exceeds neither `1.0`.
-
-   Keep concrete `USoundBase`, `UNiagaraSystem`, `UGameplayStatics`, and Niagara includes in `.cpp`. Runtime validation remains required even with editor clamps.
-
-7. Play the configured sound once with `UGameplayStatics::PlaySoundAtLocation`. Use a finite, valid context `ImpactPoint` when available; otherwise use a finite `GetActorLocation()` fallback. A missing sound asset is an intentional silent cosmetic no-op and must not suppress valid hit-stop or blood routing. Sound-location eligibility is independent from the stricter blood HitResult actor check.
-
-8. Spawn blood only when the existing Context has a `FHitResult` whose actor is this Enemy, whose `ImpactPoint` is finite, and whose `ImpactNormal` is finite and nonzero after normalization. Spawn the configured System with `UNiagaraFunctionLibrary::SpawnSystemAtLocation`, world transform only, `bAutoDestroy = true`, and `FRotationMatrix::MakeFromZ(NormalizedNormal).Rotator()` so Niagara local `+Z` follows the surface normal. A missing System or invalid/missing/mismatched hit result is a silent no-blood path and must not suppress valid hit-stop or sound.
-
-9. Under `WITH_DEV_AUTOMATION_TESTS`, add lean counters and last-request values only as needed to prove C3K routing, selected preset, sound dispatch eligibility, and blood-request location/normal eligibility without loading a real sound or Niagara asset. Every such field, getter, and test wrapper must be fully macro-gated; a test dispatch record may prove eligibility even when the production asset pointer is null, but it must not become a shipping feedback registry, event bus, persistent component, or asset test seam.
-
-### Non-goals and hard prohibitions
-
-- No GameplayCue, new Gameplay Tag, GE change, GameplayAbility change, Damage resolver rewrite, AnimNotify, trace, overlap, or duplicate callback trigger.
-- No changes to `APlayerCharacter`, Player camera shake selection, Overlay ownership, Guard/Parry resolution, Poise, stance break, launch, ragdoll, death, projectile terminal handling, collision, input, AI, replication, or persistence.
-- No decals, persistent bleeding, player blood, per-bone attachment, bone-name authoring, hit numbers, camera rewrite, audio mixer/bus work, SFX variation system, or three per-tier VFX/SFX asset families.
-- No world subsystem, generic impact-feedback framework, timer-based global-dilation restoration, manual `.uasset`/`.umap` changes, live Editor writes, imports, or asset migration.
-
-## Approved Files And Executor Boundary
-
-### Approved implementation paths
-
-1. `Source/PolyQuest/Public/Framework/PolyQuestPlayerController.h`
-2. `Source/PolyQuest/Private/Framework/PolyQuestPlayerController.cpp`
-3. `Source/PolyQuest/Public/Character/Enemy/EnemyCharacter.h`
-4. `Source/PolyQuest/Private/Character/Enemy/EnemyCharacter.cpp`
-5. `Source/PolyQuest/Private/Tests/CombatHitFeedbackAutomationTests.cpp`
-
-All other files are prohibited Gemini targets. In particular, `PolyQuest.Build.cs`, `PlayerCharacter.*`, both hit resolvers, reaction Ability classes, Tags, Config, DataAssets, Blueprints, maps, sound assets, Niagara assets, and project documents remain Main/user-owned and unchanged in this implementation pass.
-
-### Required execution order
-
-1. Implement and statically reason through the controller's request/arbitration/real-time-expiry/EndPlay ownership first, including test-only inspection hooks.
-2. Add the Enemy CDO authoring fields and one private selection/dispatch helper. Integrate it at the frozen Health delegate point while retaining the current reaction classifier and Warning semantics.
-3. Extend the existing `PolyQuest.Combat.HitFeedback` test rather than creating another test target. Change its local controller fixture from bare `APlayerController` to `APolyQuestPlayerController`; prove expiry through `World->Tick()` reaches the controller's `Tick` even without a `ULocalPlayer`, and do not rely on `PlayerTick` being called.
-4. Add context-building helpers in the existing test only as needed to attach valid, missing, invalid, and mismatched `FHitResult` data to the real Damage GE Context. Keep test worlds isolated and restore any global time-dilation baseline before world destruction. Exercise one no-HitResult route (sound actor-location fallback and blood skip) and one valid-HitResult route (sound impact location and blood normal/location record).
-5. Run only approved static checks. Do not compile, open the Editor, enter PIE, edit assets, stage, commit, reformat unrelated files, or touch the WIP tree.
+1. No asset change is authorized in this amendment. The user's existing `AM_SmallHitReaction_F` and `AM_BigHitReaction_F` are the Front entries of their respective directional sets; they are not deleted, renamed, or reassigned by C++.
+2. The user owns verification that all four directional fields are assigned in each GA. Small retains its current overlay Slot/blend contract, while Big retains its current full-body Slot and Root Motion contract; no Montage may turn the Actor manually.
+3. The four GA assets remain the authoring surface:
+   - `Content/_Abilities/Player/HitReaction/GA_PlayerSmallHitReaction.uasset`
+   - `Content/_Abilities/Player/HitReaction/GA_PlayerBigHitReaction.uasset`
+   - `Content/_Abilities/Enemy/HitReaction/GA_EnemySmallHitReaction.uasset`
+   - `Content/_Abilities/Enemy/HitReaction/GA_EnemyBigHitReaction.uasset`
+4. The old single default fields must no longer appear after recompilation. Do not solve a missing/invalid directional assignment through C++ asset-path logic, retargeting automation, another generic fallback, or a Front substitution.
 
 ## Validation Matrix
 
-### Native Automation: `PolyQuest.Combat.HitFeedback`
+### Static / Executor Evidence
 
-Use the existing real Player/Enemy ASC fixture and the custom `APolyQuestPlayerController`. Native tests prove routing and state only; they do not prove audible mixing, sound content, Niagara renderer behavior, particle collision, or visual quality.
+1. Read final diffs and direct callers/callees; confirm all changes stay inside the eleven approved source/test files.
+2. Run Rider `get_file_problems` or `lint_files` on all touched C++ files; resolve newly introduced diagnostics.
+3. Run `git diff --check` and report the exact changed paths.
+4. Do not invoke UBT, Rider build, Editor compilation, PIE, live Editor writes, asset saves, staging, or commit.
 
-1. Reset Player/Enemy Health and controller global-dilation state between cases. Assert the baseline global dilation is restored after every C3K expiry/teardown path.
-2. For Player-to-Enemy nonlethal Health damage, prove Small, Big, Launch, `None`, and invalid multi-tier tags select the frozen presets. `None`/invalid must select Small for C3K while leaving the existing reaction-event behavior unchanged.
-3. Assert rapid-hit arbitration: later Small cannot raise Big/Launch dilation or shorten expiry; a later valid stronger/later request produces the lower dilation and later real-time expiry.
-4. Tick the World across the requested real-time duration and prove exact controller restoration through the `Tick` path, including the no-`PlayerInput` fixture case. Test an external global-dilation replacement during an active stop: maintenance, expiry, and `EndPlay` must preserve that external value rather than overwrite it. Assert that one World tick cannot advance expiry twice.
-5. Build a valid Context `FHitResult` targeting the Enemy and assert C3K records one eligible blood request at the exact finite ImpactPoint with a normalized normal; also assert eligible sound dispatch uses the impact location. Build a no-HitResult case and assert sound uses the Enemy actor location while blood is skipped.
-6. Verify nonfinite/zero normal, nonfinite point, and a HitResult targeting another Actor skip only blood eligibility; valid Player-to-Enemy hit-stop/sound routing remains intact. Sound and blood test records must be independent, and all records/getters remain `WITH_DEV_AUTOMATION_TESTS`-gated.
-   A missing local `APolyQuestPlayerController` may suppress only hit-stop; it must not become an implicit gate for valid sound/blood dispatch.
-7. Verify no C3K route for Player-target damage, Enemy/invalid-team source, direct Health writes, positive Health GE/healing, Poise-only GE, successful Guard/Parry consumption, invulnerability, lethal damage, already-dead state, teardown, or duplicate/non-damaging callbacks.
-8. Retain and re-run existing Overlay/CameraShake assertions. Confirm C3K did not cause Player damage to change CameraShake behavior or introduce hit-stop/blood when an Enemy damages the Player.
+### User Gates
 
-### Static gate before user validation
-
-- Use CodeGraph to inspect the final `OnHealthAttributeChanged`, controller request/expiry/EndPlay call path, and `CombatHitFeedbackAutomationTests` fixture. Use code-review-graph only as supplemental diff/impact evidence when its index matches the baseline.
-- Run Rider `get_file_problems` or `lint_files` on all five touched C++ files, inspect final header/include boundaries, and run `git diff --check` for the approved paths.
-- Confirm no Build.cs, Tag, Config, player-feedback, resolver, GE/GA, damage, asset, Blueprint, map, or unrelated-WIP diff was introduced.
-
-### User-owned Editor and visual gates
-
-1. Manually compile `PolyQuestEditor (Development Editor)` in Visual Studio 2022 and report the exact result.
-2. Run `PolyQuest.Combat.HitFeedback`, then the full Editor Automation matrix.
-3. In `BP_Enemy_Goblin`, assign one shared impact `USoundBase` and one shared non-looping `UNiagaraSystem` to the new CDO fields. The candidate `Content/Audio/MetaSounds/HitSounds/SFX_HitFlesh.uasset` may be used only after Editor readback confirms it is a valid `USoundBase`. Create/configure `Content/Effects/Niagara/NS_EnemyBloodImpact.uasset` as local user-owned WIP with bounded, one-shot lifetime; do not add it to this source/test commit.
-4. In `Scene01`, test melee and Bow nonlethal Small/Big/Launch hits repeatedly. Tune only the six CDO values and the two local assets until the stop reads as impact without making input, Ability cleanup, projectile trail fade, ragdoll, or normal locomotion feel stuck.
-5. Verify blood spawns at the actual world impact surface, points outward along the surface normal, fades/destroys naturally, and does not follow an enemy after movement or ragdoll.
-6. Verify Player-target damage has no new C3K hit-stop/sound/blood; Guard/Parry and invulnerable contacts have none; lethal Enemy hits still transition through existing ragdoll without a C3K blood burst; all existing Overlay/CameraShake/reaction behavior remains intact.
+1. Compile `PolyQuestEditor (Development Editor)` in Visual Studio 2022.
+2. In Editor, read back each GA's four required directional fields, confirm the removed legacy single field no longer appears, then verify Montage slot configuration and Root Motion configuration.
+3. Run `PolyQuest.Combat.HitReaction`, `PolyQuest.Enemy.RootMotionFacing`, `PolyQuest.Combat.LaunchFacingSmoothing`, and `PolyQuest.Combat.HitFeedback`; then run the wider existing combat/reaction regression matrix if the focused suite is clean.
+4. In `Scene01`, test Player and Enemy as victims from front/back/left/right plus all four diagonals for Small and Big:
+   - Small selects the correct overlay reaction, retains movement/action behavior, and does not rotate the Actor.
+   - Big selects the correct full-body reaction, has no pre-turn, preserves grounded Root Motion behavior, avoids ledge/falling regressions, and restores existing control/AI state at completion.
+   - Launch still smooth-turns only through C3J and launches away from the attacker; it shows no C3L montage-selection regression.
 
 ## Documentation, Debt, And Commit Boundary
 
-- Gemini must not modify project documentation during implementation. Main updates `ROADMAP.md`, `ARCHITECTURE.md`, and `README.md` only after user validation and Main fresh review have evidence.
-- After accepted validation/review, document the stable ownership rule: Enemy Health/context selects immediate impact presentation, while `APolyQuestPlayerController` solely owns C3K global-dilation lifetime. Then move C3K to Done in `ROADMAP.md` and retain this completed closeout until the next accepted stage replaces it.
-- GameplayCue is deliberately rejected in v1. Re-evaluate it only when PolyQuest adds multiplayer prediction/replication, a duration-owned cosmetic state, or several independent systems that need a shared GAS cosmetic-event contract.
-- The sound, Niagara System, `BP_Enemy_Goblin` assignment, and all other Content changes are local authoring WIP and remain excluded. The later source/test commit may include only the five approved paths plus Main-owned documentation after explicit user approval and a scoped staged-diff review. `git add -A` is prohibited.
+1. After user validation and Main fresh review, Main updates `ARCHITECTURE.md`, `ROADMAP.md`, `README.md`, and this plan's closeout record. No executor edits project documentation.
+2. C3L has no accepted new runtime debt. The removal of the obsolete generic fallback is part of this stage, not a deferred migration. The conditional eight-direction follow-up is already canonically recorded in `ROADMAP.md`; it opens only with compatible diagonal assets plus PIE evidence that four-way mapping is visually inadequate.
+3. The intended source commit contains only the eleven C++/test files and Main-approved documentation. All `Content/**` assets, Blueprints, GA/GE, Montages, AnimBPs, maps, Config, project files, and unrelated WIP remain excluded unless the user explicitly approves a stable asset closure.
+4. No staging or commit occurs until the user explicitly authorizes it.
+
+## Executor Stop Conditions
+
+Stop and return evidence to Main instead of expanding scope if any of the following is required:
+
+1. A new GameplayTag, event, Context field, GE, Config value, Build.cs dependency, input route, or public Blueprint callable API.
+2. A change to Launch, AI yaw/Focus, CharacterMovement ownership, Root Motion policy, damage dispatch, C3K feedback, or existing reaction cancellation/teardown contract.
+3. Any Content asset creation, import, retarget, reparent, save, or Blueprint graph edit.
+4. Any additional production/test file beyond the whitelist, including a test-only Ability or fixture seam.
+5. A missing, invalid, or incompatible required directional Montage for either fixture; report the authoring gap rather than retaining a generic fallback or substituting another direction.
 
 ## Closeout Record
 
-- Implemented surface: the approved `APolyQuestPlayerController.*`, `AEnemyCharacter.*`, and `CombatHitFeedbackAutomationTests.cpp` only. No GameplayCue, Tag, Config, Build.cs, resolver, GE/GA, asset, Blueprint, map, or generic feedback framework was introduced.
-- User validation: `PolyQuest.Combat.HitFeedback` completed with `Success`; focused PIE confirmed global hit-stop, shared flesh sound, world-space blood burst, and Player-target exclusion. The known test-fixture HUD warning and invalid multi-tier reaction warnings remain expected negative-path coverage, not runtime failures.
-- Main review: the first fresh review found a stale cross-execution `FGameplayEffectSpec` identity cache and an external time-dilation tolerance gap. The final source uses execution-local `ModifiedAttributes` state for multi-Health-modifier deduplication, `UGameplayStatics` for all global-dilation writes, and `KINDA_SMALL_NUMBER` consistently. Delta fresh review found no P0-P2.
-- Debt handoff: `TODO-02C3L: Eight-Directional Small/Big Hit Reactions v1` is the next accepted presentation stage before `TODO-03C`; Launch remains owned by C3I/C3J and is explicitly excluded.
-- Commit scope: the five approved native source/test paths plus `plan.md`, `ROADMAP.md`, `ARCHITECTURE.md`, and `README.md`; all mutable `Content/**`, Config, project, map, Blueprint, AnimBP, Montage, GA/GE, and imported-resource WIP remain excluded.
+- Implemented surface: the approved eleven C++/test files only. A private non-reflected `FHitReactionFourWayMontageSet` and selector own one complete Front/Back/Left/Right selection contract. The four legacy single-Montage UPROPERTY fields and fallback parameter are gone; no Content asset, Blueprint, Tag, Config, Build.cs, GameplayCue, damage route, Launch route, AI yaw policy, or C3K feedback behavior changed.
+- Runtime contract: valid target-local attacker directions choose one cardinal Montage with X-axis priority on exact diagonal ties. Incomplete configuration, zero/near-zero, NaN, and Inf input fail closed before a Montage task can be created. Small remains a non-interrupting overlay; Big keeps existing grounded Root Motion, cancellation, ledge/falling cleanup, and no-pre-turn ownership.
+- Validation: the user confirmed focused Editor readback/PIE and the combat/reaction Automation matrix. The final `PolyQuest.Combat.HitReaction` Editor log completed with `Success` after the P3 repair timestamps; its new selector coverage includes cardinals, ties, both boundary sides, XY projection, near-zero, non-finite directions, and every incomplete set.
+- Static evidence: `git diff --check` passed. Rider inspection reported no Errors; existing project weak warnings remain, and the new selector has one non-blocking `AbsY` if-init style suggestion with no behavior or contract impact.
+- Review: Main's defect-first review identified the duplicated complete-set rule and missing near-zero test; both were repaired. The final Main review and an independent `gpt-5.6-luna / xhigh` Fresh Reviewer found no P0-P2 or actionable introduced defect. The code-review graph baseline matched `47d627c` for tracked files; direct source review covered the two untracked selector files.
+- Debt handoff: no new runtime debt is accepted. The existing conditional eight-direction follow-up remains canonical in `ROADMAP.md`: open it only when compatible diagonal assets exist and focused PIE demonstrates that nearest-cardinal presentation is visually inadequate.
+- Commit boundary: a later source/docs commit may include only these eleven C++/test paths plus Main-owned `plan.md`, `ROADMAP.md`, `ARCHITECTURE.md`, and `README.md`. All `Content/**`, Config, project, map, Blueprint, AnimBP, Montage, GA/GE, and unrelated WIP remain excluded. No staging or commit has occurred.

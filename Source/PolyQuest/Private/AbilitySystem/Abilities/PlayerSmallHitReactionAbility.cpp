@@ -5,6 +5,8 @@
 #include "Animation/AnimInstance.h"
 #include "Animation/AnimMontage.h"
 #include "Character/Player/PlayerCharacter.h"
+#include "Combat/Reaction/HitReactionFourWayMontageSelector.h"
+#include "Combat/Reaction/HitReactionImpactResolver.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "PolyQuest.h"
 
@@ -46,7 +48,7 @@ void UPlayerSmallHitReactionAbility::ActivateAbility(
 	const FGameplayAbilitySpecHandle Handle,
 	const FGameplayAbilityActorInfo* ActorInfo,
 	const FGameplayAbilityActivationInfo ActivationInfo,
-	const FGameplayEventData*)
+	const FGameplayEventData* TriggerEventData)
 {
 	bEndAbilityRequested = false;
 	BoundAnimInstance = nullptr;
@@ -59,12 +61,34 @@ void UPlayerSmallHitReactionAbility::ActivateAbility(
 
 	if (!CharacterASC || !PlayerCharacter || !AnimInstance || !ValidateActivationSetup(ActorInfo))
 	{
-		UE_LOG(LogPolyQuest, Warning, TEXT("Player small hit reaction activation aborted for '%s': ASC, living player, AnimInstance, montage, and required tags are required."), *GetNameSafe(PlayerCharacter));
+		UE_LOG(LogPolyQuest, Warning, TEXT("Player small hit reaction activation aborted for '%s': ASC, living player, AnimInstance, complete four-way montages (Front, Back, Left, Right), and required tags are required."), *GetNameSafe(PlayerCharacter));
 		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
 		return;
 	}
 
-	MontageTask = UAbilityTask_PlayMontageAndWait::CreatePlayMontageAndWaitProxy(this, NAME_None, SmallHitReactionMontage);
+	FVector LocalImpactDirection = FVector::ZeroVector;
+	if (TriggerEventData)
+	{
+		LocalImpactDirection = FHitReactionImpactResolver::ResolveImpactDirection(*TriggerEventData, PlayerCharacter);
+	}
+
+	FHitReactionFourWayMontageSet MontageSet;
+	MontageSet.Front = FrontSmallHitReactionMontage;
+	MontageSet.Back = BackSmallHitReactionMontage;
+	MontageSet.Left = LeftSmallHitReactionMontage;
+	MontageSet.Right = RightSmallHitReactionMontage;
+
+	UAnimMontage* SelectedMontage = FHitReactionFourWayMontageSelector::SelectFromLocalAttackerDirection(
+		LocalImpactDirection, MontageSet);
+
+	if (!SelectedMontage)
+	{
+		UE_LOG(LogPolyQuest, Warning, TEXT("Player small hit reaction activation aborted for '%s': directional montage selection failed."), *GetNameSafe(PlayerCharacter));
+		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
+		return;
+	}
+
+	MontageTask = UAbilityTask_PlayMontageAndWait::CreatePlayMontageAndWaitProxy(this, NAME_None, SelectedMontage);
 	if (!MontageTask)
 	{
 		UE_LOG(LogPolyQuest, Warning, TEXT("Player small hit reaction activation aborted for '%s': failed to create a montage AbilityTask."), *GetNameSafe(PlayerCharacter));
@@ -80,7 +104,7 @@ void UPlayerSmallHitReactionAbility::ActivateAbility(
 	}
 
 	BoundAnimInstance = AnimInstance;
-	ActiveMontage = SmallHitReactionMontage;
+	ActiveMontage = SelectedMontage;
 	BoundAnimInstance->OnMontageEnded.RemoveDynamic(this, &UPlayerSmallHitReactionAbility::OnActiveMontageEnded);
 	BoundAnimInstance->OnMontageEnded.AddDynamic(this, &UPlayerSmallHitReactionAbility::OnActiveMontageEnded);
 	MontageTask->ReadyForActivation();
@@ -92,7 +116,7 @@ void UPlayerSmallHitReactionAbility::ActivateAbility(
 
 	if (!BoundAnimInstance || !ActiveMontage || !BoundAnimInstance->Montage_IsActive(ActiveMontage.Get()))
 	{
-		UE_LOG(LogPolyQuest, Warning, TEXT("Player small hit reaction activation aborted for '%s': montage '%s' did not start."), *GetNameSafe(PlayerCharacter), *GetNameSafe(SmallHitReactionMontage));
+		UE_LOG(LogPolyQuest, Warning, TEXT("Player small hit reaction activation aborted for '%s': montage '%s' did not start."), *GetNameSafe(PlayerCharacter), *GetNameSafe(ActiveMontage.Get()));
 		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
 		return;
 	}
@@ -152,7 +176,13 @@ bool UPlayerSmallHitReactionAbility::ValidateActivationSetup(const FGameplayAbil
 
 	const bool bIsDead = CharacterASC && DeadStateTag.IsValid() && CharacterASC->HasMatchingGameplayTag(DeadStateTag);
 
-	return CharacterASC && PlayerCharacter && !PlayerCharacter->IsActorBeingDestroyed() && !bIsDead && AnimInstance && SmallHitReactionMontage
+	FHitReactionFourWayMontageSet MontageSet;
+	MontageSet.Front = FrontSmallHitReactionMontage;
+	MontageSet.Back = BackSmallHitReactionMontage;
+	MontageSet.Left = LeftSmallHitReactionMontage;
+	MontageSet.Right = RightSmallHitReactionMontage;
+
+	return CharacterASC && PlayerCharacter && !PlayerCharacter->IsActorBeingDestroyed() && !bIsDead && AnimInstance && MontageSet.IsComplete()
 		&& SmallHitReactionAbilityTag.IsValid() && SmallHitReactionEventTag.IsValid() && SmallHitReactingStateTag.IsValid()
 		&& StunnedStateTag.IsValid() && DeadStateTag.IsValid();
 }

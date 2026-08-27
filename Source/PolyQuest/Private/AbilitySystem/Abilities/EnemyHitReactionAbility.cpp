@@ -6,6 +6,7 @@
 #include "Animation/AnimInstance.h"
 #include "Animation/AnimMontage.h"
 #include "Character/Enemy/EnemyCharacter.h"
+#include "Combat/Reaction/HitReactionFourWayMontageSelector.h"
 #include "Combat/Reaction/HitReactionImpactResolver.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "GameFramework/CharacterMovementComponent.h"
@@ -73,12 +74,33 @@ void UEnemyHitReactionAbility::ActivateAbility(
 
 	if (!CharacterASC || !EnemyCharacter || !AnimInstance || !MovementComponent || !ValidateActivationSetup(ActorInfo))
 	{
-		UE_LOG(LogPolyQuest, Warning, TEXT("Enemy hit reaction activation aborted for '%s': ASC, living enemy, AnimInstance, montage, grounded movement, and required tags are required."), *GetNameSafe(EnemyCharacter));
+		UE_LOG(LogPolyQuest, Warning, TEXT("Enemy hit reaction activation aborted for '%s': ASC, living enemy, AnimInstance, complete four-way montages (Front, Back, Left, Right), grounded movement, and required tags are required."), *GetNameSafe(EnemyCharacter));
 		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
 		return;
 	}
 
-	MontageTask = UAbilityTask_PlayMontageAndWait::CreatePlayMontageAndWaitProxy(this, NAME_None, HitReactionMontage);
+	if (TriggerEventData)
+	{
+		ImpactDirectionSnapshot = FHitReactionImpactResolver::ResolveImpactDirection(*TriggerEventData, EnemyCharacter);
+	}
+
+	FHitReactionFourWayMontageSet MontageSet;
+	MontageSet.Front = FrontHitReactionMontage;
+	MontageSet.Back = BackHitReactionMontage;
+	MontageSet.Left = LeftHitReactionMontage;
+	MontageSet.Right = RightHitReactionMontage;
+
+	UAnimMontage* SelectedMontage = FHitReactionFourWayMontageSelector::SelectFromLocalAttackerDirection(
+		ImpactDirectionSnapshot, MontageSet);
+
+	if (!SelectedMontage)
+	{
+		UE_LOG(LogPolyQuest, Warning, TEXT("Enemy hit reaction activation aborted for '%s': directional montage selection failed."), *GetNameSafe(EnemyCharacter));
+		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
+		return;
+	}
+
+	MontageTask = UAbilityTask_PlayMontageAndWait::CreatePlayMontageAndWaitProxy(this, NAME_None, SelectedMontage);
 	if (!MontageTask)
 	{
 		UE_LOG(LogPolyQuest, Warning, TEXT("Enemy hit reaction activation aborted for '%s': failed to create a montage AbilityTask."), *GetNameSafe(EnemyCharacter));
@@ -94,7 +116,7 @@ void UEnemyHitReactionAbility::ActivateAbility(
 	}
 
 	BoundAnimInstance = AnimInstance;
-	ActiveMontage = HitReactionMontage;
+	ActiveMontage = SelectedMontage;
 	BoundEnemyCharacter = EnemyCharacter;
 
 	BoundAnimInstance->OnMontageEnded.RemoveDynamic(this, &UEnemyHitReactionAbility::OnActiveMontageEnded);
@@ -109,37 +131,31 @@ void UEnemyHitReactionAbility::ActivateAbility(
 
 	if (!BoundAnimInstance || !ActiveMontage || !BoundAnimInstance->Montage_IsActive(ActiveMontage.Get()))
 	{
-		UE_LOG(LogPolyQuest, Warning, TEXT("Enemy hit reaction activation aborted for '%s': montage '%s' did not start."), *GetNameSafe(EnemyCharacter), *GetNameSafe(HitReactionMontage));
+		UE_LOG(LogPolyQuest, Warning, TEXT("Enemy hit reaction activation aborted for '%s': montage '%s' did not start."), *GetNameSafe(EnemyCharacter), *GetNameSafe(ActiveMontage.Get()));
 		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
 		return;
 	}
 
-	// 1. Snapshot target-local impact direction
-	if (TriggerEventData)
-	{
-		ImpactDirectionSnapshot = FHitReactionImpactResolver::ResolveImpactDirection(*TriggerEventData, EnemyCharacter);
-	}
-
-	// 2. Stop AI navigation movement if available
+	// 1. Stop AI navigation movement if available
 	if (AAIController* AIController = EnemyCharacter->GetController<AAIController>())
 	{
 		AIController->StopMovement();
 	}
 
-	// 3. Stop current velocity
+	// 2. Stop current velocity
 	MovementComponent->StopMovementImmediately();
 
-	// 4. Snapshot and disable ledge walk-off
+	// 3. Snapshot and disable ledge walk-off
 	bSavedCanWalkOffLedges = MovementComponent->bCanWalkOffLedges;
 	MovementComponent->bCanWalkOffLedges = false;
 	bLedgeSettingModified = true;
 
-	// 5. Bind MovementModeChangedDelegate for falling teardown
+	// 4. Bind MovementModeChangedDelegate for falling teardown
 	EnemyCharacter->MovementModeChangedDelegate.RemoveDynamic(this, &UEnemyHitReactionAbility::OnMovementModeChanged);
 	EnemyCharacter->MovementModeChangedDelegate.AddDynamic(this, &UEnemyHitReactionAbility::OnMovementModeChanged);
 	bMovementModeDelegateBound = true;
 
-	// 6. Cancel enemy melee and small hit reaction after montage is confirmed active
+	// 5. Cancel enemy melee and small hit reaction after montage is confirmed active
 	CharacterASC->CancelAbilities(&AbilitiesToCancel, nullptr, this);
 }
 
@@ -226,7 +242,13 @@ bool UEnemyHitReactionAbility::ValidateActivationSetup(const FGameplayAbilityAct
 	const UAnimInstance* AnimInstance = SkeletalMesh ? SkeletalMesh->GetAnimInstance() : nullptr;
 	const UCharacterMovementComponent* MovementComponent = EnemyCharacter ? EnemyCharacter->GetCharacterMovement() : nullptr;
 
-	return CharacterASC && EnemyCharacter && !EnemyCharacter->IsDead() && AnimInstance && HitReactionMontage
+	FHitReactionFourWayMontageSet MontageSet;
+	MontageSet.Front = FrontHitReactionMontage;
+	MontageSet.Back = BackHitReactionMontage;
+	MontageSet.Left = LeftHitReactionMontage;
+	MontageSet.Right = RightHitReactionMontage;
+
+	return CharacterASC && EnemyCharacter && !EnemyCharacter->IsDead() && AnimInstance && MontageSet.IsComplete()
 		&& MovementComponent && MovementComponent->IsMovingOnGround()
 		&& HitReactionAbilityTag.IsValid() && HitReactionEventTag.IsValid() && HitReactingStateTag.IsValid() && StunnedStateTag.IsValid() && HyperArmorStateTag.IsValid()
 		&& EnemyMeleeAbilityTag.IsValid() && EnemySmallHitReactionAbilityTag.IsValid() && AbilitiesToCancel.Num() == 2;

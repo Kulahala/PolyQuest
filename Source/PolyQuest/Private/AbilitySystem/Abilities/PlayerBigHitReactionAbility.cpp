@@ -5,6 +5,7 @@
 #include "Animation/AnimInstance.h"
 #include "Animation/AnimMontage.h"
 #include "Character/Player/PlayerCharacter.h"
+#include "Combat/Reaction/HitReactionFourWayMontageSelector.h"
 #include "Combat/Reaction/HitReactionImpactResolver.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "GameFramework/CharacterMovementComponent.h"
@@ -92,12 +93,33 @@ void UPlayerBigHitReactionAbility::ActivateAbility(
 
 	if (!CharacterASC || !PlayerCharacter || !AnimInstance || !MovementComponent || !ValidateActivationSetup(ActorInfo))
 	{
-		UE_LOG(LogPolyQuest, Warning, TEXT("Player big hit reaction activation aborted for '%s': ASC, living player, AnimInstance, montage, grounded movement, and required tags are required."), *GetNameSafe(PlayerCharacter));
+		UE_LOG(LogPolyQuest, Warning, TEXT("Player big hit reaction activation aborted for '%s': ASC, living player, AnimInstance, complete four-way montages (Front, Back, Left, Right), grounded movement, and required tags are required."), *GetNameSafe(PlayerCharacter));
 		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
 		return;
 	}
 
-	MontageTask = UAbilityTask_PlayMontageAndWait::CreatePlayMontageAndWaitProxy(this, NAME_None, BigHitReactionMontage);
+	if (TriggerEventData)
+	{
+		ImpactDirectionSnapshot = FHitReactionImpactResolver::ResolveImpactDirection(*TriggerEventData, PlayerCharacter);
+	}
+
+	FHitReactionFourWayMontageSet MontageSet;
+	MontageSet.Front = FrontBigHitReactionMontage;
+	MontageSet.Back = BackBigHitReactionMontage;
+	MontageSet.Left = LeftBigHitReactionMontage;
+	MontageSet.Right = RightBigHitReactionMontage;
+
+	UAnimMontage* SelectedMontage = FHitReactionFourWayMontageSelector::SelectFromLocalAttackerDirection(
+		ImpactDirectionSnapshot, MontageSet);
+
+	if (!SelectedMontage)
+	{
+		UE_LOG(LogPolyQuest, Warning, TEXT("Player big hit reaction activation aborted for '%s': directional montage selection failed."), *GetNameSafe(PlayerCharacter));
+		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
+		return;
+	}
+
+	MontageTask = UAbilityTask_PlayMontageAndWait::CreatePlayMontageAndWaitProxy(this, NAME_None, SelectedMontage);
 	if (!MontageTask)
 	{
 		UE_LOG(LogPolyQuest, Warning, TEXT("Player big hit reaction activation aborted for '%s': failed to create a montage AbilityTask."), *GetNameSafe(PlayerCharacter));
@@ -113,7 +135,7 @@ void UPlayerBigHitReactionAbility::ActivateAbility(
 	}
 
 	BoundAnimInstance = AnimInstance;
-	ActiveMontage = BigHitReactionMontage;
+	ActiveMontage = SelectedMontage;
 	BoundPlayerCharacter = PlayerCharacter;
 
 	BoundAnimInstance->OnMontageEnded.RemoveDynamic(this, &UPlayerBigHitReactionAbility::OnActiveMontageEnded);
@@ -127,31 +149,25 @@ void UPlayerBigHitReactionAbility::ActivateAbility(
 
 	if (!BoundAnimInstance || !ActiveMontage || !BoundAnimInstance->Montage_IsActive(ActiveMontage.Get()))
 	{
-		UE_LOG(LogPolyQuest, Warning, TEXT("Player big hit reaction activation aborted for '%s': montage '%s' did not start."), *GetNameSafe(PlayerCharacter), *GetNameSafe(BigHitReactionMontage));
+		UE_LOG(LogPolyQuest, Warning, TEXT("Player big hit reaction activation aborted for '%s': montage '%s' did not start."), *GetNameSafe(PlayerCharacter), *GetNameSafe(ActiveMontage.Get()));
 		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
 		return;
 	}
 
-	// 1. Snapshot target-local impact direction
-	if (TriggerEventData)
-	{
-		ImpactDirectionSnapshot = FHitReactionImpactResolver::ResolveImpactDirection(*TriggerEventData, PlayerCharacter);
-	}
-
-	// 2. Stop current velocity
+	// 1. Stop current velocity
 	MovementComponent->StopMovementImmediately();
 
-	// 3. Snapshot and disable ledge walk-off
+	// 2. Snapshot and disable ledge walk-off
 	bSavedCanWalkOffLedges = MovementComponent->bCanWalkOffLedges;
 	MovementComponent->bCanWalkOffLedges = false;
 	bLedgeSettingModified = true;
 
-	// 4. Bind MovementModeChangedDelegate for falling teardown
+	// 3. Bind MovementModeChangedDelegate for falling teardown
 	PlayerCharacter->MovementModeChangedDelegate.RemoveDynamic(this, &UPlayerBigHitReactionAbility::OnMovementModeChanged);
 	PlayerCharacter->MovementModeChangedDelegate.AddDynamic(this, &UPlayerBigHitReactionAbility::OnMovementModeChanged);
 	bMovementModeDelegateBound = true;
 
-	// 5. Cancel pre-existing combat actions after Montage is confirmed active
+	// 4. Cancel pre-existing combat actions after Montage is confirmed active
 	CharacterASC->CancelAbilities(&AbilitiesToCancel, nullptr, this);
 }
 
@@ -240,7 +256,13 @@ bool UPlayerBigHitReactionAbility::ValidateActivationSetup(const FGameplayAbilit
 
 	const bool bIsDead = CharacterASC && DeadStateTag.IsValid() && CharacterASC->HasMatchingGameplayTag(DeadStateTag);
 
-	return CharacterASC && PlayerCharacter && !PlayerCharacter->IsActorBeingDestroyed() && !bIsDead && AnimInstance && BigHitReactionMontage
+	FHitReactionFourWayMontageSet MontageSet;
+	MontageSet.Front = FrontBigHitReactionMontage;
+	MontageSet.Back = BackBigHitReactionMontage;
+	MontageSet.Left = LeftBigHitReactionMontage;
+	MontageSet.Right = RightBigHitReactionMontage;
+
+	return CharacterASC && PlayerCharacter && !PlayerCharacter->IsActorBeingDestroyed() && !bIsDead && AnimInstance && MontageSet.IsComplete()
 		&& MovementComponent && MovementComponent->IsMovingOnGround()
 		&& BigHitReactionAbilityTag.IsValid() && BigHitReactionEventTag.IsValid() && HitReactingStateTag.IsValid()
 		&& StunnedStateTag.IsValid() && DeadStateTag.IsValid() && HyperArmorStateTag.IsValid()

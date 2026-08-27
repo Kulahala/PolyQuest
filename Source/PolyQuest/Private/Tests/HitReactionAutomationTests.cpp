@@ -18,6 +18,7 @@
 #include "Character/Enemy/EnemyCharacter.h"
 #include "Character/Player/PlayerCharacter.h"
 #include "Combat/Reaction/HitReactionClassifier.h"
+#include "Combat/Reaction/HitReactionFourWayMontageSelector.h"
 #include "Combat/Reaction/HitReactionImpactResolver.h"
 #include "Engine/Engine.h"
 #include "Engine/World.h"
@@ -884,6 +885,159 @@ bool FHitReactionAutomationTest::RunTest(const FString& Parameters)
 					FHitReactionImpactResolver::TryBuildLaunchVelocity(FVector(1.0f, 0.0f, 0.0f), 0.0f, -450.0f, 550.0f, WrapperVel));
 				TestTrue(TEXT("Wrapper negative speed resets OutVelocity"), WrapperVel.IsZero());
 			}
+		}
+
+		// 4.9 Four-Way Montage Selector Pure Function Tests (FHitReactionFourWayMontageSelector)
+		{
+			UAnimMontage* DummyFront = NewObject<UAnimMontage>(GetTransientPackage());
+			UAnimMontage* DummyBack = NewObject<UAnimMontage>(GetTransientPackage());
+			UAnimMontage* DummyLeft = NewObject<UAnimMontage>(GetTransientPackage());
+			UAnimMontage* DummyRight = NewObject<UAnimMontage>(GetTransientPackage());
+
+			FHitReactionFourWayMontageSet FullSet;
+			FullSet.Front = DummyFront;
+			FullSet.Back = DummyBack;
+			FullSet.Left = DummyLeft;
+			FullSet.Right = DummyRight;
+
+			// 4.9.1 Set Completeness Check (IsComplete)
+			TestTrue(TEXT("Selector: FullSet is complete"), FullSet.IsComplete());
+
+			FHitReactionFourWayMontageSet SetMissingFront;
+			SetMissingFront.Back = DummyBack;
+			SetMissingFront.Left = DummyLeft;
+			SetMissingFront.Right = DummyRight;
+			TestFalse(TEXT("Selector: Set missing Front is incomplete"), SetMissingFront.IsComplete());
+
+			FHitReactionFourWayMontageSet SetMissingBack;
+			SetMissingBack.Front = DummyFront;
+			SetMissingBack.Left = DummyLeft;
+			SetMissingBack.Right = DummyRight;
+			TestFalse(TEXT("Selector: Set missing Back is incomplete"), SetMissingBack.IsComplete());
+
+			FHitReactionFourWayMontageSet SetMissingLeft;
+			SetMissingLeft.Front = DummyFront;
+			SetMissingLeft.Back = DummyBack;
+			SetMissingLeft.Right = DummyRight;
+			TestFalse(TEXT("Selector: Set missing Left is incomplete"), SetMissingLeft.IsComplete());
+
+			FHitReactionFourWayMontageSet SetMissingRight;
+			SetMissingRight.Front = DummyFront;
+			SetMissingRight.Back = DummyBack;
+			SetMissingRight.Left = DummyLeft;
+			TestFalse(TEXT("Selector: Set missing Right is incomplete"), SetMissingRight.IsComplete());
+
+			FHitReactionFourWayMontageSet EmptySet;
+			TestFalse(TEXT("Selector: EmptySet is incomplete"), EmptySet.IsComplete());
+
+			// 4.9.2 Cardinal directions (FullSet)
+			// a) Front (+X)
+			TestEqual(TEXT("Selector: Cardinal Front (+X) returns Front montage"),
+				FHitReactionFourWayMontageSelector::SelectFromLocalAttackerDirection(FVector(1.0f, 0.0f, 0.0f), FullSet), DummyFront);
+
+			// b) Back (-X)
+			TestEqual(TEXT("Selector: Cardinal Back (-X) returns Back montage"),
+				FHitReactionFourWayMontageSelector::SelectFromLocalAttackerDirection(FVector(-1.0f, 0.0f, 0.0f), FullSet), DummyBack);
+
+			// c) Right (+Y)
+			TestEqual(TEXT("Selector: Cardinal Right (+Y) returns Right montage"),
+				FHitReactionFourWayMontageSelector::SelectFromLocalAttackerDirection(FVector(0.0f, 1.0f, 0.0f), FullSet), DummyRight);
+
+			// d) Left (-Y)
+			TestEqual(TEXT("Selector: Cardinal Left (-Y) returns Left montage"),
+				FHitReactionFourWayMontageSelector::SelectFromLocalAttackerDirection(FVector(0.0f, -1.0f, 0.0f), FullSet), DummyLeft);
+
+			// 4.9.3 Exact 45-degree diagonal ties (X-axis priority rule)
+			// a) Front-Right (+X, +Y, AbsX == AbsY) -> Front
+			TestEqual(TEXT("Selector: Diagonal (+1, +1) tie-breaks to Front"),
+				FHitReactionFourWayMontageSelector::SelectFromLocalAttackerDirection(FVector(1.0f, 1.0f, 0.0f), FullSet), DummyFront);
+
+			// b) Front-Left (+X, -Y, AbsX == AbsY) -> Front
+			TestEqual(TEXT("Selector: Diagonal (+1, -1) tie-breaks to Front"),
+				FHitReactionFourWayMontageSelector::SelectFromLocalAttackerDirection(FVector(1.0f, -1.0f, 0.0f), FullSet), DummyFront);
+
+			// c) Back-Right (-X, +Y, AbsX == AbsY) -> Back
+			TestEqual(TEXT("Selector: Diagonal (-1, +1) tie-breaks to Back"),
+				FHitReactionFourWayMontageSelector::SelectFromLocalAttackerDirection(FVector(-1.0f, 1.0f, 0.0f), FullSet), DummyBack);
+
+			// d) Back-Left (-X, -Y, AbsX == AbsY) -> Back
+			TestEqual(TEXT("Selector: Diagonal (-1, -1) tie-breaks to Back"),
+				FHitReactionFourWayMontageSelector::SelectFromLocalAttackerDirection(FVector(-1.0f, -1.0f, 0.0f), FullSet), DummyBack);
+
+			// 4.9.4 Boundary crossings (samples immediately on both sides of each 45-degree boundary)
+			// a) Front / Right boundary: (1.001, 1.0) -> Front; (1.0, 1.001) -> Right
+			TestEqual(TEXT("Selector: Front-leaning (+1.001, +1.0) selects Front"),
+				FHitReactionFourWayMontageSelector::SelectFromLocalAttackerDirection(FVector(1.001f, 1.0f, 0.0f), FullSet), DummyFront);
+			TestEqual(TEXT("Selector: Right-leaning (+1.0, +1.001) selects Right"),
+				FHitReactionFourWayMontageSelector::SelectFromLocalAttackerDirection(FVector(1.0f, 1.001f, 0.0f), FullSet), DummyRight);
+
+			// b) Front / Left boundary: (1.001, -1.0) -> Front; (1.0, -1.001) -> Left
+			TestEqual(TEXT("Selector: Front-leaning (+1.001, -1.0) selects Front"),
+				FHitReactionFourWayMontageSelector::SelectFromLocalAttackerDirection(FVector(1.001f, -1.0f, 0.0f), FullSet), DummyFront);
+			TestEqual(TEXT("Selector: Left-leaning (+1.0, -1.001) selects Left"),
+				FHitReactionFourWayMontageSelector::SelectFromLocalAttackerDirection(FVector(1.0f, -1.001f, 0.0f), FullSet), DummyLeft);
+
+			// c) Back / Right boundary: (-1.001, 1.0) -> Back; (-1.0, 1.001) -> Right
+			TestEqual(TEXT("Selector: Back-leaning (-1.001, +1.0) selects Back"),
+				FHitReactionFourWayMontageSelector::SelectFromLocalAttackerDirection(FVector(-1.001f, 1.0f, 0.0f), FullSet), DummyBack);
+			TestEqual(TEXT("Selector: Right-leaning (-1.0, +1.001) selects Right"),
+				FHitReactionFourWayMontageSelector::SelectFromLocalAttackerDirection(FVector(-1.0f, 1.001f, 0.0f), FullSet), DummyRight);
+
+			// d) Back / Left boundary: (-1.001, -1.0) -> Back; (-1.0, -1.001) -> Left
+			TestEqual(TEXT("Selector: Back-leaning (-1.001, -1.0) selects Back"),
+				FHitReactionFourWayMontageSelector::SelectFromLocalAttackerDirection(FVector(-1.001f, -1.0f, 0.0f), FullSet), DummyBack);
+			TestEqual(TEXT("Selector: Left-leaning (-1.0, -1.001) selects Left"),
+				FHitReactionFourWayMontageSelector::SelectFromLocalAttackerDirection(FVector(-1.0f, -1.001f, 0.0f), FullSet), DummyLeft);
+
+			// 4.9.5 Unnormalized vector and non-zero Z input (XY projection)
+			TestEqual(TEXT("Selector: Unnormalized with +Z (100, 0, 50) selects Front"),
+				FHitReactionFourWayMontageSelector::SelectFromLocalAttackerDirection(FVector(100.0f, 0.0f, 50.0f), FullSet), DummyFront);
+			TestEqual(TEXT("Selector: Unnormalized with -Z (-50, 0, -20) selects Back"),
+				FHitReactionFourWayMontageSelector::SelectFromLocalAttackerDirection(FVector(-50.0f, 0.0f, -20.0f), FullSet), DummyBack);
+			TestEqual(TEXT("Selector: Unnormalized with +Z (0, 80, 120) selects Right"),
+				FHitReactionFourWayMontageSelector::SelectFromLocalAttackerDirection(FVector(0.0f, 80.0f, 120.0f), FullSet), DummyRight);
+			TestEqual(TEXT("Selector: Unnormalized with -Z (0, -90, -30) selects Left"),
+				FHitReactionFourWayMontageSelector::SelectFromLocalAttackerDirection(FVector(0.0f, -90.0f, -30.0f), FullSet), DummyLeft);
+			TestEqual(TEXT("Selector: Unnormalized diagonal with huge Z (30, 60, 999) selects Right"),
+				FHitReactionFourWayMontageSelector::SelectFromLocalAttackerDirection(FVector(30.0f, 60.0f, 999.0f), FullSet), DummyRight);
+			TestEqual(TEXT("Selector: Unnormalized diagonal with huge -Z (-60, 30, -999) selects Back"),
+				FHitReactionFourWayMontageSelector::SelectFromLocalAttackerDirection(FVector(-60.0f, 30.0f, -999.0f), FullSet), DummyBack);
+
+			// 4.9.6 Zero, Near-Zero, NaN, and Inf inputs (fail-closed to nullptr)
+			TestNull(TEXT("Selector: Zero direction returns nullptr"),
+				FHitReactionFourWayMontageSelector::SelectFromLocalAttackerDirection(FVector::ZeroVector, FullSet));
+			TestNull(TEXT("Selector: Near-zero direction (1e-5 on X) returns nullptr"),
+				FHitReactionFourWayMontageSelector::SelectFromLocalAttackerDirection(FVector(1e-5f, 0.0f, 0.0f), FullSet));
+			TestNull(TEXT("Selector: Near-zero direction (-1e-5 on Y) returns nullptr"),
+				FHitReactionFourWayMontageSelector::SelectFromLocalAttackerDirection(FVector(0.0f, -1e-5f, 0.0f), FullSet));
+			TestNull(TEXT("Selector: Near-zero direction (1e-5 on XY with non-zero Z) returns nullptr"),
+				FHitReactionFourWayMontageSelector::SelectFromLocalAttackerDirection(FVector(1e-5f, 1e-5f, 50.0f), FullSet));
+			TestNull(TEXT("Selector: NaN X returns nullptr"),
+				FHitReactionFourWayMontageSelector::SelectFromLocalAttackerDirection(FVector(NAN, 0.0f, 0.0f), FullSet));
+			TestNull(TEXT("Selector: NaN Y returns nullptr"),
+				FHitReactionFourWayMontageSelector::SelectFromLocalAttackerDirection(FVector(0.0f, NAN, 0.0f), FullSet));
+			TestNull(TEXT("Selector: Inf X returns nullptr"),
+				FHitReactionFourWayMontageSelector::SelectFromLocalAttackerDirection(FVector(INFINITY, 0.0f, 0.0f), FullSet));
+			TestNull(TEXT("Selector: Inf Y returns nullptr"),
+				FHitReactionFourWayMontageSelector::SelectFromLocalAttackerDirection(FVector(0.0f, -INFINITY, 0.0f), FullSet));
+			TestNull(TEXT("Selector: NaN X and Inf Y returns nullptr"),
+				FHitReactionFourWayMontageSelector::SelectFromLocalAttackerDirection(FVector(NAN, INFINITY, 0.0f), FullSet));
+
+			// 4.9.7 Incomplete sets return nullptr
+			TestNull(TEXT("Selector: Incomplete set (missing Front) returns nullptr for front attacker"),
+				FHitReactionFourWayMontageSelector::SelectFromLocalAttackerDirection(FVector(1.0f, 0.0f, 0.0f), SetMissingFront));
+			TestNull(TEXT("Selector: Incomplete set (missing Front) returns nullptr for right attacker"),
+				FHitReactionFourWayMontageSelector::SelectFromLocalAttackerDirection(FVector(0.0f, 1.0f, 0.0f), SetMissingFront));
+			TestNull(TEXT("Selector: Incomplete set (missing Back) returns nullptr"),
+				FHitReactionFourWayMontageSelector::SelectFromLocalAttackerDirection(FVector(-1.0f, 0.0f, 0.0f), SetMissingBack));
+			TestNull(TEXT("Selector: Incomplete set (missing Left) returns nullptr"),
+				FHitReactionFourWayMontageSelector::SelectFromLocalAttackerDirection(FVector(0.0f, -1.0f, 0.0f), SetMissingLeft));
+			TestNull(TEXT("Selector: Incomplete set (missing Right) returns nullptr"),
+				FHitReactionFourWayMontageSelector::SelectFromLocalAttackerDirection(FVector(0.0f, 1.0f, 0.0f), SetMissingRight));
+			TestNull(TEXT("Selector: EmptySet returns nullptr for Front"),
+				FHitReactionFourWayMontageSelector::SelectFromLocalAttackerDirection(FVector(1.0f, 0.0f, 0.0f), EmptySet));
+			TestNull(TEXT("Selector: EmptySet returns nullptr for Back"),
+				FHitReactionFourWayMontageSelector::SelectFromLocalAttackerDirection(FVector(-1.0f, 0.0f, 0.0f), EmptySet));
 		}
 	}
 
