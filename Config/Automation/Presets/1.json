@@ -1,0 +1,29 @@
+{
+	"id": "1",
+	"name": "Full",
+	"enabledTests": [
+		"PolyQuest.Combat.HitFeedback",
+		"PolyQuest.Combat.HitReaction",
+		"PolyQuest.Combat.LaunchFacingSmoothing",
+		"PolyQuest.Combat.ParrySuccessFeedback",
+		"PolyQuest.Enemy.AttackSetSelection",
+		"PolyQuest.Enemy.CombatSpacing",
+		"PolyQuest.Enemy.CombatTargetRetention",
+		"PolyQuest.Enemy.DeathRagdoll",
+		"PolyQuest.Enemy.RootMotionFacing",
+		"PolyQuest.Equipment.TransactionMatrix",
+		"PolyQuest.Equipment.WorldPickupGrounding",
+		"PolyQuest.Melee.MultiTraceSource",
+		"PolyQuest.Melee.TraceSourceGeometry",
+		"PolyQuest.Melee.TraceWindowLifecycle",
+		"PolyQuest.Melee.WeaponTrail",
+		"PolyQuest.Player.ActionWindows",
+		"PolyQuest.Player.Exhaustion",
+		"PolyQuest.Player.LockOn",
+		"PolyQuest.Player.MobileBow",
+		"PolyQuest.Projectile.FlightTrail",
+		"PolyQuest.Projectile.Lifecycle",
+		"PolyQuest.Projectile.TargetAssist",
+		"PolyQuest.UI.VitalHUD"
+	]
+}

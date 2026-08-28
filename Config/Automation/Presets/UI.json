@@ -1,0 +1,7 @@
+{
+	"id": "UI",
+	"name": "UI",
+	"enabledTests": [
+		"PolyQuest.UI.VitalHUD"
+	]
+}

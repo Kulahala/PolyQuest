@@ -1,6 +1,8 @@
 # Visual Studio 2015 user specific files
 .vs/
 .idea/
+.codex/
+.zcode/
 .codegraph/
 .code-review-graph/
 
