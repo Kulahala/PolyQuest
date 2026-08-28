@@ -79,7 +79,8 @@ Content/                Authored Unreal assets
 Source/PolyQuest/       PolyQuest runtime module
 AGENTS.md               Collaboration and tooling rules
 ARCHITECTURE.md          Verified implemented architecture
-ROADMAP.md               Long-term milestone order
+ROADMAP.md               Active milestone and dependency view
+ROADMAP-archive.md       Historical roadmap and closeout archive
 plan.md                 Current or most-recent stage plan/closeout record
 ```
 
@@ -95,6 +96,7 @@ The user owns compilation, PIE validation, packaging, and commit approval unless
 
 - [`ARCHITECTURE.md`](ARCHITECTURE.md): implemented facts only.
 - [`ROADMAP.md`](ROADMAP.md): accepted future milestones and adoption gates.
+- [`ROADMAP-archive.md`](ROADMAP-archive.md): historical closeouts and evidence; non-authoritative.
 - [`plan.md`](plan.md): current stage scope, validation, handoff, or most-recent closeout detail.
 - [`AGENTS.md`](AGENTS.md): repository-specific collaboration, MCP, Git, and validation rules.
 
