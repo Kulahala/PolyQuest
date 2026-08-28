@@ -1,191 +1,206 @@
-# TODO-02C3N: Guard Success And Player Hit Audio Feedback v1
+# TODO-02B3: Lock-On Retention Hysteresis v1（阶段收口记录）
+
+> 本文件保留 TODO-02B3 的完整计划与收口证据。用户已确认 15% retention 和 retention-only Cycle no-op 两个冻结点；Gemini 已按批准范围完成实现。本阶段只处理既有 Player Lock-On 的“保持”屏幕边界，不改变获取、循环、死亡交接或 Bow/Projectile 的既有所有权。
 
 ## Plan State
 
-- **状态**：Main 方案已冻结，等待 Gemini 只读审阅并按交接提示执行；本次只更新计划，不修改源码、资产或配置。
-- **仓库**：`E:\GameDevelop\PolyQuest`（UE 5.8，运行时模块 `PolyQuest`）。
-- **基线**：`b2eb4f2559bdf7206f4be4012549693358144e6e`。
-- **范围纪律**：保留工作区全部既有用户 WIP，尤其是 `Config/DefaultEngine.ini` 与 `Content/**` 的修改/删除；它们不属于本阶段实现，也不能被回滚、格式化或提交。
-- **阶段目标**：在已经存在的 GAS/Resolver 边界上加入两个彼此独立、可选、可静默失败的原生音效通道：成功 Guard 音效，以及玩家受到敌方非致命实际伤害时的受击音效。
-- **阶段成功条件**：Guard 只在成功吸收一次接触后播放一次；Player 只在权威、非致命、Health 实际下降且来源精确属于 `Team.Enemy` 时播放一次；现有 Parry、Overlay、Camera Shake、Small/Big/Launch 反应、Guard Break、投射物伤害和清理生命周期均保持不变。
+- **状态**：实现、用户确认的 Automation/PIE 门禁、Main 单轮 defect-first fresh review 均已完成；本记录进入文档收口与提交阶段。
+- **用户冻结确认**：retention 固定为每轴 15% 的单一原生常量、不增加配置字段；retention-only 状态下 Cycle 严格 no-op，保留当前锁定，不隐式清锁或自动换目标。
+- **仓库**：E:\GameDevelop\PolyQuest（UE 5.8，运行时模块 PolyQuest）。
+- **阶段基线**：fdf8fa2c76b119b51cc9b7027756ac272425fb08（main，2026-08-29）。
+- **现有工作区纪律**：保留全部既有 WIP：Config/Automation/Presets/1.json、大量 Content/** 修改/删除或未跟踪项，以及本阶段六个 Source/test 文件和四份文档改动。Config/Content/其他 WIP 不属于本阶段，不能回滚、清理、格式化或纳入提交。
+- **最近完成阶段**：TODO-02B3 是当前收口阶段；其前序最近提交为 fdf8fa2（Automation Unity 辅助符号修复）。该历史提交不是 TODO-02B3 的运行时证明。
+- **前一阶段追溯**：C3N closeout、用户既有验证和提交边界已保留在 ROADMAP.md、ARCHITECTURE.md、README.md 的已完成记录中；本文件不再把 C3N 的历史 handoff 当作当前执行指令。
+
+## Objective And Player Problem
+
+固定高位斜视镜头下，已锁定目标在屏幕边缘因相机轻微移动或敌人位移而越出一像素时会立即清锁，导致锁定、朝向和 Bow 的锁定优先表现生硬。TODO-02B3 只增加一个有限的屏幕空间保持缓冲：
+
+- 主动获取和滚轮循环仍只接受严格视口内的候选；
+- 已经拥有的 LockedTarget 在小范围越出视口时继续保持；
+- 目标真正离开保持边界、死亡、被销毁或不再满足现有敌我/ASC/状态规则时，仍按当前生命周期清锁或死亡交接；
+- 不引入新的目标源、计时宽限、预测或第二条伤害/投射物路径。
+
+## Evidence Baseline And Current Call Chain
+
+以下实现结论来自当前 on-disk 源码、Config、Automation 测试、基线 CodeGraph 调用链和代码审查图的只读结果；用户另确认了本阶段 Automation 与 focused Scene01 PIE 通过。静态、用户 Automation、用户 PIE 和独立编译/Editor readback 证据仍分开记录。
+
+1. APlayerCharacter::Tick() 每帧调用 ValidateCurrentLockedTarget()；有效后才更新锁定朝向。
+2. TryAcquireLockOnTarget()、HandleTargetCycleTriggered() 和 TryRetargetAfterLockedTargetDeath() 都通过 BuildLockOnCandidates()；该函数会调用 TryProjectLockOnWorldPoint()，再使用 FPlayerLockOnTargeting::IsStrictlyWithinViewport()。
+3. ValidateCurrentLockedTarget() 先检查 Player ASC/Controller、Player Dead、目标 Dead，再调用 FCombatProjectileTargeting::IsValidTargetCandidate() 和 CacheCurrentLockedTargetCandidate()。除确认死亡外，当前无效原因都会清锁。
+4. CacheCurrentLockedTargetCandidate() 同时投影 Player 和当前目标，计算顺时针角度/距离并更新 LastValidLockedTargetCandidate；ResolveValidLockedTarget() 直接复用这条验证路径。
+5. UBowDrawFireAbility 在启用 Target Assist 的 Release 时调用 ResolveValidLockedTarget()；Bow 自己的自动候选仍由 FCombatProjectileTargeting 以当前 6% 屏幕边界处理。两者必须继续是两个窄边界，不能把 Bow helper 变成全局 Lock-On 设置。
+6. PlayerLockOnAutomationTests.cpp 与 ProjectileLifecycleAutomationTests.cpp 已补齐保持外扩、真实循环输入 seam、超过 15% 清锁和 Bow 锁定快照回归；B3 使用了 retention 内的严格视口外坐标与明确越界坐标。
+
+## Frozen Product And Runtime Contract
+
+### 1. Acquisition、Cycle、Death Handoff
+
+- BuildLockOnCandidates() 的投影 margin 固定为 0.0f；IsStrictlyWithinViewport() 的旧语义和边缘拒绝行为保持不变。中键获取、滚轮循环和死亡后的候选扫描都不得使用 retention margin。
+- 已保持但暂时落在严格视口外的当前目标不进入循环候选。此时滚轮输入必须 no-op 并保留当前锁定，不得因为 FindCycledTargetIndex() 找不到当前目标而隐式清锁，也不得自动换成别的目标；目标回到严格视口后才恢复正常循环。严格视口内的循环顺序和方向完全不变。
+- 只有当前目标确认死亡时才进行一次现有的顺时针严格候选扫描；死亡目标即使最后一帧位于 retention 区域，也不得让交接扫描采用 overscan。其他失效原因仍不自动寻找替代目标。
+
+### 2. Retention Hysteresis
+
+- v1 冻结为每轴 15% 的有限 viewport 扩展：-0.15 * Width < X < 1.15 * Width，-0.15 * Height < Y < 1.15 * Height。扩展边界使用严格不等式，正好落在外边界仍清锁；margin 为零时必须与旧严格判定完全一致。
+- 只在已有 LockedTarget 的保持/验证路径对目标投影使用 15%；Player 的投影锚点仍使用严格 margin 0.0f。这样不会把 Player 自身或候选获取范围扩大。
+- 保持判定必须继续要求：WorldPoint、投影坐标、Viewport 和 margin 为有限值；Viewport 为正；本地 Controller、CameraManager、Camera 前方点积和 ProjectWorldLocationToScreen() 有效。任何失败都 Fail-Closed。
+- 目标仍必须通过现有 FCombatProjectileTargeting::IsValidTargetCandidate()：错误阵营/同队、Dead、Invulnerable、Destroyed、缺失 ASC 或其他现有资格失败都清锁。此阶段不改 Team、ASC、GameplayTag 或死亡生命周期。
+- 15% 是 v1 生产调用的唯一上限和唯一原生常量；纯判定 helper 只校验显式 margin 为有限且非负，不再额外硬编码第二个 max。运行时调用点只允许使用 0.0 或 0.15；不新增 UPROPERTY、Config、DataAsset、编辑器调参字段，也不再留一个未定义的“small upper cap”。Focused PIE 只验证边界手感和没有行为回归；若以后要改数值，另开已批准阶段。
+- 不增加 Timer grace period、连续丢失帧计数、目标预测、LOS 改写、相机重置、自动重选、目标排序重写或任何 projectile targeting 共用框架。
+
+### 3. Shared Consumers And Ownership
+
+- Tick()、TryGetLockedTargetDirection()、Lock-facing、Action-facing、Dodge-facing 与 ResolveValidLockedTarget() 必须观察同一条 retention 验证结果；不复制一套“宽松锁定”布尔值。
+- Lock highlight、LastValidLockedTargetCandidate 的顺时针锚点、Bow Release 的一次性目标快照和已发射箭的生命周期所有权保持原样。Bow 发射后滚轮、清锁、死亡或后续投影变化不得改写已发射 Projectile。
+- 不修改 FCombatProjectileTargeting 的 6% 规则，不修改 Bow Ability、Projectile Actor、Damage GameplayEffect、GAS/ASC、GameplayTags、Input Mapping 或 Content 资产。
 
 ## Route And Delegation
 
-```text
-Outer: ue-stage-workflow
-Primary: ue5-cpp-gameplay
-Support: game-feel, ue5-debug-validation
-Route reason: 这是一个窄范围的原生 GAS 防御/Health 回调扩展和直接音效呈现接入；现有 ASC、Resolver、Player Controller 与 Enemy 反馈所有权已经足够，不需要新的反馈框架。
-```
+    Outer: ue-stage-workflow
+    Primary: ue5-cpp-gameplay
+    Support: ue5-debug-validation
+    Route reason: 窄范围原生 Lock-On 屏幕空间保持校验和现有 Automation 扩展；不涉及资产、Blueprint、Input、GameplayTags、Editor 写入或新的 GAS 路径。
 
-```text
-Plan explorers: 0
-Implementation executors: 1 (Gemini)
-Complex Executor: one scoped lifecycle-sensitive implementation
-Main parallel work: none
-Reason: Guard 接触消费与 Player Health 回调分别是两个入口，但都共享 Player/ASC、有限位置校验和测试生命周期；由一个执行者按顺序写入可避免跨文件契约竞争，Main 保留契约、文档、验证解释、暂存和提交所有权。
-```
+    Plan explorers: 0
+    Implementation executors: 1 (Gemini)
+    Execution route: manual/out-of-band Gemini
+    Complex Executor: one scoped lifecycle-sensitive implementation
+    Main parallel work: none
+    Reason: Lock-On 投影、死亡交接、朝向和 Bow 读取共享同一生命周期合同；单一执行者按冻结 API 顺序修改，Main 保留合同、验证解释、fresh review、文档、暂存和提交所有权。
 
 ### Ownership
 
-- **Contract owner：Main**。Main 冻结 API、敌我过滤、反馈时序、去重语义、测试接受条件和非目标；任何契约变更都必须停工返回 Main 决策。
-- **Implementation writer：Gemini**。Gemini 只能修改下列七个批准路径中的指定函数/测试 seam，不得修改文档、Config、Content、资产、Resolver、Controller、Enemy 或构建设置。
-- **User-owned gates**：用户负责在 Unreal Editor/VS 2022 中完成资产可选赋值、`PolyQuestEditor (Development Editor)` 编译、Automation、Scene01 PIE 的声音与行为确认。
-- **Main after validation**：Main 做一次普通 defect-first fresh review，解释用户证据，更新 `ROADMAP.md`、`ARCHITECTURE.md`、`README.md` 和本计划的收尾记录，按明确路径暂存并等待用户批准提交。
-
-## Current Evidence And Call Chain
-
-1. 近战路径是 `FMeleeHitResolver::TryResolveHit` → `APlayerCharacter::TryResolveIncomingDefense` → 当前活动的 `UPlayerParryAbility` 或 `UPlayerGuardAbility`。近战 Resolver 已把 `FHitResult` 传入并允许 Parry。
-2. 投射物路径是 `FCombatProjectileHitResolver::TryResolveHit` → 同一个 Player 防御入口；C3M 已传入 `bAllowParry = false`，因此投射物跳过 Parry 并保留 Guard/伤害路径。两个 Resolver 不在本阶段修改。
-3. `UPlayerGuardAbility::TryGuardMeleeHit` 当前只接收攻击者和体力伤害，成功应用 Guard Stamina GE 后会继续处理恢复延迟或 Guard Break；这是成功 Guard 音效应插入的唯一接触消费点。
-4. `APlayerCharacter::OnHealthAttributeChanged` 已负责权威、非致命、Health 下降、Overlay、Camera Shake 和反应事件。新增受击音效必须挂在同一回调的有效伤害分支中，不能用新的 Health/伤害路径。
-5. `AEnemyCharacter::HandleCombatImpactFeedback` 的 `ImpactSound` 是 C3K 已验证的 Enemy 受击路径，本阶段不修改、不复用其配置字段，也不把 Player 音效移到 Enemy。
-6. `ICombatTeamAgent::Execute_GetCombatTeamTag` 是当前精确敌我关系契约；Player 受击音效只接受返回值精确匹配 `Team.Enemy` 的 Instigator。
-
-## Frozen Product Decisions
-
-### 1. Guard success audio
-
-- `GuardSuccessSound` 是 `UPlayerGuardAbility` 上的可选 `USoundBase`，默认 `nullptr`；未配置时只跳过音频，不影响 Guard 消费。
-- 成功吸收的 Guard 接触全部适用：近战、投射物，以及该接触把 Stamina 降至零并触发 Guard Break 的情况。Guard Break 仍是一次被吸收的接触，只播放一次。
-- 只有现有 Guard 前置条件通过且 `ApplyGameplayEffectSpecToSelf` 对 Guard Stamina GE 返回成功后才触发；错误攻击弧、非活动/失效 Guard、缺失 GE、Spec 构造失败或 GE 应用失败不触发。
-- 触发时机固定在 GE 成功之后、任何 Guard Break/恢复延迟分支之前；不新增计时器、Gameplay Event、Tag 或重复防御状态。
-- `TryGuardMeleeHit` 改为接收 `const FHitResult& HitResult`；`APlayerCharacter::TryGuardIncomingMeleeHit` 同步增加该参数，并原样转发。`TryResolveIncomingDefense` 已有 HitResult，bAllowParry 为 false 时继续调用带 HitResult 的 Guard 路径。
-- 位置规则：仅当 `HitResult.GetActor() == PlayerCharacter`、`ImpactPoint` 三轴有限且不是默认近零点时使用 `ImpactPoint`；否则退回 Player 的有限 `GetActorLocation()`。World、音效资产或最终位置无效时静默跳过音效。
-- 增加一个私有 `TriggerGuardSuccessFeedback(const FHitResult&)`，同步消费 HitResult，不保留指针、Context 或跨帧回调。该 helper 不能改变 `true` 返回、Stamina、Guard Break 或 `EndAbility` 清理。
-
-### 2. Player received-hit audio
-
-- `ReceivedHitSound` 是 `APlayerCharacter` 上的可选 `USoundBase`，默认 `nullptr`；Enemy 的 C3K `ImpactSound` 不改变。
-- 触发必须同时满足：`HasAuthority()`、Actor 未销毁、Health 新值大于零、Health 实际下降、存在 `GEModData`、Instigator 实现 `UCombatTeamAgent`，且 `GetCombatTeamTag()` 精确匹配 `Team.Enemy`。死亡、治疗、直接 Base 写入、无来源、友方/无阵营、仅 Poise 变化都不播放。
-- 适用于现有 Small、Big、Launch 非致命 Health 反应，不要求反应 Tag 有效，也不因 Stunned、反应能力缺失或其他 Overlay/Camera/Reaction 分支提前返回而丢失音效。现有反馈顺序与行为保持不变。
-- 在 `OnHealthAttributeChanged` 中以 `EffectSpec.GetModifiedAttribute(UCharacterAttributeSet::GetHealthAttribute())` 识别同一个 GE Spec 的首次 Health Modifier；只让首次回调尝试音效。这个检查只能决定音效是否调用，**不得对整个回调提前 return**，否则会改变既有 Overlay、Camera Shake 和 Reaction 行为。
-- 触发顺序固定为：保留现有 Overlay 与 ReactionTier 计算，紧随既有 `TriggerHitFeedbackCameraShake(ReactionTier)` 调用 `TriggerReceivedHitSound(EffectSpec)`，并且必须位于 `Stunned` 与 `ReactionTier == Invalid` 的后续分支之前；这样硬直或无效反应 Tag 不能吞掉声音，也不能改变原有后续分支。
-- 同一 GE Spec 含多个 Health Modifier 时只播放一次；两个独立 GE Spec 即使复用同一个 `FGameplayEffectContextHandle` 也各播放一次。
-- 新增私有 `TriggerReceivedHitSound(const FGameplayEffectSpec&)`。从 `EffectSpec.GetContext().GetInstigator()` 做阵营校验，从 Context HitResult 取位置；只有 `GetActor() == this` 且 ImpactPoint 有限、非近零时使用 ImpactPoint，否则回退到有限的 Player ActorLocation。音效、World 或位置无效时仅跳过音频。
-- 直接使用 `UGameplayStatics::PlaySoundAtLocation`。v1 不建立 GameplayCue、音频总线、混音/ducking、随机变体、池化、复制或网络广播；项目当前是单机，声音是本地呈现通道。
-
-### 3. Test-only seams
-
-- 新增的反馈计数、最后一次位置、可选音频 dispatch bypass/记录和必要 setter/getter 必须完全包在 `#if WITH_DEV_AUTOMATION_TESTS` 中，不得进入 Shipping/反射 API。
-- 生产代码不能为了测试添加特殊分支、全局单例、可写的运行时 Tag 或持久化状态。
+- **Contract owner: Main**：冻结 margin、边界不等式、Cycle no-op、死亡交接、消费者复用、测试接受条件和非目标。任何需要新文件、公开 API、Tag、Input、Config、Asset 或生命周期规则的情况必须停工返回 Main。
+- **Implementation writer: Gemini**：只修改下列批准源码/测试路径，并完成严格实现自审；不得编辑项目文档、Config、Content、Blueprint、Editor 状态或提交。
+- **User-owned gates**：用户在 VS 2022/Unreal Editor 中手动编译 PolyQuestEditor (Development Editor)、运行 Automation、做 Editor readback 和 Scene01 PIE/视觉验证。
+- **Main after validation**：Main 独立执行一轮 defect-first fresh review；本阶段不执行第二轮 adversarial review，也不把 Gemini 的自审计为独立 review。通过后由 Main 收口 ROADMAP.md、ARCHITECTURE.md、README.md、本计划，按明确路径暂存并提交。
 
 ## Approved Native And Test Slice
 
-除以下路径外不得修改任何文件。每个共享契约文件均为 **Contract owner: Main；implementation writer: Gemini**。
+除以下路径外不得修改任何文件。共享契约文件均标记为 Contract owner: Main；implementation writer: Gemini。
 
-1. `E:\GameDevelop\PolyQuest\Source\PolyQuest\Public\AbilitySystem\Abilities\PlayerGuardAbility.h`
-   - 前置声明 `USoundBase`。
-   - 将 `TryGuardMeleeHit` 改为 `bool TryGuardMeleeHit(AActor* AttackingActor, float GuardStaminaDamage, const FHitResult& HitResult);`。
-   - 增加可选 `GuardSuccessSound` UPROPERTY（`EditDefaultsOnly`、`BlueprintReadOnly`、Guard/Feedback 分类、默认空）。
-   - 声明私有 `TriggerGuardSuccessFeedback(const FHitResult&)`。
-   - 在 `WITH_DEV_AUTOMATION_TESTS` 中仅加入构造瞬态 Ability 所需的测试 setter/getter、反馈计数和最后位置读取；不改 Ability Tags、Activation/Cancel 矩阵、Montage、GE 生命周期或 Blueprint 行为。
+1. E:\GameDevelop\PolyQuest\Source\PolyQuest\Public\Character\Player\PlayerLockOnTargeting.h
+   - 增加一个纯屏幕空间、带显式 margin ratio 的判定原语（建议名 IsWithinViewportWithMargin），保留 IsStrictlyWithinViewport() 原声明和语义。
+   - 文档说明 finite/positive viewport、finite/non-negative margin、严格扩展边界和 margin=0 等价性；helper 不承担产品上限，运行时调用点只传 0.0 或 0.15；不放置 Editor/Config 可调字段。
 
-2. `E:\GameDevelop\PolyQuest\Source\PolyQuest\Private\AbilitySystem\Abilities\PlayerGuardAbility.cpp`
-   - 在 `TryGuardMeleeHit` 中保留既有窗口、攻击弧、ASC/GE 校验、SetByCaller 体力扣除、恢复延迟、Guard Break 和返回值。
-   - 仅在 Guard Stamina GE `WasSuccessfullyApplied()` 后调用一次 `TriggerGuardSuccessFeedback(HitResult)`，并确保 Guard Break 分支仍继续执行。
-   - Helper 使用 `UGameplayStatics::PlaySoundAtLocation` 和有限位置回退；所有呈现失败都静默，不阻断消费或清理。
-   - 只补所需直接 include（例如 `Kismet/GameplayStatics.h`、`Sound/SoundBase.h`），清理未使用 include；不触碰其他 Ability 生命周期。
+2. E:\GameDevelop\PolyQuest\Source\PolyQuest\Private\Character\Player\PlayerLockOnTargeting.cpp
+   - 实现上述纯判定，检查 margin 与计算出的扩展量有限；不要改变排序、鼠标最近、循环或死亡 successor 算法。
+   - 不复用或修改 CombatProjectileTargeting.cpp 的 Bow 6% helper。
 
-3. `E:\GameDevelop\PolyQuest\Source\PolyQuest\Public\Character\Player\PlayerCharacter.h`
-   - 前置声明 `USoundBase`（若已有则复用）。
-   - 增加可选 `ReceivedHitSound` UPROPERTY，默认空，放在现有 `Combat|Feedback` 资产配置边界。
-   - 将 `TryGuardIncomingMeleeHit` 改为携带 `const FHitResult&` 并保持 `TryResolveIncomingDefense` 的既有 HitResult/bAllowParry 契约。
-   - 声明私有 `TriggerReceivedHitSound(const FGameplayEffectSpec&)`；只添加宏保护的测试 setter/getter/计数/位置 seam。
-   - 不改变公开的 Parry Camera wrapper、输入、ASC、Tag、Equipment、Lock-on 或 Camera API。
+3. E:\GameDevelop\PolyQuest\Source\PolyQuest\Public\Character\Player\PlayerCharacter.h
+   - 为私有 TryProjectLockOnWorldPoint() 增加明确的 margin 参数（默认或调用点显式为 0 均可，但获取/循环调用必须肉眼可见地传 0）。
+   - 在 WITH_DEV_AUTOMATION_TESTS 下增加真实循环触发所需的最小 seam（如 TriggerTestTargetCycle(float)）；Shipping/反射 API 不得新增。
+   - 不改变 ResolveValidLockedTarget()、Lock-on、Bow、ASC、Input 或 GameplayTag 的生产公开契约。
 
-4. `E:\GameDevelop\PolyQuest\Source\PolyQuest\Private\Character\Player\PlayerCharacter.cpp`
-   - 更新 `TryGuardIncomingMeleeHit` 对 Guard 的转发，确保 `HitResult` 一路不丢失；`bAllowParry=false` 仍直接进入 Guard。
-   - 在现有 `OnHealthAttributeChanged` 的有效非致命下降分支中加入首次 Health Modifier 判断和 `TriggerReceivedHitSound` 调用；调用应紧随既有 `TriggerHitFeedbackCameraShake` 且位于 Stunned/Invalid 后续检查之前，不得用全局 early return 去重。
-   - Helper 按 `AEnemyCharacter::HandleCombatImpactFeedback` 的对称模式，对 Instigator 做 `UCombatTeamAgent` 接口检查和精确 `Team.Enemy` 匹配，再做 HitResult/ActorLocation 有限性与音效调用。
-   - 保留现有 Overlay、Camera Shake、反应分类、Stunned 处理、Invalid Tag 日志和事件分发的顺序与语义。
-   - 直接 include `Combat/Melee/CombatTeamAgent.h`、`Sound/SoundBase.h` 等实际使用依赖；不修改 Enemy 反馈。
+4. E:\GameDevelop\PolyQuest\Source\PolyQuest\Private\Character\Player\PlayerCharacter.cpp
+   - 在本文件匿名 namespace 放置唯一的 constexpr float retention ratio 0.15f，或等价的单一原生来源；不得引入第二个 cap。
+   - BuildLockOnCandidates() 的 Player/候选投影显式使用 0.0f。
+   - CacheCurrentLockedTargetCandidate() 对 Player 使用 0.0f，仅对当前 Target 使用 0.15f；保留 finite、camera、controller、ASC、team、Dead/Invulnerable 检查和缓存更新顺序。
+   - 保持 ValidateCurrentLockedTarget() 的死亡分支和 TryRetargetAfterLockedTargetDeath() 的一次严格扫描不变。
+   - 调整 HandleTargetCycleTriggered()：严格候选仍只来自 BuildLockOnCandidates()；仅当该函数成功返回、当前 LockedTarget 通过本帧 retention 验证但不在严格候选列表时，输入才 no-op 并保留锁定，不得清锁或自动重选。`NextIndex == INDEX_NONE` 时不得只依据旧的 LastValidLockedTargetCandidate；需要使用本次验证结果或一次窄的当前资格+投影重检确认“仍在 retention、仅缺席严格候选”。BuildLockOnCandidates() 失败（Player 投影、Controller/Camera、世界等基础失败）以及其他原有失败语义继续清锁/返回，不得用“LockedTarget 仍非空”做宽泛兜底。
+   - ResolveValidLockedTarget()、TryGetLockedTargetDirection()、Lock-facing/Action-facing/Dodge-facing 只通过现有验证路径获得新保持语义，不添加旁路状态。
 
-5. `E:\GameDevelop\PolyQuest\Source\PolyQuest\Private\Tests\TestGuardStaminaCostGE.h`
-   - 新建仅供 Automation 使用的 `UCLASS() UTestGuardStaminaCostGE : public UGameplayEffect` 声明，保持与现有测试 GE 风格一致。
+5. E:\GameDevelop\PolyQuest\Source\PolyQuest\Private\Tests\PlayerLockOnAutomationTests.cpp
+   - 扩展纯判定：margin=0 与 strict 等价；X/Y 四边的刚内/刚外；精确扩展边界拒绝；NaN/Inf、无效 viewport、负/非有限 margin Fail-Closed。
+   - 扩展真实 Player fixture：严格视口外目标不能 Acquire；严格候选外目标不能被 Cycle 选入；已锁定目标在边缘/刚越界且仍在 15% 内时保持高亮和锁定；超过 15%（X、Y）后清锁且不自动重选；相机/目标移动跨边界时结果稳定。
+   - 覆盖 retention 状态下的 Cycle no-op、死亡目标一次严格顺时针交接、Dead/Destroyed/Invulnerable/错误阵营/Player Dead、缺失 Controller/Camera、投影失败和 teardown。
+   - 保留现有 Lock-facing、Action-facing、Dodge、Sprint、Guard、Parry、Root Motion、Bow requester 回归；测试 hook 必须最终走与生产相同的 margin 判定，不复制第二套数学。
 
-6. `E:\GameDevelop\PolyQuest\Source\PolyQuest\Private\Tests\TestGuardStaminaCostGE.cpp`
-   - 构造 Instant、Additive 的 Stamina Modifier，使用 `Data.Stamina.GuardDamage` SetByCaller Tag，供真实 Guard 应用路径测试。
-   - 不修改全局 CDO、Content GE 或生产配置。
+6. E:\GameDevelop\PolyQuest\Source\PolyQuest\Private\Tests\ProjectileLifecycleAutomationTests.cpp
+   - 修正现有 B3 “X = 0 即无效锁”断言：边缘点在新 retention 合同下应保持；无效/回退样例改为明确超过 15% 的坐标（例如 X < -0.15 * Width）。
+   - 增加一个仅在 15% retention 内、但位于严格视口外且超出 Bow 6% 自动候选边界的锁定目标（例如 1920 宽视口的 X=-150；15% 外扩下界为 -288，Bow 6% 下界为约 -115.2），确认 ResolveValidLockedTarget() 和 Target Assist Release 仍优先使用该锁定快照；再用明确超过 15% 的坐标（例如 X=-300）确认清锁并回到 B2 自动候选。
+   - 保留 Target Assist disabled、箭发射后不重定向、死亡交接和 Projectile 生命周期断言；不修改 Bow/Projectile 生产代码。
 
-7. `E:\GameDevelop\PolyQuest\Source\PolyQuest\Private\Tests\PlayerDefenseAudioAutomationTests.cpp`
-   - 新建 `PolyQuest.Combat.DefenseAudio` 原生 Automation 套件，利用 `FCombatAutomationFixture::SpawnPlayer`、瞬态 ASC/Ability/GE/USoundBase 和现有 World cleanup，不依赖 `.uasset`。
-   - 覆盖至少以下矩阵：
-     - 近战 Guard 成功、投射物 Guard 成功、Guard Break 仍吸收且只发一次；
-     - 错误攻击弧、非活动 Guard、缺失/失败 GE、空音效的静默与原有返回值；
-     - 合法 HitResult 使用 ImpactPoint；构造属于 Player 的有效 HitResult 时显式设置 `HitObjectHandle = FActorInstanceHandle(Player)`，缺失 HitResult、错误 Actor、零点、NaN、Inf 使用 ActorLocation 回退；无效 World/ActorLocation 安全跳过；
-     - Player Small/Big/Launch 敌方非致命 Health 伤害发声；有效/缺失/错误 Actor 的 Context HitResult 位置回退；
-     - Friendly、无团队、治疗、直接 Base 写入、Poise-only、致命伤害、已死亡状态均不发声；
-     - 同一 GE Spec 多 Health Modifier 只发一次，两个独立 GE（即便复用 Context）各发一次；
-     - Early-return、对象销毁/EndPlay 后无悬空调用、无状态污染，且现有 Overlay/Camera/Reaction 仍未被新去重逻辑吞掉。
-   - 测试应读取宏保护的计数和位置，不用日志数量代替行为断言；每个用例独立清理 World、ASC、Ability 和临时资产。
+### Read-only reference paths (do not edit)
 
-## Execution Order
+- E:\GameDevelop\PolyQuest\Source\PolyQuest\Private\Combat\Projectile\CombatProjectileTargeting.cpp：只读取 Bow 的 6% 边界、Camera 前方和候选资格，不能改成共享 Lock-On helper。
+- E:\GameDevelop\PolyQuest\Source\PolyQuest\Private\AbilitySystem\Abilities\BowDrawFireAbility.cpp：只确认 ResolveValidLockedTarget() 的一次性 Release 快照调用。
+- E:\GameDevelop\PolyQuest\PolyQuest.uproject、Source/PolyQuest/PolyQuest.Build.cs、Config/Tags/PolyQuestGameplayTags.ini：只做依赖/Tag 只读核对；本阶段不应需要改动。
 
-1. Gemini 先读取本计划、`AGENTS.md`、当前基线和七个批准路径，确认 Resolver 已有 HitResult 传递，不修改 Resolver。
-2. 先完成两个公共头文件的最小契约更新，再实现 Guard 成功反馈；保持现有 Guard Break 分支可达。
-3. 实现 Player 受击音效 helper 与 `OnHealthAttributeChanged` 的仅音效去重；将调用放在既有 `TriggerHitFeedbackCameraShake` 之后、Stunned/Invalid 分支之前，逐行核对现有 Overlay/Camera/Reaction 路径未被提前返回改变。
-4. 新建测试 GE 和 `PolyQuest.Combat.DefenseAudio`，先覆盖失败/回退矩阵，再覆盖多 Modifier/独立 Spec 和生命周期。
-5. 仅做静态自检：读取最终 diff、Rider `get_file_problems`/`lint_files`（若端点可用）和 `git diff --check`；不得调用 UBT、VS、Editor、PIE、打包或提交。
-6. 按下方交接格式返回 changed paths、静态证据、未运行的用户门禁、严格自审发现和剩余风险；任何需要第八个文件、Tag、Config、Asset 或新生命周期规则的情况立即停工返回 Main。
+## Execution Order And Stop Conditions
 
-## Validation Matrix And Gates
+1. Gemini 先读取本计划、AGENTS.md、当前基线和六个批准路径，逐行确认 BuildLockOnCandidates 的三类调用、CacheCurrentLockedTargetCandidate 的双投影和 B3 的旧边界断言。
+2. 先完成 FPlayerLockOnTargeting 纯判定，再扩展 TryProjectLockOnWorldPoint 的显式参数；不先改 IsStrictlyWithinViewport 的行为。
+3. 按“获取/循环显式 0 → 保持目标 0.15 → Cycle no-op”顺序修改 Player 调用链；每一步检查死亡交接、highlight 和 ResolveValidLockedTarget 没有旁路。
+4. 扩展两个既有 Automation 套件，优先写失败/边界/生命周期用例，再写 Bow retention 快照回归；不新建通用测试框架。
+5. Gemini 只做静态自检，并完成两遍执行者自审：第一遍 defect-first 检查生命周期/边界/回归，第二遍按冻结合同做 adversarial 检查；随后读取最终 diff/调用链、运行 Rider lint 或 problem 检查（端点可用时）、git diff --check、批准路径审计。两遍都不能称为 Main 的独立 fresh review；不得调用 UBT、Build.bat、Visual Studio build、Editor、Automation、PIE、打包、Git stage/commit。
+6. 任何需要第七个源码/测试文件、修改 Bow/Projectile/Build.cs/Config/Tag/Input/Content、改变死亡交接或增加第二个 grace/cap 的需求，立即停止并把证据交回 Main。
 
-### Executor static gate
+## Validation Matrix And Evidence Gates
 
-- 七个批准路径的 include、类型、UHT 形状和调用链自洽。
-- `Rider get_file_problems` / `lint_files`：新增错误为零；既有 warning 与新增 warning 分开记录。
-- `git diff --check`：零空白错误。
-- 静态检查不是编译、Editor、Automation 或 PIE 证据。
+### Gemini/Main static gate (not runtime proof)
 
-### User-owned compile and Editor gate
+- IsStrictlyWithinViewport() 的旧测试与调用行为保持；BuildLockOnCandidates() 所有获取/循环/死亡调用仍传 0。
+- CacheCurrentLockedTargetCandidate() 只有当前 Target 使用固定 0.15，Player 锚点不扩大；所有失败路径仍清锁或走既有死亡交接。
+- ResolveValidLockedTarget()、Lock-facing/Action-facing/Dodge-facing 和 B3 Release 读取同一验证结果；Projectile 发射后不读取锁。
+- 批准路径之外无差异；git diff --check 为零；Rider/CodeGraph/CRG 输出只作为静态/影响证据。codegraph 当前索引与 fdf8fa2 一致；code-review-graph 只补充调用影响，不证明运行时。
 
-- 在 Visual Studio 2022 编译 `PolyQuestEditor (Development Editor)`。
-- 在 Unreal Editor 运行 `PolyQuest.Combat.DefenseAudio`，并回归至少 `PolyQuest.Combat.HitFeedback`、`PolyQuest.Combat.ParrySuccessFeedback`、`PolyQuest.Combat.HitReaction`、`PolyQuest.Projectile.Lifecycle` 及现有 Guard/Equipment 套件。
-- 若要听到实际声音，用户在当前 Parry/Guard/Player authored Ability 或 BP/CDO 中自行赋值 `GuardSuccessSound`、`ReceivedHitSound` 并保存资产；资产变更保持本地 WIP，不进入本阶段源代码提交。
+### User-owned compile and Editor readback evidence
 
-### User-owned PIE gate
+- 本记录没有独立的 Visual Studio `PolyQuestEditor (Development Editor)` 编译日志，也没有新增 Editor 资产读回；不从用户 Automation/PIE 结果反推独立编译或 readback 证据。
+- 本阶段没有新的资产读写要求；现有 LockOn/TargetCycle 输入引用和 Bow Target Assist 资产不在批准修改路径内。
 
-- 在 `Scene01` 近战 Guard 成功时听到一次 Guard 音效；投射物 Guard 与 Guard Break 吸收也不重复。
-- 角色受到敌方 Small/Big/Launch 非致命伤害时听到一次 Player 受击音效；友方、治疗、致命和仅 Poise 变化不误触发。
-- 确认原有 Parry 音效、Hit-stop、Camera Shake、Overlay、受击 Montage、Guard Break、投射物伤害和结束/打断清理没有回归。
+### User-owned Automation gate (confirmed)
 
-## Non-goals And Stop Conditions
+- 用户确认 TODO-02B3 相关 Automation 通过，包含 `PolyQuest.Player.LockOn` 以及 `PolyQuest.Projectile.Lifecycle` / `PolyQuest.Projectile.TargetAssist` 的 Bow 回归。
+- 该结果是用户运行证据；本轮未重新运行 Automation。
 
-- 不新增 GameplayCue、Gameplay Tag、Input、Damage/Health 路径、ASC、Controller API、网络复制、音频总线、ducking、随机变体、池化或通用 Feedback Dispatcher。
-- 不修改 `MeleeHitResolver.cpp`、`CombatProjectileHitResolver.cpp`、`AEnemyCharacter`、`APolyQuestPlayerController`、Parry C3M 路径、GameplayEffect/Ability/Montage/AnimBP/Blueprint/DataAsset/Map 资产或 `PolyQuest.Build.cs`。
-- 不把 Guard 音效误绑定到 Guard Ability 激活/循环 Montage；它只属于一次成功接触。
-- 不把 Player 受击音效放到客户端猜测、Overlay、Camera Shake、Reaction Tag 或 Enemy 反馈回调之外的第二个入口。
-- 如果音效 API 在当前模块需要未批准的 Build.cs 依赖、若 HitResult 传递实际缺失、若去重需要修改共享 AttributeSet/Resolver、若必须编辑资产或新增 Tag，停止实现并把证据交回 Main；不得绕过白名单。
-- `USoundBase` 为空、World/Actor 无效、位置非有限或播放失败均是呈现层 no-op，不得让 Gameplay 结果失败。
+### User-owned focused Scene01 PIE gate (confirmed)
+
+- 中键获取与滚轮循环仍只接受严格视口内目标；严格视口外候选不能主动锁入。
+- 已锁目标在视口边缘、刚越出边界但在 15% 内时保持锁定、高亮、合法锁定朝向和 Bow Release 锁定优先；相机轻移和目标轻移均不瞬间脱锁。
+- 目标超过任一轴的 15% 扩展边界、死亡/销毁、Invulnerable、错误阵营、Player Dead、Controller/Camera/投影失效时按合同清锁或只做一次死亡交接；不自动重选。
+- 在 retention 区域滚轮输入不清锁、不偷换目标；目标回到严格区域后循环恢复。
+- 用户确认 focused `Scene01` PIE 通过，覆盖上述锁定保持/清锁、Cycle no-op、Bow 锁定优先与既有朝向/生命周期回归；本轮未重新启动 Editor 或 PIE。
+
+### Evidence labels
+
+- 当前已确认：源码/Config 静态读取、基线 CodeGraph 调用链、code-review-graph 的影响补充、用户确认的 TODO-02B3 Automation 与 focused Scene01 PIE。
+- 当前未单独提供：本阶段 Development Editor 编译日志和 Editor readback 记录；本轮未重新运行任何用户门禁。Gemini 的两遍自审不等于 Main 的独立 fresh review。
+
+## Known Debt And Blocker Decision
+
+- Main 的单轮 defect-first fresh review 未发现 P0/P1/P2 或需要返工的源代码阻塞；既有 Lock-On/Bow 源码边界完整，保持用例和循环触发 seam 已在本阶段补齐。
+- helper 契约注释完整度、个别测试注释措辞和 Y 轴更深的集成矩阵属于非阻塞观察，本阶段不把它们升级为债务或追加实现范围。
+- Content/** 与 Config/** WIP、作者化输入/Widget/Bow/Animation 资产未形成干净检出 fixture，是版本边界和验证说明，不是本阶段源码实现 blocker；继续原样保留。
+- Bow 的固定 6% overscan 是已有、已验证的武器族规则；本阶段不把它改为 15%，也不把 15% 写回 Projectile 配置。
+- 若 focused PIE 证明 15% 手感仍需改值，不能在本阶段由执行者临时调参；应先结束本阶段并单独确认新阶段/新 plan。
 
 ## Documentation And Commit Boundary
 
-- 本阶段实现验证通过后，Main 才能将 `TODO-02C3N` 移到 `ROADMAP.md` 的 Done Milestones，并记录音效边界、去重语义、用户验证证据和仍保留的本地资产 WIP。
-- `ARCHITECTURE.md` 只记录已验证的 Guard/Player 音频所有权和调用链，不写可变调音 TODO；`README.md` 只更新已证实的公开状态。
-- `plan.md` 保留本阶段完整计划和收尾证据，直到下一阶段被 Main 明确替换；执行者不得编辑它。
-- 提交边界为七个批准源码/测试路径及 Main 明确批准的文档变更；排除所有 `Content/**`、未批准 Config 和其他用户 WIP。未获得用户明确提交批准前不得 `git add` 或 `git commit`。
+- 本阶段计划阶段只允许 Main 修改 plan.md 和必要的 ROADMAP.md 漂移表述；ARCHITECTURE.md 与 README.md 仅记录已通过门禁的稳定事实，本次已写入 hysteresis 的收口摘要。
+- 实现与用户门禁通过、Main 单轮 fresh review 完成后，Main 已将 TODO-02B3 移到 Done Milestones，并在 Architecture/README 写入实际 margin、Cycle no-op、死亡交接和 Bow 分界的已验证摘要。
+- 提交候选为六个批准源码/测试路径及 Main 明确批准的文档收尾；排除 Config/Automation/Presets/1.json、所有 Content/**、Build.cs、uproject 和其他 WIP。本次用户已明确授权提交，仍不得扩大暂存范围。
 
 ## Gemini Handoff Prompt
 
-将下面的提示原样交给 Gemini；它是执行指令，不是新的架构授权：
+以下提示可在用户已确认本计划后原样交给 Gemini；它是冻结执行边界，不是新的架构授权：
 
-> 你是本阶段的实现执行者。工作目录必须是 `E:\GameDevelop\PolyQuest`，基线为 `b2eb4f2559bdf7206f4be4012549693358144e6e`；先读取仓库 `AGENTS.md` 和当前 `plan.md`，按 `ue-stage-workflow` 外层流程、`ue5-cpp-gameplay` 主技能，并参考 `game-feel` 与 `ue5-debug-validation` 执行。Contract owner：Main；implementation writer：Gemini。只允许修改本计划列出的七个路径：`Source/PolyQuest/Public/AbilitySystem/Abilities/PlayerGuardAbility.h`、`Source/PolyQuest/Private/AbilitySystem/Abilities/PlayerGuardAbility.cpp`、`Source/PolyQuest/Public/Character/Player/PlayerCharacter.h`、`Source/PolyQuest/Private/Character/Player/PlayerCharacter.cpp`、`Source/PolyQuest/Private/Tests/TestGuardStaminaCostGE.h`、`Source/PolyQuest/Private/Tests/TestGuardStaminaCostGE.cpp`、`Source/PolyQuest/Private/Tests/PlayerDefenseAudioAutomationTests.cpp`。共享契约文件仍由 Main 负责；你只能实现已冻结的函数和 test-only seam。
+> 你是 TODO-02B3 的实现执行者。工作目录必须是 E:\GameDevelop\PolyQuest，基线为 fdf8fa2c76b119b51cc9b7027756ac272425fb08；先读取 AGENTS.md 和当前 plan.md。执行路线是 manual/out-of-band Gemini，Primary Skill 为 ue5-cpp-gameplay，Support Skill 为 ue5-debug-validation。Contract owner: Main；implementation writer: Gemini。
 >
-> 执行顺序：确认两个 Resolver 已经把 `FHitResult` 传入 Player 防御入口且不改 Resolver；更新 Guard 与 Player 头文件契约；在 Guard Stamina GE 成功后一次性触发 `GuardSuccessSound`；在 Player 现有权威非致命 Health 回调中为精确 `Team.Enemy` Instigator 触发 `ReceivedHitSound`，并将其调用放在既有 `TriggerHitFeedbackCameraShake` 之后、Stunned/Invalid 分支之前；完成 `TestGuardStaminaCostGE` 和 `PolyQuest.Combat.DefenseAudio` 的完整负向/回退/去重/生命周期矩阵。Guard Break 吸收仍算一次成功接触。Player 的 `GetModifiedAttribute(Health)` 只控制音效首次调用，绝不能对整个回调 early return。所有音频失败都是静默 no-op，不能改变现有 GAS、Overlay、Camera Shake、Reaction、Guard Break、Projectile 或清理行为。
+> 只允许修改本计划列出的六个绝对路径。保持 IsStrictlyWithinViewport、获取、循环、死亡一次性交接、Team/ASC/Dead/Invulnerable、Lock-facing、Bow 6% 自动候选和已发射 Projectile 生命周期不变。新增的 retention 只对已有 LockedTarget 的目标投影使用固定每轴 15% 严格扩展；纯 helper 只校验有限/非负 margin，运行时调用点只能传 0.0 或 0.15；Player 投影和所有 BuildLockOnCandidates 调用使用 0。只有 BuildLockOnCandidates 成功、且当前目标本帧通过 retention 但不在严格候选列表时，Cycle 才能 no-op 保留锁定；`NextIndex == INDEX_NONE` 时不得只依据旧缓存，必须以本次目标资格+投影重检确认该条件。基础投影/Controller/Camera/世界失败仍按原语义清锁或返回，不得以 LockedTarget 非空作为宽泛兜底。不得新增第二个 cap、Timer grace、预测、LOS/相机行为、Tag/Input/Config/Asset/Build.cs 或通用 targeting 框架。
 >
-> 非目标：不要改 Gameplay Tag、Input、ASC/AttributeSet、Resolver、Controller、Enemy、Build.cs、Config、Content、Blueprint、GA/GE/Montage/AnimBP/Map，不新增 GameplayCue、复制、音频总线、混音、变体、池化或通用框架；不要编译、运行 Editor/PIE、打包、`git add` 或提交。任何需要白名单外文件、公共 API、资产或生命周期规则的情况立即停工，把证据返回 Main。
+> 测试必须走相同生产 margin 判定，覆盖 0 等价 strict、X/Y 边界、NaN/Inf、Acquire/Cycle strict、retention 内保持、超过 15% 清锁、Cycle no-op、状态/teardown、死亡严格交接，以及 B3 Bow lock snapshot 回归。B3 至少使用一个严格视口外但仍在 retention 内、且超出 Bow 6% 自动边界的坐标（1920 宽时可用 X=-150），并用 X=-300 一类坐标覆盖超过 15% 的清锁；不得修改 Bow/Projectile 生产源码。
 >
-> 测试构造属于 Player 的有效 `FHitResult` 时，显式设置 `HitObjectHandle = FActorInstanceHandle(Player)`，并用错误 Actor/零点/NaN/Inf 覆盖回退路径；阵营判断按 `AEnemyCharacter::HandleCombatImpactFeedback` 的 `ICombatTeamAgent::Execute_GetCombatTeamTag` 模式实现。实现后只做静态证据：逐项读取 diff，运行可用的 Rider `get_file_problems`/`lint_files` 和 `git diff --check`。完成回报必须包含：实际 changed paths；每个检查的真实结果；未运行的 VS 编译、Editor Automation、资产读回和 PIE 门禁；严格自审中找到的 P0-P3（没有就明确写无）；以及仍存在的风险/假设。不要把静态检查或测试设计写成编译、运行时或视觉验证结论。
+> 只做静态自审：先做一遍 defect-first，再做一遍针对冻结合同的 adversarial 自审；若 `.codegraph/` 可用，先用 CodeGraph 核对符号和调用链；`.code-review-graph/` 只能作为变更影响补充，不能当编译或运行时证明；随后读取最终 diff，运行 Rider lint/problem 检查（若可用）与 git diff --check。两遍自审都不能冒充 Main 的独立 fresh review。不得编译、运行 Editor/Automation/PIE、打包、stage、commit 或扩大范围。完成 handoff 时列出 changed paths、静态证据、两遍自审 findings、未运行的用户门禁和剩余风险；遇到未列出的文件或契约需求立即停工返回 Main。
+
+## Dependency Order After This Stage
+
+路线保持用户确认的唯一顺序，当前阶段已完成，后续只制定不执行：
+
+TODO-03A3E World Pickup Interaction Prompt v1
+→ TODO-03A7 Selected Melee Motion-Warp Contact Assist v1
+→ TODO-05A Front Critical v1
+→ TODO-05B Backstab v1
+→ TODO-05C Stagger Execution And Stagger Backstab v1
+→ TODO-03C Ranged Enemy v1
+
+每一项都必须先通过自己的 adoption、compile、Automation、Editor/PIE 和 review 门禁；路线图未来项不是本阶段已实现事实。
 
 ## Closeout Record
 
-- Implementation evidence: Gemini changed the seven approved C3N source/test paths. Guard success audio is dispatched only after a successful Guard-Stamina GameplayEffect and carries the resolver HitResult through melee and projectile defense; Player received-hit audio is dispatched only for authoritative nonlethal enemy damage, once per GameplayEffect Spec's first Health modifier. All test-only counters/bypasses remain behind `WITH_DEV_AUTOMATION_TESTS`.
-- User compile/Editor/PIE evidence: the user confirmed `PolyQuest.Combat.DefenseAudio` Automation as `Success` and confirmed the focused Scene01 PIE route. No separate Development Editor compile result is claimed in this record. The reported missing HUD, missing Stamina-delay fixture, absent Guard-break receiver, and invalid reaction-tag messages are expected fixture/negative-path signals.
-- Main fresh review: one defect-first fresh review of the final source and direct resolver/caller paths found no P0-P2 or remaining actionable P3. The review verified that audio dispatch counters occur only after final World/location validation; the unused `Combat/Melee/CombatTeamAgent.h` include in the new test was removed, and Rider re-lint plus `git diff --check` completed without new errors.
-- Roadmap/documentation/commit: `ROADMAP.md` now marks C3N complete and retains the existing C3M coverage debt with its closure trigger; `ARCHITECTURE.md` records the Guard/Player audio ownership and no-GameplayCue boundary; `README.md` records the completed stage and adds the user-provided [Bilibili combat demo](https://www.bilibili.com/video/BV14Ntw6RELr). The aggregate preset `Config/Automation/Presets/1.json`, `Config/DefaultEngine.ini`, `Content/**`, and all other user WIP remain excluded from staging. The approved seven source/test paths plus these three documents are ready for the focused commit.
-
-## Post-Closeout Correction
-
-- After the C3N closeout, the user-approved `EnemyCharacter.cpp` correction extends the existing C3K Enemy feedback boundary to the first lethal Health hit, immediately before `SetDeadState()` begins terminal teardown. Dead follow-up callbacks remain silent; the lethal path keeps the same finite-context, team-filter, preset, and per-Spec de-duplication rules.
-- The existing `CombatHitFeedbackAutomationTests.cpp` lethal section was updated to assert one lethal hit-stop/sound dispatch, no blood without a HitResult, expiry, and no feedback after Dead. `ARCHITECTURE.md`, `ROADMAP.md`, and the English C3K README summary now describe this durable behavior. `Config/DefaultEngine.ini` was committed separately as the user-confirmed render-setting chore; all other WIP remains excluded.
+- **Implementation evidence**：Gemini 修改了六个批准 Source/test 路径：15% 每轴 retention helper、严格 Acquire/Cycle/Death 投影、retention-only Cycle no-op、Player 验证路径复用，以及 Lock-On/Bow 生命周期回归用例；未修改 Bow/Projectile 生产代码、Config 或 Content。
+- **User compile/Editor/Automation/PIE evidence**：用户确认本阶段 Automation 与 focused Scene01 PIE 通过。本记录没有独立 Development Editor 编译日志或新增 Editor readback，不作推断；本轮未重新运行这些门禁。
+- **Main fresh review**：Main 已完成一轮独立 defect-first fresh review，未发现 P0/P1/P2 或需要返工的源代码问题。Gemini 的两遍执行者自审仅作为交接证据，不替代该 review；本阶段不执行第二轮 adversarial review。
+- **Documentation/commit**：本次收口同步 ROADMAP.md、ARCHITECTURE.md、README.md 与本计划，并登记未来 `TODO-07B4`。提交只包含六个批准 Source/test 路径与四份文档；Config/Automation/Presets/1.json、所有 Content/**、uproject、Build.cs 和其他 WIP 排除在外。

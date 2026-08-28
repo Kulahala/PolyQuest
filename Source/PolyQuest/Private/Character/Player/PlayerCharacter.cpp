@@ -44,6 +44,7 @@
 namespace
 {
 	constexpr float ExhaustionMinimumDurationSeconds = 3.0f;
+	constexpr float LockOnRetentionMarginRatio = 0.15f;
 }
 
 APlayerCharacter::APlayerCharacter()
@@ -1171,6 +1172,22 @@ void APlayerCharacter::HandleTargetCycleTriggered(const FInputActionValue& Value
 	const int32 NextIndex = FPlayerLockOnTargeting::FindCycledTargetIndex(Candidates, LockedTarget.Get(), AxisValue > 0.0f ? 1 : -1);
 	if (NextIndex == INDEX_NONE)
 	{
+		AEnemyCharacter* CurrentTarget = LockedTarget.Get();
+		const APlayerController* PlayerController = Cast<APlayerController>(GetController());
+		const UAbilitySystemComponent* SourceASC = GetAbilitySystemComponent();
+		FVector2D TargetScreenPosition = FVector2D::ZeroVector;
+		FVector2D TargetViewportSize = FVector2D::ZeroVector;
+
+		if (CurrentTarget
+			&& PlayerController
+			&& SourceASC
+			&& FCombatProjectileTargeting::IsValidTargetCandidate(this, SourceASC, CurrentTarget)
+			&& TryProjectLockOnWorldPoint(PlayerController, FCombatProjectileTargeting::GetTargetAimPoint(CurrentTarget), TargetScreenPosition, TargetViewportSize, LockOnRetentionMarginRatio)
+			&& !FPlayerLockOnTargeting::IsStrictlyWithinViewport(TargetScreenPosition, TargetViewportSize))
+		{
+			return;
+		}
+
 		ClearLockedTarget();
 		return;
 	}
@@ -1240,7 +1257,7 @@ bool APlayerCharacter::BuildLockOnCandidates(TArray<FPlayerLockOnCandidate>& Out
 #endif
 
 	FVector2D ViewportSize = FVector2D::ZeroVector;
-	if (!TryProjectLockOnWorldPoint(PlayerController, FCombatProjectileTargeting::GetTargetAimPoint(this), OutPlayerScreenPosition, ViewportSize))
+	if (!TryProjectLockOnWorldPoint(PlayerController, FCombatProjectileTargeting::GetTargetAimPoint(this), OutPlayerScreenPosition, ViewportSize, 0.0f))
 	{
 		return false;
 	}
@@ -1256,7 +1273,7 @@ bool APlayerCharacter::BuildLockOnCandidates(TArray<FPlayerLockOnCandidate>& Out
 		const FVector AimPoint = FCombatProjectileTargeting::GetTargetAimPoint(CandidateActor);
 		FVector2D CandidateScreenPosition = FVector2D::ZeroVector;
 		FVector2D CandidateViewportSize = FVector2D::ZeroVector;
-		if (!TryProjectLockOnWorldPoint(PlayerController, AimPoint, CandidateScreenPosition, CandidateViewportSize))
+		if (!TryProjectLockOnWorldPoint(PlayerController, AimPoint, CandidateScreenPosition, CandidateViewportSize, 0.0f))
 		{
 			continue;
 		}
@@ -1288,7 +1305,8 @@ bool APlayerCharacter::TryProjectLockOnWorldPoint(
 	const APlayerController* PlayerController,
 	const FVector& WorldPoint,
 	FVector2D& OutScreenPosition,
-	FVector2D& OutViewportSize) const
+	FVector2D& OutViewportSize,
+	const float MarginRatio) const
 {
 	OutScreenPosition = FVector2D::ZeroVector;
 	OutViewportSize = FVector2D::ZeroVector;
@@ -1301,7 +1319,7 @@ bool APlayerCharacter::TryProjectLockOnWorldPoint(
 	if (TestLockOnProjectionHook)
 	{
 		return TestLockOnProjectionHook(WorldPoint, OutScreenPosition, OutViewportSize)
-			&& FPlayerLockOnTargeting::IsStrictlyWithinViewport(OutScreenPosition, OutViewportSize);
+			&& FPlayerLockOnTargeting::IsWithinViewportWithMargin(OutScreenPosition, OutViewportSize, MarginRatio);
 	}
 #endif
 
@@ -1332,7 +1350,7 @@ bool APlayerCharacter::TryProjectLockOnWorldPoint(
 		return false;
 	}
 
-	return FPlayerLockOnTargeting::IsStrictlyWithinViewport(OutScreenPosition, OutViewportSize);
+	return FPlayerLockOnTargeting::IsWithinViewportWithMargin(OutScreenPosition, OutViewportSize, MarginRatio);
 }
 
 APlayerCharacter::ELockOnValidationResult APlayerCharacter::ValidateCurrentLockedTarget()
@@ -1388,8 +1406,8 @@ bool APlayerCharacter::CacheCurrentLockedTargetCandidate()
 	FVector2D PlayerViewportSize = FVector2D::ZeroVector;
 	FVector2D TargetScreenPosition = FVector2D::ZeroVector;
 	FVector2D TargetViewportSize = FVector2D::ZeroVector;
-	if (!TryProjectLockOnWorldPoint(PlayerController, FCombatProjectileTargeting::GetTargetAimPoint(this), PlayerScreenPosition, PlayerViewportSize)
-		|| !TryProjectLockOnWorldPoint(PlayerController, FCombatProjectileTargeting::GetTargetAimPoint(CurrentTarget), TargetScreenPosition, TargetViewportSize))
+	if (!TryProjectLockOnWorldPoint(PlayerController, FCombatProjectileTargeting::GetTargetAimPoint(this), PlayerScreenPosition, PlayerViewportSize, 0.0f)
+		|| !TryProjectLockOnWorldPoint(PlayerController, FCombatProjectileTargeting::GetTargetAimPoint(CurrentTarget), TargetScreenPosition, TargetViewportSize, LockOnRetentionMarginRatio))
 	{
 		return false;
 	}
@@ -2482,3 +2500,10 @@ bool APlayerCharacter::ShouldRequestSprintAttack() const
 	const UCharacterMovementComponent* MovementComponent = GetCharacterMovement();
 	return HasActiveSprint() && !CurrentMoveInput.IsNearlyZero() && MovementComponent && MovementComponent->IsMovingOnGround();
 }
+
+#if WITH_DEV_AUTOMATION_TESTS
+void APlayerCharacter::TriggerTestTargetCycle(const float InAxisValue)
+{
+	HandleTargetCycleTriggered(FInputActionValue(InAxisValue));
+}
+#endif

@@ -40,14 +40,38 @@ namespace
 
 bool FPlayerLockOnTargeting::IsStrictlyWithinViewport(const FVector2D& ScreenPosition, const FVector2D& ViewportSize)
 {
-	return IsFiniteVector2D(ScreenPosition)
-		&& IsFiniteVector2D(ViewportSize)
-		&& ViewportSize.X > 0.0f
-		&& ViewportSize.Y > 0.0f
-		&& ScreenPosition.X > 0.0f
-		&& ScreenPosition.X < ViewportSize.X
-		&& ScreenPosition.Y > 0.0f
-		&& ScreenPosition.Y < ViewportSize.Y;
+	return IsWithinViewportWithMargin(ScreenPosition, ViewportSize, 0.0f);
+}
+
+bool FPlayerLockOnTargeting::IsWithinViewportWithMargin(
+	const FVector2D& ScreenPosition,
+	const FVector2D& ViewportSize,
+	const float MarginRatio)
+{
+	if (!IsFiniteVector2D(ScreenPosition)
+		|| !IsFiniteVector2D(ViewportSize)
+		|| ViewportSize.X <= 0.0f
+		|| ViewportSize.Y <= 0.0f
+		|| !FMath::IsFinite(MarginRatio)
+		|| MarginRatio < 0.0f)
+	{
+		return false;
+	}
+
+	const float MinX = -MarginRatio * ViewportSize.X;
+	const float MaxX = (1.0f + MarginRatio) * ViewportSize.X;
+	const float MinY = -MarginRatio * ViewportSize.Y;
+	const float MaxY = (1.0f + MarginRatio) * ViewportSize.Y;
+
+	if (!FMath::IsFinite(MinX) || !FMath::IsFinite(MaxX) || !FMath::IsFinite(MinY) || !FMath::IsFinite(MaxY))
+	{
+		return false;
+	}
+
+	return ScreenPosition.X > MinX
+		&& ScreenPosition.X < MaxX
+		&& ScreenPosition.Y > MinY
+		&& ScreenPosition.Y < MaxY;
 }
 
 bool FPlayerLockOnTargeting::TryCalculateClockwiseAngle(

@@ -326,6 +326,7 @@ public:
 	void SetTestCurrentMoveInput(const FVector2D& InInput) { CurrentMoveInput = InInput; }
 	bool TriggerTestAcquireLockOnTarget() { return TryAcquireLockOnTarget(); }
 	bool TriggerTestValidateCurrentLockedTarget() { return ValidateCurrentLockedTarget() != ELockOnValidationResult::Cleared; }
+	void TriggerTestTargetCycle(float InAxisValue);
 	void SetTestLockOnProjectionHook(TFunction<bool(const FVector&, FVector2D&, FVector2D&)> InHook) { TestLockOnProjectionHook = MoveTemp(InHook); }
 	void SetTestLockOnCursorPosition(const FVector2D& InPosition) { TestLockOnCursorPosition = InPosition; }
 	void SetTestBypassLockOnValidation(const bool bBypass) { bTestBypassLockOnValidation = bBypass; }
@@ -384,7 +385,7 @@ private:
 	void UpdateLockedLocomotionFacing(float DeltaSeconds);
 	bool TryAcquireLockOnTarget();
 	bool BuildLockOnCandidates(TArray<FPlayerLockOnCandidate>& OutCandidates, FVector2D& OutPlayerScreenPosition) const;
-	bool TryProjectLockOnWorldPoint(const APlayerController* PlayerController, const FVector& WorldPoint, FVector2D& OutScreenPosition, FVector2D& OutViewportSize) const;
+	bool TryProjectLockOnWorldPoint(const APlayerController* PlayerController, const FVector& WorldPoint, FVector2D& OutScreenPosition, FVector2D& OutViewportSize, float MarginRatio = 0.0f) const;
 	ELockOnValidationResult ValidateCurrentLockedTarget();
 	bool CacheCurrentLockedTargetCandidate();
 	bool TryRetargetAfterLockedTargetDeath(AEnemyCharacter* DeadTarget);

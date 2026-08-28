@@ -94,6 +94,36 @@ bool FPlayerLockOnAutomationTest::RunTest(const FString&)
 		TestFalse(TEXT("Strict viewport rejects bottom edge"), FPlayerLockOnTargeting::IsStrictlyWithinViewport(FVector2D(960.0f, 1080.0f), ViewportSize));
 		TestFalse(TEXT("Strict viewport rejects non-finite projection"), FPlayerLockOnTargeting::IsStrictlyWithinViewport(FVector2D(std::numeric_limits<float>::quiet_NaN(), 540.0f), ViewportSize));
 
+		TestTrue(TEXT("Margin 0.0 equals strict interior check"), FPlayerLockOnTargeting::IsWithinViewportWithMargin(FVector2D(960.0f, 540.0f), ViewportSize, 0.0f));
+		TestFalse(TEXT("Margin 0.0 rejects exact left boundary"), FPlayerLockOnTargeting::IsWithinViewportWithMargin(FVector2D(0.0f, 540.0f), ViewportSize, 0.0f));
+		TestFalse(TEXT("Margin 0.0 rejects exact right boundary"), FPlayerLockOnTargeting::IsWithinViewportWithMargin(FVector2D(1920.0f, 540.0f), ViewportSize, 0.0f));
+		TestFalse(TEXT("Margin 0.0 rejects exact top boundary"), FPlayerLockOnTargeting::IsWithinViewportWithMargin(FVector2D(960.0f, 0.0f), ViewportSize, 0.0f));
+		TestFalse(TEXT("Margin 0.0 rejects exact bottom boundary"), FPlayerLockOnTargeting::IsWithinViewportWithMargin(FVector2D(960.0f, 1080.0f), ViewportSize, 0.0f));
+
+		// 15% retention boundary on 1920x1080: X in (-288, 2208), Y in (-162, 1242)
+		constexpr float Margin15 = 0.15f;
+		TestTrue(TEXT("Margin 0.15 accepts point just inside left hysteresis limit"), FPlayerLockOnTargeting::IsWithinViewportWithMargin(FVector2D(-287.0f, 540.0f), ViewportSize, Margin15));
+		TestFalse(TEXT("Margin 0.15 rejects exact left hysteresis boundary"), FPlayerLockOnTargeting::IsWithinViewportWithMargin(FVector2D(-288.0f, 540.0f), ViewportSize, Margin15));
+		TestFalse(TEXT("Margin 0.15 rejects point outside left hysteresis limit"), FPlayerLockOnTargeting::IsWithinViewportWithMargin(FVector2D(-289.0f, 540.0f), ViewportSize, Margin15));
+
+		TestTrue(TEXT("Margin 0.15 accepts point just inside right hysteresis limit"), FPlayerLockOnTargeting::IsWithinViewportWithMargin(FVector2D(2207.0f, 540.0f), ViewportSize, Margin15));
+		TestFalse(TEXT("Margin 0.15 rejects exact right hysteresis boundary"), FPlayerLockOnTargeting::IsWithinViewportWithMargin(FVector2D(2208.0f, 540.0f), ViewportSize, Margin15));
+		TestFalse(TEXT("Margin 0.15 rejects point outside right hysteresis limit"), FPlayerLockOnTargeting::IsWithinViewportWithMargin(FVector2D(2209.0f, 540.0f), ViewportSize, Margin15));
+
+		TestTrue(TEXT("Margin 0.15 accepts point just inside top hysteresis limit"), FPlayerLockOnTargeting::IsWithinViewportWithMargin(FVector2D(960.0f, -161.0f), ViewportSize, Margin15));
+		TestFalse(TEXT("Margin 0.15 rejects exact top hysteresis boundary"), FPlayerLockOnTargeting::IsWithinViewportWithMargin(FVector2D(960.0f, -162.0f), ViewportSize, Margin15));
+		TestFalse(TEXT("Margin 0.15 rejects point outside top hysteresis limit"), FPlayerLockOnTargeting::IsWithinViewportWithMargin(FVector2D(960.0f, -163.0f), ViewportSize, Margin15));
+
+		TestTrue(TEXT("Margin 0.15 accepts point just inside bottom hysteresis limit"), FPlayerLockOnTargeting::IsWithinViewportWithMargin(FVector2D(960.0f, 1241.0f), ViewportSize, Margin15));
+		TestFalse(TEXT("Margin 0.15 rejects exact bottom hysteresis boundary"), FPlayerLockOnTargeting::IsWithinViewportWithMargin(FVector2D(960.0f, 1242.0f), ViewportSize, Margin15));
+		TestFalse(TEXT("Margin 0.15 rejects point outside bottom hysteresis limit"), FPlayerLockOnTargeting::IsWithinViewportWithMargin(FVector2D(960.0f, 1243.0f), ViewportSize, Margin15));
+
+		TestFalse(TEXT("Margin check rejects negative margin"), FPlayerLockOnTargeting::IsWithinViewportWithMargin(FVector2D(960.0f, 540.0f), ViewportSize, -0.05f));
+		TestFalse(TEXT("Margin check rejects NaN margin"), FPlayerLockOnTargeting::IsWithinViewportWithMargin(FVector2D(960.0f, 540.0f), ViewportSize, std::numeric_limits<float>::quiet_NaN()));
+		TestFalse(TEXT("Margin check rejects Inf margin"), FPlayerLockOnTargeting::IsWithinViewportWithMargin(FVector2D(960.0f, 540.0f), ViewportSize, std::numeric_limits<float>::infinity()));
+		TestFalse(TEXT("Margin check rejects non-positive viewport X"), FPlayerLockOnTargeting::IsWithinViewportWithMargin(FVector2D(960.0f, 540.0f), FVector2D(0.0f, 1080.0f), Margin15));
+		TestFalse(TEXT("Margin check rejects non-positive viewport Y"), FPlayerLockOnTargeting::IsWithinViewportWithMargin(FVector2D(960.0f, 540.0f), FVector2D(1920.0f, -10.0f), Margin15));
+
 		float ClockwiseAngle = 0.0f;
 		TestTrue(TEXT("Clockwise angle resolves screen-right"), FPlayerLockOnTargeting::TryCalculateClockwiseAngle(FVector2D(960.0f, 540.0f), FVector2D(1160.0f, 540.0f), ClockwiseAngle));
 		TestTrue(TEXT("Screen-right is the zero-degree cycle origin"), FMath::IsNearlyZero(ClockwiseAngle));
@@ -277,15 +307,84 @@ bool FPlayerLockOnAutomationTest::RunTest(const FString&)
 			}
 
 			Player->SetTestLockedTarget(EnemyRight);
-			Player->SetTestLockOnProjectionHook([](const FVector&, FVector2D& OutScreenPosition, FVector2D& OutViewportSize)
+			// Helper to project EnemyRight at custom X while keeping other candidates at their consistent strict-viewport positions
+			auto SetProjectionForEnemyRightX = [Player](const float EnemyRightX)
 			{
-				OutScreenPosition = FVector2D(0.0f, 540.0f);
-				OutViewportSize = FVector2D(1920.0f, 1080.0f);
-				return true;
-			});
-			TestFalse(TEXT("A strict-viewport boundary projection clears the target"), Player->TriggerTestValidateCurrentLockedTarget());
-			TestNull(TEXT("Off-screen target does not auto-retarget"), Player->GetLockedTarget());
-			TestEqual(TEXT("Off-screen target highlight is cleared"), RightHighlight->GetVisibility(), ESlateVisibility::Collapsed);
+				Player->SetTestLockOnProjectionHook([EnemyRightX](const FVector& WorldPoint, FVector2D& OutScreenPosition, FVector2D& OutViewportSize)
+				{
+					OutViewportSize = FVector2D(1920.0f, 1080.0f);
+					if (WorldPoint.Y > 100.0f)
+					{
+						OutScreenPosition = FVector2D(960.0f, 720.0f); // EnemyBottom
+					}
+					else if (WorldPoint.X < -100.0f)
+					{
+						OutScreenPosition = FVector2D(760.0f, 540.0f); // EnemyLeft
+					}
+					else if (WorldPoint.Y < -100.0f)
+					{
+						OutScreenPosition = FVector2D(960.0f, 340.0f); // EnemyTop
+					}
+					else if (WorldPoint.X > 550.0f)
+					{
+						OutScreenPosition = FVector2D(1400.0f, 540.0f); // EnemyTie
+					}
+					else if (WorldPoint.X > 100.0f)
+					{
+						OutScreenPosition = FVector2D(EnemyRightX, 540.0f); // EnemyRight
+					}
+					else
+					{
+						OutScreenPosition = FVector2D(960.0f, 540.0f); // Player anchor
+					}
+					return true;
+				});
+			};
+
+			// 1. Target at exact viewport edge (X=0) and inside 15% retention (X=-150) stays retained
+			SetProjectionForEnemyRightX(-150.0f);
+			TestTrue(TEXT("A target inside the 15% retention boundary remains valid"), Player->TriggerTestValidateCurrentLockedTarget());
+			TestEqual(TEXT("Retention preserves the current locked target"), Player->GetLockedTarget(), EnemyRight);
+			TestEqual(TEXT("Retention keeps target health bar highlight active"), RightHighlight->GetVisibility(), ESlateVisibility::HitTestInvisible);
+
+			// 2. Strict acquisition cannot acquire a target in the retention-only zone
+			Player->SetTestLockedTarget(nullptr);
+			Player->SetTestLockOnCursorPosition(FVector2D(1110.0f, 540.0f));
+			TestTrue(TEXT("World candidate query acquires mouse-nearest strict candidate"), Player->TriggerTestAcquireLockOnTarget());
+			TestEqual(TEXT("Strict acquisition chooses EnemyBottom instead of off-screen EnemyRight"), Player->GetLockedTarget(), EnemyBottom);
+			Player->SetTestLockedTarget(nullptr);
+
+			// 3. Cycle no-op in retention-only state
+			Player->SetTestLockedTarget(EnemyRight);
+			TestTrue(TEXT("Re-locking EnemyRight succeeds in retention zone"), Player->TriggerTestValidateCurrentLockedTarget());
+			Player->TriggerTestTargetCycle(1.0f);
+			TestEqual(TEXT("Cycle forward on retained target is no-op and preserves lock"), Player->GetLockedTarget(), EnemyRight);
+			TestEqual(TEXT("Retained target highlight stays active during Cycle no-op"), RightHighlight->GetVisibility(), ESlateVisibility::HitTestInvisible);
+			TestEqual(TEXT("Strict candidates stay unhighlighted during Cycle no-op"), BottomHighlight->GetVisibility(), ESlateVisibility::Collapsed);
+			TestEqual(TEXT("Tie candidate stays unhighlighted during Cycle no-op"), TieHighlight->GetVisibility(), ESlateVisibility::Collapsed);
+
+			Player->TriggerTestTargetCycle(-1.0f);
+			TestEqual(TEXT("Cycle backward on retained target is also no-op"), Player->GetLockedTarget(), EnemyRight);
+
+			// 4. Target moving beyond 15% retention limit (X=-300 < -288) clears the lock
+			SetProjectionForEnemyRightX(-300.0f);
+			TestFalse(TEXT("A target beyond the 15% retention limit clears the lock"), Player->TriggerTestValidateCurrentLockedTarget());
+			TestNull(TEXT("Target beyond retention limit does not auto-retarget"), Player->GetLockedTarget());
+			TestEqual(TEXT("Target highlight is collapsed when lock is cleared"), RightHighlight->GetVisibility(), ESlateVisibility::Collapsed);
+
+			// 5. Target returning to strict viewport restores normal Cycle behavior
+			SetProjectionForEnemyRightX(1100.0f);
+			Player->SetTestLockedTarget(EnemyRight);
+			TestTrue(TEXT("EnemyRight re-locks inside strict viewport"), Player->TriggerTestValidateCurrentLockedTarget());
+			Player->TriggerTestTargetCycle(1.0f);
+			TestEqual(TEXT("Target Cycle inside strict viewport successfully cycles to next candidate"), Player->GetLockedTarget(), EnemyTie);
+			TestEqual(TEXT("Cycled target highlight is updated"), TieHighlight->GetVisibility(), ESlateVisibility::HitTestInvisible);
+			TestEqual(TEXT("Old target highlight is cleared after successful cycle"), RightHighlight->GetVisibility(), ESlateVisibility::Collapsed);
+
+			Player->TriggerTestTargetCycle(1.0f);
+			TestEqual(TEXT("Second cycle advances to EnemyBottom"), Player->GetLockedTarget(), EnemyBottom);
+			TestEqual(TEXT("EnemyBottom highlight is updated"), BottomHighlight->GetVisibility(), ESlateVisibility::HitTestInvisible);
+			TestEqual(TEXT("Tie highlight is cleared after second cycle"), TieHighlight->GetVisibility(), ESlateVisibility::Collapsed);
 
 			Player->SetTestLockOnProjectionHook([](const FVector&, FVector2D& OutScreenPosition, FVector2D& OutViewportSize)
 			{

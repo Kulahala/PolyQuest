@@ -921,11 +921,28 @@ bool FProjectileLifecycleAutomationTest::RunTest(const FString& Parameters)
 				ProjectileDefinition->bEnableTargetAssist = true;
 				ProjectileDefinition->bEnableLimitedHoming = true;
 
+				// 1. Target retained inside 15% retention but outside strict viewport & Bow 6% (X=-150)
 				Player->SetTestLockedTarget(LockedEnemy);
 				Player->SetTestLockOnProjectionHook([](const FVector& WorldPoint, FVector2D& OutScreenPosition, FVector2D& OutViewportSize)
 				{
 					OutViewportSize = FVector2D(1920.0f, 1080.0f);
-					OutScreenPosition = WorldPoint.Y > 200.0f ? FVector2D(0.0f, 540.0f) : FVector2D(960.0f, 540.0f);
+					OutScreenPosition = WorldPoint.Y > 200.0f ? FVector2D(-150.0f, 540.0f) : FVector2D(960.0f, 540.0f);
+					return true;
+				});
+				TestEqual(TEXT("B3 retained lock resolves target outside strict viewport"), Player->ResolveValidLockedTarget(), LockedEnemy);
+				ACombatProjectile* RetainedLockProjectile = SpawnReleaseProjectile(TEXT("Test_B3RetainedLockProjectileAbility"));
+				TestNotNull(TEXT("B3 Release spawns projectile targeting retained lock"), RetainedLockProjectile);
+				if (RetainedLockProjectile)
+				{
+					TestEqual(TEXT("B3 retained lock wins over automatic candidate"), RetainedLockProjectile->GetTestTargetActor(), Cast<AActor>(LockedEnemy));
+				}
+
+				// 2. Target beyond 15% retention limit (X=-300 < -288) clears lock and falls back to automatic
+				Player->SetTestLockedTarget(LockedEnemy);
+				Player->SetTestLockOnProjectionHook([](const FVector& WorldPoint, FVector2D& OutScreenPosition, FVector2D& OutViewportSize)
+				{
+					OutViewportSize = FVector2D(1920.0f, 1080.0f);
+					OutScreenPosition = WorldPoint.Y > 200.0f ? FVector2D(-300.0f, 540.0f) : FVector2D(960.0f, 540.0f);
 					return true;
 				});
 				ACombatProjectile* InvalidLockProjectile = SpawnReleaseProjectile(TEXT("Test_B3InvalidLockProjectileAbility"));
@@ -965,7 +982,7 @@ bool FProjectileLifecycleAutomationTest::RunTest(const FString& Parameters)
 				}
 				LockedASC->RemoveLooseGameplayTag(TagDead);
 
-				for (ACombatProjectile* Projectile : { LockedProjectile, AutomaticProjectile, StraightProjectile, InvalidLockProjectile, DeathHandoffProjectile })
+				for (ACombatProjectile* Projectile : { LockedProjectile, AutomaticProjectile, StraightProjectile, RetainedLockProjectile, InvalidLockProjectile, DeathHandoffProjectile })
 				{
 					if (Projectile)
 					{

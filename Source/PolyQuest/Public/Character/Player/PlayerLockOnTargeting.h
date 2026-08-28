@@ -24,6 +24,7 @@ class POLYQUEST_API FPlayerLockOnTargeting
 {
 public:
 	static bool IsStrictlyWithinViewport(const FVector2D& ScreenPosition, const FVector2D& ViewportSize);
+	static bool IsWithinViewportWithMargin(const FVector2D& ScreenPosition, const FVector2D& ViewportSize, float MarginRatio);
 	static bool TryCalculateClockwiseAngle(const FVector2D& PlayerScreenPosition, const FVector2D& TargetScreenPosition, float& OutAngleRadians);
 	static void SortClockwise(TArray<FPlayerLockOnCandidate>& Candidates);
 	static int32 FindNearestToCursor(const TArray<FPlayerLockOnCandidate>& Candidates, const FVector2D& CursorScreenPosition);
