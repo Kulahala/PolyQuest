@@ -31,10 +31,10 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 
 namespace
 {
-	struct FWorldCleanup
+	struct FPlayerDefenseAudioWorldCleanup
 	{
 		UWorld* World = nullptr;
-		~FWorldCleanup()
+		~FPlayerDefenseAudioWorldCleanup()
 		{
 			if (World)
 			{
@@ -45,7 +45,7 @@ namespace
 		}
 	};
 
-	void TickTestWorld(UWorld* World, const float DeltaSeconds)
+	void TickPlayerDefenseAudioTestWorld(UWorld* World, const float DeltaSeconds)
 	{
 		if (World)
 		{
@@ -54,13 +54,13 @@ namespace
 		}
 	}
 
-	void AdvanceTestWorld(UWorld* World, float DeltaSeconds)
+	void AdvancePlayerDefenseAudioTestWorld(UWorld* World, float DeltaSeconds)
 	{
 		constexpr float MaxTickStepSeconds = 0.05f;
 		while (DeltaSeconds > KINDA_SMALL_NUMBER)
 		{
 			const float TickStep = FMath::Min(DeltaSeconds, MaxTickStepSeconds);
-			TickTestWorld(World, TickStep);
+			TickPlayerDefenseAudioTestWorld(World, TickStep);
 			DeltaSeconds -= TickStep;
 		}
 	}
@@ -111,7 +111,7 @@ bool FPlayerDefenseAudioAutomationTest::RunTest(const FString& Parameters)
 	FWorldContext& WorldContext = GEngine->CreateNewWorldContext(EWorldType::Game);
 	UWorld* World = UWorld::CreateWorld(EWorldType::Game, false, TEXT("PlayerDefenseAudioTestWorld"));
 	WorldContext.SetCurrentWorld(World);
-	FWorldCleanup Cleanup{ World };
+	FPlayerDefenseAudioWorldCleanup Cleanup{ World };
 
 	if (!TestNotNull(TEXT("Test World created"), World))
 	{
@@ -468,7 +468,7 @@ bool FPlayerDefenseAudioAutomationTest::RunTest(const FString& Parameters)
 
 		// 3.7 Null ReceivedHitSound (graceful silence, camera shake still plays)
 		PlayerASC->SetNumericAttributeBase(UCharacterAttributeSet::GetHealthAttribute(), 500.0f);
-		AdvanceTestWorld(World, 0.25f);
+		AdvancePlayerDefenseAudioTestWorld(World, 0.25f);
 		FGameplayTagContainer LaunchTags;
 		LaunchTags.AddTag(FGameplayTag::RequestGameplayTag(FName(TEXT("Data.Reaction.Launch")), false));
 		Player->SetTestReceivedHitSound(nullptr);
@@ -479,7 +479,7 @@ bool FPlayerDefenseAudioAutomationTest::RunTest(const FString& Parameters)
 		TestTrue(TEXT("Overlay flash still triggered with null sound"), Player->IsTestHitFeedbackOverlayActive());
 		TestEqual(TEXT("Camera shake still triggered with null sound"), Player->GetTestHitFeedbackCameraShakeStartCount(), ShakeCountBeforeNull + 1);
 		Player->SetTestReceivedHitSound(TestReceivedHitSound);
-		AdvanceTestWorld(World, 0.25f);
+		AdvancePlayerDefenseAudioTestWorld(World, 0.25f);
 	}
 
 	// =========================================================================
