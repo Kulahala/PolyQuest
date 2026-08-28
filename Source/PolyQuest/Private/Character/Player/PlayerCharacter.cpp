@@ -35,9 +35,11 @@
 #include "Combat/Equipment/WeaponEquipmentComponent.h"
 #include "Combat/Equipment/WorldWeaponPickup.h"
 #include "Combat/Input/CombatLoadoutDefinition.h"
+#include "Combat/Melee/CombatTeamAgent.h"
 #include "Combat/Reaction/HitReactionClassifier.h"
 #include "GameplayEffectExtension.h"
 #include "PolyQuest.h"
+#include "Sound/SoundBase.h"
 
 namespace
 {
@@ -513,7 +515,7 @@ bool APlayerCharacter::CanAttemptGuard() const
 		&& CharacterASC->GetNumericAttribute(UCharacterAttributeSet::GetStaminaAttribute()) > 0.0f;
 }
 
-bool APlayerCharacter::TryGuardIncomingMeleeHit(AActor* AttackingActor, float GuardStaminaDamage)
+bool APlayerCharacter::TryGuardIncomingMeleeHit(AActor* AttackingActor, float GuardStaminaDamage, const FHitResult& HitResult)
 {
 	if (!AttackingActor)
 	{
@@ -522,7 +524,7 @@ bool APlayerCharacter::TryGuardIncomingMeleeHit(AActor* AttackingActor, float Gu
 
 	if (UPlayerGuardAbility* GuardAbility = FindActiveGuardAbility())
 	{
-		return GuardAbility->TryGuardMeleeHit(AttackingActor, GuardStaminaDamage);
+		return GuardAbility->TryGuardMeleeHit(AttackingActor, GuardStaminaDamage, HitResult);
 	}
 
 	return false;
@@ -572,7 +574,7 @@ bool APlayerCharacter::TryResolveIncomingDefense(
 		}
 	}
 
-	return TryGuardIncomingMeleeHit(AttackingActor, GuardStaminaDamage);
+	return TryGuardIncomingMeleeHit(AttackingActor, GuardStaminaDamage, HitResult);
 }
 
 void APlayerCharacter::TriggerParrySuccessCameraShake()
@@ -2201,6 +2203,12 @@ void APlayerCharacter::OnHealthAttributeChanged(const FOnAttributeChangeData& Ch
 	const EHitReactionTier ReactionTier = FHitReactionClassifier::ClassifyReactionTier(AssetTags);
 	TriggerHitFeedbackCameraShake(ReactionTier);
 
+	const bool bIsFirstHealthModifierInSpec = (ChangeData.GEModData->EffectSpec.GetModifiedAttribute(UCharacterAttributeSet::GetHealthAttribute()) == nullptr);
+	if (bIsFirstHealthModifierInSpec)
+	{
+		TriggerReceivedHitSound(ChangeData.GEModData->EffectSpec);
+	}
+
 	const bool bIsStunned = StunnedStateTag.IsValid() && CharacterASC->HasMatchingGameplayTag(StunnedStateTag);
 	if (bIsStunned)
 	{
@@ -2359,6 +2367,62 @@ void APlayerCharacter::ClearActiveHitFeedbackCameraShake()
 	ActiveHitFeedbackCameraManager = nullptr;
 	ActiveHitFeedbackCameraShake = nullptr;
 	ActiveHitFeedbackCameraShakeClass = nullptr;
+}
+
+void APlayerCharacter::TriggerReceivedHitSound(const FGameplayEffectSpec& EffectSpec)
+{
+	if (!ReceivedHitSound)
+	{
+		return;
+	}
+
+	const FGameplayEffectContextHandle ContextHandle = EffectSpec.GetContext();
+	AActor* InstigatorActor = ContextHandle.GetInstigator();
+	if (!InstigatorActor || !InstigatorActor->GetClass()->ImplementsInterface(UCombatTeamAgent::StaticClass()))
+	{
+		return;
+	}
+
+	const FGameplayTag InstigatorTeamTag = ICombatTeamAgent::Execute_GetCombatTeamTag(InstigatorActor);
+	static const FGameplayTag EnemyTeamTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Team.Enemy")), false);
+	if (!InstigatorTeamTag.IsValid() || !EnemyTeamTag.IsValid() || !InstigatorTeamTag.MatchesTagExact(EnemyTeamTag))
+	{
+		return;
+	}
+
+	FVector SoundLocation = GetActorLocation();
+	const FHitResult* ContextHitResult = ContextHandle.GetHitResult();
+	if (ContextHitResult
+		&& ContextHitResult->GetActor() == this
+		&& !ContextHitResult->ImpactPoint.ContainsNaN()
+		&& FMath::IsFinite(ContextHitResult->ImpactPoint.X) && FMath::IsFinite(ContextHitResult->ImpactPoint.Y) && FMath::IsFinite(ContextHitResult->ImpactPoint.Z)
+		&& !ContextHitResult->ImpactPoint.IsNearlyZero())
+	{
+		SoundLocation = ContextHitResult->ImpactPoint;
+	}
+
+	if (SoundLocation.ContainsNaN()
+		|| !FMath::IsFinite(SoundLocation.X) || !FMath::IsFinite(SoundLocation.Y) || !FMath::IsFinite(SoundLocation.Z))
+	{
+		return;
+	}
+
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return;
+	}
+
+#if WITH_DEV_AUTOMATION_TESTS
+	++TestReceivedHitSoundDispatchCount;
+	TestLastReceivedHitSoundLocation = SoundLocation;
+	if (bTestBypassReceivedHitAudioPlayback)
+	{
+		return;
+	}
+#endif
+
+	UGameplayStatics::PlaySoundAtLocation(World, ReceivedHitSound, SoundLocation);
 }
 
 void APlayerCharacter::OnSprintRelevantTagChanged(const FGameplayTag Tag, int32 NewCount)

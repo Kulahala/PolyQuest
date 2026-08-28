@@ -13,6 +13,7 @@ class UAbilityTask_WaitGameplayEvent;
 class UAnimInstance;
 class UAnimMontage;
 class UGameplayEffect;
+class USoundBase;
 
 /**
  * Held, grounded player Guard. The shared resolver asks this active Ability
@@ -50,7 +51,26 @@ public:
 	bool IsGuardActive() const { return bGuardActive && !bEndAbilityRequested; }
 
 	/** Applies one authored Stamina loss for a resolver-validated front-arc melee contact. */
-	bool TryGuardMeleeHit(AActor* AttackingActor, float GuardStaminaDamage);
+	bool TryGuardMeleeHit(AActor* AttackingActor, float GuardStaminaDamage, const FHitResult& HitResult);
+
+#if WITH_DEV_AUTOMATION_TESTS
+	const FGameplayTagContainer& GetTestActivationBlockedTags() const { return ActivationBlockedTags; }
+	void SetTestCurrentActorInfo(const FGameplayAbilityActorInfo* InActorInfo) { CurrentActorInfo = InActorInfo; }
+	void SetTestCurrentSpecHandle(const FGameplayAbilitySpecHandle InHandle) { CurrentSpecHandle = InHandle; }
+	void SetTestGuardActive(bool bActive)
+	{
+		bGuardActive = bActive;
+		if (bActive)
+		{
+			bEndAbilityRequested = false;
+		}
+	}
+	void SetTestGuardStaminaCostGameplayEffectClass(TSubclassOf<UGameplayEffect> InClass) { GuardStaminaCostGameplayEffectClass = InClass; }
+	void SetTestGuardSuccessSound(USoundBase* InSound) { GuardSuccessSound = InSound; }
+	void SetTestBypassAudioPlayback(const bool bBypass) { bTestBypassAudioPlayback = bBypass; }
+	int32 GetTestGuardSuccessSoundDispatchCount() const { return TestGuardSuccessSoundDispatchCount; }
+	FVector GetTestLastGuardSuccessSoundLocation() const { return TestLastGuardSuccessSoundLocation; }
+#endif
 
 private:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Player|Guard", meta = (AllowPrivateAccess = "true", ToolTip = "持盾/武器防御姿态的循环动画 Montage 资产。"))
@@ -67,6 +87,9 @@ private:
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Player|Guard", meta = (AllowPrivateAccess = "true", ToolTip = "格挡消耗体力后重置体力自然恢复延迟的 GameplayEffect 类。"))
 	TSubclassOf<UGameplayEffect> StaminaRegenDelayGameplayEffectClass;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Player|Guard|Feedback", meta = (AllowPrivateAccess = "true", ToolTip = "格挡成功时播放的音效。"))
+	TObjectPtr<USoundBase> GuardSuccessSound;
 
 	UPROPERTY(Transient)
 	TObjectPtr<UAbilityTask_PlayMontageAndWait> MontageTask;
@@ -116,4 +139,11 @@ private:
 	bool IsGuardInputEvent(const FGameplayEventData& Payload) const;
 	bool IsAttackerInGuardArc(const AActor* AttackingActor) const;
 	void EndFromMontage(bool bWasCancelled);
+	void TriggerGuardSuccessFeedback(const FHitResult& HitResult);
+
+#if WITH_DEV_AUTOMATION_TESTS
+	int32 TestGuardSuccessSoundDispatchCount = 0;
+	FVector TestLastGuardSuccessSoundLocation = FVector::ZeroVector;
+	bool bTestBypassAudioPlayback = false;
+#endif
 };

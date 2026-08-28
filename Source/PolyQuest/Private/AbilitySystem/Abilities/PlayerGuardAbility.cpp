@@ -11,7 +11,9 @@
 #include "GameFramework/CharacterMovementComponent.h"
 #include "GameplayEffect.h"
 #include "GameplayEffectTypes.h"
+#include "Kismet/GameplayStatics.h"
 #include "PolyQuest.h"
+#include "Sound/SoundBase.h"
 
 namespace
 {
@@ -205,7 +207,7 @@ void UPlayerGuardAbility::EndAbility(
 	Super::EndAbility(Handle, ActorInfo, ActivationInfo, bReplicateEndAbility, bWasCancelled);
 }
 
-bool UPlayerGuardAbility::TryGuardMeleeHit(AActor* AttackingActor, float GuardStaminaDamage)
+bool UPlayerGuardAbility::TryGuardMeleeHit(AActor* AttackingActor, float GuardStaminaDamage, const FHitResult& HitResult)
 {
 	if (!IsGuardActive() || !AttackingActor || !IsAttackerInGuardArc(AttackingActor))
 	{
@@ -241,6 +243,8 @@ bool UPlayerGuardAbility::TryGuardMeleeHit(AActor* AttackingActor, float GuardSt
 	{
 		return false;
 	}
+
+	TriggerGuardSuccessFeedback(HitResult);
 
 	ApplyStaminaRegenDelay();
 	if (CharacterASC->GetNumericAttribute(UCharacterAttributeSet::GetStaminaAttribute()) > 0.0f)
@@ -415,5 +419,49 @@ void UPlayerGuardAbility::EndFromMontage(bool bWasCancelled)
 	if (CurrentActorInfo)
 	{
 		EndAbility(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, true, bWasCancelled);
+	}
+}
+
+void UPlayerGuardAbility::TriggerGuardSuccessFeedback(const FHitResult& HitResult)
+{
+	APlayerCharacter* PlayerCharacter = Cast<APlayerCharacter>(GetAvatarActorFromActorInfo());
+	if (!PlayerCharacter)
+	{
+		return;
+	}
+
+	if (GuardSuccessSound)
+	{
+		FVector SoundLocation = PlayerCharacter->GetActorLocation();
+		if (HitResult.GetActor() == PlayerCharacter
+			&& !HitResult.ImpactPoint.ContainsNaN()
+			&& FMath::IsFinite(HitResult.ImpactPoint.X) && FMath::IsFinite(HitResult.ImpactPoint.Y) && FMath::IsFinite(HitResult.ImpactPoint.Z)
+			&& !HitResult.ImpactPoint.IsNearlyZero())
+		{
+			SoundLocation = HitResult.ImpactPoint;
+		}
+
+		if (SoundLocation.ContainsNaN()
+			|| !FMath::IsFinite(SoundLocation.X) || !FMath::IsFinite(SoundLocation.Y) || !FMath::IsFinite(SoundLocation.Z))
+		{
+			return;
+		}
+
+		UWorld* World = PlayerCharacter->GetWorld();
+		if (!World)
+		{
+			return;
+		}
+
+#if WITH_DEV_AUTOMATION_TESTS
+		++TestGuardSuccessSoundDispatchCount;
+		TestLastGuardSuccessSoundLocation = SoundLocation;
+		if (bTestBypassAudioPlayback)
+		{
+			return;
+		}
+#endif
+
+		UGameplayStatics::PlaySoundAtLocation(World, GuardSuccessSound, SoundLocation);
 	}
 }

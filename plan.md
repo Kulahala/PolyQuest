@@ -1,292 +1,186 @@
-# TODO-02C3M: Parry Success Impact Feedback v1
+# TODO-02C3N: Guard Success And Player Hit Audio Feedback v1
 
 ## Plan State
 
-- Status: Completed / user-validated / Main fresh-reviewed / closeout committed.
-- Baseline: `024a374494ecca9525ff8607b07c402e4247582b`.
-- Repository: `E:\GameDevelop\PolyQuest` (UE 5.8, runtime module `PolyQuest`).
-- Preserve all existing user WIP. The C3M native/test slice is joined at closeout by the two user-approved C3K tuning files (`EnemyCharacter.h` and `CombatHitFeedbackAutomationTests.cpp`) as one explicit impact-feedback tuning freeze. `AGENTS.md`, `Config/**`, `Content/**`, generated folders, and all other unrelated source changes remain excluded.
-- Objective: make a successful Player Parry feel decisive with a short hit-stop, the existing Player Big-hit camera shake, and an optional Parry-owned sound, while making the shared defense boundary explicitly reject Parry for projectile contacts.
-- Player-facing success: one valid melee Parry consumes the contact, leaves Player Health and Guard Stamina unchanged, applies the existing counter-Poise behavior when an attacker ASC exists, and emits a brief freeze/camera/audio response at the contact location. A projectile striking during the Parry window must not be Parried; it must retain the existing Guard-or-damage route.
-- Approved tuning freeze: Parry uses `0.05s / 0.03`; the accompanying C3K presets are Small `0.03s / 0.1`, Big `0.05s / 0.03`, and Launch `0.05s / 0.05`. These values are user-approved presentation tuning, not an implementation defect.
+- **状态**：Main 方案已冻结，等待 Gemini 只读审阅并按交接提示执行；本次只更新计划，不修改源码、资产或配置。
+- **仓库**：`E:\GameDevelop\PolyQuest`（UE 5.8，运行时模块 `PolyQuest`）。
+- **基线**：`b2eb4f2559bdf7206f4be4012549693358144e6e`。
+- **范围纪律**：保留工作区全部既有用户 WIP，尤其是 `Config/DefaultEngine.ini` 与 `Content/**` 的修改/删除；它们不属于本阶段实现，也不能被回滚、格式化或提交。
+- **阶段目标**：在已经存在的 GAS/Resolver 边界上加入两个彼此独立、可选、可静默失败的原生音效通道：成功 Guard 音效，以及玩家受到敌方非致命实际伤害时的受击音效。
+- **阶段成功条件**：Guard 只在成功吸收一次接触后播放一次；Player 只在权威、非致命、Health 实际下降且来源精确属于 `Team.Enemy` 时播放一次；现有 Parry、Overlay、Camera Shake、Small/Big/Launch 反应、Guard Break、投射物伤害和清理生命周期均保持不变。
 
 ## Route And Delegation
 
-Outer: `ue-stage-workflow`
-Primary: `ue5-cpp-gameplay`
-Support: `game-feel`, `ue5-debug-validation`
-Route reason: this is a narrow native GAS/resolver lifecycle change plus presentation reuse. The existing Controller hit-stop and Player camera-manager ownership are sufficient; no new feedback framework, GameplayCue, input route, tag, replication path, or asset system is needed.
+```text
+Outer: ue-stage-workflow
+Primary: ue5-cpp-gameplay
+Support: game-feel, ue5-debug-validation
+Route reason: 这是一个窄范围的原生 GAS 防御/Health 回调扩展和直接音效呈现接入；现有 ASC、Resolver、Player Controller 与 Enemy 反馈所有权已经足够，不需要新的反馈框架。
+```
 
+```text
 Plan explorers: 0
 Implementation executors: 1 (Gemini)
-Complex Executor: one scoped lifecycle-sensitive implementation (Gemini; the Parry/resolver boundary and feedback cleanup must be treated as one contract)
+Complex Executor: one scoped lifecycle-sensitive implementation
 Main parallel work: none
-Reason: the changed paths share one synchronous defense decision and one Player-owned presentation call. A single bounded executor can implement the frozen slice without competing writers; Main retains contract, asset, validation, documentation, staging, and commit ownership.
+Reason: Guard 接触消费与 Player Health 回调分别是两个入口，但都共享 Player/ASC、有限位置校验和测试生命周期；由一个执行者按顺序写入可避免跨文件契约竞争，Main 保留契约、文档、验证解释、暂存和提交所有权。
+```
 
-## Ownership And Handoff Boundary
+### Ownership
 
-- Contract owner: Main. Main owns the public signatures, Parry-vs-projectile policy, feedback order, defaults, GAS/ASC semantics, test acceptance, and any scope decision.
-- Implementation writer: Gemini. Gemini may edit only the explicitly approved source/test paths below, and only the named functions or test seams. It must not change the policy while implementing.
-- User-owned Editor work: if the current authored Parry Gameplay Ability/Blueprint exposes the new field, assign `ParrySuccessSound` there if desired; save any mutable assets, compile `PolyQuestEditor (Development Editor)` in Visual Studio 2022, run Automation in the Unreal Editor, and perform Scene01 PIE/audio/visual verification.
-- Main-owned work after validation: fresh defect-first review, `plan.md`/`ROADMAP.md`/`ARCHITECTURE.md`/`README.md` synchronization, explicit-path staging, and commit preparation. Gemini must not edit project documentation, stage, or commit.
-- No executor may modify `AGENTS.md`, `ROADMAP.md`, `ARCHITECTURE.md`, `README.md`, `plan.md`, `Config/**`, `Content/**`, `.uasset`, `.umap`, AnimBP/Montage assets, `PolyQuestPlayerController` production code, Enemy feedback code, `PolyQuest.Build.cs`, Gameplay Tags, or Input configuration.
+- **Contract owner：Main**。Main 冻结 API、敌我过滤、反馈时序、去重语义、测试接受条件和非目标；任何契约变更都必须停工返回 Main 决策。
+- **Implementation writer：Gemini**。Gemini 只能修改下列七个批准路径中的指定函数/测试 seam，不得修改文档、Config、Content、资产、Resolver、Controller、Enemy 或构建设置。
+- **User-owned gates**：用户负责在 Unreal Editor/VS 2022 中完成资产可选赋值、`PolyQuestEditor (Development Editor)` 编译、Automation、Scene01 PIE 的声音与行为确认。
+- **Main after validation**：Main 做一次普通 defect-first fresh review，解释用户证据，更新 `ROADMAP.md`、`ARCHITECTURE.md`、`README.md` 和本计划的收尾记录，按明确路径暂存并等待用户批准提交。
 
 ## Current Evidence And Call Chain
 
-1. Native melee delivery currently follows `FMeleeHitResolver::TryResolveHit` -> `APlayerCharacter::TryResolveIncomingDefense` -> `UPlayerParryAbility::TryParryMeleeHit`. A successful Parry is terminal for that trace contact.
-2. Native projectile delivery follows `FCombatProjectileHitResolver::TryResolveHit` -> the same `TryResolveIncomingDefense` entry. C3M now passes `bAllowParry = false`, so projectiles skip Parry and retain the Guard-or-damage route.
-3. `UPlayerParryAbility::TryParryMeleeHit` already owns the front-arc/window gate, optional attacker Poise counter, and contact-consumption return value. It currently has no success presentation.
-4. `APolyQuestPlayerController::RequestCombatImpactHitStop(float, float)` already owns global time-dilation arbitration, real-time expiry, external-dilation detection, and teardown restoration. Do not add another timer or Controller API.
-5. `APlayerCharacter::TriggerHitFeedbackCameraShake(EHitReactionTier)` already owns local-controller checks, Big/Small/Launch class selection, single-instance replacement, and camera-manager cleanup. The Parry path needs only a narrow C++ wrapper that selects the existing Big class; it must not expose a general new tier or duplicate the manager lifecycle.
-6. Existing C3K impact feedback is damage-path-owned on Enemy and is intentionally separate. Parry success is a defense contact event, not Health damage, so it must not dispatch a Health reaction, blood, overlay, or Enemy feedback.
+1. 近战路径是 `FMeleeHitResolver::TryResolveHit` → `APlayerCharacter::TryResolveIncomingDefense` → 当前活动的 `UPlayerParryAbility` 或 `UPlayerGuardAbility`。近战 Resolver 已把 `FHitResult` 传入并允许 Parry。
+2. 投射物路径是 `FCombatProjectileHitResolver::TryResolveHit` → 同一个 Player 防御入口；C3M 已传入 `bAllowParry = false`，因此投射物跳过 Parry 并保留 Guard/伤害路径。两个 Resolver 不在本阶段修改。
+3. `UPlayerGuardAbility::TryGuardMeleeHit` 当前只接收攻击者和体力伤害，成功应用 Guard Stamina GE 后会继续处理恢复延迟或 Guard Break；这是成功 Guard 音效应插入的唯一接触消费点。
+4. `APlayerCharacter::OnHealthAttributeChanged` 已负责权威、非致命、Health 下降、Overlay、Camera Shake 和反应事件。新增受击音效必须挂在同一回调的有效伤害分支中，不能用新的 Health/伤害路径。
+5. `AEnemyCharacter::HandleCombatImpactFeedback` 的 `ImpactSound` 是 C3K 已验证的 Enemy 受击路径，本阶段不修改、不复用其配置字段，也不把 Player 音效移到 Enemy。
+6. `ICombatTeamAgent::Execute_GetCombatTeamTag` 是当前精确敌我关系契约；Player 受击音效只接受返回值精确匹配 `Team.Enemy` 的 Instigator。
 
 ## Frozen Product Decisions
 
-### 1. Parry eligibility and projectile policy
+### 1. Guard success audio
 
-- Only a resolver-approved **melee** contact may call `TryParryMeleeHit`.
-- The shared Player entry becomes:
+- `GuardSuccessSound` 是 `UPlayerGuardAbility` 上的可选 `USoundBase`，默认 `nullptr`；未配置时只跳过音频，不影响 Guard 消费。
+- 成功吸收的 Guard 接触全部适用：近战、投射物，以及该接触把 Stamina 降至零并触发 Guard Break 的情况。Guard Break 仍是一次被吸收的接触，只播放一次。
+- 只有现有 Guard 前置条件通过且 `ApplyGameplayEffectSpecToSelf` 对 Guard Stamina GE 返回成功后才触发；错误攻击弧、非活动/失效 Guard、缺失 GE、Spec 构造失败或 GE 应用失败不触发。
+- 触发时机固定在 GE 成功之后、任何 Guard Break/恢复延迟分支之前；不新增计时器、Gameplay Event、Tag 或重复防御状态。
+- `TryGuardMeleeHit` 改为接收 `const FHitResult& HitResult`；`APlayerCharacter::TryGuardIncomingMeleeHit` 同步增加该参数，并原样转发。`TryResolveIncomingDefense` 已有 HitResult，bAllowParry 为 false 时继续调用带 HitResult 的 Guard 路径。
+- 位置规则：仅当 `HitResult.GetActor() == PlayerCharacter`、`ImpactPoint` 三轴有限且不是默认近零点时使用 `ImpactPoint`；否则退回 Player 的有限 `GetActorLocation()`。World、音效资产或最终位置无效时静默跳过音效。
+- 增加一个私有 `TriggerGuardSuccessFeedback(const FHitResult&)`，同步消费 HitResult，不保留指针、Context 或跨帧回调。该 helper 不能改变 `true` 返回、Stamina、Guard Break 或 `EndAbility` 清理。
 
-```cpp
-bool TryResolveIncomingDefense(
-    AActor* AttackingActor,
-    float GuardStaminaDamage,
-    const FHitResult& HitResult,
-    bool bAllowParry);
-```
+### 2. Player received-hit audio
 
-- `FMeleeHitResolver` passes `Request.HitResult` and `bAllowParry = true`.
-- `FCombatProjectileHitResolver` passes `Request.HitResult` and `bAllowParry = false`.
-- When `bAllowParry` is false, skip the Parry lookup entirely and continue to the existing Guard path; if Guard does not consume the projectile contact, apply the existing projectile GameplayEffect unchanged.
-- When `bAllowParry` is true and an active Parry instance is found, preserve the current return semantics: return the Parry result directly. A failed/invalid active Parry does not silently fall through to Guard, matching the established melee behavior. `TryGuardIncomingMeleeHit` keeps its existing signature and behavior; it does not need the HitResult.
-- Do not add a new Gameplay Tag, Input route, ASC, damage route, projectile flag, or global Parry de-duplication state. Existing `UAbilityTask_MeleeTraceWindow::DeliveredTargets` and `ACombatProjectile::bHitDelivered` remain the one-contact guards.
+- `ReceivedHitSound` 是 `APlayerCharacter` 上的可选 `USoundBase`，默认 `nullptr`；Enemy 的 C3K `ImpactSound` 不改变。
+- 触发必须同时满足：`HasAuthority()`、Actor 未销毁、Health 新值大于零、Health 实际下降、存在 `GEModData`、Instigator 实现 `UCombatTeamAgent`，且 `GetCombatTeamTag()` 精确匹配 `Team.Enemy`。死亡、治疗、直接 Base 写入、无来源、友方/无阵营、仅 Poise 变化都不播放。
+- 适用于现有 Small、Big、Launch 非致命 Health 反应，不要求反应 Tag 有效，也不因 Stunned、反应能力缺失或其他 Overlay/Camera/Reaction 分支提前返回而丢失音效。现有反馈顺序与行为保持不变。
+- 在 `OnHealthAttributeChanged` 中以 `EffectSpec.GetModifiedAttribute(UCharacterAttributeSet::GetHealthAttribute())` 识别同一个 GE Spec 的首次 Health Modifier；只让首次回调尝试音效。这个检查只能决定音效是否调用，**不得对整个回调提前 return**，否则会改变既有 Overlay、Camera Shake 和 Reaction 行为。
+- 触发顺序固定为：保留现有 Overlay 与 ReactionTier 计算，紧随既有 `TriggerHitFeedbackCameraShake(ReactionTier)` 调用 `TriggerReceivedHitSound(EffectSpec)`，并且必须位于 `Stunned` 与 `ReactionTier == Invalid` 的后续分支之前；这样硬直或无效反应 Tag 不能吞掉声音，也不能改变原有后续分支。
+- 同一 GE Spec 含多个 Health Modifier 时只播放一次；两个独立 GE Spec 即使复用同一个 `FGameplayEffectContextHandle` 也各播放一次。
+- 新增私有 `TriggerReceivedHitSound(const FGameplayEffectSpec&)`。从 `EffectSpec.GetContext().GetInstigator()` 做阵营校验，从 Context HitResult 取位置；只有 `GetActor() == this` 且 ImpactPoint 有限、非近零时使用 ImpactPoint，否则回退到有限的 Player ActorLocation。音效、World 或位置无效时仅跳过音频。
+- 直接使用 `UGameplayStatics::PlaySoundAtLocation`。v1 不建立 GameplayCue、音频总线、混音/ducking、随机变体、池化、复制或网络广播；项目当前是单机，声音是本地呈现通道。
 
-### 2. Parry API and success feedback
+### 3. Test-only seams
 
-Change the Parry method to:
-
-```cpp
-bool TryParryMeleeHit(AActor* AttackingActor, const FHitResult& HitResult);
-```
-
-Keep the existing window, front `120`-degree arc, ability/GE validation, counter-Poise attempt, and `true`/`false` meaning. A missing attacker ASC still skips only the counter and still returns success after a valid Parry; a malformed local Parry configuration still returns `false` and emits no feedback.
-
-Add these optional, Parry-owned authoring fields to `UPlayerParryAbility`:
-
-```cpp
-UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Player|Parry|Feedback", meta = (AllowPrivateAccess = "true", ClampMin = "0.0", Units = "Seconds"))
-float ParrySuccessHitStopDurationSeconds = 0.05f;
-
-UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Player|Parry|Feedback", meta = (AllowPrivateAccess = "true", ClampMin = "0.01", ClampMax = "1.0"))
-   float ParrySuccessHitStopTimeDilation = 0.03f;
-
-UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Player|Parry|Feedback", meta = (AllowPrivateAccess = "true"))
-TObjectPtr<USoundBase> ParrySuccessSound;
-```
-
-The approved defaults follow the current C3K Big impact tuning (`0.05s`, `0.03`), while the fields remain independently tunable on Parry. Invalid/non-finite duration or dilation is fail-closed for the hit-stop channel only; it must not cancel a valid Parry or counter.
-
-Add one private helper:
-
-```cpp
-void TriggerParrySuccessFeedback(const FHitResult& HitResult);
-```
-
-Call it exactly once, after the existing successful Parry gate and counter attempt, immediately before returning `true`. The helper must execute channels in this order, with independent validity checks:
-
-1. Request `APolyQuestPlayerController::RequestCombatImpactHitStop(...)` through the current Player's existing Controller route. If World/Controller is unavailable, or values are invalid, skip only hit-stop.
-2. Call the Player's narrow `TriggerParrySuccessCameraShake()` wrapper, which internally reuses `BigHitFeedbackCameraShakeClass` and the existing local camera-manager lifecycle. Missing/non-local camera is a no-op.
-3. If `ParrySuccessSound` is configured, play it with `UGameplayStatics::PlaySoundAtLocation`. Use `HitResult.ImpactPoint` only when `HitResult.GetActor() == PlayerCharacter`, all three coordinates are finite, and the point is not the default near-zero value; otherwise use the Player `ActorLocation` if finite. A missing sound, invalid point, missing World, or audio failure is a silent presentation no-op.
-
-The `FHitResult` is copied/consumed synchronously; do not retain a pointer, `FGameplayEffectContextHandle`, or callback state across frames. Sound failure must never block contact consumption, counter-Poise, cooldown, or `EndAbility` cleanup.
-
-### 3. Player camera wrapper
-
-Add this narrow C++-only method to `APlayerCharacter`:
-
-```cpp
-void TriggerParrySuccessCameraShake();
-```
-
-Its implementation must only forward to the existing private camera-shake path with `EHitReactionTier::Big`. Do not make `TriggerHitFeedbackCameraShake` public, do not create a second shake manager, and do not change the existing Health hit-reaction tier mapping.
-
-### 4. No GameplayCue in v1
-
-Do not add a GameplayCue class, cue tag, cue asset, or generic feedback dispatcher. PolyQuest is single-player and currently has one Player Parry consumer; direct native Ability -> Player/Controller calls are the smallest authoritative path. Reconsider a GameplayCue only when at least one of these is real and accepted: replicated/network-visible Parry feedback, multiple actors/consumers sharing the same event, or a materially larger asset-driven feedback fan-out.
+- 新增的反馈计数、最后一次位置、可选音频 dispatch bypass/记录和必要 setter/getter 必须完全包在 `#if WITH_DEV_AUTOMATION_TESTS` 中，不得进入 Shipping/反射 API。
+- 生产代码不能为了测试添加特殊分支、全局单例、可写的运行时 Tag 或持久化状态。
 
 ## Approved Native And Test Slice
 
-Only the following paths are approved. For every shared-contract path, **Contract owner: Main; implementation writer: Gemini**.
+除以下路径外不得修改任何文件。每个共享契约文件均为 **Contract owner: Main；implementation writer: Gemini**。
 
-1. `Source/PolyQuest/Public/AbilitySystem/Abilities/PlayerParryAbility.h`
-   - Add the `USoundBase` forward declaration, the three feedback UPROPERTY fields, the new `TryParryMeleeHit` signature, and the private helper declaration.
-   - Add only minimal `#if WITH_DEV_AUTOMATION_TESTS` setters/getters needed to construct a transient test instance: `SetTestCurrentActorInfo`, `SetTestCurrentSpecHandle`, `TestSetParryWindowOpen`, `SetTestParryCounterPoiseGameplayEffectClass`, `SetTestParrySuccessSound`, optional tunable setters, `GetTestParrySuccessFeedbackCount`, `GetTestParrySuccessSoundDispatchCount`, and `GetTestLastParrySuccessSoundLocation` (exact names may follow project style). Keep every seam test-only and non-reflected.
-   - Do not change ability tags, activation blocks, cancellation ownership, public Blueprint behavior, or Montage/task members.
+1. `E:\GameDevelop\PolyQuest\Source\PolyQuest\Public\AbilitySystem\Abilities\PlayerGuardAbility.h`
+   - 前置声明 `USoundBase`。
+   - 将 `TryGuardMeleeHit` 改为 `bool TryGuardMeleeHit(AActor* AttackingActor, float GuardStaminaDamage, const FHitResult& HitResult);`。
+   - 增加可选 `GuardSuccessSound` UPROPERTY（`EditDefaultsOnly`、`BlueprintReadOnly`、Guard/Feedback 分类、默认空）。
+   - 声明私有 `TriggerGuardSuccessFeedback(const FHitResult&)`。
+   - 在 `WITH_DEV_AUTOMATION_TESTS` 中仅加入构造瞬态 Ability 所需的测试 setter/getter、反馈计数和最后位置读取；不改 Ability Tags、Activation/Cancel 矩阵、Montage、GE 生命周期或 Blueprint 行为。
 
-2. `Source/PolyQuest/Private/AbilitySystem/Abilities/PlayerParryAbility.cpp`
-   - Allowed runtime functions: `TryParryMeleeHit` and the new `TriggerParrySuccessFeedback`; add only their required includes.
-   - Preserve `ActivateAbility`, `EndAbility`, window event identity, arc math, counter GE construction, and cooldown semantics except for compile-safe signature plumbing.
-   - Counter application remains optional: an absent attacker ASC or an unsuccessful counter spec does not erase a valid Parry success. The helper must run once for that accepted contact.
+2. `E:\GameDevelop\PolyQuest\Source\PolyQuest\Private\AbilitySystem\Abilities\PlayerGuardAbility.cpp`
+   - 在 `TryGuardMeleeHit` 中保留既有窗口、攻击弧、ASC/GE 校验、SetByCaller 体力扣除、恢复延迟、Guard Break 和返回值。
+   - 仅在 Guard Stamina GE `WasSuccessfullyApplied()` 后调用一次 `TriggerGuardSuccessFeedback(HitResult)`，并确保 Guard Break 分支仍继续执行。
+   - Helper 使用 `UGameplayStatics::PlaySoundAtLocation` 和有限位置回退；所有呈现失败都静默，不阻断消费或清理。
+   - 只补所需直接 include（例如 `Kismet/GameplayStatics.h`、`Sound/SoundBase.h`），清理未使用 include；不触碰其他 Ability 生命周期。
 
-3. `Source/PolyQuest/Public/Character/Player/PlayerCharacter.h`
-   - Add the narrow `TriggerParrySuccessCameraShake()` declaration near the existing combat feedback API.
-   - Keep the existing `TryResolveIncomingDefense` C++ API non-Blueprint and update its exact signature with `HitResult` and `bAllowParry`.
-   - Any test-only feedback readback remains inside `WITH_DEV_AUTOMATION_TESTS`; do not add a general feedback callback or public sound API.
+3. `E:\GameDevelop\PolyQuest\Source\PolyQuest\Public\Character\Player\PlayerCharacter.h`
+   - 前置声明 `USoundBase`（若已有则复用）。
+   - 增加可选 `ReceivedHitSound` UPROPERTY，默认空，放在现有 `Combat|Feedback` 资产配置边界。
+   - 将 `TryGuardIncomingMeleeHit` 改为携带 `const FHitResult&` 并保持 `TryResolveIncomingDefense` 的既有 HitResult/bAllowParry 契约。
+   - 声明私有 `TriggerReceivedHitSound(const FGameplayEffectSpec&)`；只添加宏保护的测试 setter/getter/计数/位置 seam。
+   - 不改变公开的 Parry Camera wrapper、输入、ASC、Tag、Equipment、Lock-on 或 Camera API。
 
-4. `Source/PolyQuest/Private/Character/Player/PlayerCharacter.cpp`
-   - Update only `TryResolveIncomingDefense` to honor `bAllowParry` and forward `HitResult`; keep Guard fallback behavior exact.
-   - Implement only the narrow camera wrapper by forwarding to `TriggerHitFeedbackCameraShake(EHitReactionTier::Big)`.
-   - Do not alter camera follow, lock-on, movement, input, or Health reaction code.
+4. `E:\GameDevelop\PolyQuest\Source\PolyQuest\Private\Character\Player\PlayerCharacter.cpp`
+   - 更新 `TryGuardIncomingMeleeHit` 对 Guard 的转发，确保 `HitResult` 一路不丢失；`bAllowParry=false` 仍直接进入 Guard。
+   - 在现有 `OnHealthAttributeChanged` 的有效非致命下降分支中加入首次 Health Modifier 判断和 `TriggerReceivedHitSound` 调用；调用应紧随既有 `TriggerHitFeedbackCameraShake` 且位于 Stunned/Invalid 后续检查之前，不得用全局 early return 去重。
+   - Helper 按 `AEnemyCharacter::HandleCombatImpactFeedback` 的对称模式，对 Instigator 做 `UCombatTeamAgent` 接口检查和精确 `Team.Enemy` 匹配，再做 HitResult/ActorLocation 有限性与音效调用。
+   - 保留现有 Overlay、Camera Shake、反应分类、Stunned 处理、Invalid Tag 日志和事件分发的顺序与语义。
+   - 直接 include `Combat/Melee/CombatTeamAgent.h`、`Sound/SoundBase.h` 等实际使用依赖；不修改 Enemy 反馈。
 
-5. `Source/PolyQuest/Private/Combat/Melee/MeleeHitResolver.cpp`
-   - Pass `Request.HitResult` and `true` to the new Player defense entry.
-   - Do not alter team filtering, dead/invulnerable checks, Context construction, damage modifiers, or trace-contact return semantics.
+5. `E:\GameDevelop\PolyQuest\Source\PolyQuest\Private\Tests\TestGuardStaminaCostGE.h`
+   - 新建仅供 Automation 使用的 `UCLASS() UTestGuardStaminaCostGE : public UGameplayEffect` 声明，保持与现有测试 GE 风格一致。
 
-6. `Source/PolyQuest/Private/Combat/Projectile/CombatProjectileHitResolver.cpp`
-   - Pass `Request.HitResult` and `false` to the new Player defense entry.
-   - Preserve Guard consumption, ordinary projectile Health damage, instant-GE success handling, `bHitDelivered`, and all targeting/lifecycle behavior.
+6. `E:\GameDevelop\PolyQuest\Source\PolyQuest\Private\Tests\TestGuardStaminaCostGE.cpp`
+   - 构造 Instant、Additive 的 Stamina Modifier，使用 `Data.Stamina.GuardDamage` SetByCaller Tag，供真实 Guard 应用路径测试。
+   - 不修改全局 CDO、Content GE 或生产配置。
 
-7. `Source/PolyQuest/Private/Tests/TestParryCounterPoiseGE.h`
-   - Add a native-only transient test `UGameplayEffect` declaration. It must be an instant Poise additive modifier driven by the existing `Data.Poise.Parry` SetByCaller tag; no Content asset or Config entry.
-
-8. `Source/PolyQuest/Private/Tests/TestParryCounterPoiseGE.cpp`
-   - Implement only the test GE constructor and its SetByCaller Poise modifier using the same style as existing native test GEs.
-
-9. `Source/PolyQuest/Private/Tests/ParrySuccessImpactFeedbackAutomationTests.cpp`
-   - Add the `PolyQuest.Combat.ParrySuccessFeedback` suite. It may include existing fixture/test helpers but must not modify them.
-   - All test-only counters, transient asset setup, and seams must remain under the existing automation-test build boundary; no production-only instrumentation is allowed.
-
-No other source/test path is approved. If a required change falls outside this list, stop and return the evidence to Main.
-
-### Closeout-only tuning freeze
-
-The user explicitly approved including these two existing C3K tuning changes in the same freeze commit; they are not Gemini's C3M implementation surface:
-
-10. `Source/PolyQuest/Public/Character/Enemy/EnemyCharacter.h`
-   - Freeze Small `0.03s / 0.1`, Big `0.05s / 0.03`, and Launch `0.05s / 0.05` defaults and the corresponding `0.001` dilation lower bound.
-
-11. `Source/PolyQuest/Private/Tests/CombatHitFeedbackAutomationTests.cpp`
-   - Keep the C3K preset assertions synchronized with those approved defaults.
-
-## Automation Acceptance Matrix
-
-The new suite must cover the following observable contracts without Content assets:
-
-1. **Successful melee Parry**
-   - Build a transient Player/attacker fixture and a valid `FHitResult` whose actor is the Player and whose ImpactPoint is finite and non-zero.
-   - Exercise the real `FMeleeHitResolver` path where practical. Assert Player Health and Guard Stamina do not decrease, the attacker Poise loses the configured counter amount through `UTestParryCounterPoiseGE`, and Parry feedback counts increase exactly once.
-   - Assert the existing Controller is active at the approved `0.05s` / `0.03` and exposes the expected expiry/restoration through its existing test readback; assert one Parry feedback invocation, one Big camera-shake start using the already configured test Big shake, and one sound dispatch at the exact non-zero ImpactPoint. Do not add a Controller request counter or modify Controller production/test files.
-
-2. **Sound location and independent fallback**
-   - A finite, non-zero Player-owned ImpactPoint uses that point.
-   - A missing, mismatched, or non-finite HitResult point falls back to finite Player ActorLocation without retaining a Context pointer.
-   - A null sound asset does not prevent hit-stop, Big shake, Parry success, counter-Poise, or cleanup.
-   - Missing World/Controller/CameraManager/Big shake or invalid hit-stop values fail closed per channel and do not crash or change Parry return semantics.
-
-3. **Existing Parry gates**
-   - Closed window, wrong front arc, null attacker, invalid local counter configuration, and dead/invalid setup produce no success feedback.
-   - An attacker Actor without an ASC still yields a valid Parry success and feedback, while only the counter-Poise application is skipped.
-
-4. **Projectile separation and Guard regression**
-   - With a valid active Parry window, a projectile resolver request does not call Parry, does not emit Parry feedback, and still applies ordinary projectile damage when Guard does not consume it.
-   - A projectile with an active Guard continues through the existing Guard consumption path. Do not weaken or duplicate the Guard contract.
-
-5. **Exactly-once contact behavior**
-   - The C3M suite proves one resolver-delivered Parry contact produces one feedback call; the existing `UAbilityTask_MeleeTraceWindow` / `DeliveredTargets` suite proves repeated samples in one window produce one damage delivery. A combined Parry-specific Trace Window assertion remains a low-priority coverage recommendation, not a new runtime owner.
-   - Preserve the existing task/projectile de-duplication owners; do not make the new Parry Ability globally suppress future contacts.
-
-6. **Hit-stop lifecycle**
-   - Advance the test World using the existing real-time/controller tick helper and assert the global dilation restores after expiry.
-   - Exercise Controller teardown/World teardown while feedback is active and assert no stale dilation or crash. This reuses, rather than reimplements, C3K Controller ownership. The test must follow the existing `CombatHitFeedbackAutomationTests.cpp` `FWorldCleanup` RAII pattern (or an equivalent scope guard) to restore global dilation to `1.0f` on every early return.
-
-If the current fixture cannot host an active transient Parry instance without a production seam, first use a `FGameplayAbilitySpec` with a transient `UPlayerParryAbility` primary instance plus its existing test-only ActorInfo/state setters. Only if that exact engine API is unavailable may Gemini propose a minimal Player test seam; it must remain in the approved Player header/cpp and stop for Main approval before adding it.
+7. `E:\GameDevelop\PolyQuest\Source\PolyQuest\Private\Tests\PlayerDefenseAudioAutomationTests.cpp`
+   - 新建 `PolyQuest.Combat.DefenseAudio` 原生 Automation 套件，利用 `FCombatAutomationFixture::SpawnPlayer`、瞬态 ASC/Ability/GE/USoundBase 和现有 World cleanup，不依赖 `.uasset`。
+   - 覆盖至少以下矩阵：
+     - 近战 Guard 成功、投射物 Guard 成功、Guard Break 仍吸收且只发一次；
+     - 错误攻击弧、非活动 Guard、缺失/失败 GE、空音效的静默与原有返回值；
+     - 合法 HitResult 使用 ImpactPoint；构造属于 Player 的有效 HitResult 时显式设置 `HitObjectHandle = FActorInstanceHandle(Player)`，缺失 HitResult、错误 Actor、零点、NaN、Inf 使用 ActorLocation 回退；无效 World/ActorLocation 安全跳过；
+     - Player Small/Big/Launch 敌方非致命 Health 伤害发声；有效/缺失/错误 Actor 的 Context HitResult 位置回退；
+     - Friendly、无团队、治疗、直接 Base 写入、Poise-only、致命伤害、已死亡状态均不发声；
+     - 同一 GE Spec 多 Health Modifier 只发一次，两个独立 GE（即便复用 Context）各发一次；
+     - Early-return、对象销毁/EndPlay 后无悬空调用、无状态污染，且现有 Overlay/Camera/Reaction 仍未被新去重逻辑吞掉。
+   - 测试应读取宏保护的计数和位置，不用日志数量代替行为断言；每个用例独立清理 World、ASC、Ability 和临时资产。
 
 ## Execution Order
 
-1. Gemini reads the approved files, current C3K feedback implementation, direct resolver callers, and existing automation fixture patterns. It verifies the baseline and does not touch the Editor.
-2. Add the frozen API plumbing (`HitResult`, `bAllowParry`) and update exactly the two resolver call sites. Re-read the melee/projectile branch matrix to confirm Parry is melee-only and Guard remains shared.
-3. Add Parry-owned tunables and the synchronous feedback helper. Reuse the existing Controller and camera paths; keep each feedback channel fail-closed and independent.
-4. Add the transient counter-Poise GE and the new focused Automation suite, including active-instance construction and resolver-level contact coverage without changing production fixtures.
-5. Run Rider `get_file_problems`/`lint_files` on every touched C++ file, run `git diff --check`, and inspect the complete diff plus direct callers/callees. Resolve newly introduced diagnostics.
-6. Return changed paths, static evidence, unrun user gates, strict self-review findings, and residual risks. Stop without compilation, Editor/PIE, asset saves, documentation edits, staging, or commit.
-7. User compiles and runs the prescribed Editor Automation/PIE gates. Main interprets the evidence, performs the final fresh review, and only then closes documentation and stages after explicit approval.
+1. Gemini 先读取本计划、`AGENTS.md`、当前基线和七个批准路径，确认 Resolver 已有 HitResult 传递，不修改 Resolver。
+2. 先完成两个公共头文件的最小契约更新，再实现 Guard 成功反馈；保持现有 Guard Break 分支可达。
+3. 实现 Player 受击音效 helper 与 `OnHealthAttributeChanged` 的仅音效去重；将调用放在既有 `TriggerHitFeedbackCameraShake` 之后、Stunned/Invalid 分支之前，逐行核对现有 Overlay/Camera/Reaction 路径未被提前返回改变。
+4. 新建测试 GE 和 `PolyQuest.Combat.DefenseAudio`，先覆盖失败/回退矩阵，再覆盖多 Modifier/独立 Spec 和生命周期。
+5. 仅做静态自检：读取最终 diff、Rider `get_file_problems`/`lint_files`（若端点可用）和 `git diff --check`；不得调用 UBT、VS、Editor、PIE、打包或提交。
+6. 按下方交接格式返回 changed paths、静态证据、未运行的用户门禁、严格自审发现和剩余风险；任何需要第八个文件、Tag、Config、Asset 或新生命周期规则的情况立即停工返回 Main。
 
-## Validation Gates
+## Validation Matrix And Gates
 
-### Gemini static gate (must not be mislabeled as runtime proof)
+### Executor static gate
 
-- Read final source and test diffs plus the direct `TryResolveIncomingDefense` callers/callees.
-- Rider diagnostics on all nine approved paths that contain C++ (or the available subset, reported explicitly) show no new errors/warnings.
-- `git diff --check` passes.
-- No UBT/Visual Studio/Rider build, live Unreal MCP write, Editor Automation run, PIE, audio/visual claim, staging, or commit by Gemini.
+- 七个批准路径的 include、类型、UHT 形状和调用链自洽。
+- `Rider get_file_problems` / `lint_files`：新增错误为零；既有 warning 与新增 warning 分开记录。
+- `git diff --check`：零空白错误。
+- 静态检查不是编译、Editor、Automation 或 PIE 证据。
 
-### User compile and Editor readback
+### User-owned compile and Editor gate
 
-1. Compile `PolyQuestEditor (Development Editor)` in Visual Studio 2022. **User result: passed.**
-2. If sound is desired and an authored Parry Gameplay Ability/Blueprint exists, assign a valid `USoundBase` to `ParrySuccessSound`; save the asset in Editor. Leaving it empty is an intentional silent fallback, not a source failure.
-3. Confirm the Parry ability still owns its existing Montage/window/counter/cooldown fields and that no new Gameplay Tag, Input, or GameplayCue asset was introduced.
-4. Keep authored assets local WIP; do not hand-edit or stage `.uasset`/`.umap` files as part of the source slice.
+- 在 Visual Studio 2022 编译 `PolyQuestEditor (Development Editor)`。
+- 在 Unreal Editor 运行 `PolyQuest.Combat.DefenseAudio`，并回归至少 `PolyQuest.Combat.HitFeedback`、`PolyQuest.Combat.ParrySuccessFeedback`、`PolyQuest.Combat.HitReaction`、`PolyQuest.Projectile.Lifecycle` 及现有 Guard/Equipment 套件。
+- 若要听到实际声音，用户在当前 Parry/Guard/Player authored Ability 或 BP/CDO 中自行赋值 `GuardSuccessSound`、`ReceivedHitSound` 并保存资产；资产变更保持本地 WIP，不进入本阶段源代码提交。
 
-### Automation and PIE
+### User-owned PIE gate
 
-Run at minimum:
+- 在 `Scene01` 近战 Guard 成功时听到一次 Guard 音效；投射物 Guard 与 Guard Break 吸收也不重复。
+- 角色受到敌方 Small/Big/Launch 非致命伤害时听到一次 Player 受击音效；友方、治疗、致命和仅 Poise 变化不误触发。
+- 确认原有 Parry 音效、Hit-stop、Camera Shake、Overlay、受击 Montage、Guard Break、投射物伤害和结束/打断清理没有回归。
 
-- `PolyQuest.Combat.ParrySuccessFeedback`
-- `PolyQuest.Combat.HitFeedback`
-- `PolyQuest.Projectile.Lifecycle`
-- `PolyQuest.Player.ActionWindows`
-- the existing Guard/Parry and Equipment transaction suites relevant to the active defense grants.
+## Non-goals And Stop Conditions
 
-**User result:** the requested Automation suites passed, including `PolyQuest.Combat.ParrySuccessFeedback` and the existing combat/reaction regressions.
+- 不新增 GameplayCue、Gameplay Tag、Input、Damage/Health 路径、ASC、Controller API、网络复制、音频总线、ducking、随机变体、池化或通用 Feedback Dispatcher。
+- 不修改 `MeleeHitResolver.cpp`、`CombatProjectileHitResolver.cpp`、`AEnemyCharacter`、`APolyQuestPlayerController`、Parry C3M 路径、GameplayEffect/Ability/Montage/AnimBP/Blueprint/DataAsset/Map 资产或 `PolyQuest.Build.cs`。
+- 不把 Guard 音效误绑定到 Guard Ability 激活/循环 Montage；它只属于一次成功接触。
+- 不把 Player 受击音效放到客户端猜测、Overlay、Camera Shake、Reaction Tag 或 Enemy 反馈回调之外的第二个入口。
+- 如果音效 API 在当前模块需要未批准的 Build.cs 依赖、若 HitResult 传递实际缺失、若去重需要修改共享 AttributeSet/Resolver、若必须编辑资产或新增 Tag，停止实现并把证据交回 Main；不得绕过白名单。
+- `USoundBase` 为空、World/Actor 无效、位置非有限或播放失败均是呈现层 no-op，不得让 Gameplay 结果失败。
 
-In Scene01, verify:
+## Documentation And Commit Boundary
 
-- a valid melee Parry produces a perceptible but brief freeze, the existing Big camera shake, and the configured sound at the contact;
-- Player Health/Guard Stamina remain unchanged and attacker Poise/counter behavior remains intact;
-- a projectile during Parry is not Parried, while Guard and ordinary projectile damage still behave as before;
-- repeated sweep samples do not stack feedback for one delivered contact;
-- missing sound or unavailable camera/controller does not block or wedge the Parry Ability;
-- normal Parry interruption, cooldown, and teardown remain clean.
-
-**User result:** focused Scene01 PIE passed, including the Parry freeze, Big camera response, sound route, projectile separation, and cleanup behavior.
-
-## Non-Goals And Stop Conditions
-
-- No GameplayCue, Niagara/blood effect, overlay, Health reaction Montage, Enemy feedback, hit-reaction tier dispatch, knockback, or new damage/Poise route.
-- No changes to `APolyQuestPlayerController` production implementation; the existing hit-stop API is the only Controller integration.
-- No changes to Parry activation/cost/cooldown timing, Montage Notify ownership, front-arc math, Guard behavior, projectile movement, trace geometry, target assist, or de-duplication owners.
-- No replication, client prediction, network authority expansion, generic feedback bus, or asset import/migration.
-- Stop and report to Main if implementation needs a new public API beyond the frozen signatures, a new Tag/Input/Config/Build.cs entry, a production fixture seam not covered above, an asset edit, or a lifecycle rule change.
-- Stop on any missing/invalid authored Parry asset only as an Editor/user authoring issue; do not infer a runtime substitute or silently broaden the native fallback.
-
-## Documentation, Debt, And Commit Boundary
-
-- Before closeout, Main compares all implementation findings and user-gate results against the existing C3M entry in `ROADMAP.md`. Any unresolved risk must name its boundary, evidence, impact, closure trigger, and owning stage; “deferred” alone is not enough.
-- On accepted validation, Main updates `ARCHITECTURE.md` with the stable Parry-success feedback and melee-only Parry/projectile-defense contract, updates `README.md` only for the evidence-backed player-facing result, marks `TODO-02C3M` done in `ROADMAP.md`, and records the final closeout in this plan until the next stage replaces it.
-- The source/docs freeze commit includes the nine C3M native/test paths, the two explicitly approved C3K tuning paths, and Main-owned documentation only. Exclude `AGENTS.md`, all `Content/**`/`Config/**` WIP, maps, Blueprints, Montage/AnimBP/GA/GE assets, generated output, and unrelated changes.
+- 本阶段实现验证通过后，Main 才能将 `TODO-02C3N` 移到 `ROADMAP.md` 的 Done Milestones，并记录音效边界、去重语义、用户验证证据和仍保留的本地资产 WIP。
+- `ARCHITECTURE.md` 只记录已验证的 Guard/Player 音频所有权和调用链，不写可变调音 TODO；`README.md` 只更新已证实的公开状态。
+- `plan.md` 保留本阶段完整计划和收尾证据，直到下一阶段被 Main 明确替换；执行者不得编辑它。
+- 提交边界为七个批准源码/测试路径及 Main 明确批准的文档变更；排除所有 `Content/**`、未批准 Config 和其他用户 WIP。未获得用户明确提交批准前不得 `git add` 或 `git commit`。
 
 ## Gemini Handoff Prompt
 
-> 你是本阶段的唯一实现执行者。工作目录必须是 `E:\GameDevelop\PolyQuest`，基线为 `024a374494ecca9525ff8607b07c402e4247582b`；先读取当前 `plan.md`、项目 `AGENTS.md` 和本计划列出的真实源码，再开始改动。Outer=`ue-stage-workflow`，Primary=`ue5-cpp-gameplay`，Support=`game-feel`/`ue5-debug-validation`。Contract owner: Main；implementation writer: Gemini。
->
-> 只允许修改以下九个路径：`Source/PolyQuest/Public/AbilitySystem/Abilities/PlayerParryAbility.h`、`Source/PolyQuest/Private/AbilitySystem/Abilities/PlayerParryAbility.cpp`、`Source/PolyQuest/Public/Character/Player/PlayerCharacter.h`、`Source/PolyQuest/Private/Character/Player/PlayerCharacter.cpp`、`Source/PolyQuest/Private/Combat/Melee/MeleeHitResolver.cpp`、`Source/PolyQuest/Private/Combat/Projectile/CombatProjectileHitResolver.cpp`、`Source/PolyQuest/Private/Tests/TestParryCounterPoiseGE.h`、`Source/PolyQuest/Private/Tests/TestParryCounterPoiseGE.cpp`、`Source/PolyQuest/Private/Tests/ParrySuccessImpactFeedbackAutomationTests.cpp`。不要改文档、资产、Config、Tags、Input、Build.cs、Controller、Enemy、fixture 或其他 WIP；不要 `git add`、不要 commit。
->
-> 按计划冻结的契约实现：`TryResolveIncomingDefense(AActor*, float, const FHitResult&, bool bAllowParry)`；近战传 `true`，投射物传 `false`，Guard 路径保持不变。`TryParryMeleeHit(AActor*, const FHitResult&)` 只在有效近战 Parry 成功后触发一次 Parry-owned feedback：调用现有 Controller hit-stop（批准默认 `0.05s/0.03`）、Player 现有 Big camera shake、可选 `ParrySuccessSound`；各通道独立 fail-closed，Sound 仅在 HitResult actor 匹配 Player、ImpactPoint 有限且非默认近零时使用该点，否则回退 Player ActorLocation，不保存 Context/HitResult 指针。缺少 attacker ASC 只跳过 counter，不能否定 Parry 或反馈。不要 GameplayCue，不要新增去重状态。
->
-> 用 `UTestParryCounterPoiseGE` 验证现有 `Data.Poise.Parry` counter；新增 `PolyQuest.Combat.ParrySuccessFeedback` 原生 Automation，覆盖成功近战、Sound/位置 fallback、缺失资产、错误方向/窗口、无 attacker ASC、投射物禁止 Parry 但保留 Guard/伤害、Trace Window 重复 sweep 单次反馈、Hit-stop 恢复与 teardown。测试 World 必须沿用现有 `FWorldCleanup` RAII（或等价 scope guard），任何 early return 都要把全局时间膨胀恢复为 `1.0f`。优先使用 transient `FGameplayAbilitySpec` primary instance 和现有 test-only setters；需要新增 seam 时必须留在批准的 Player/Parry 文件、`WITH_DEV_AUTOMATION_TESTS` 内，并在超出冻结边界前停下报告。
->
-> 完成后只运行静态检查：Rider `get_file_problems`/`lint_files`、`git diff --check`，并阅读完整 diff/直接调用链。返回：changed paths、静态检查证据、未运行的编译/Editor Automation/PIE 门禁、严格自审 findings、remaining risks。不要声称编译、PIE、音频或视觉验证成功；遇到未列出的文件、公共契约、资产或生命周期需求立即停止并把证据交还 Main。
+将下面的提示原样交给 Gemini；它是执行指令，不是新的架构授权：
 
-## Main Fresh Review
-
-- Findings: no P0/P1/P2 source defect. The previously noted numeric differences are approved user tuning and are treated as a documentation synchronization item.
-- The only remaining observation is P3 test granularity: the C3M suite does not itself drive repeated `UAbilityTask_MeleeTraceWindow` samples; existing `MeleeMultiTraceSource` coverage proves the shared `DeliveredTargets` owner and C3M coverage proves the resolver feedback call. No additional runtime owner or code repair is required for this closeout.
-- Static evidence: direct source/diff review completed; `git diff --check` passed. The Code Review Graph was used only as supplemental context because the working-tree delta is uncommitted. Rider diagnostics from the executor reported no new errors.
+> 你是本阶段的实现执行者。工作目录必须是 `E:\GameDevelop\PolyQuest`，基线为 `b2eb4f2559bdf7206f4be4012549693358144e6e`；先读取仓库 `AGENTS.md` 和当前 `plan.md`，按 `ue-stage-workflow` 外层流程、`ue5-cpp-gameplay` 主技能，并参考 `game-feel` 与 `ue5-debug-validation` 执行。Contract owner：Main；implementation writer：Gemini。只允许修改本计划列出的七个路径：`Source/PolyQuest/Public/AbilitySystem/Abilities/PlayerGuardAbility.h`、`Source/PolyQuest/Private/AbilitySystem/Abilities/PlayerGuardAbility.cpp`、`Source/PolyQuest/Public/Character/Player/PlayerCharacter.h`、`Source/PolyQuest/Private/Character/Player/PlayerCharacter.cpp`、`Source/PolyQuest/Private/Tests/TestGuardStaminaCostGE.h`、`Source/PolyQuest/Private/Tests/TestGuardStaminaCostGE.cpp`、`Source/PolyQuest/Private/Tests/PlayerDefenseAudioAutomationTests.cpp`。共享契约文件仍由 Main 负责；你只能实现已冻结的函数和 test-only seam。
+>
+> 执行顺序：确认两个 Resolver 已经把 `FHitResult` 传入 Player 防御入口且不改 Resolver；更新 Guard 与 Player 头文件契约；在 Guard Stamina GE 成功后一次性触发 `GuardSuccessSound`；在 Player 现有权威非致命 Health 回调中为精确 `Team.Enemy` Instigator 触发 `ReceivedHitSound`，并将其调用放在既有 `TriggerHitFeedbackCameraShake` 之后、Stunned/Invalid 分支之前；完成 `TestGuardStaminaCostGE` 和 `PolyQuest.Combat.DefenseAudio` 的完整负向/回退/去重/生命周期矩阵。Guard Break 吸收仍算一次成功接触。Player 的 `GetModifiedAttribute(Health)` 只控制音效首次调用，绝不能对整个回调 early return。所有音频失败都是静默 no-op，不能改变现有 GAS、Overlay、Camera Shake、Reaction、Guard Break、Projectile 或清理行为。
+>
+> 非目标：不要改 Gameplay Tag、Input、ASC/AttributeSet、Resolver、Controller、Enemy、Build.cs、Config、Content、Blueprint、GA/GE/Montage/AnimBP/Map，不新增 GameplayCue、复制、音频总线、混音、变体、池化或通用框架；不要编译、运行 Editor/PIE、打包、`git add` 或提交。任何需要白名单外文件、公共 API、资产或生命周期规则的情况立即停工，把证据返回 Main。
+>
+> 测试构造属于 Player 的有效 `FHitResult` 时，显式设置 `HitObjectHandle = FActorInstanceHandle(Player)`，并用错误 Actor/零点/NaN/Inf 覆盖回退路径；阵营判断按 `AEnemyCharacter::HandleCombatImpactFeedback` 的 `ICombatTeamAgent::Execute_GetCombatTeamTag` 模式实现。实现后只做静态证据：逐项读取 diff，运行可用的 Rider `get_file_problems`/`lint_files` 和 `git diff --check`。完成回报必须包含：实际 changed paths；每个检查的真实结果；未运行的 VS 编译、Editor Automation、资产读回和 PIE 门禁；严格自审中找到的 P0-P3（没有就明确写无）；以及仍存在的风险/假设。不要把静态检查或测试设计写成编译、运行时或视觉验证结论。
 
 ## Closeout Record
 
-- Implementation: Gemini completed the nine approved C3M native/test paths.
-- User compile/Automation/PIE: user confirmed Development Editor compilation, the focused Automation/regression matrix, and Scene01 PIE passed.
-- Additional freeze: user approved `EnemyCharacter.h` and `CombatHitFeedbackAutomationTests.cpp` as the C3K presentation-tuning freeze.
-- Documentation: Main synchronized `ROADMAP.md`, `ARCHITECTURE.md`, and `README.md`; the next accepted stage is `TODO-02C3N`.
-- Commit boundary: this closeout commit contains the nine C3M native/test paths, the two user-approved C3K tuning paths, and Main-owned `plan.md`/`ROADMAP.md`/`ARCHITECTURE.md`/`README.md`; unrelated WIP remains excluded.
+- Implementation evidence: Gemini changed the seven approved C3N source/test paths. Guard success audio is dispatched only after a successful Guard-Stamina GameplayEffect and carries the resolver HitResult through melee and projectile defense; Player received-hit audio is dispatched only for authoritative nonlethal enemy damage, once per GameplayEffect Spec's first Health modifier. All test-only counters/bypasses remain behind `WITH_DEV_AUTOMATION_TESTS`.
+- User compile/Editor/PIE evidence: the user confirmed `PolyQuest.Combat.DefenseAudio` Automation as `Success` and confirmed the focused Scene01 PIE route. No separate Development Editor compile result is claimed in this record. The reported missing HUD, missing Stamina-delay fixture, absent Guard-break receiver, and invalid reaction-tag messages are expected fixture/negative-path signals.
+- Main fresh review: one defect-first fresh review of the final source and direct resolver/caller paths found no P0-P2 or remaining actionable P3. The review verified that audio dispatch counters occur only after final World/location validation; the unused `Combat/Melee/CombatTeamAgent.h` include in the new test was removed, and Rider re-lint plus `git diff --check` completed without new errors.
+- Roadmap/documentation/commit: `ROADMAP.md` now marks C3N complete and retains the existing C3M coverage debt with its closure trigger; `ARCHITECTURE.md` records the Guard/Player audio ownership and no-GameplayCue boundary; `README.md` records the completed stage and adds the user-provided [Bilibili combat demo](https://www.bilibili.com/video/BV14Ntw6RELr). The aggregate preset `Config/Automation/Presets/1.json`, `Config/DefaultEngine.ini`, `Content/**`, and all other user WIP remain excluded from staging. The approved seven source/test paths plus these three documents are ready for the focused commit.

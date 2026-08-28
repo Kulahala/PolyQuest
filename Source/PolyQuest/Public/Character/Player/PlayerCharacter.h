@@ -28,7 +28,9 @@ class AController;
 class AEnemyCharacter;
 class APlayerCameraManager;
 class APlayerController;
+class USoundBase;
 enum class EHitReactionTier : uint8;
+struct FGameplayEffectSpec;
 struct FInputActionValue;
 struct FOnAttributeChangeData;
 
@@ -130,6 +132,10 @@ protected:
 	UPROPERTY(EditDefaultsOnly, Category="Combat|Feedback", meta=(ToolTip="玩家受到击飞受击（Launch Tier）时触发的摄像机震屏效果类。"))
 	TSubclassOf<UCameraShakeBase> LaunchHitFeedbackCameraShakeClass;
 
+	/** Sound played when this Player receives non-lethal health damage from an enemy. */
+	UPROPERTY(EditDefaultsOnly, Category="Combat|Feedback", meta=(ToolTip="玩家受到非致命实际伤害时触发的受击音效。"))
+	TObjectPtr<USoundBase> ReceivedHitSound;
+
 	/** The authored combat routes applied to this player at BeginPlay. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Loadout", meta = (AllowPrivateAccess = "true", ToolTip = "玩家初始生效的战斗输入路由资产（CombatLoadoutDefinition）。"))
 	TObjectPtr<UCombatLoadoutDefinition> InitialCombatLoadout;
@@ -207,7 +213,7 @@ public:
 	bool CanAttemptGuard() const;
 
 	/** Resolves one valid incoming melee contact through the active Guard Ability. */
-	bool TryGuardIncomingMeleeHit(AActor* AttackingActor, float GuardStaminaDamage);
+	bool TryGuardIncomingMeleeHit(AActor* AttackingActor, float GuardStaminaDamage, const FHitResult& HitResult);
 
 	/** Resolves one valid incoming contact through the active Parry first (if allowed), then the active Guard. */
 	bool TryResolveIncomingDefense(
@@ -323,6 +329,10 @@ public:
 	void SetTestLockOnProjectionHook(TFunction<bool(const FVector&, FVector2D&, FVector2D&)> InHook) { TestLockOnProjectionHook = MoveTemp(InHook); }
 	void SetTestLockOnCursorPosition(const FVector2D& InPosition) { TestLockOnCursorPosition = InPosition; }
 	void SetTestBypassLockOnValidation(const bool bBypass) { bTestBypassLockOnValidation = bBypass; }
+	void SetTestReceivedHitSound(USoundBase* InSound) { ReceivedHitSound = InSound; }
+	void SetTestBypassReceivedHitAudioPlayback(const bool bBypass) { bTestBypassReceivedHitAudioPlayback = bBypass; }
+	int32 GetTestReceivedHitSoundDispatchCount() const { return TestReceivedHitSoundDispatchCount; }
+	FVector GetTestLastReceivedHitSoundLocation() const { return TestLastReceivedHitSoundLocation; }
 #endif
 
 private:
@@ -457,12 +467,16 @@ private:
 #if WITH_DEV_AUTOMATION_TESTS
 	int32 TestHitFeedbackCameraShakeStartCount = 0;
 	TWeakObjectPtr<UCameraShakeBase> TestLastHitFeedbackCameraShake;
+	int32 TestReceivedHitSoundDispatchCount = 0;
+	FVector TestLastReceivedHitSoundLocation = FVector::ZeroVector;
+	bool bTestBypassReceivedHitAudioPlayback = false;
 #endif
 
 	void BindHealthEvents();
 	void UnbindHealthEvents();
 	void OnHealthAttributeChanged(const FOnAttributeChangeData& ChangeData);
 	void TriggerHitFeedbackCameraShake(EHitReactionTier ReactionTier);
+	void TriggerReceivedHitSound(const FGameplayEffectSpec& EffectSpec);
 	TSubclassOf<UCameraShakeBase> ResolveHitFeedbackCameraShakeClass(EHitReactionTier ReactionTier);
 	void ClearActiveHitFeedbackCameraShake();
 	void BindExhaustionStateEvents();
