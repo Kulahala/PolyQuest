@@ -63,9 +63,9 @@ bool FCombatProjectileHitResolver::TryResolveHit(const FCombatProjectileHitReque
 
 	if (APlayerCharacter* PlayerCharacter = Cast<APlayerCharacter>(TargetActor))
 	{
-		if (PlayerCharacter->TryResolveIncomingDefense(SourceActor, Request.GuardStaminaDamage))
+		if (PlayerCharacter->TryResolveIncomingDefense(SourceActor, Request.GuardStaminaDamage, Request.HitResult, false))
 		{
-			// Player defense (Guard / Parry) successfully consumed the contact.
+			// Player defense (Guard) successfully consumed the contact.
 			return true;
 		}
 	}

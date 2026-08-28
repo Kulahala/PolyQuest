@@ -145,21 +145,21 @@ private:
 	TObjectPtr<UNiagaraSystem> ImpactBloodSystem;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Enemy|ImpactFeedback", meta = (AllowPrivateAccess = "true", ClampMin = "0.0", Units = "Seconds", ToolTip = "轻度受击（Small）造成的全局命中顿帧持续时间（秒）。"))
-	float SmallImpactHitStopDurationSeconds = 0.02f;
+	float SmallImpactHitStopDurationSeconds = 0.03f;
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Enemy|ImpactFeedback", meta = (AllowPrivateAccess = "true", ClampMin = "0.01", ClampMax = "1.0", ToolTip = "轻度受击（Small）期间的全局时间膨胀比例（(0.0, 1.0]）。"))
-	float SmallImpactHitStopTimeDilation = 0.15f;
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Enemy|ImpactFeedback", meta = (AllowPrivateAccess = "true", ClampMin = "0.001", ClampMax = "1.0", ToolTip = "轻度受击（Small）期间的全局时间膨胀比例（(0.0, 1.0]）。"))
+	float SmallImpactHitStopTimeDilation = 0.1f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Enemy|ImpactFeedback", meta = (AllowPrivateAccess = "true", ClampMin = "0.0", Units = "Seconds", ToolTip = "重度受击（Big）造成的全局命中顿帧持续时间（秒）。"))
 	float BigImpactHitStopDurationSeconds = 0.05f;
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Enemy|ImpactFeedback", meta = (AllowPrivateAccess = "true", ClampMin = "0.01", ClampMax = "1.0", ToolTip = "重度受击（Big）期间的全局时间膨胀比例（(0.0, 1.0]）。"))
-	float BigImpactHitStopTimeDilation = 0.05f;
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Enemy|ImpactFeedback", meta = (AllowPrivateAccess = "true", ClampMin = "0.001", ClampMax = "1.0", ToolTip = "重度受击（Big）期间的全局时间膨胀比例（(0.0, 1.0]）。"))
+	float BigImpactHitStopTimeDilation = 0.03f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Enemy|ImpactFeedback", meta = (AllowPrivateAccess = "true", ClampMin = "0.0", Units = "Seconds", ToolTip = "击飞受击（Launch）造成的全局命中顿帧持续时间（秒）。"))
-	float LaunchImpactHitStopDurationSeconds = 0.04f;
+	float LaunchImpactHitStopDurationSeconds = 0.05f;
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Enemy|ImpactFeedback", meta = (AllowPrivateAccess = "true", ClampMin = "0.01", ClampMax = "1.0", ToolTip = "击飞受击（Launch）期间的全局时间膨胀比例（(0.0, 1.0]）。"))
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Enemy|ImpactFeedback", meta = (AllowPrivateAccess = "true", ClampMin = "0.001", ClampMax = "1.0", ToolTip = "击飞受击（Launch）期间的全局时间膨胀比例（(0.0, 1.0]）。"))
 	float LaunchImpactHitStopTimeDilation = 0.05f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Enemy|Death", meta = (AllowPrivateAccess = "true", ToolTip = "死亡时是否尝试开启物理布娃娃模拟；需要角色网格体与有效 Physics Asset，缺失时跳过布娃娃并记录 Warning。"))

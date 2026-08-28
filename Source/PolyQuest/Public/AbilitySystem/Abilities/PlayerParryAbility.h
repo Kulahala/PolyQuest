@@ -13,6 +13,8 @@ class UAbilityTask_WaitGameplayEvent;
 class UAnimInstance;
 class UAnimMontage;
 class UGameplayEffect;
+class USoundBase;
+struct FHitResult;
 
 /**
  * Timed front-arc Parry. Startup pays only the Stamina Cost through
@@ -51,10 +53,22 @@ public:
 	bool IsParryActive() const { return bParryWindowOpen && !bEndAbilityRequested; }
 
 	/** Consumes one resolver-validated front-arc melee contact during the active window. */
-	bool TryParryMeleeHit(AActor* AttackingActor);
+	bool TryParryMeleeHit(AActor* AttackingActor, const FHitResult& HitResult);
 
 #if WITH_DEV_AUTOMATION_TESTS
 	const FGameplayTagContainer& GetTestActivationBlockedTags() const { return ActivationBlockedTags; }
+	void SetTestCurrentActorInfo(const FGameplayAbilityActorInfo* InActorInfo) { CurrentActorInfo = InActorInfo; }
+	void SetTestCurrentSpecHandle(const FGameplayAbilitySpecHandle InHandle) { CurrentSpecHandle = InHandle; }
+	void TestSetParryWindowOpen(bool bOpen) { bParryWindowOpen = bOpen; }
+	void SetTestParryCounterPoiseGameplayEffectClass(TSubclassOf<UGameplayEffect> InClass) { ParryCounterPoiseGameplayEffectClass = InClass; }
+	void SetTestParryPoiseDamage(float InPoiseDamage) { ParryPoiseDamage = InPoiseDamage; }
+	void SetTestParrySuccessSound(USoundBase* InSound) { ParrySuccessSound = InSound; }
+	void SetTestParrySuccessHitStopDuration(float InDuration) { ParrySuccessHitStopDurationSeconds = InDuration; }
+	void SetTestParrySuccessHitStopTimeDilation(float InDilation) { ParrySuccessHitStopTimeDilation = InDilation; }
+	void SetTestBypassAudioPlayback(const bool bBypass) { bTestBypassAudioPlayback = bBypass; }
+	int32 GetTestParrySuccessFeedbackCount() const { return TestParrySuccessFeedbackCount; }
+	int32 GetTestParrySuccessSoundDispatchCount() const { return TestParrySuccessSoundDispatchCount; }
+	FVector GetTestLastParrySuccessSoundLocation() const { return TestLastParrySuccessSoundLocation; }
 #endif
 
 private:
@@ -67,6 +81,15 @@ private:
 	/** Poise removed from the attacker by one successful Parry; applied as negative Data.Poise.Parry. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Player|Parry", meta = (AllowPrivateAccess = "true", ClampMin = "0.01", ToolTip = "弹反成功直接扣除攻击方的削韧数值。"))
 	float ParryPoiseDamage = 100.0f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Player|Parry|Feedback", meta = (AllowPrivateAccess = "true", ClampMin = "0.0", Units = "Seconds"))
+	float ParrySuccessHitStopDurationSeconds = 0.05f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Player|Parry|Feedback", meta = (AllowPrivateAccess = "true", ClampMin = "0.001", ClampMax = "1.0"))
+	float ParrySuccessHitStopTimeDilation = 0.03f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Player|Parry|Feedback", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<USoundBase> ParrySuccessSound;
 
 	UPROPERTY(Transient)
 	TObjectPtr<UAbilityTask_PlayMontageAndWait> MontageTask;
@@ -113,4 +136,12 @@ private:
 	bool IsParryWindowEventFromActiveMontage(const FGameplayEventData& Payload) const;
 	bool IsAttackerInParryArc(const AActor* AttackingActor) const;
 	void EndFromMontage(bool bWasCancelled);
+	void TriggerParrySuccessFeedback(const FHitResult& HitResult);
+
+#if WITH_DEV_AUTOMATION_TESTS
+	int32 TestParrySuccessFeedbackCount = 0;
+	int32 TestParrySuccessSoundDispatchCount = 0;
+	FVector TestLastParrySuccessSoundLocation = FVector::ZeroVector;
+	bool bTestBypassAudioPlayback = false;
+#endif
 };

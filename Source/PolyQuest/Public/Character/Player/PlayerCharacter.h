@@ -209,8 +209,15 @@ public:
 	/** Resolves one valid incoming melee contact through the active Guard Ability. */
 	bool TryGuardIncomingMeleeHit(AActor* AttackingActor, float GuardStaminaDamage);
 
-	/** Resolves one valid incoming melee contact through the active Parry first, then the active Guard. */
-	bool TryResolveIncomingDefense(AActor* AttackingActor, float GuardStaminaDamage);
+	/** Resolves one valid incoming contact through the active Parry first (if allowed), then the active Guard. */
+	bool TryResolveIncomingDefense(
+		AActor* AttackingActor,
+		float GuardStaminaDamage,
+		const FHitResult& HitResult,
+		bool bAllowParry);
+
+	/** Triggers the configured Big hit camera shake on successful melee Parry. */
+	void TriggerParrySuccessCameraShake();
 
 	/** Cancels a live Parry after an external airborne transition; it never clears Guard resume eligibility. */
 	void CancelActiveParry();

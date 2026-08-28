@@ -553,19 +553,31 @@ UPlayerGuardAbility* APlayerCharacter::FindActiveGuardAbility() const
 	return nullptr;
 }
 
-bool APlayerCharacter::TryResolveIncomingDefense(AActor* AttackingActor, float GuardStaminaDamage)
+bool APlayerCharacter::TryResolveIncomingDefense(
+	AActor* AttackingActor,
+	float GuardStaminaDamage,
+	const FHitResult& HitResult,
+	bool bAllowParry)
 {
 	if (!AttackingActor)
 	{
 		return false;
 	}
 
-	if (UPlayerParryAbility* ParryAbility = FindActiveParryAbility())
+	if (bAllowParry)
 	{
-		return ParryAbility->TryParryMeleeHit(AttackingActor);
+		if (UPlayerParryAbility* ParryAbility = FindActiveParryAbility())
+		{
+			return ParryAbility->TryParryMeleeHit(AttackingActor, HitResult);
+		}
 	}
 
 	return TryGuardIncomingMeleeHit(AttackingActor, GuardStaminaDamage);
+}
+
+void APlayerCharacter::TriggerParrySuccessCameraShake()
+{
+	TriggerHitFeedbackCameraShake(EHitReactionTier::Big);
 }
 
 UPlayerParryAbility* APlayerCharacter::FindActiveParryAbility() const

@@ -6,11 +6,17 @@
 #include "Abilities/Tasks/AbilityTask_WaitGameplayEvent.h"
 #include "Animation/AnimInstance.h"
 #include "Animation/AnimMontage.h"
-#include "Character/Player/PlayerCharacter.h"
 #include "Components/SkeletalMeshComponent.h"
+#include "Engine/HitResult.h"
+#include "Engine/World.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "GameplayEffect.h"
 #include "GameplayEffectTypes.h"
+#include "Kismet/GameplayStatics.h"
+#include "Sound/SoundBase.h"
+
+#include "Character/Player/PlayerCharacter.h"
+#include "Framework/PolyQuestPlayerController.h"
 #include "PolyQuest.h"
 
 namespace
@@ -233,7 +239,7 @@ void UPlayerParryAbility::EndAbility(
 	Super::EndAbility(Handle, ActorInfo, ActivationInfo, bReplicateEndAbility, bWasCancelled);
 }
 
-bool UPlayerParryAbility::TryParryMeleeHit(AActor* AttackingActor)
+bool UPlayerParryAbility::TryParryMeleeHit(AActor* AttackingActor, const FHitResult& HitResult)
 {
 	if (!IsParryActive() || !AttackingActor || !IsAttackerInParryArc(AttackingActor))
 	{
@@ -264,8 +270,68 @@ bool UPlayerParryAbility::TryParryMeleeHit(AActor* AttackingActor)
 		}
 	}
 
+	// Trigger presentation feedback on successful parry contact.
+	TriggerParrySuccessFeedback(HitResult);
+
 	// The contact is consumed either way; a missing attacker ASC skips only the counter.
 	return true;
+}
+
+void UPlayerParryAbility::TriggerParrySuccessFeedback(const FHitResult& HitResult)
+{
+#if WITH_DEV_AUTOMATION_TESTS
+	++TestParrySuccessFeedbackCount;
+#endif
+
+	APlayerCharacter* PlayerCharacter = Cast<APlayerCharacter>(GetAvatarActorFromActorInfo());
+	if (!PlayerCharacter)
+	{
+		return;
+	}
+
+	// 1. Request Hit-Stop via PlayerController
+	if (APolyQuestPlayerController* PlayerController = Cast<APolyQuestPlayerController>(PlayerCharacter->GetController()))
+	{
+		if (FMath::IsFinite(ParrySuccessHitStopDurationSeconds) && ParrySuccessHitStopDurationSeconds > 0.0f
+			&& FMath::IsFinite(ParrySuccessHitStopTimeDilation) && ParrySuccessHitStopTimeDilation > 0.0f && ParrySuccessHitStopTimeDilation <= 1.0f)
+		{
+			PlayerController->RequestCombatImpactHitStop(ParrySuccessHitStopDurationSeconds, ParrySuccessHitStopTimeDilation);
+		}
+	}
+
+	// 2. Trigger Big camera shake via Player narrow wrapper
+	PlayerCharacter->TriggerParrySuccessCameraShake();
+
+	// 3. Play optional sound
+	if (ParrySuccessSound)
+	{
+		FVector SoundLocation = PlayerCharacter->GetActorLocation();
+		if (HitResult.GetActor() == PlayerCharacter
+			&& !HitResult.ImpactPoint.ContainsNaN()
+			&& FMath::IsFinite(HitResult.ImpactPoint.X) && FMath::IsFinite(HitResult.ImpactPoint.Y) && FMath::IsFinite(HitResult.ImpactPoint.Z)
+			&& !HitResult.ImpactPoint.IsNearlyZero())
+		{
+			SoundLocation = HitResult.ImpactPoint;
+		}
+
+#if WITH_DEV_AUTOMATION_TESTS
+		++TestParrySuccessSoundDispatchCount;
+		TestLastParrySuccessSoundLocation = SoundLocation;
+		if (bTestBypassAudioPlayback)
+		{
+			return;
+		}
+#endif
+
+		if (!SoundLocation.ContainsNaN()
+			&& FMath::IsFinite(SoundLocation.X) && FMath::IsFinite(SoundLocation.Y) && FMath::IsFinite(SoundLocation.Z))
+		{
+			if (UWorld* World = PlayerCharacter->GetWorld())
+			{
+				UGameplayStatics::PlaySoundAtLocation(World, ParrySuccessSound, SoundLocation);
+			}
+		}
+	}
 }
 
 void UPlayerParryAbility::OnActiveMontageEnded(UAnimMontage* Montage, bool bInterrupted)

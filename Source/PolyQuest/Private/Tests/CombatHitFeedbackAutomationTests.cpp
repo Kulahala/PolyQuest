@@ -320,10 +320,10 @@ bool FCombatHitFeedbackAutomationTest::RunTest(const FString& Parameters)
 	const int32 InitialHitStopCount = Enemy->GetTestCombatImpactHitStopRequestCount();
 	TestTrue(TEXT("Player hits Enemy with Small reaction tier"), ApplyDamage(SourceASC, EnemyASC, &SmallTags));
 	TestEqual(TEXT("Small hit requests hit-stop"), Enemy->GetTestCombatImpactHitStopRequestCount(), InitialHitStopCount + 1);
-	TestEqual(TEXT("Small hit selects 0.02s duration"), Enemy->GetTestLastImpactHitStopDuration(), 0.02f);
-	TestEqual(TEXT("Small hit selects 0.15 dilation"), Enemy->GetTestLastImpactHitStopTimeDilation(), 0.15f);
+	TestEqual(TEXT("Small hit selects 0.03s duration"), Enemy->GetTestLastImpactHitStopDuration(), 0.03f);
+	TestEqual(TEXT("Small hit selects 0.1 dilation"), Enemy->GetTestLastImpactHitStopTimeDilation(), 0.1f);
 	TestTrue(TEXT("Controller hit-stop is active after Small hit"), Controller->IsTestHitStopActive());
-	TestTrue(TEXT("Global time dilation is set to 0.15"), FMath::IsNearlyEqual(UGameplayStatics::GetGlobalTimeDilation(World), 0.15f, KINDA_SMALL_NUMBER));
+	TestTrue(TEXT("Global time dilation is set to 0.1"), FMath::IsNearlyEqual(UGameplayStatics::GetGlobalTimeDilation(World), 0.1f, KINDA_SMALL_NUMBER));
 
 	// Tick across real-time duration and verify controller restoration via Tick()
 	AdvanceHitFeedbackTimer(World, 0.05f);
@@ -333,15 +333,15 @@ bool FCombatHitFeedbackAutomationTest::RunTest(const FString& Parameters)
 	// 11. Big Preset Mapping
 	TestTrue(TEXT("Player hits Enemy with Big reaction tier"), ApplyDamage(SourceASC, EnemyASC, &BigTags));
 	TestEqual(TEXT("Big hit selects 0.05s duration"), Enemy->GetTestLastImpactHitStopDuration(), 0.05f);
-	TestEqual(TEXT("Big hit selects 0.05 dilation"), Enemy->GetTestLastImpactHitStopTimeDilation(), 0.05f);
-	TestTrue(TEXT("Global time dilation is set to 0.05"), FMath::IsNearlyEqual(UGameplayStatics::GetGlobalTimeDilation(World), 0.05f, KINDA_SMALL_NUMBER));
+	TestEqual(TEXT("Big hit selects 0.03 dilation"), Enemy->GetTestLastImpactHitStopTimeDilation(), 0.03f);
+	TestTrue(TEXT("Global time dilation is set to 0.03"), FMath::IsNearlyEqual(UGameplayStatics::GetGlobalTimeDilation(World), 0.03f, KINDA_SMALL_NUMBER));
 	AdvanceHitFeedbackTimer(World, 0.08f);
 	TestFalse(TEXT("Big hit-stop expires"), Controller->IsTestHitStopActive());
 	TestTrue(TEXT("Global time dilation restored to 1.0 after Big hit"), FMath::IsNearlyEqual(UGameplayStatics::GetGlobalTimeDilation(World), 1.0f, KINDA_SMALL_NUMBER));
 
 	// 12. Launch Preset Mapping
 	TestTrue(TEXT("Player hits Enemy with Launch reaction tier"), ApplyDamage(SourceASC, EnemyASC, &LaunchTags));
-	TestEqual(TEXT("Launch hit selects 0.04s duration"), Enemy->GetTestLastImpactHitStopDuration(), 0.04f);
+	TestEqual(TEXT("Launch hit selects 0.05s duration"), Enemy->GetTestLastImpactHitStopDuration(), 0.05f);
 	TestEqual(TEXT("Launch hit selects 0.05 dilation"), Enemy->GetTestLastImpactHitStopTimeDilation(), 0.05f);
 	TestTrue(TEXT("Global time dilation is set to 0.05 for Launch"), FMath::IsNearlyEqual(UGameplayStatics::GetGlobalTimeDilation(World), 0.05f, KINDA_SMALL_NUMBER));
 	AdvanceHitFeedbackTimer(World, 0.08f);
@@ -350,17 +350,17 @@ bool FCombatHitFeedbackAutomationTest::RunTest(const FString& Parameters)
 
 	// 13. None Tier uses Small preset for C3K
 	TestTrue(TEXT("Player hits Enemy with None reaction tier"), ApplyDamage(SourceASC, EnemyASC));
-	TestEqual(TEXT("None tier hit selects Small preset duration 0.02s"), Enemy->GetTestLastImpactHitStopDuration(), 0.02f);
-	TestEqual(TEXT("None tier hit selects Small preset dilation 0.15"), Enemy->GetTestLastImpactHitStopTimeDilation(), 0.15f);
-	TestTrue(TEXT("Global time dilation set to 0.15 for None tier"), FMath::IsNearlyEqual(UGameplayStatics::GetGlobalTimeDilation(World), 0.15f, KINDA_SMALL_NUMBER));
+	TestEqual(TEXT("None tier hit selects Small preset duration 0.03s"), Enemy->GetTestLastImpactHitStopDuration(), 0.03f);
+	TestEqual(TEXT("None tier hit selects Small preset dilation 0.1"), Enemy->GetTestLastImpactHitStopTimeDilation(), 0.1f);
+	TestTrue(TEXT("Global time dilation set to 0.1 for None tier"), FMath::IsNearlyEqual(UGameplayStatics::GetGlobalTimeDilation(World), 0.1f, KINDA_SMALL_NUMBER));
 	AdvanceHitFeedbackTimer(World, 0.05f);
 	TestFalse(TEXT("None tier hit-stop expires"), Controller->IsTestHitStopActive());
 
 	// 14. Invalid multi-tier uses Small preset for C3K while warning/skipping reaction event
 	TestTrue(TEXT("Player hits Enemy with Invalid multi-tier"), ApplyDamage(SourceASC, EnemyASC, &InvalidReactionTags));
-	TestEqual(TEXT("Invalid multi-tier selects Small preset duration 0.02s"), Enemy->GetTestLastImpactHitStopDuration(), 0.02f);
-	TestEqual(TEXT("Invalid multi-tier selects Small preset dilation 0.15"), Enemy->GetTestLastImpactHitStopTimeDilation(), 0.15f);
-	TestTrue(TEXT("Global time dilation set to 0.15 for Invalid tier"), FMath::IsNearlyEqual(UGameplayStatics::GetGlobalTimeDilation(World), 0.15f, KINDA_SMALL_NUMBER));
+	TestEqual(TEXT("Invalid multi-tier selects Small preset duration 0.03s"), Enemy->GetTestLastImpactHitStopDuration(), 0.03f);
+	TestEqual(TEXT("Invalid multi-tier selects Small preset dilation 0.1"), Enemy->GetTestLastImpactHitStopTimeDilation(), 0.1f);
+	TestTrue(TEXT("Global time dilation set to 0.1 for Invalid tier"), FMath::IsNearlyEqual(UGameplayStatics::GetGlobalTimeDilation(World), 0.1f, KINDA_SMALL_NUMBER));
 	AdvanceHitFeedbackTimer(World, 0.05f);
 	TestFalse(TEXT("Invalid tier hit-stop expires"), Controller->IsTestHitStopActive());
 
@@ -368,33 +368,33 @@ bool FCombatHitFeedbackAutomationTest::RunTest(const FString& Parameters)
 	EnemyASC->AddLooseGameplayTag(StunnedTag);
 	TestTrue(TEXT("Stunned Enemy hit with Big reaction tier"), ApplyDamage(SourceASC, EnemyASC, &BigTags));
 	TestEqual(TEXT("Stunned Enemy hit selects Big preset duration"), Enemy->GetTestLastImpactHitStopDuration(), 0.05f);
-	TestEqual(TEXT("Stunned Enemy hit selects Big preset dilation"), Enemy->GetTestLastImpactHitStopTimeDilation(), 0.05f);
+	TestEqual(TEXT("Stunned Enemy hit selects Big preset dilation"), Enemy->GetTestLastImpactHitStopTimeDilation(), 0.03f);
 	TestTrue(TEXT("Stunned Enemy hit activates hit-stop"), Controller->IsTestHitStopActive());
 	EnemyASC->RemoveLooseGameplayTag(StunnedTag);
 	AdvanceHitFeedbackTimer(World, 0.08f);
 
 	// 16. Rapid hit monotonic arbitration:
-	// 16.1 Big followed by Small: Dilation stays at 0.05 (min), expiry extends to max
+	// 16.1 Big followed by Small: Dilation stays at 0.03 (min), expiry extends to max
 	TestTrue(TEXT("Rapid hit 1: Big hit applies"), ApplyDamage(SourceASC, EnemyASC, &BigTags));
 	const double BigExpiry = Controller->GetTestHitStopExpireRealTimeSeconds();
 	TestTrue(TEXT("Rapid hit 2: Small hit applies immediately"), ApplyDamage(SourceASC, EnemyASC, &SmallTags));
-	TestTrue(TEXT("Dilation stays at 0.05 after subsequent weaker Small hit"), FMath::IsNearlyEqual(UGameplayStatics::GetGlobalTimeDilation(World), 0.05f, KINDA_SMALL_NUMBER));
+	TestTrue(TEXT("Dilation stays at 0.03 after subsequent weaker Small hit"), FMath::IsNearlyEqual(UGameplayStatics::GetGlobalTimeDilation(World), 0.03f, KINDA_SMALL_NUMBER));
 	TestTrue(TEXT("Expiry is at least the Big hit expiry"), Controller->GetTestHitStopExpireRealTimeSeconds() >= BigExpiry);
 	AdvanceHitFeedbackTimer(World, 0.08f);
 	TestFalse(TEXT("Rapid hit stop expires completely"), Controller->IsTestHitStopActive());
 	TestTrue(TEXT("Global time dilation restored after rapid hit sequence"), FMath::IsNearlyEqual(UGameplayStatics::GetGlobalTimeDilation(World), 1.0f, KINDA_SMALL_NUMBER));
 
-	// 16.2 Small followed by Big: Dilation drops to 0.05 (min), expiry updates to later
+	// 16.2 Small followed by Big: Dilation drops to 0.03 (min), expiry updates to later
 	TestTrue(TEXT("Rapid hit 3: Small hit applies"), ApplyDamage(SourceASC, EnemyASC, &SmallTags));
-	TestTrue(TEXT("Dilation starts at 0.15"), FMath::IsNearlyEqual(UGameplayStatics::GetGlobalTimeDilation(World), 0.15f, KINDA_SMALL_NUMBER));
+	TestTrue(TEXT("Dilation starts at 0.1"), FMath::IsNearlyEqual(UGameplayStatics::GetGlobalTimeDilation(World), 0.1f, KINDA_SMALL_NUMBER));
 	TestTrue(TEXT("Rapid hit 4: Big hit applies immediately"), ApplyDamage(SourceASC, EnemyASC, &BigTags));
-	TestTrue(TEXT("Dilation decreases to 0.05 after stronger Big hit"), FMath::IsNearlyEqual(UGameplayStatics::GetGlobalTimeDilation(World), 0.05f, KINDA_SMALL_NUMBER));
+	TestTrue(TEXT("Dilation decreases to 0.03 after stronger Big hit"), FMath::IsNearlyEqual(UGameplayStatics::GetGlobalTimeDilation(World), 0.03f, KINDA_SMALL_NUMBER));
 	AdvanceHitFeedbackTimer(World, 0.08f);
 	TestFalse(TEXT("Arbitrated hit stop expires"), Controller->IsTestHitStopActive());
 
 	// 17. External Time Dilation Override & Preservation
 	TestTrue(TEXT("External override setup: Big hit applies"), ApplyDamage(SourceASC, EnemyASC, &BigTags));
-	TestTrue(TEXT("Hit-stop active at 0.05"), Controller->IsTestHitStopActive());
+	TestTrue(TEXT("Hit-stop active at 0.03"), Controller->IsTestHitStopActive());
 	// External system overrides global dilation to 0.5
 	UGameplayStatics::SetGlobalTimeDilation(World, 0.5f);
 	// Single Tick detects override and relinquishes C3K ownership without overwriting 0.5
@@ -405,7 +405,7 @@ bool FCombatHitFeedbackAutomationTest::RunTest(const FString& Parameters)
 	// Subsequent C3K hit captures 0.5 as new baseline and restores to 0.5
 	TestTrue(TEXT("New Small hit applies under external 0.5 baseline"), ApplyDamage(SourceASC, EnemyASC, &SmallTags));
 	TestEqual(TEXT("Captured pre-hit-stop baseline is 0.5"), Controller->GetTestPreHitStopGlobalTimeDilation(), 0.5f);
-	TestTrue(TEXT("Dilation temporarily set to 0.15"), FMath::IsNearlyEqual(UGameplayStatics::GetGlobalTimeDilation(World), 0.15f, KINDA_SMALL_NUMBER));
+	TestTrue(TEXT("Dilation temporarily set to 0.1"), FMath::IsNearlyEqual(UGameplayStatics::GetGlobalTimeDilation(World), 0.1f, KINDA_SMALL_NUMBER));
 	AdvanceHitFeedbackTimer(World, 0.05f);
 	TestFalse(TEXT("Hit-stop expires"), Controller->IsTestHitStopActive());
 	TestTrue(TEXT("Global time dilation restored to external baseline 0.5"), FMath::IsNearlyEqual(UGameplayStatics::GetGlobalTimeDilation(World), 0.5f, KINDA_SMALL_NUMBER));
