@@ -240,6 +240,16 @@ void AEnemyCharacter::OnHealthAttributeChanged(const FOnAttributeChangeData& Cha
 						}
 					}
 				}
+
+				// A single GameplayEffect Spec may execute more than one Health modifier.
+				// Keep lethal feedback at one dispatch per Spec, matching the nonlethal path.
+				if (EffectSpec.GetModifiedAttribute(UCharacterAttributeSet::GetHealthAttribute()) == nullptr)
+				{
+					FGameplayTagContainer AssetTags;
+					EffectSpec.GetAllAssetTags(AssetTags);
+					const EHitReactionTier ReactionTier = FHitReactionClassifier::ClassifyReactionTier(AssetTags);
+					HandleCombatImpactFeedback(EffectSpec, ReactionTier);
+				}
 			}
 
 			SetDeadState();

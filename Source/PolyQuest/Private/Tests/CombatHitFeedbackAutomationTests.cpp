@@ -550,13 +550,29 @@ bool FCombatHitFeedbackAutomationTest::RunTest(const FString& Parameters)
 	TestFalse(TEXT("Controller hit-stop not active on non-Player instigator"), Controller->IsTestHitStopActive());
 	AdvanceHitFeedbackTimer(World, 0.25f);
 
-	// 20. Lethal & Dead Enemy exclusions
+	// 20. Lethal Enemy feedback and Dead exclusion
 	EnemyASC->SetNumericAttributeBase(UCharacterAttributeSet::GetHealthAttribute(), 25.0f);
+	const int32 LethalHitStopBefore = Enemy->GetTestCombatImpactHitStopRequestCount();
+	const int32 LethalSoundBefore = Enemy->GetTestImpactSoundDispatchCount();
+	const int32 LethalBloodBefore = Enemy->GetTestImpactBloodDispatchCount();
 	TestTrue(TEXT("Lethal Enemy Health GE applies"), ApplyDamage(SourceASC, EnemyASC));
 	TestTrue(TEXT("Lethal Enemy enters its existing Dead state"), Enemy->IsDead());
-	TestFalse(TEXT("Lethal Enemy damage does not flash"), Enemy->IsTestHitFeedbackOverlayActive());
+	TestEqual(TEXT("Lethal Enemy requests one C3K hit-stop"), Enemy->GetTestCombatImpactHitStopRequestCount(), LethalHitStopBefore + 1);
+	TestEqual(TEXT("Lethal Enemy dispatches one impact sound"), Enemy->GetTestImpactSoundDispatchCount(), LethalSoundBefore + 1);
+	TestEqual(TEXT("Lethal Enemy without HitResult skips blood"), Enemy->GetTestImpactBloodDispatchCount(), LethalBloodBefore);
+	TestTrue(TEXT("Lethal Enemy activates C3K hit-stop"), Controller->IsTestHitStopActive());
+	TestFalse(TEXT("Lethal Enemy does not flash the overlay"), Enemy->IsTestHitFeedbackOverlayActive());
+	AdvanceHitFeedbackTimer(World, 0.05f);
+	TestFalse(TEXT("Lethal Enemy hit-stop expires"), Controller->IsTestHitStopActive());
+	const int32 DeadHitStopBefore = Enemy->GetTestCombatImpactHitStopRequestCount();
+	const int32 DeadSoundBefore = Enemy->GetTestImpactSoundDispatchCount();
+	const int32 DeadBloodBefore = Enemy->GetTestImpactBloodDispatchCount();
 	TestTrue(TEXT("Dead Enemy Health GE applies"), ApplyDamage(SourceASC, EnemyASC));
-	TestFalse(TEXT("Dead Enemy does not flash"), Enemy->IsTestHitFeedbackOverlayActive());
+	TestEqual(TEXT("Dead Enemy does not request another hit-stop"), Enemy->GetTestCombatImpactHitStopRequestCount(), DeadHitStopBefore);
+	TestEqual(TEXT("Dead Enemy does not dispatch another impact sound"), Enemy->GetTestImpactSoundDispatchCount(), DeadSoundBefore);
+	TestEqual(TEXT("Dead Enemy does not dispatch blood"), Enemy->GetTestImpactBloodDispatchCount(), DeadBloodBefore);
+	TestFalse(TEXT("Dead Enemy does not activate hit-stop"), Controller->IsTestHitStopActive());
+	TestFalse(TEXT("Dead Enemy does not flash the overlay"), Enemy->IsTestHitFeedbackOverlayActive());
 
 	// 21. Player Destroy / EndPlay stops active shake and clears state
 	PlayerASC->SetNumericAttributeBase(UCharacterAttributeSet::GetHealthAttribute(), 1000.0f);
