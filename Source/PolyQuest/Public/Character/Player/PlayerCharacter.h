@@ -24,6 +24,7 @@ class UGameplayAbility;
 class UMeleeWeaponDefinition;
 class UWeaponEquipmentComponent;
 class UAIPerceptionStimuliSourceComponent;
+class UMotionWarpingComponent;
 class USpringArmComponent;
 class AController;
 class AEnemyCharacter;
@@ -55,6 +56,10 @@ public:
 	/** Registers this player as the explicit Sight source for the first enemy fixture. */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="AI|Perception", meta=(AllowPrivateAccess="true"))
 	TObjectPtr<UAIPerceptionStimuliSourceComponent> SightStimuliSource;
+
+	/** Motion Warping component owned by this Player for root-motion contact assists. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Components", meta=(AllowPrivateAccess="true"))
+	TObjectPtr<UMotionWarpingComponent> MotionWarpingComponent;
 
 protected:
 	/** Input action used to start and stop jumping. */
@@ -271,6 +276,12 @@ public:
 	/** Validates the current lock once and returns its surviving or death-retargeted Enemy; may clear the lock. */
 	AEnemyCharacter* ResolveValidLockedTarget();
 
+	/** Sets a one-shot melee motion warp target on this Player. C++ narrow bridge. */
+	bool SetMeleeMotionWarpTarget(FName WarpTargetName, const FTransform& TargetTransform);
+
+	/** Clears all melee motion warp targets from this Player. C++ narrow bridge. */
+	void ClearMeleeMotionWarpTargets();
+
 	/** True only when physical Sprint intent and current movement state permit a new Sprint request. */
 	bool CanAttemptSprint() const;
 
@@ -377,6 +388,11 @@ public:
 	void SetTestBypassReceivedHitAudioPlayback(const bool bBypass) { bTestBypassReceivedHitAudioPlayback = bBypass; }
 	int32 GetTestReceivedHitSoundDispatchCount() const { return TestReceivedHitSoundDispatchCount; }
 	FVector GetTestLastReceivedHitSoundLocation() const { return TestLastReceivedHitSoundLocation; }
+	bool HasTestMeleeMotionWarpTarget(FName WarpTargetName, FTransform* OutTransform = nullptr) const;
+	int32 GetTestMeleeMotionWarpTargetCount() const;
+	void TriggerTestUnPossessed() { UnPossessed(); }
+	void TriggerTestEndPlay(const EEndPlayReason::Type Reason = EEndPlayReason::Destroyed) { EndPlay(Reason); }
+	void TriggerTestOnMovementModeChanged(EMovementMode PrevMode, uint8 CustomMode = 0) { OnMovementModeChanged(PrevMode, CustomMode); }
 #endif
 
 private:

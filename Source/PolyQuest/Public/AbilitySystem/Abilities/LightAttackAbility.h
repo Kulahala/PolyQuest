@@ -35,6 +35,20 @@ public:
 		bool bReplicateEndAbility,
 		bool bWasCancelled) override;
 
+	/**
+	 * Pure geometric evaluator for melee motion-warp contact assist.
+	 * Calculates the one-shot target Transform if all geometry and ground conditions are met.
+	 * Returns true if a valid warp transform was generated, false otherwise.
+	 */
+	static bool EvaluateMeleeMotionWarpTransform(
+		const FVector& PlayerLocation,
+		const FVector& PlayerForwardVector,
+		bool bPlayerOnGround,
+		const FVector& TargetLocation,
+		bool bTargetOnGround,
+		const struct FComboChainEntry& EntryConfig,
+		FTransform& OutWarpTransform);
+
 protected:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combo", meta = (ToolTip = "连续轻攻击连招段落配置数据资产（ComboChainDataAsset）。"))
 	TObjectPtr<UComboChainDataAsset> ComboDefinition;
@@ -158,6 +172,7 @@ private:
 	void CloseTraceWindow();
 	void SetDodgeCancelable(bool bShouldBeCancelable);
 	void RestoreBaselineMontageRate();
+	void TryApplyMeleeMotionWarpTarget(class APlayerCharacter* PlayerCharacter, const struct FComboChainEntry& EntryConfig);
 
 	TWeakObjectPtr<const class UAnimNotifyState_AttackTraceWindow> ActiveTraceNotifyState;
 };

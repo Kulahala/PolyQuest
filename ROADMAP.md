@@ -8,18 +8,19 @@ This file is the active route: it records the current baseline, the next depende
 
 ## Current State
 
-- This closeout starts from parent baseline `main @ 9c2ca48`; the latest implemented stage is `TODO-07B4 Player Attacker-Impact Camera Shake And Reaction-Tier Mapping v1`, and the resulting commit is identified by Git history. Its user-confirmed Automation and PIE evidence is recorded below, while separate compile/readback evidence remains explicit validation debt. Lock-On acquisition/cycle remain strict with fixed per-axis `15%` retention for an already-owned target, while Bow keeps its independent `6%` automatic Target Assist boundary.
-- The product route is `/Game/Maps/Scene01` with a fixed elevated oblique camera and a desktop Controller/input boundary. The next open player-facing slice is `TODO-03A7`; the completed and open sequence is listed below.
+- This stage closeout is based on parent `main @ 90ad381` (the committed `TODO-07B4` stage); `TODO-03A7` is implemented and user-PIE-confirmed in the approved stage change, but has no separate manual `PolyQuestEditor` compile or Editor-readback record. Lock-On acquisition/cycle remain strict with fixed per-axis `15%` retention for an already-owned target, while Bow keeps its independent `6%` automatic Target Assist boundary.
+- The product route is `/Game/Maps/Scene01` with a fixed elevated oblique camera and a desktop Controller/input boundary. The next open player-facing slice is `TODO-03A7B`; the completed and open sequence is listed below.
 - Mutable GameplayAbility/GameplayEffect, Montage, AnimBP, Blueprint, input, DataAsset, map, Niagara, sound, and imported Content remain user-owned local WIP. Manual compilation, Editor readback, PIE/visual checks, imported-asset decisions, packaging, and final commit approval remain separate gates.
 
 ## Current Player-Combat Sequence
 
 Before introducing the first ranged enemy, the player-combat route is:
 
-Completed: TODO-03A3E → TODO-07B4
-Next: TODO-03A7 → TODO-05A → TODO-05B → TODO-03C
+Implemented/PIE-confirmed: TODO-03A3E → TODO-07B4 → TODO-03A7 (entry 0 only)
+Next player-combat slices: TODO-03A7B → TODO-03A7C → TODO-03A7D → TODO-05A → TODO-05B → TODO-07B5 → TODO-07B6 → TODO-03C
+Later optional enemy adoption: TODO-03A7E (after the first ranged-enemy gate)
 
-TODO-07B4 is a deliberately early presentation gate and is technically independent of Motion Warping. The punish dependency remains TODO-03A7 → TODO-05A → TODO-05B. TODO-03A4B is conditional equipment work and is not a prerequisite unless a partial-Guard weapon is intentionally authored.
+`TODO-03A7` is deliberately limited to the selected Light entry 0; later Player adoption slices reuse its narrow component/evaluator/bridge only after their own Montage and Root Motion evidence. TODO-07B4 is a deliberately early presentation gate and is technically independent of Motion Warping. The punish dependency remains `TODO-05A → TODO-05B`; the Small Reaction retrigger remains an explicit `TODO-07B5` gate because it changes GAS re-entry and Montage cleanup semantics for both Player and Enemy. `TODO-03A4B` is conditional equipment work and is not a prerequisite unless a partial-Guard weapon is intentionally authored.
 
 ## Route Constraints
 
@@ -35,10 +36,19 @@ For older completed stages, validation evidence, and exact historical wording, s
 
 ### Player Combat Closure
 
-- [ ] TODO-03A7: Selected Melee Motion-Warp Contact Assist v1
-  - After an Editor asset audit, adopt Motion Warping only for explicitly named Player attacks whose selected Montage has verified Root Motion and a matching warp window/target name. Enemy adoption is optional and requires a separate concrete authored need.
-  - The active GAS Ability owns target validity, one bounded start snapshot, distance/angle/grounding limits, and all cancellation/death/montage/teardown cleanup. A valid snapshot writes one bounded Warp Target; there is no continuous chase, re-query, or damage-path change.
-  - Add the MotionWarping module only if the selected native integration requires it. Missing or unsuitable assets are a valid no-adoption result with evidence; no locomotion, reaction, projectile, or global auto-targeting warp.
+- [ ] TODO-03A7B: Light Combo Motion-Warp Adoption v1
+  - Extend the already-proven Player Motion-Warp contract from Light combo entry 0 to explicitly selected entry 1/2 Montages only. Reuse the Player-owned component, one-shot evaluator, static Lock-On snapshot, and cleanup bridge; do not create a global combo switch or dispatcher.
+  - Each selected Montage must independently pass direct Notify/Modifier, Root Motion, target-name, timing-window, distance/angle, cancellation, and Scene01 PIE checks. A failed or unsuitable entry remains opt-out and keeps the ordinary combo path.
+  - Close with focused production-entry coverage for `StartComboEntry`, repeated entry replacement, stale-target prevention, and existing Trace/Resolver/Damage regression; compile/readback evidence from the current 03A7 debt is a prerequisite.
+
+- [ ] TODO-03A7C: Charged/Sprint Melee Motion-Warp Adoption v1
+  - Evaluate `UChargedAttackAbility` and `USprintAttackAbility` as separate authored Root Motion lifecycles. Adopt only explicitly named Montages with a verified Notify window and independent release/cancel/teardown behavior.
+  - Reuse only the narrow Player bridge/evaluator where the activation snapshot semantics match; do not make Light's combo state or a shared global target follow these abilities.
+  - Keep existing cost, action tags, Trace/Resolver/Damage, Dodge cancellation, and Sprint ownership unchanged; close with focused Automation, compile/readback, and Scene01 PIE evidence.
+
+- [ ] TODO-03A7D: Melee Skill Motion-Warp Adoption v1
+  - Audit `UPlayerMeleeSkillAbility` and its actual authored skills one at a time. Each skill must prove its own target snapshot, Montage Notify/Root Motion compatibility, range/angle policy, and all interruption/death/teardown cleanup before adoption.
+  - No generic skill dispatcher, automatic retarget, locomotion warp, or change to the existing skill damage route.
 
 ### Punish
 
@@ -57,9 +67,14 @@ For older completed stages, validation evidence, and exact historical wording, s
 ### Ranged Gate And Conditional Equipment
 
 - [ ] TODO-03C: Ranged Enemy v1
-  - Add one StateTree-driven ranged enemy only after TODO-03A3E, TODO-07B4, TODO-03A7, TODO-05A, and TODO-05B each pass their own adoption, compile, Automation, Editor/PIE, and review gates (or Motion Warping closes with an evidence-backed no-adoption decision).
+  - Add one StateTree-driven ranged enemy only after TODO-03A3E, TODO-07B4, TODO-03A7, TODO-03A7B, TODO-03A7C, TODO-03A7D, TODO-05A, TODO-05B, TODO-07B5, and TODO-07B6 each pass their own adoption, compile, Automation, Editor/PIE, and review gates (or a Motion-Warp slice closes with an evidence-backed no-adoption decision).
   - Reuse the existing immutable 03B projectile runtime and GAS delivery path. Add only enemy ranged Profile/Ability/StateTree timing and an AI-owned target snapshot; enemy projectiles are explicitly authored straight/non-homing by default.
   - Do not create Player Lock-On, global Target Assist, a second projectile hierarchy, or a second damage path.
+
+- [ ] TODO-03A7E: Enemy Melee Motion-Warp Adoption v1 (post-ranged, optional)
+  - Revisit `UEnemyMeleeAbility` only after the first ranged-enemy gate and a concrete enemy authored need. Keep AI/Controller/StateTree intent separate from the Ability-owned one-shot target snapshot and Root Motion lifecycle.
+  - Reuse the Player evaluator only if the geometry and ownership contract is demonstrably identical; otherwise define a bounded Enemy-specific evaluator. No Player component sharing, continuous chase, AI retarget loop, or change to Enemy Trace/Resolver/Damage ownership.
+  - This stage is not a prerequisite for `TODO-03C`; it requires its own authored Montage/Notify/Root Motion, Automation, compile/readback, PIE, and teardown evidence.
 
 - [ ] TODO-03A4B: Weapon Defense Outcome Profiles v1 (conditional)
   - Before intentionally authoring a weapon with partial Guard damage, define one explicit no-defense/full-absorb/bounded-partial outcome while keeping Parry distinct and the existing Guard/Resolver/Damage GE ownership.
@@ -107,8 +122,21 @@ For older completed stages, validation evidence, and exact historical wording, s
   - Add only the HUD/debug surfaces needed to make validated Poise, target, damage, and later route state legible while retaining the ASC-backed read-only ownership of TODO-07A1.
 
 - [ ] TODO-07B: Feedback, Presentation Retune, And Demo Polish v1
-  - TODO-07B1/07B1A, TODO-07B2, TODO-07B3, and TODO-07B4 are delivered. The remaining umbrella owns later focused VFX/SFX/camera/navigation retuning and demo polish, not new combat ownership.
+  - TODO-07B1/07B1A, TODO-07B2, TODO-07B3, and TODO-07B4 are delivered. TODO-07B5 and TODO-07B6 are the remaining explicitly scoped children before the first ranged enemy; the umbrella owns focused presentation work, not new combat ownership.
   - Re-author final Montage composition and Notify timing only after the selected animation set is stable. Reuse the proven TODO-02F rate lifecycle; do not add overlapping playback-rate systems or use Motion Warping for locomotion.
+
+- [ ] TODO-07B5: Small Hit Reaction Retrigger v1
+  - This is the first of the two pre-03C feedback stages; its small code surface does not waive an independent GAS/Montage validation gate.
+  - Allow the existing Player and Enemy Small Hit Reaction Abilities to retrigger the same `InstancedPerActor` ability so a new Small hit stops/resets the currently playing Small Montage and starts the latest selected directional Montage.
+  - Enable only the engine's `bRetriggerInstancedAbility` behavior and remove only the Small ability's self-block on `State.Action.SmallHitReacting`. Retain that tag as the active-state owner, retain the Dead/Stunned activation blocks, and preserve the existing montage-task, delegate, identity, interruption, death, and teardown cleanup.
+  - Keep Big/Launch reactions, movement/action arbitration, damage/Poise delivery, StateTree intent, Gameplay Tags, Config, and authored assets unchanged. This is a bounded reaction-lifecycle adjustment, not a generic retrigger framework or a cross-tier interruption rule.
+  - Close only after focused Player/Enemy repeated-Small-hit Automation coverage and user-owned `PolyQuestEditor` compile plus Scene01 PIE evidence show the successor Montage owns the state without a stale prior completion ending it. Regressions for Big/Launch, Stunned, Dead, cancellation, and teardown remain in the same gate.
+
+- [ ] TODO-07B6: Combat Feedback DataAsset Consolidation v1
+  - After the current feedback behavior and `TODO-07B5` are stable, consolidate authored feedback references/tuning (camera shake, hit-stop, sound, blood, and overlay where applicable) into a deliberately scoped Combat Feedback DataAsset while preserving each existing runtime owner's authority and lifecycle.
+  - Player remains the owner of its local `PlayerCameraManager` Shake lifecycle, Controller remains the owner of global hit-stop, Enemy remains the owner of impact sound/blood presentation, and `ABaseCharacter` remains the owner of the shared overlay lifecycle. The DataAsset supplies authored data; it does not become a second gameplay or damage authority.
+  - The future plan must freeze the exact fields, asset paths, fallback behavior, and migration/readback boundary before implementation. Do not introduce GameplayCue, a generic feedback dispatcher, a second damage path, network policy, or incidental asset migration.
+  - Close only with old/new field-equivalence Automation, explicit missing-data fail-closed coverage, curated Editor asset readback, user-owned compile, and focused Scene01 PIE evidence for Player hit, attacker impact, Parry/Guard, Enemy impact, and teardown cleanup.
 
 ## Recommendations
 
@@ -134,6 +162,7 @@ For older completed stages, validation evidence, and exact historical wording, s
 - `PolyQuest.Equipment.TransactionMatrix` still depends on a local WIP Guard asset and an unapproved test-path repair. Keep that source change and `Content/**` asset outside this stage; close in a separately approved equipment/asset baseline with user readback.
 - `Config/Automation/Presets/1.json` is not a complete test manifest. The 25/25 result recorded in the archived TODO-03A3E closeout comes from the user's manual selection of all current PolyQuest suites, not from the preset; a preset refresh is optional config maintenance, not a TODO-03A3E blocker.
 - TODO-07B4 source and focused Automation are confirmed, and the user has confirmed the focused Scene01 PIE route. This closeout does not contain a separate manual `PolyQuestEditor` compile record or six-field `BP_Player` Editor readback; treat the attacker-field authoring baseline as uncurated until those exact gates are read back. The debt closes before packaging or a clean authored-fixture claim and is not a blocker for the next source-only planning slice.
+- TODO-03A7 source and focused Automation/Scene01 PIE are confirmed. The remaining debt is bounded to (a) no separately recorded manual `PolyQuestEditor` compile or Motion-Warp asset readback, and (b) Automation coverage that exercises the shared evaluator/Player bridge rather than the complete `StartComboEntry(0) -> TryApplyMeleeMotionWarpTarget` production entry. Close (a) before claiming a clean authored baseline and close (b) in `TODO-03A7B`'s production-entry adoption matrix or a dedicated validation slice; neither is a blocker for drafting the next player-combat plan.
 
 ## Deferred TODOs
 

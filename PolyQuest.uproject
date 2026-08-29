@@ -144,6 +144,10 @@
 			"Enabled": true
 		},
 		{
+			"Name": "MotionWarping",
+			"Enabled": true
+		},
+		{
 			"Name": "AIAssistant",
 			"Enabled": true
 		},

@@ -22,6 +22,7 @@
 #include "GameplayAbilitySpec.h"
 #include "GameplayTagContainer.h"
 #include "InputActionValue.h"
+#include "MotionWarpingComponent.h"
 #include "Perception/AIPerceptionStimuliSourceComponent.h"
 #include "Perception/AISense_Sight.h"
 #include "DrawDebugHelpers.h"
@@ -118,6 +119,8 @@ APlayerCharacter::APlayerCharacter()
 	FollowCamera->FieldOfView = 60.0f;
 
 	SightStimuliSource = CreateDefaultSubobject<UAIPerceptionStimuliSourceComponent>(TEXT("SightStimuliSource"));
+	MotionWarpingComponent = CreateDefaultSubobject<UMotionWarpingComponent>(TEXT("MotionWarpingComponent"));
+	MotionWarpingComponent->bSearchForWindowsInAnimsWithinMontages = false;
 	WeaponEquipment = CreateDefaultSubobject<UWeaponEquipmentComponent>(TEXT("WeaponEquipment"));
 }
 
@@ -240,6 +243,7 @@ void APlayerCharacter::PossessedBy(AController* NewController)
 void APlayerCharacter::UnPossessed()
 {
 	ClearActiveHitFeedbackCameraShake();
+	ClearMeleeMotionWarpTargets();
 	OnCharacterMovementUpdated.RemoveDynamic(this, &APlayerCharacter::HandleCharacterMovementUpdated);
 	ClearWorldPickupInteractionState();
 	Super::UnPossessed();
@@ -253,6 +257,7 @@ void APlayerCharacter::EndPlay(const EEndPlayReason::Type EndPlayReason)
 	}
 
 	ClearActiveHitFeedbackCameraShake();
+	ClearMeleeMotionWarpTargets();
 	ClearDodgeSprintInputState();
 	ClearGuardResumeEligibility();
 	bGuardRequiresReleaseAfterBreak = false;
@@ -301,6 +306,8 @@ void APlayerCharacter::OnMovementModeChanged(EMovementMode PrevMovementMode, uin
 	UCharacterMovementComponent* MovementComponent = GetCharacterMovement();
 	if (!MovementComponent || !MovementComponent->IsMovingOnGround())
 	{
+		ClearMeleeMotionWarpTargets();
+
 		const UAbilitySystemComponent* CharacterASC = GetAbilitySystemComponent();
 		const bool bParryStateActive = CharacterASC && ParryingStateTag.IsValid()
 			&& CharacterASC->HasMatchingGameplayTag(ParryingStateTag);
@@ -1570,6 +1577,27 @@ void APlayerCharacter::ClearLockedTarget()
 	UpdateActionFacingRotationMode();
 }
 
+bool APlayerCharacter::SetMeleeMotionWarpTarget(FName WarpTargetName, const FTransform& TargetTransform)
+{
+	const FVector Location = TargetTransform.GetLocation();
+	if (!MotionWarpingComponent || WarpTargetName.IsNone() || !TargetTransform.IsValid()
+		|| !FMath::IsFinite(Location.X) || !FMath::IsFinite(Location.Y) || !FMath::IsFinite(Location.Z))
+	{
+		return false;
+	}
+
+	MotionWarpingComponent->AddOrUpdateWarpTargetFromTransform(WarpTargetName, TargetTransform);
+	return true;
+}
+
+void APlayerCharacter::ClearMeleeMotionWarpTargets()
+{
+	if (MotionWarpingComponent)
+	{
+		MotionWarpingComponent->RemoveAllWarpTargets();
+	}
+}
+
 bool APlayerCharacter::RegisterBowAimRequester(const UObject* Requester)
 {
 	if (!Requester)
@@ -2592,6 +2620,30 @@ bool APlayerCharacter::ShouldRequestSprintAttack() const
 void APlayerCharacter::TriggerTestTargetCycle(const float InAxisValue)
 {
 	HandleTargetCycleTriggered(FInputActionValue(InAxisValue));
+}
+
+bool APlayerCharacter::HasTestMeleeMotionWarpTarget(FName WarpTargetName, FTransform* OutTransform) const
+{
+	if (!MotionWarpingComponent || WarpTargetName.IsNone())
+	{
+		return false;
+	}
+
+	if (const FMotionWarpingTarget* Target = MotionWarpingComponent->FindWarpTarget(WarpTargetName))
+	{
+		if (OutTransform)
+		{
+			*OutTransform = FTransform(Target->Rotation, Target->Location);
+		}
+		return true;
+	}
+
+	return false;
+}
+
+int32 APlayerCharacter::GetTestMeleeMotionWarpTargetCount() const
+{
+	return MotionWarpingComponent ? MotionWarpingComponent->GetWarpTargets().Num() : 0;
 }
 #endif
 

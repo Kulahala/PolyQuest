@@ -25,7 +25,8 @@ public class PolyQuest : ModuleRules
 		});
 
 		PrivateDependencyModuleNames.AddRange(new string[] {
-			"Niagara"
+			"Niagara",
+			"MotionWarping"
 		});
 
 		PublicIncludePaths.AddRange(new string[] {

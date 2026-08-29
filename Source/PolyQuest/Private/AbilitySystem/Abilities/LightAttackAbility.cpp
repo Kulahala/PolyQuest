@@ -8,9 +8,12 @@
 #include "Animation/AnimMontage.h"
 #include "Animation/Combat/AnimNotifyState_ActionWindows.h"
 #include "Character/BaseCharacter.h"
+#include "Character/Enemy/EnemyCharacter.h"
 #include "Character/Player/PlayerCharacter.h"
 #include "Combat/ComboChainDataAsset.h"
 #include "Components/SkeletalMeshComponent.h"
+#include "Engine/Engine.h"
+#include "GameFramework/CharacterMovementComponent.h"
 #include "GameplayEffect.h"
 #include "PolyQuest.h"
 
@@ -162,6 +165,11 @@ void ULightAttackAbility::EndAbility(
 	SetDodgeCancelable(false);
 	CloseTraceWindow();
 	RestoreBaselineMontageRate();
+
+	if (APlayerCharacter* PlayerCharacter = Cast<APlayerCharacter>(GetAvatarActorFromActorInfo()))
+	{
+		PlayerCharacter->ClearMeleeMotionWarpTargets();
+	}
 
 	if (BoundAnimInstance)
 	{
@@ -443,11 +451,26 @@ bool ULightAttackAbility::StartComboEntry(int32 EntryIndex)
 	ActiveEntryIndex = EntryIndex;
 	ActiveEntryMontage = EntryMontage;
 	MontageTask = NewMontageTask;
+
+	APlayerCharacter* PlayerCharacter = Cast<APlayerCharacter>(GetAvatarActorFromActorInfo());
+	if (PlayerCharacter)
+	{
+		PlayerCharacter->ClearMeleeMotionWarpTargets();
+		if (Entry && Entry->bUseMotionWarping && EntryIndex == 0)
+		{
+			TryApplyMeleeMotionWarpTarget(PlayerCharacter, *Entry);
+		}
+	}
+
 	NewMontageTask->ReadyForActivation();
 
 	// A zero-length or otherwise immediately completed Montage can synchronously run EndAbility.
 	if (bEndAbilityRequested)
 	{
+		if (PlayerCharacter)
+		{
+			PlayerCharacter->ClearMeleeMotionWarpTargets();
+		}
 		return false;
 	}
 
@@ -457,12 +480,16 @@ bool ULightAttackAbility::StartComboEntry(int32 EntryIndex)
 		MontageTask = PreviousMontageTask;
 		ActiveEntryIndex = PreviousEntryIndex;
 		ActiveEntryMontage = PreviousEntryMontage;
+		if (PlayerCharacter)
+		{
+			PlayerCharacter->ClearMeleeMotionWarpTargets();
+		}
 		return false;
 	}
 
 	if (EntryIndex == 0)
 	{
-		if (APlayerCharacter* PlayerCharacter = Cast<APlayerCharacter>(GetAvatarActorFromActorInfo()))
+		if (PlayerCharacter)
 		{
 			PlayerCharacter->CancelActiveGuardAfterConfirmedAction(true);
 		}
@@ -628,4 +655,196 @@ void ULightAttackAbility::OpenTraceWindow(const TArray<FName>& InTraceSourceName
 void ULightAttackAbility::CloseTraceWindow()
 {
 	FMeleeTraceWindowLifecycle::CloseAndClear(TraceWindowTask, ActiveTraceNotifyState);
+}
+
+bool ULightAttackAbility::EvaluateMeleeMotionWarpTransform(
+	const FVector& PlayerLocation,
+	const FVector& PlayerForwardVector,
+	const bool bPlayerOnGround,
+	const FVector& TargetLocation,
+	const bool bTargetOnGround,
+	const FComboChainEntry& EntryConfig,
+	FTransform& OutWarpTransform)
+{
+	OutWarpTransform = FTransform::Identity;
+
+	if (!EntryConfig.bUseMotionWarping || EntryConfig.WarpTargetName.IsNone())
+	{
+		return false;
+	}
+
+	if (!FMath::IsFinite(EntryConfig.WarpStopDistance)
+		|| !FMath::IsFinite(EntryConfig.MaxWarpDistance)
+		|| !FMath::IsFinite(EntryConfig.MaxWarpAngleDegrees))
+	{
+		return false;
+	}
+
+	if (EntryConfig.WarpStopDistance < 0.0f
+		|| EntryConfig.MaxWarpDistance < 0.0f
+		|| EntryConfig.MaxWarpAngleDegrees < 0.0f
+		|| EntryConfig.MaxWarpAngleDegrees > 180.0f)
+	{
+		return false;
+	}
+
+	if (!bPlayerOnGround || !bTargetOnGround)
+	{
+		return false;
+	}
+
+	if (!FMath::IsFinite(PlayerLocation.X) || !FMath::IsFinite(PlayerLocation.Y) || !FMath::IsFinite(PlayerLocation.Z)
+		|| !FMath::IsFinite(TargetLocation.X) || !FMath::IsFinite(TargetLocation.Y) || !FMath::IsFinite(TargetLocation.Z)
+		|| !FMath::IsFinite(PlayerForwardVector.X) || !FMath::IsFinite(PlayerForwardVector.Y) || !FMath::IsFinite(PlayerForwardVector.Z))
+	{
+		return false;
+	}
+
+	FVector ToTarget2D = FVector(TargetLocation.X - PlayerLocation.X, TargetLocation.Y - PlayerLocation.Y, 0.0f);
+	const float DistSq2D = ToTarget2D.SizeSquared();
+	if (DistSq2D <= KINDA_SMALL_NUMBER || !FMath::IsFinite(DistSq2D))
+	{
+		return false;
+	}
+
+	const float TargetDistance2D = FMath::Sqrt(DistSq2D);
+	if (!FMath::IsFinite(TargetDistance2D))
+	{
+		return false;
+	}
+
+	// Fail-closed if target is already at or inside the desired stop distance
+	if (TargetDistance2D <= EntryConfig.WarpStopDistance)
+	{
+		return false;
+	}
+
+	ToTarget2D /= TargetDistance2D;
+	if (!FMath::IsFinite(ToTarget2D.X) || !FMath::IsFinite(ToTarget2D.Y))
+	{
+		return false;
+	}
+
+	// Calculate desired warp position
+	FVector WarpLocation = TargetLocation - (ToTarget2D * EntryConfig.WarpStopDistance);
+	WarpLocation.Z = PlayerLocation.Z;
+
+	if (!FMath::IsFinite(WarpLocation.X) || !FMath::IsFinite(WarpLocation.Y) || !FMath::IsFinite(WarpLocation.Z))
+	{
+		return false;
+	}
+
+	// Maximum horizontal warp correction distance check (PlayerLocation -> WarpLocation)
+	const float HorizontalCorrectionDistance = FVector::Dist2D(PlayerLocation, WarpLocation);
+	if (!FMath::IsFinite(HorizontalCorrectionDistance) || HorizontalCorrectionDistance > EntryConfig.MaxWarpDistance)
+	{
+		return false;
+	}
+
+	// Angle check between player forward and direction to target
+	FVector Forward2D = FVector(PlayerForwardVector.X, PlayerForwardVector.Y, 0.0f);
+	if (!Forward2D.Normalize() || !FMath::IsFinite(Forward2D.X) || !FMath::IsFinite(Forward2D.Y))
+	{
+		return false;
+	}
+
+	const float Dot2D = FMath::Clamp(FVector::DotProduct(Forward2D, ToTarget2D), -1.0f, 1.0f);
+	const float AngleDegrees = FMath::RadiansToDegrees(FMath::Acos(Dot2D));
+	if (!FMath::IsFinite(AngleDegrees) || AngleDegrees > EntryConfig.MaxWarpAngleDegrees)
+	{
+		return false;
+	}
+
+	const float WarpYaw = FMath::RadiansToDegrees(FMath::Atan2(ToTarget2D.Y, ToTarget2D.X));
+	if (!FMath::IsFinite(WarpYaw))
+	{
+		return false;
+	}
+
+	OutWarpTransform = FTransform(FRotator(0.0f, WarpYaw, 0.0f), WarpLocation);
+	return true;
+}
+
+void ULightAttackAbility::TryApplyMeleeMotionWarpTarget(APlayerCharacter* PlayerCharacter, const FComboChainEntry& EntryConfig)
+{
+	if (!PlayerCharacter)
+	{
+		return;
+	}
+
+	const UAbilitySystemComponent* ASC = GetAbilitySystemComponentFromActorInfo();
+	const AController* Controller = PlayerCharacter->GetController();
+	if (!ASC || !Controller)
+	{
+		return;
+	}
+
+	AEnemyCharacter* OriginalTarget = PlayerCharacter->GetLockedTarget();
+	if (!OriginalTarget || OriginalTarget->IsDead() || !IsValid(OriginalTarget))
+	{
+#if !(UE_BUILD_SHIPPING || UE_BUILD_TEST)
+		if (GEngine)
+		{
+			GEngine->AddOnScreenDebugMessage(-1, 2.0f, FColor::Silver, TEXT("[MotionWarp] 未锁定目标 (LockOn)"));
+		}
+#endif
+		return;
+	}
+
+	AEnemyCharacter* ValidatedTarget = PlayerCharacter->ResolveValidLockedTarget();
+	if (!ValidatedTarget || ValidatedTarget != OriginalTarget || ValidatedTarget->IsDead() || !IsValid(ValidatedTarget))
+	{
+#if !(UE_BUILD_SHIPPING || UE_BUILD_TEST)
+		if (GEngine)
+		{
+			GEngine->AddOnScreenDebugMessage(-1, 2.0f, FColor::Orange, TEXT("[MotionWarp] 目标验证失败或发生死亡切换"));
+		}
+#endif
+		return;
+	}
+
+	const UCharacterMovementComponent* PlayerMoveComp = PlayerCharacter->GetCharacterMovement();
+	const UCharacterMovementComponent* TargetMoveComp = ValidatedTarget->GetCharacterMovement();
+	const bool bPlayerOnGround = PlayerMoveComp && PlayerMoveComp->IsMovingOnGround();
+	const bool bTargetOnGround = TargetMoveComp && TargetMoveComp->IsMovingOnGround();
+
+	const FVector PlayerLoc = PlayerCharacter->GetActorLocation();
+	const FVector TargetLoc = ValidatedTarget->GetActorLocation();
+	const float Dist2D = FVector::Dist2D(PlayerLoc, TargetLoc);
+
+	FTransform WarpTransform;
+	if (EvaluateMeleeMotionWarpTransform(
+		PlayerLoc,
+		PlayerCharacter->GetActorForwardVector(),
+		bPlayerOnGround,
+		TargetLoc,
+		bTargetOnGround,
+		EntryConfig,
+		WarpTransform))
+	{
+		PlayerCharacter->SetMeleeMotionWarpTarget(EntryConfig.WarpTargetName, WarpTransform);
+#if !(UE_BUILD_SHIPPING || UE_BUILD_TEST)
+		if (GEngine)
+		{
+			const float CorrectionDist = FVector::Dist2D(PlayerLoc, WarpTransform.GetLocation());
+			GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Green,
+				FString::Printf(TEXT("[MotionWarp] 成功触发！目标=%s, 距离=%.1fcm, 停距=%.1fcm, 修正=%.1fcm"),
+					*GetNameSafe(ValidatedTarget), Dist2D, EntryConfig.WarpStopDistance, CorrectionDist));
+		}
+		UE_LOG(LogPolyQuest, Log, TEXT("[MotionWarp] Applied warp target '%s' on '%s' (Dist2D=%.1f)"),
+			*EntryConfig.WarpTargetName.ToString(), *GetNameSafe(PlayerCharacter), Dist2D);
+#endif
+	}
+	else
+	{
+#if !(UE_BUILD_SHIPPING || UE_BUILD_TEST)
+		if (GEngine)
+		{
+			GEngine->AddOnScreenDebugMessage(-1, 2.0f, FColor::Yellow,
+				FString::Printf(TEXT("[MotionWarp] 判定未通过 (距离=%.1fcm, 允许: %.1f~%.1fcm, 地面=%d/%d)"),
+					Dist2D, EntryConfig.WarpStopDistance, EntryConfig.WarpStopDistance + EntryConfig.MaxWarpDistance,
+					bPlayerOnGround ? 1 : 0, bTargetOnGround ? 1 : 0));
+		}
+#endif
+	}
 }
