@@ -2,7 +2,7 @@
 
 > 本文件是文档维护门（DOC-MAINT-01）的历史归档，不是当前行为或路线图的权威来源。当前运行时事实以源码、Config 和实际资产为准；当前架构契约见 ARCHITECTURE.md，当前路线见 ROADMAP.md。
 >
-> 归档建立于 2026-08-29。以下内容是维护开始时的工作区快照，包含此前已经存在的未提交路线调整，不等同于 HEAD `f474515` 的干净快照。它保留文档维护前的路线图、Architecture 顶部历史状态段和 TODO-02B3 计划/收口记录，便于追溯；不要从历史记录推断尚未实现的未来项。
+> 初始归档建立于 2026-08-29。前置内容是维护开始时的工作区快照，包含此前已经存在的未提交路线调整，不等同于 HEAD `f474515` 的干净快照；后续追加条目以各自标题标注其 HEAD/working-tree 状态。它保留文档维护前的路线图、Architecture 顶部历史状态段和 TODO-02B3 计划/收口记录，便于追溯；不要从历史记录推断尚未实现的未来项。
 
 ## Pre-Maintenance ROADMAP.md Snapshot
 
@@ -995,7 +995,7 @@ TODO-03A3E World Pickup Interaction Prompt v1
 - 新完成阶段只在当前 ROADMAP.md 保留紧凑结果；需要长期保留的详细收口证据追加到本文件，并注明提交和验证类型。
 - 不把归档文件中的未来 TODO、旧依赖或旧资产描述当作当前实现事实。
 
-## DOC-MAINT-01 Review Adjustment (2026-08-29)
+## DOC-MAINT-01 Review Adjustment (superseded, 2026-08-29)
 
 - Gemini review 建议删除 `Done Milestones`、移除路线图原则段和底部文档职责段，并进一步压缩 `Current State`。
 - Main 保留紧凑的 `Done Milestones`，因为 `AGENTS.md` 将其定义为完成阶段的交接要求；同时采纳其余精简建议，将稳定架构原则归回 `ARCHITECTURE.md`，在 `ROADMAP.md` 仅保留必要的 `Route Constraints` 与顶部归档指针。
@@ -1005,4 +1005,16 @@ TODO-03A3E World Pickup Interaction Prompt v1
 
 - 用户授权在不受旧规则约束的前提下重新判断 `Done Milestones` 是否必要。Main 采纳删除：`ROADMAP.md` 的 `Current State` 保留唯一最新基线/阶段指针，`plan.md` 保存最近阶段收口，详细历史进入本归档。
 - `AGENTS.md` 已改为不要求独立完成章节；只有不重复且对依赖有实际帮助的完成事实才可留在路线图中。
+- 本修订取代上方早期“新完成阶段只在当前 `ROADMAP.md` 保留紧凑结果”的措辞：活动路线只列开放阶段；已完成阶段不得保留完整完成块，必要时只留一行非重复依赖指针。
 - 本修订是信息架构与维护规则变更，不是新的运行时实现或验证证据。
+
+## TODO-03A3E Final Closeout (2026-08-29; HEAD `6a96fc1`, working tree not clean)
+
+> 本节是在文档维护门中从活动 `ROADMAP.md` 移出的阶段收口摘要。记录时 `HEAD` 为 `6a96fc1`，工作区仍含既有 Config/Content/Source WIP，因此不是干净 checkout 快照；本节是历史追溯资料，不是运行时权威。
+
+- **范围与所有权**：世界武器拾取提示由 Player-owned 的事件驱动候选快照驱动；Controller 只拥有本地被动 `UWorldInteractionPromptWidget`，`AWorldWeaponPickup::CanInteract` 仍是资格门，`UWeaponEquipmentComponent::TryEquipWorldPickup` 仍是唯一装备变更路径。Overlap、拾取状态、移动、FormerOwner 冷却、Dead、Possess、交易、销毁和 teardown 都汇入同一解析器；未增加 Tick 轮询、通用交互框架、第二套交易逻辑、Gameplay Tag 或 Input/Config 路由。
+- **用户运行证据**：用户手动选择当前全部 PolyQuest Automation 套件，记录为 25/25 `Success`；用户确认 focused `Scene01` PIE 覆盖提示显隐、最近候选切换、E 装备/失败交互、FormerOwner 冷却恢复、重新 Possess 和 teardown。
+- **静态与复核证据**：Gemini 报告 CodeGraph 调用链核对、Rider error-level 检查无诊断以及 `git diff --check -- Source/PolyQuest` 通过；Main 完成一轮受控 defect-first fresh review，未发现 P0/P1/P2 blocker。没有执行第二轮 adversarial review，也没有派遣独立 Reviewer。
+- **未声称证据**：没有独立 Development Editor 编译日志或新的 Editor readback；Automation/PIE 结果不替代这些证据。`Config/Automation/Presets/1.json` 不是完整测试清单，25/25 来自用户手动选择，不从 preset 推断。
+- **排除项与债务**：`WeaponEquipmentComponentAutomationTests.cpp` 的未批准 TransactionMatrix 修复、本地 Guard WIP 资产、全部 Config/Content WIP 和其他 Source WIP 均未纳入；真实 overlap/delegate 深度与失效 E 快照不改装备的直接断言仍是非阻塞验证债务，TransactionMatrix 资产依赖留待单独批准的装备/资产基线阶段。
+- **提交边界**：阶段实现提交为 `6a96fc1`；本节文档维护不改变该提交的代码/资产范围。

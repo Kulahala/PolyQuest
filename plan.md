@@ -201,7 +201,7 @@ Main 在用户验证后完成一轮独立 defect-first fresh review，审查范�
 验证和 review 通过后，Main 才更新：
 
 - ARCHITECTURE.md：记录稳定的 Prompt ownership、Player 候选快照、事件驱动生命周期和装备边界。
-- ROADMAP.md：将 TODO-03A3E 标记完成，更新下一阶段顺序，并登记实际存在的资产/验证债务。
+- ROADMAP.md：更新当前基线和下一阶段顺序；`Active Milestones` 只保留开放阶段，详细完成记录追加到 `ROADMAP-archive.md`，并登记实际存在的资产/验证债务。
 - README.md：只补充必要的公开状态和证据摘要。
 - plan.md：写入本阶段 closeout，直到下一阶段获准后再替换。
 
@@ -309,8 +309,14 @@ FormerOwner getter 必须接收当前 Player 请求者并严格检查 FormerOwne
 ### Documentation and commit boundary
 
 - `ARCHITECTURE.md` 已补充 Prompt、候选快照、事件驱动刷新、Controller/Widget 与 Pickup 的稳定所有权契约。
-- `ROADMAP.md` 已将 TODO-03A3E 标记完成，保留 `TODO-03A3E → TODO-07B4 → TODO-03A7 → TODO-05A → TODO-05B → TODO-03C` 顺序，并登记上述验证/资产债务；TODO-05C 继续退役。
+- `ROADMAP.md` 按项目惯例保留本阶段起始基线 `main @ 397bea6`、`TODO-07B4 → TODO-03A7 → TODO-05A → TODO-05B → TODO-03C` 的开放顺序和必要债务/依赖指针；TODO-03A3E 的详细 closeout 已追加到 `ROADMAP-archive.md`，阶段完成提交为 `6a96fc1`，TODO-05C 继续退役。
 - `README.md` 已补充公开状态和证据边界；`AGENTS.md` 已加入受控 fresh review 范围、证据短路和输出预算规则。
-- 提交只包含上述 10 个 Source/test 路径与五份文档（`AGENTS.md`、`ARCHITECTURE.md`、`ROADMAP.md`、`README.md`、`plan.md`）；Config/Content WIP 与未批准测试改动明确排除。
+- 原阶段实现提交只包含上述 10 个 Source/test 路径与五份文档（`AGENTS.md`、`ARCHITECTURE.md`、`ROADMAP.md`、`README.md`、`plan.md`）；Config/Content WIP 与未批准测试改动明确排除。
 
-阶段收口状态：用户已批准并完成本阶段提交；未暂存的 Config/Content/其他 Source WIP 仍保留在工作区，未被本次提交触碰。
+阶段收口状态（原阶段提交）：用户已批准并完成本阶段提交；未暂存的 Config/Content/其他 Source WIP 仍保留在工作区，未被本次提交触碰。
+
+## Documentation Maintenance Follow-up (2026-08-29)
+
+- `ROADMAP.md` 的完整 TODO-03A3E 完成块已移出活动路线；活动路线只保留开放里程碑，阶段起始基线仍按项目惯例记录为 `397bea6`，阶段完成提交为 `6a96fc1`。
+- TODO-03A3E 的详细完成、验证证据、排除项和非阻塞债务已追加到 `ROADMAP-archive.md`。本 `plan.md` 继续作为最近阶段的详细交接记录，直到下一阶段计划正式替换它。
+- 本次维护提交仅包含 `AGENTS.md`、`ROADMAP.md`、`ROADMAP-archive.md` 和 `plan.md`；所有 Config/Content/Source WIP 继续排除。
