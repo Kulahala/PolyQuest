@@ -8,8 +8,8 @@ This file is the active route: it records the current baseline, the next depende
 
 ## Current State
 
-- Baseline is `main @ f474515`; the latest completed stage is `TODO-02B3 Lock-On Retention Hysteresis v1`. Acquisition, cycle, and confirmed-death handoff remain strict; only an already-owned lock uses fixed per-axis `15%` retention, while Bow keeps its independent `6%` automatic Target Assist boundary.
-- The product route is `/Game/Maps/Scene01` with a fixed elevated oblique camera and a desktop Controller/input boundary. The next planned player-facing slice is `TODO-03A3E`; the complete sequence is listed below.
+- Baseline is `main @ 397bea6`; the latest completed stage is `TODO-03A3E World Pickup Interaction Prompt v1`. Lock-On acquisition/cycle remain strict with fixed per-axis `15%` retention for an already-owned target, while Bow keeps its independent `6%` automatic Target Assist boundary.
+- The product route is `/Game/Maps/Scene01` with a fixed elevated oblique camera and a desktop Controller/input boundary. The next player-facing slice is `TODO-07B4`; the complete sequence is listed below.
 - Mutable GameplayAbility/GameplayEffect, Montage, AnimBP, Blueprint, input, DataAsset, map, Niagara, sound, and imported Content remain user-owned local WIP. Manual compilation, Editor readback, PIE/visual checks, imported-asset decisions, packaging, and final commit approval remain separate gates.
 
 ## Current Player-Combat Sequence
@@ -34,10 +34,10 @@ For older completed stages, validation evidence, and exact historical wording, s
 
 ### Player Combat Closure
 
-- [ ] TODO-03A3E: World Pickup Interaction Prompt v1
-  - Add one local event-driven key hint for the existing AWorldWeaponPickup overlap, CanInteract, and nearest-candidate route. Refresh on candidate changes and hide on leaving range, invalidation, transaction completion/failure, death, destruction, possession change, and teardown.
-  - The prompt and E interaction must use the same Player-owned candidate snapshot/resolver; UWeaponEquipmentComponent::TryEquipWorldPickup remains the only equipment mutation and AWorldWeaponPickup::CanInteract remains the validity gate.
-  - User-owned UMG authoring and styling stay in Content WIP. Editor readback and focused Scene01 PIE must cover enter/leave, nearest arbitration, successful/refused swaps, and cleanup; native tests cover only the existing source boundary.
+- [x] TODO-03A3E: World Pickup Interaction Prompt v1
+  - The local prompt is event-driven from the Player-owned overlap/candidate snapshot. It refreshes on candidate, pickup-state, movement, FormerOwner cooldown, Dead-state, possession, transaction, destruction, and teardown changes; no interaction polling was added to Tick.
+  - Prompt text and E interaction consume the same cached candidate. `UWeaponEquipmentComponent::TryEquipWorldPickup` remains the only equipment mutation and `AWorldWeaponPickup::CanInteract` remains the validity gate; an invalid snapshot fails closed without an input-time rescan or implicit replacement.
+  - The user confirmed focused Scene01 PIE for prompt visibility, nearest-candidate changes, E equipment/failed interaction behavior, and FormerOwner recovery, plus manually selected all current PolyQuest Automation suites (25/25 Success). UMG authoring remains local `Content/**` WIP; this closeout has no separate Development Editor compile log.
 
 - [ ] TODO-07B4: Player Attacker-Impact Camera Shake And Reaction-Tier Mapping v1
   - At the authoritative successful damaging contact owned by the existing melee Trace/Resolver or projectile delivery path, select at most one authored Player Camera Shake from Data.Reaction.Small, Data.Reaction.Big, or Data.Reaction.Launch.
@@ -140,6 +140,9 @@ For older completed stages, validation evidence, and exact historical wording, s
 - Enemy Launch abnormal-Poise recovery and the Parry/Trace combined exactly-once assertion remain documented follow-ups with their existing focused closure triggers.
 - The retained legacy SwordShield BlendSpace asset is authoring clutter, not a runtime path; deletion requires Reference Viewer evidence and explicit approval.
 - The hierarchical Primary-tag positive fixture remains conditional until a real Ability.Attack.Primary child tag is adopted.
+- TODO-03A3E's native Automation coverage primarily uses transient test seams; direct overlap/delegate depth and an explicit assertion that a stale E snapshot leaves equipment unchanged remain validation debt. Close only if a future interaction regression or dedicated test-depth stage needs those paths; this is not a blocker for TODO-07B4.
+- `PolyQuest.Equipment.TransactionMatrix` still depends on a local WIP Guard asset and an unapproved test-path repair. Keep that source change and `Content/**` asset outside this stage; close in a separately approved equipment/asset baseline with user readback.
+- `Config/Automation/Presets/1.json` is not a complete test manifest. The 25/25 result above comes from the user's manual selection of all current PolyQuest suites, not from the preset; a preset refresh is optional config maintenance, not a TODO-03A3E blocker.
 
 ## Deferred TODOs
 

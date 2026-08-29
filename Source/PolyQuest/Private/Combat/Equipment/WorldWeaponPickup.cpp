@@ -24,6 +24,8 @@ AWorldWeaponPickup::AWorldWeaponPickup()
 	InteractionSphere->SetCollisionResponseToAllChannels(ECR_Ignore);
 	InteractionSphere->SetCollisionResponseToChannel(ECC_Pawn, ECR_Overlap);
 	InteractionSphere->SetGenerateOverlapEvents(true);
+	InteractionSphere->OnComponentBeginOverlap.AddDynamic(this, &AWorldWeaponPickup::HandleInteractionSphereBeginOverlap);
+	InteractionSphere->OnComponentEndOverlap.AddDynamic(this, &AWorldWeaponPickup::HandleInteractionSphereEndOverlap);
 
 	PickupMeshComponent = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("PickupMeshComponent"));
 	PickupMeshComponent->SetupAttachment(RootComponent);
@@ -52,6 +54,15 @@ void AWorldWeaponPickup::BeginPlay()
 void AWorldWeaponPickup::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
 	bInteractionInProgress = false;
+	TArray<TWeakObjectPtr<APlayerCharacter>> PlayersToUnregister = OverlappingPlayers.Array();
+	OverlappingPlayers.Empty();
+	for (const TWeakObjectPtr<APlayerCharacter>& WeakPlayer : PlayersToUnregister)
+	{
+		if (APlayerCharacter* Player = WeakPlayer.Get())
+		{
+			Player->UnregisterWorldPickupCandidate(this);
+		}
+	}
 	FormerOwner.Reset();
 	Super::EndPlay(EndPlayReason);
 }
@@ -64,6 +75,11 @@ bool AWorldWeaponPickup::CanInteract(const APlayerCharacter* Requester) const
 	}
 
 	if (Requester->IsActorBeingDestroyed())
+	{
+		return false;
+	}
+
+	if (!InteractionSphere || InteractionSphere->GetCollisionEnabled() == ECollisionEnabled::NoCollision)
 	{
 		return false;
 	}
@@ -91,6 +107,7 @@ void AWorldWeaponPickup::SetWeaponDefinition(UWeaponDefinition* InDefinition)
 {
 	WeaponDefinition = InDefinition;
 	UpdateVisualMesh();
+	NotifyOverlappingPlayersStateChanged();
 }
 
 void AWorldWeaponPickup::InitializeDroppedPickup(UWeaponDefinition* InDefinition, APlayerCharacter* InFormerOwner, float InRejectDurationSeconds)
@@ -103,16 +120,19 @@ void AWorldWeaponPickup::InitializeDroppedPickup(UWeaponDefinition* InDefinition
 	bInteractionInProgress = false;
 
 	UpdateVisualMesh();
+	NotifyOverlappingPlayersStateChanged();
 }
 
 void AWorldWeaponPickup::BeginInteraction()
 {
 	bInteractionInProgress = true;
+	NotifyOverlappingPlayersStateChanged();
 }
 
 void AWorldWeaponPickup::EndInteraction()
 {
 	bInteractionInProgress = false;
+	NotifyOverlappingPlayersStateChanged();
 }
 
 void AWorldWeaponPickup::SetInteractionEnabled(bool bEnabled)
@@ -120,7 +140,12 @@ void AWorldWeaponPickup::SetInteractionEnabled(bool bEnabled)
 	if (InteractionSphere)
 	{
 		InteractionSphere->SetCollisionEnabled(bEnabled ? ECollisionEnabled::QueryOnly : ECollisionEnabled::NoCollision);
+		if (InteractionSphere->IsRegistered())
+		{
+			InteractionSphere->UpdateOverlaps();
+		}
 	}
+	NotifyOverlappingPlayersStateChanged();
 }
 
 void AWorldWeaponPickup::UpdateVisualMesh()
@@ -306,3 +331,85 @@ bool AWorldWeaponPickup::StageDisplacedDrops(APlayerCharacter* PlayerCharacter, 
 
 	return true;
 }
+
+void AWorldWeaponPickup::HandleInteractionSphereBeginOverlap(
+	UPrimitiveComponent* OverlappedComponent,
+	AActor* OtherActor,
+	UPrimitiveComponent* OtherComp,
+	int32 OtherBodyIndex,
+	bool bFromSweep,
+	const FHitResult& SweepResult)
+{
+	if (APlayerCharacter* Player = Cast<APlayerCharacter>(OtherActor))
+	{
+		OverlappingPlayers.Add(Player);
+		Player->RegisterWorldPickupCandidate(this);
+	}
+}
+
+void AWorldWeaponPickup::HandleInteractionSphereEndOverlap(
+	UPrimitiveComponent* OverlappedComponent,
+	AActor* OtherActor,
+	UPrimitiveComponent* OtherComp,
+	int32 OtherBodyIndex)
+{
+	if (APlayerCharacter* Player = Cast<APlayerCharacter>(OtherActor))
+	{
+		OverlappingPlayers.Remove(Player);
+		Player->UnregisterWorldPickupCandidate(this);
+	}
+}
+
+void AWorldWeaponPickup::NotifyOverlappingPlayersStateChanged()
+{
+	TArray<TWeakObjectPtr<APlayerCharacter>> PlayersToNotify = OverlappingPlayers.Array();
+	for (const TWeakObjectPtr<APlayerCharacter>& WeakPlayer : PlayersToNotify)
+	{
+		if (APlayerCharacter* Player = WeakPlayer.Get())
+		{
+			Player->RefreshWorldPickupInteractionPrompt();
+		}
+	}
+}
+
+float AWorldWeaponPickup::GetFormerOwnerRemainingTime(const APlayerCharacter* Requester) const
+{
+	if (!Requester || FormerOwner.Get() != Requester)
+	{
+		return 0.0f;
+	}
+
+	const UWorld* World = GetWorld();
+	if (!World)
+	{
+		return 0.0f;
+	}
+
+	const float CurrentTime = World->GetTimeSeconds();
+	if (CurrentTime < RejectUntilTime)
+	{
+		return RejectUntilTime - CurrentTime;
+	}
+
+	return 0.0f;
+}
+
+#if WITH_DEV_AUTOMATION_TESTS
+void AWorldWeaponPickup::AddTestOverlappingPlayer(APlayerCharacter* InPlayer)
+{
+	if (InPlayer)
+	{
+		OverlappingPlayers.Add(InPlayer);
+		InPlayer->RegisterWorldPickupCandidate(this);
+	}
+}
+
+void AWorldWeaponPickup::RemoveTestOverlappingPlayer(APlayerCharacter* InPlayer)
+{
+	if (InPlayer)
+	{
+		OverlappingPlayers.Remove(InPlayer);
+		InPlayer->UnregisterWorldPickupCandidate(this);
+	}
+}
+#endif

@@ -62,6 +62,8 @@ PolyQuest has completed its native first-enemy combat loop and weapon/AI combat 
 
 `TODO-02C3N` completes Guard success and Player received-hit audio at existing native boundaries. A successful Guard-Stamina GameplayEffect dispatches one optional `GuardSuccessSound` for melee or projectile contacts, including a Guard-break absorption; the Player's authoritative nonlethal Health delegate dispatches one optional `ReceivedHitSound` per GameplayEffect Spec for an exact `Team.Enemy` instigator. Both use a validated contact point or Player-location fallback and fail silently for missing assets or invalid presentation data, without adding GameplayCue, replication, or a second damage path. The user confirmed `PolyQuest.Combat.DefenseAudio` and focused Scene01 PIE; audio assets remain local `Content/**` WIP.
 
+`TODO-03A3E` completes the local world-pickup interaction prompt. A Player-owned event-driven candidate snapshot drives both the passive prompt and `E` interaction; invalid snapshots fail closed without an input-time rescan, while `UWeaponEquipmentComponent::TryEquipWorldPickup` remains the only equipment mutation. The user confirmed focused Scene01 PIE and manually selected all current PolyQuest Automation suites (25/25 Success); UMG authoring remains local `Content/**` WIP, and this closeout does not claim a separate Development Editor compile log.
+
 ## Technology
 
 - Unreal Engine 5.8
@@ -127,6 +129,8 @@ PolyQuest 是一个以 UE 5.8、C++ 与 GAS 为核心的单机低多边形动作
 `TODO-02C3M` 已完成玩家弹反成功反馈。近战命中会把有效 `FHitResult` 传入 Parry 边界，投射物显式跳过 Parry 并保留 Guard/普通伤害路径；成功弹反复用 Controller 的短顿帧（批准默认 `0.05s / 0.03`）、玩家 Big 镜头反馈，并可在命中点或玩家位置回退播放可选音效。该阶段没有新增 GameplayCue、Health/Poise/血液或受击 Montage 路径。用户已确认 Development Editor 编译、聚焦 Automation/回归矩阵与 Scene01 PIE；C3K 的 Small/Big/Launch 定格调参并入同一次源码/文档提交，作者化音效和其他 Content 资产继续作为本地 WIP。
 
 `TODO-02C3N` 已完成 Guard 成功与玩家受击音效。Guard 只有在体力 GameplayEffect 成功应用后才为近战、投射物及 Guard Break 吸收接触播放一次可选 `GuardSuccessSound`；玩家则在权威非致命 Health 委托中，仅对精确 `Team.Enemy` 来源按每个 GameplayEffect Spec 的首个 Health Modifier 播放一次 `ReceivedHitSound`。两条路径都优先使用属于玩家的有效命中点，否则回退到有限的玩家位置；缺失资产、无效位置或 World 只会静默跳过，不新增 GameplayCue、复制或第二条伤害路径。用户已确认 `PolyQuest.Combat.DefenseAudio` Automation 与 Scene01 PIE，音效资产仍是本地 `Content/**` WIP。
+
+`TODO-03A3E` 已完成世界武器拾取交互提示：Player-owned 的事件驱动候选快照同时驱动被动提示和 `E` 交互；候选在输入前失效时 Fail-Closed，不现场重扫或偷偷换选，装备变更仍只由 `UWeaponEquipmentComponent::TryEquipWorldPickup` 完成。用户已确认聚焦 Scene01 PIE，并手动勾选当前全部 PolyQuest Automation 套件 25/25 通过；UMG 作者化仍是本地 `Content/**` WIP，本次收口不宣称另有独立 Development Editor 编译日志。
 
 `TODO-01C4` 已完成玩家专属的起身翻滚路线。现有 `ActionDodgeCancelWindow` 只会在匹配且仍活跃的 Player Launch `LandingRecovery` Montage 中授权普通的接地 Dodge；该阶段对 `State.Action.CanCancel.Dodge` 的 scoped loose-tag 贡献会在窗口结束和所有 Launch 清理路径中移除。Dodge 仍会先提交其正常 Cost，随后才取消 Launch，因此保留“当前 Stamina 大于 0 即可开始、Cost 后钳制到 0”的软透支规则；连续输入在 Dodge 自身恢复窗口到来前不会覆盖新起手。用户已确认 Automation 与聚焦 PIE，Montage/GA/GE 作者化资产继续保留为本地 WIP。
 

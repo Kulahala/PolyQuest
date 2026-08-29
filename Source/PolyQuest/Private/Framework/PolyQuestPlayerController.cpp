@@ -9,6 +9,7 @@
 #include "Kismet/GameplayStatics.h"
 #include "PolyQuest.h"
 #include "UI/PlayerVitalHUDWidget.h"
+#include "UI/WorldInteractionPromptWidget.h"
 
 APolyQuestPlayerController::APolyQuestPlayerController()
 {
@@ -34,6 +35,7 @@ void APolyQuestPlayerController::BeginPlay()
 		SetInputMode(InputMode);
 
 		EnsureHUDCreated();
+		EnsureInteractionPromptCreated();
 		BindToPawn(GetPawn());
 	}
 }
@@ -51,12 +53,14 @@ void APolyQuestPlayerController::OnPossess(APawn* InPawn)
 	if (IsLocalPlayerController())
 	{
 		EnsureHUDCreated();
+		EnsureInteractionPromptCreated();
 		BindToPawn(InPawn);
 	}
 }
 
 void APolyQuestPlayerController::OnUnPossess()
 {
+	HideInteractionPrompt();
 	UnbindCurrentPawn();
 
 	Super::OnUnPossess();
@@ -71,6 +75,12 @@ void APolyQuestPlayerController::EndPlay(const EEndPlayReason::Type EndPlayReaso
 	{
 		PlayerVitalHUDInstance->RemoveFromParent();
 		PlayerVitalHUDInstance = nullptr;
+	}
+
+	if (InteractionPromptInstance)
+	{
+		InteractionPromptInstance->RemoveFromParent();
+		InteractionPromptInstance = nullptr;
 	}
 
 	Super::EndPlay(EndPlayReason);
@@ -157,6 +167,79 @@ void APolyQuestPlayerController::EnsureHUDCreated()
 	{
 		UE_LOG(LogPolyQuest, Warning, TEXT("APolyQuestPlayerController: Failed to create PlayerVitalHUDInstance from class '%s'."), *GetNameSafe(PlayerVitalHUDClass));
 		bHasLoggedMissingHUDClass = true;
+	}
+}
+
+void APolyQuestPlayerController::EnsureInteractionPromptCreated()
+{
+#if !WITH_DEV_AUTOMATION_TESTS
+	if (!IsLocalPlayerController())
+	{
+		return;
+	}
+#endif
+
+	if (GetNetMode() == NM_DedicatedServer)
+	{
+		return;
+	}
+
+	if (InteractionPromptInstance)
+	{
+		return;
+	}
+
+	if (!InteractionPromptClass)
+	{
+		if (!bHasLoggedMissingInteractionPromptClass)
+		{
+			UE_LOG(LogPolyQuest, Warning, TEXT("APolyQuestPlayerController: InteractionPromptClass is not configured on '%s'."), *GetNameSafe(this));
+			bHasLoggedMissingInteractionPromptClass = true;
+		}
+		return;
+	}
+
+	if (IsLocalPlayerController())
+	{
+		InteractionPromptInstance = CreateWidget<UWorldInteractionPromptWidget>(this, InteractionPromptClass);
+	}
+#if WITH_DEV_AUTOMATION_TESTS
+	else if (GetWorld())
+	{
+		InteractionPromptInstance = CreateWidget<UWorldInteractionPromptWidget>(GetWorld(), InteractionPromptClass);
+	}
+#endif
+
+	if (InteractionPromptInstance)
+	{
+		InteractionPromptInstance->SetVisibility(ESlateVisibility::Collapsed);
+		if (IsLocalPlayerController())
+		{
+			InteractionPromptInstance->AddToViewport(0);
+		}
+	}
+	else if (!bHasLoggedMissingInteractionPromptClass)
+	{
+		UE_LOG(LogPolyQuest, Warning, TEXT("APolyQuestPlayerController: Failed to create InteractionPromptInstance from class '%s'."), *GetNameSafe(InteractionPromptClass));
+		bHasLoggedMissingInteractionPromptClass = true;
+	}
+}
+
+void APolyQuestPlayerController::ShowInteractionPrompt(const FText& InText)
+{
+	EnsureInteractionPromptCreated();
+	if (InteractionPromptInstance)
+	{
+		InteractionPromptInstance->SetPromptText(InText);
+		InteractionPromptInstance->SetVisibility(ESlateVisibility::HitTestInvisible);
+	}
+}
+
+void APolyQuestPlayerController::HideInteractionPrompt()
+{
+	if (InteractionPromptInstance)
+	{
+		InteractionPromptInstance->SetVisibility(ESlateVisibility::Collapsed);
 	}
 }
 

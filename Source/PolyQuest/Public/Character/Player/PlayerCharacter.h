@@ -19,6 +19,7 @@ class UInputComponent;
 class UPlayerGuardAbility;
 class UPlayerParryAbility;
 class AActor;
+class AWorldWeaponPickup;
 class UGameplayAbility;
 class UMeleeWeaponDefinition;
 class UWeaponEquipmentComponent;
@@ -288,6 +289,25 @@ public:
 	/** Attempts to get the current horizontal Bow aim direction. */
 	bool TryGetBowAimWorldDirection(FVector& OutDirection) const;
 
+	/** Registers an overlapping world weapon pickup candidate. */
+	void RegisterWorldPickupCandidate(AWorldWeaponPickup* Pickup);
+
+	/** Unregisters an overlapping world weapon pickup candidate. */
+	void UnregisterWorldPickupCandidate(AWorldWeaponPickup* Pickup);
+
+	/** Arbitrates nearest valid candidate and synchronizes controller prompt. */
+	void RefreshWorldPickupInteractionPrompt();
+
+	/** Clears interaction candidates, timer, and hides prompt. */
+	void ClearWorldPickupInteractionState();
+
+	/** Returns the currently arbitrated world pickup candidate. */
+	AWorldWeaponPickup* GetCurrentWorldPickupCandidate() const { return CurrentWorldPickupCandidate.Get(); }
+
+	/** Handles character movement updates to refresh pickup candidates when moving. */
+	UFUNCTION()
+	void HandleCharacterMovementUpdated(float DeltaSeconds, FVector OldLocation, FVector OldVelocity);
+
 	/**
 	 * Intersects a 3D ray with a horizontal plane at Z = PlaneZ.
 	 * Returns true if the ray intersects the plane at T > 0 with finite coordinates.
@@ -314,6 +334,10 @@ public:
 	bool IsTestExhaustionActive() const { return bExhaustionActive; }
 	bool HasTestExhaustionRecoveryTimer() const { return ExhaustionRecoveryTimerHandle.IsValid(); }
 	bool HasTestExhaustionMoveSpeedEffect() const { return ExhaustionMoveSpeedEffectHandle.IsValid(); }
+	int32 GetTestWorldPickupCandidateCount() const { return WorldPickupCandidates.Num(); }
+	bool HasTestFormerOwnerInteractionTimer() const { return FormerOwnerInteractionRefreshTimerHandle.IsValid(); }
+	void TriggerTestSeedWorldPickupCandidates() { SeedWorldPickupCandidates(); }
+	void TriggerTestHandleInteractStarted();
 	void ConfigureTestHitFeedbackCameraShakes(
 		TSubclassOf<UCameraShakeBase> InSmallClass,
 		TSubclassOf<UCameraShakeBase> InBigClass,
@@ -493,12 +517,16 @@ private:
 	bool TryCalculateMousePlaneIntersection(FVector& OutIntersectionPoint) const;
 	void UpdateBowAimFacing();
 	void ApplyBowAimFacing(const FVector& AimDirection);
+	void SeedWorldPickupCandidates();
 
 	TWeakObjectPtr<const UObject> ActiveBowAimRequester;
 	FVector LastValidBowAimDirection = FVector::ZeroVector;
 	bool bHasValidBowAimDirection = false;
 	TWeakObjectPtr<AEnemyCharacter> LockedTarget;
 	TOptional<FPlayerLockOnCandidate> LastValidLockedTargetCandidate;
+	TSet<TWeakObjectPtr<AWorldWeaponPickup>> WorldPickupCandidates;
+	TWeakObjectPtr<AWorldWeaponPickup> CurrentWorldPickupCandidate;
+	FTimerHandle FormerOwnerInteractionRefreshTimerHandle;
 
 #if WITH_DEV_AUTOMATION_TESTS
 	TFunction<bool(const FVector&, FVector2D&, FVector2D&)> TestLockOnProjectionHook;

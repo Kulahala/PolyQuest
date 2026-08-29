@@ -77,6 +77,9 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|World Pickup", meta = (ToolTip = "武器在未装备（世界拾取物）状态下的相对显示变换（位置、旋转、缩放）。"))
 	FTransform WorldPickupDisplayTransform = FTransform::Identity;
 
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|World Pickup", meta = (ToolTip = "世界拾取物交互提示中显示的武器名称；留空则回退到基础提示。"))
+	FText InteractionDisplayName;
+
 	/** Candidate grouping only: these ability classes join the same runtime candidate union as ExclusiveCombatActions. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Combat Actions", meta = (ToolTip = "可复用战斗技能候选 Ability 类列表，运行时与独占列表合并为候选技能池。"))
 	TArray<TSubclassOf<UGameplayAbility>> ReusableCombatActions;

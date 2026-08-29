@@ -37,6 +37,7 @@
 #include "Combat/Input/CombatLoadoutDefinition.h"
 #include "Combat/Melee/CombatTeamAgent.h"
 #include "Combat/Reaction/HitReactionClassifier.h"
+#include "Framework/PolyQuestPlayerController.h"
 #include "GameplayEffectExtension.h"
 #include "PolyQuest.h"
 #include "Sound/SoundBase.h"
@@ -145,6 +146,9 @@ void APlayerCharacter::BeginPlay()
 		SightStimuliSource->RegisterForSense(UAISense_Sight::StaticClass());
 	}
 
+	OnCharacterMovementUpdated.AddUniqueDynamic(this, &APlayerCharacter::HandleCharacterMovementUpdated);
+	SeedWorldPickupCandidates();
+
 	if (bStaminaRegenEffectApplied || !HasAuthority())
 	{
 		return;
@@ -206,6 +210,11 @@ void APlayerCharacter::ConfigureTestHitFeedbackCameraShakes(
 	BigHitFeedbackCameraShakeClass = InBigClass;
 	LaunchHitFeedbackCameraShakeClass = InLaunchClass;
 }
+
+void APlayerCharacter::TriggerTestHandleInteractStarted()
+{
+	HandleInteractStarted(FInputActionValue());
+}
 #endif
 
 void APlayerCharacter::PossessedBy(AController* NewController)
@@ -214,11 +223,15 @@ void APlayerCharacter::PossessedBy(AController* NewController)
 	BindSprintStateEvents();
 	BindHealthEvents();
 	BindExhaustionStateEvents();
+	OnCharacterMovementUpdated.AddUniqueDynamic(this, &APlayerCharacter::HandleCharacterMovementUpdated);
+	SeedWorldPickupCandidates();
 }
 
 void APlayerCharacter::UnPossessed()
 {
 	ClearActiveHitFeedbackCameraShake();
+	OnCharacterMovementUpdated.RemoveDynamic(this, &APlayerCharacter::HandleCharacterMovementUpdated);
+	ClearWorldPickupInteractionState();
 	Super::UnPossessed();
 }
 
@@ -240,6 +253,9 @@ void APlayerCharacter::EndPlay(const EEndPlayReason::Type EndPlayReason)
 	UnbindSprintStateEvents();
 	ClearSprintJumpAirSpeed();
 	ClearLockedTarget();
+
+	OnCharacterMovementUpdated.RemoveDynamic(this, &APlayerCharacter::HandleCharacterMovementUpdated);
+	ClearWorldPickupInteractionState();
 
 	ActiveBowAimRequester = nullptr;
 	bHasValidBowAimDirection = false;
@@ -769,42 +785,18 @@ void APlayerCharacter::HandleInteractStarted(const FInputActionValue&)
 		return;
 	}
 
-	TArray<AActor*> OverlappingActors;
-	GetOverlappingActors(OverlappingActors, AWorldWeaponPickup::StaticClass());
-
-	AWorldWeaponPickup* BestCandidate = nullptr;
-	float BestDistanceSq = MAX_flt;
-
-	for (AActor* Actor : OverlappingActors)
+	AWorldWeaponPickup* Candidate = CurrentWorldPickupCandidate.Get();
+	if (!Candidate || !Candidate->CanInteract(this))
 	{
-		AWorldWeaponPickup* Pickup = Cast<AWorldWeaponPickup>(Actor);
-		if (!Pickup || !Pickup->CanInteract(this))
-		{
-			continue;
-		}
-
-		const float DistSq = FVector::DistSquared(GetActorLocation(), Pickup->GetActorLocation());
-		if (DistSq < BestDistanceSq)
-		{
-			BestDistanceSq = DistSq;
-			BestCandidate = Pickup;
-		}
-		else if (FMath::IsNearlyEqual(DistSq, BestDistanceSq, KINDA_SMALL_NUMBER) && BestCandidate)
-		{
-			// Deterministic tie-break by actor name
-			if (Pickup->GetName() < BestCandidate->GetName())
-			{
-				BestCandidate = Pickup;
-			}
-		}
+		RefreshWorldPickupInteractionPrompt();
+		return;
 	}
 
-	if (BestCandidate)
-	{
-		UWeaponDefinition* IncomingDefinition = BestCandidate->GetWeaponDefinition();
-		const bool bSuccess = WeaponEquipment->TryEquipWorldPickup(BestCandidate);
-		OnWorldPickupInteractionResult(bSuccess, IncomingDefinition);
-	}
+	UWeaponDefinition* IncomingDefinition = Candidate->GetWeaponDefinition();
+	const bool bSuccess = WeaponEquipment->TryEquipWorldPickup(Candidate);
+	OnWorldPickupInteractionResult(bSuccess, IncomingDefinition);
+
+	RefreshWorldPickupInteractionPrompt();
 }
 
 void APlayerCharacter::HandleDodgeSprintStarted(const FInputActionValue&)
@@ -2449,7 +2441,12 @@ void APlayerCharacter::OnSprintRelevantTagChanged(const FGameplayTag Tag, int32 
 
 	if (NewCount > 0)
 	{
-		if (Tag == DeadStateTag || Tag == StunnedStateTag)
+		if (Tag == DeadStateTag)
+		{
+			ClearGuardResumeEligibility();
+			ClearWorldPickupInteractionState();
+		}
+		else if (Tag == StunnedStateTag)
 		{
 			ClearGuardResumeEligibility();
 		}
@@ -2462,6 +2459,11 @@ void APlayerCharacter::OnSprintRelevantTagChanged(const FGameplayTag Tag, int32 
 
 		CancelSprintAbility();
 		return;
+	}
+
+	if (Tag == DeadStateTag)
+	{
+		SeedWorldPickupCandidates();
 	}
 
 	if ((Tag == AttackingStateTag || Tag == ParryingStateTag) && bGuardResumeEligibleAfterAttack)
@@ -2507,3 +2509,173 @@ void APlayerCharacter::TriggerTestTargetCycle(const float InAxisValue)
 	HandleTargetCycleTriggered(FInputActionValue(InAxisValue));
 }
 #endif
+
+void APlayerCharacter::RegisterWorldPickupCandidate(AWorldWeaponPickup* Pickup)
+{
+	if (Pickup)
+	{
+		WorldPickupCandidates.Add(Pickup);
+		RefreshWorldPickupInteractionPrompt();
+	}
+}
+
+void APlayerCharacter::UnregisterWorldPickupCandidate(AWorldWeaponPickup* Pickup)
+{
+	if (Pickup)
+	{
+		WorldPickupCandidates.Remove(Pickup);
+		RefreshWorldPickupInteractionPrompt();
+	}
+}
+
+void APlayerCharacter::ClearWorldPickupInteractionState()
+{
+	WorldPickupCandidates.Empty();
+	CurrentWorldPickupCandidate.Reset();
+	if (UWorld* World = GetWorld())
+	{
+		World->GetTimerManager().ClearTimer(FormerOwnerInteractionRefreshTimerHandle);
+	}
+	if (APolyQuestPlayerController* PC = Cast<APolyQuestPlayerController>(GetController()))
+	{
+		PC->HideInteractionPrompt();
+	}
+}
+
+void APlayerCharacter::HandleCharacterMovementUpdated(float DeltaSeconds, FVector OldLocation, FVector OldVelocity)
+{
+	if (WorldPickupCandidates.IsEmpty())
+	{
+		return;
+	}
+
+	if (!GetActorLocation().Equals(OldLocation, 0.1f))
+	{
+		RefreshWorldPickupInteractionPrompt();
+	}
+}
+
+void APlayerCharacter::SeedWorldPickupCandidates()
+{
+	WorldPickupCandidates.Empty();
+	TArray<AActor*> OverlappingPickups;
+	GetOverlappingActors(OverlappingPickups, AWorldWeaponPickup::StaticClass());
+	for (AActor* Actor : OverlappingPickups)
+	{
+		if (AWorldWeaponPickup* Pickup = Cast<AWorldWeaponPickup>(Actor))
+		{
+			WorldPickupCandidates.Add(Pickup);
+		}
+	}
+	RefreshWorldPickupInteractionPrompt();
+}
+
+void APlayerCharacter::RefreshWorldPickupInteractionPrompt()
+{
+	UWorld* World = GetWorld();
+	if (!World || IsActorBeingDestroyed())
+	{
+		return;
+	}
+
+	World->GetTimerManager().ClearTimer(FormerOwnerInteractionRefreshTimerHandle);
+
+	const UAbilitySystemComponent* CharacterASC = GetAbilitySystemComponent();
+	if (CharacterASC && DeadStateTag.IsValid() && CharacterASC->HasMatchingGameplayTag(DeadStateTag))
+	{
+		CurrentWorldPickupCandidate.Reset();
+		if (APolyQuestPlayerController* PC = Cast<APolyQuestPlayerController>(GetController()))
+		{
+			PC->HideInteractionPrompt();
+		}
+		return;
+	}
+
+	for (auto It = WorldPickupCandidates.CreateIterator(); It; ++It)
+	{
+		if (!It->IsValid() || (*It)->IsActorBeingDestroyed())
+		{
+			It.RemoveCurrent();
+		}
+	}
+
+	AWorldWeaponPickup* BestCandidate = nullptr;
+	float BestDistanceSq = MAX_flt;
+	float EarliestRemainingCooldown = MAX_flt;
+	const FVector PlayerLocation = GetActorLocation();
+
+	for (const TWeakObjectPtr<AWorldWeaponPickup>& WeakPickup : WorldPickupCandidates)
+	{
+		AWorldWeaponPickup* Pickup = WeakPickup.Get();
+		if (!Pickup)
+		{
+			continue;
+		}
+
+		if (Pickup->CanInteract(this))
+		{
+			const float DistSq = FVector::DistSquared(PlayerLocation, Pickup->GetActorLocation());
+			if (DistSq < BestDistanceSq)
+			{
+				BestDistanceSq = DistSq;
+				BestCandidate = Pickup;
+			}
+			else if (FMath::IsNearlyEqual(DistSq, BestDistanceSq, KINDA_SMALL_NUMBER) && BestCandidate)
+			{
+				if (Pickup->GetName() < BestCandidate->GetName())
+				{
+					BestCandidate = Pickup;
+				}
+			}
+		}
+		else
+		{
+			const float RemainingCooldown = Pickup->GetFormerOwnerRemainingTime(this);
+			if (RemainingCooldown > 0.0f && RemainingCooldown < EarliestRemainingCooldown)
+			{
+				EarliestRemainingCooldown = RemainingCooldown;
+			}
+		}
+	}
+
+	CurrentWorldPickupCandidate = BestCandidate;
+
+	APolyQuestPlayerController* PC = Cast<APolyQuestPlayerController>(GetController());
+	if (BestCandidate)
+	{
+		if (PC)
+		{
+			const UWeaponDefinition* WeaponDef = BestCandidate->GetWeaponDefinition();
+			FText PromptText;
+			if (WeaponDef && !WeaponDef->InteractionDisplayName.IsEmpty())
+			{
+				PromptText = FText::Format(
+					NSLOCTEXT("PolyQuest", "PromptWithWeapon", "拾取 {0}"),
+					WeaponDef->InteractionDisplayName);
+			}
+			else
+			{
+				PromptText = NSLOCTEXT("PolyQuest", "PromptFallback", "拾取");
+			}
+
+			PC->ShowInteractionPrompt(PromptText);
+		}
+	}
+	else
+	{
+		if (PC)
+		{
+			PC->HideInteractionPrompt();
+		}
+	}
+
+	if (EarliestRemainingCooldown < MAX_flt && EarliestRemainingCooldown > 0.0f)
+	{
+		World->GetTimerManager().SetTimer(
+			FormerOwnerInteractionRefreshTimerHandle,
+			this,
+			&APlayerCharacter::RefreshWorldPickupInteractionPrompt,
+			EarliestRemainingCooldown,
+			false);
+	}
+}

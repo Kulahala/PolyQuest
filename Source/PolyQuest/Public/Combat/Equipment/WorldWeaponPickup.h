@@ -22,6 +22,7 @@ class POLYQUEST_API AWorldWeaponPickup : public AActor
 	GENERATED_BODY()
 
 	friend class UWeaponEquipmentComponent;
+	friend class APlayerCharacter;
 
 public:
 	AWorldWeaponPickup();
@@ -55,6 +56,14 @@ public:
 	/** Projects a point down onto ground geometry using ECC_Visibility (down 300cm, +2cm normal offset). */
 	static bool ProjectLocationToGround(UWorld* World, const FVector& SourceLocation, FVector& OutGroundLocation, const AActor* IgnoreActor = nullptr);
 
+#if WITH_DEV_AUTOMATION_TESTS
+	int32 GetTestOverlappingPlayerCount() const { return OverlappingPlayers.Num(); }
+	float GetTestFormerOwnerRemainingTime(const APlayerCharacter* Requester) const { return GetFormerOwnerRemainingTime(Requester); }
+	void TriggerTestNotifyOverlappingPlayersStateChanged() { NotifyOverlappingPlayersStateChanged(); }
+	void AddTestOverlappingPlayer(APlayerCharacter* InPlayer);
+	void RemoveTestOverlappingPlayer(APlayerCharacter* InPlayer);
+#endif
+
 protected:
 	virtual void BeginPlay() override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
@@ -65,6 +74,22 @@ protected:
 	/** Optional presentation hook invoked before destroying a consumed pickup. */
 	UFUNCTION(BlueprintImplementableEvent, Category = "Equipment|Pickup", meta = (DisplayName = "OnPickupConsumed"))
 	void OnPickupConsumed();
+
+	UFUNCTION()
+	void HandleInteractionSphereBeginOverlap(
+		UPrimitiveComponent* OverlappedComponent,
+		AActor* OtherActor,
+		UPrimitiveComponent* OtherComp,
+		int32 OtherBodyIndex,
+		bool bFromSweep,
+		const FHitResult& SweepResult);
+
+	UFUNCTION()
+	void HandleInteractionSphereEndOverlap(
+		UPrimitiveComponent* OverlappedComponent,
+		AActor* OtherActor,
+		UPrimitiveComponent* OtherComp,
+		int32 OtherBodyIndex);
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Equipment|Pickup", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<USphereComponent> InteractionSphere;
@@ -84,7 +109,10 @@ protected:
 
 private:
 	void UpdateVisualMesh();
+	void NotifyOverlappingPlayersStateChanged();
+	float GetFormerOwnerRemainingTime(const APlayerCharacter* Requester) const;
 
+	TSet<TWeakObjectPtr<APlayerCharacter>> OverlappingPlayers;
 	TWeakObjectPtr<APlayerCharacter> FormerOwner;
 	float RejectUntilTime = 0.0f;
 	bool bInteractionInProgress = false;

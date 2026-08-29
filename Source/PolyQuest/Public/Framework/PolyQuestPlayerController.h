@@ -9,6 +9,7 @@
 class UAbilitySystemComponent;
 class UInputMappingContext;
 class UPlayerVitalHUDWidget;
+class UWorldInteractionPromptWidget;
 class APlayerCharacter;
 struct FOnAttributeChangeData;
 
@@ -30,10 +31,22 @@ public:
 	 */
 	void RequestCombatImpactHitStop(float DurationSeconds, float TimeDilation);
 
+	/** Shows the interaction prompt with the given text; creates the prompt widget idempotently. */
+	void ShowInteractionPrompt(const FText& InText);
+
+	/** Hides the interaction prompt without destroying the widget. */
+	void HideInteractionPrompt();
+
 #if WITH_DEV_AUTOMATION_TESTS
 	UPlayerVitalHUDWidget* GetTestPlayerVitalHUDInstance() const { return PlayerVitalHUDInstance; }
 	void SetTestPlayerVitalHUDInstance(UPlayerVitalHUDWidget* InInstance) { PlayerVitalHUDInstance = InInstance; }
 	void SetTestPlayerVitalHUDClass(TSubclassOf<UPlayerVitalHUDWidget> InClass) { PlayerVitalHUDClass = InClass; }
+	void SetTestInteractionPromptClass(TSubclassOf<UWorldInteractionPromptWidget> InClass) { InteractionPromptClass = InClass; }
+	UWorldInteractionPromptWidget* GetTestInteractionPromptInstance() const { return InteractionPromptInstance.Get(); }
+	void SetTestInteractionPromptInstance(UWorldInteractionPromptWidget* InInstance) { InteractionPromptInstance = InInstance; }
+	void TriggerTestEnsureInteractionPromptCreated() { EnsureInteractionPromptCreated(); }
+	void TriggerTestShowInteractionPrompt(const FText& InText) { ShowInteractionPrompt(InText); }
+	void TriggerTestHideInteractionPrompt() { HideInteractionPrompt(); }
 	UAbilitySystemComponent* GetTestBoundAbilitySystemComponent() const;
 	bool HasBoundAttributeDelegates() const
 	{
@@ -66,6 +79,14 @@ protected:
 	UPROPERTY(Transient)
 	TObjectPtr<UPlayerVitalHUDWidget> PlayerVitalHUDInstance;
 
+	/** Configured Interaction Prompt Widget class for local player display. */
+	UPROPERTY(EditDefaultsOnly, Category = "UI")
+	TSubclassOf<UWorldInteractionPromptWidget> InteractionPromptClass;
+
+	/** Created interaction prompt instance in the viewport. */
+	UPROPERTY(Transient)
+	TObjectPtr<UWorldInteractionPromptWidget> InteractionPromptInstance;
+
 	virtual void BeginPlay() override;
 	virtual void Tick(float DeltaSeconds) override;
 	virtual void OnPossess(APawn* InPawn) override;
@@ -79,6 +100,7 @@ protected:
 
 private:
 	void EnsureHUDCreated();
+	void EnsureInteractionPromptCreated();
 	void BindToPawn(APawn* InPawn);
 	void UnbindCurrentPawn();
 	void RefreshVitalHUD();
@@ -94,6 +116,7 @@ private:
 	TWeakObjectPtr<APlayerCharacter> BoundPlayerCharacter;
 	TWeakObjectPtr<UAbilitySystemComponent> BoundAbilitySystemComponent;
 	bool bHasLoggedMissingHUDClass = false;
+	bool bHasLoggedMissingInteractionPromptClass = false;
 
 	bool bHitStopActive = false;
 	float PreHitStopGlobalTimeDilation = 1.0f;
