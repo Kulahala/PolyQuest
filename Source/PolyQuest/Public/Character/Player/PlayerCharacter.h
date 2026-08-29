@@ -133,6 +133,18 @@ protected:
 	UPROPERTY(EditDefaultsOnly, Category="Combat|Feedback", meta=(ToolTip="玩家受到击飞受击（Launch Tier）时触发的摄像机震屏效果类。"))
 	TSubclassOf<UCameraShakeBase> LaunchHitFeedbackCameraShakeClass;
 
+	/** Local camera shake played when this Player inflicts Small tier hit reaction damage on an enemy. */
+	UPROPERTY(EditDefaultsOnly, Category="Combat|Feedback|AttackerImpact", meta=(ToolTip="玩家造成轻击命中（Small Tier）时触发的摄像机震屏效果类。"))
+	TSubclassOf<UCameraShakeBase> SmallAttackerImpactCameraShakeClass;
+
+	/** Local camera shake played when this Player inflicts Big tier hit reaction damage on an enemy. */
+	UPROPERTY(EditDefaultsOnly, Category="Combat|Feedback|AttackerImpact", meta=(ToolTip="玩家造成重击命中（Big Tier）时触发的摄像机震屏效果类。"))
+	TSubclassOf<UCameraShakeBase> BigAttackerImpactCameraShakeClass;
+
+	/** Local camera shake played when this Player inflicts Launch tier hit reaction damage on an enemy. */
+	UPROPERTY(EditDefaultsOnly, Category="Combat|Feedback|AttackerImpact", meta=(ToolTip="玩家造成击飞命中（Launch Tier）时触发的摄像机震屏效果类。"))
+	TSubclassOf<UCameraShakeBase> LaunchAttackerImpactCameraShakeClass;
+
 	/** Sound played when this Player receives non-lethal health damage from an enemy. */
 	UPROPERTY(EditDefaultsOnly, Category="Combat|Feedback", meta=(ToolTip="玩家受到非致命实际伤害时触发的受击音效。"))
 	TObjectPtr<USoundBase> ReceivedHitSound;
@@ -225,6 +237,9 @@ public:
 
 	/** Triggers the configured Big hit camera shake on successful melee Parry. */
 	void TriggerParrySuccessCameraShake();
+
+	/** Triggers attacker-side camera shake feedback when this Player inflicts Small/Big/Launch damage on an enemy. */
+	void TriggerAttackerImpactCameraShake(EHitReactionTier ReactionTier);
 
 	/** Cancels a live Parry after an external airborne transition; it never clears Guard resume eligibility. */
 	void CancelActiveParry();
@@ -339,6 +354,10 @@ public:
 	void TriggerTestSeedWorldPickupCandidates() { SeedWorldPickupCandidates(); }
 	void TriggerTestHandleInteractStarted();
 	void ConfigureTestHitFeedbackCameraShakes(
+		TSubclassOf<UCameraShakeBase> InSmallClass,
+		TSubclassOf<UCameraShakeBase> InBigClass,
+		TSubclassOf<UCameraShakeBase> InLaunchClass);
+	void ConfigureTestAttackerImpactCameraShakes(
 		TSubclassOf<UCameraShakeBase> InSmallClass,
 		TSubclassOf<UCameraShakeBase> InBigClass,
 		TSubclassOf<UCameraShakeBase> InLaunchClass);
@@ -485,6 +504,9 @@ private:
 	bool bHasLoggedMissingSmallHitFeedbackCameraShakeClass = false;
 	bool bHasLoggedMissingBigHitFeedbackCameraShakeClass = false;
 	bool bHasLoggedMissingLaunchHitFeedbackCameraShakeClass = false;
+	bool bHasLoggedMissingSmallAttackerImpactCameraShakeClass = false;
+	bool bHasLoggedMissingBigAttackerImpactCameraShakeClass = false;
+	bool bHasLoggedMissingLaunchAttackerImpactCameraShakeClass = false;
 	TWeakObjectPtr<APlayerCameraManager> ActiveHitFeedbackCameraManager;
 	TWeakObjectPtr<UCameraShakeBase> ActiveHitFeedbackCameraShake;
 	TSubclassOf<UCameraShakeBase> ActiveHitFeedbackCameraShakeClass;
@@ -503,6 +525,8 @@ private:
 	void TriggerHitFeedbackCameraShake(EHitReactionTier ReactionTier);
 	void TriggerReceivedHitSound(const FGameplayEffectSpec& EffectSpec);
 	TSubclassOf<UCameraShakeBase> ResolveHitFeedbackCameraShakeClass(EHitReactionTier ReactionTier);
+	TSubclassOf<UCameraShakeBase> ResolveAttackerImpactCameraShakeClass(EHitReactionTier ReactionTier);
+	void StartHitFeedbackCameraShakeInstance(TSubclassOf<UCameraShakeBase> ResolvedClass);
 	void ClearActiveHitFeedbackCameraShake();
 	void BindExhaustionStateEvents();
 	void UnbindExhaustionStateEvents();

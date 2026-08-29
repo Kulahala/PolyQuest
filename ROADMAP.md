@@ -8,15 +8,16 @@ This file is the active route: it records the current baseline, the next depende
 
 ## Current State
 
-- Baseline is `main @ 397bea6`; the latest completed stage is `TODO-03A3E World Pickup Interaction Prompt v1`. Lock-On acquisition/cycle remain strict with fixed per-axis `15%` retention for an already-owned target, while Bow keeps its independent `6%` automatic Target Assist boundary.
-- The product route is `/Game/Maps/Scene01` with a fixed elevated oblique camera and a desktop Controller/input boundary. The next player-facing slice is `TODO-07B4`; the complete sequence is listed below.
+- This closeout starts from parent baseline `main @ 9c2ca48`; the latest implemented stage is `TODO-07B4 Player Attacker-Impact Camera Shake And Reaction-Tier Mapping v1`, and the resulting commit is identified by Git history. Its user-confirmed Automation and PIE evidence is recorded below, while separate compile/readback evidence remains explicit validation debt. Lock-On acquisition/cycle remain strict with fixed per-axis `15%` retention for an already-owned target, while Bow keeps its independent `6%` automatic Target Assist boundary.
+- The product route is `/Game/Maps/Scene01` with a fixed elevated oblique camera and a desktop Controller/input boundary. The next open player-facing slice is `TODO-03A7`; the completed and open sequence is listed below.
 - Mutable GameplayAbility/GameplayEffect, Montage, AnimBP, Blueprint, input, DataAsset, map, Niagara, sound, and imported Content remain user-owned local WIP. Manual compilation, Editor readback, PIE/visual checks, imported-asset decisions, packaging, and final commit approval remain separate gates.
 
 ## Current Player-Combat Sequence
 
-Before introducing the first ranged enemy, complete this player-combat sequence:
+Before introducing the first ranged enemy, the player-combat route is:
 
-TODO-03A3E → TODO-07B4 → TODO-03A7 → TODO-05A → TODO-05B → TODO-03C
+Completed: TODO-03A3E → TODO-07B4
+Next: TODO-03A7 → TODO-05A → TODO-05B → TODO-03C
 
 TODO-07B4 is a deliberately early presentation gate and is technically independent of Motion Warping. The punish dependency remains TODO-03A7 → TODO-05A → TODO-05B. TODO-03A4B is conditional equipment work and is not a prerequisite unless a partial-Guard weapon is intentionally authored.
 
@@ -33,12 +34,6 @@ For older completed stages, validation evidence, and exact historical wording, s
 ## Active Milestones
 
 ### Player Combat Closure
-
-- [ ] TODO-07B4: Player Attacker-Impact Camera Shake And Reaction-Tier Mapping v1
-  - At the authoritative successful damaging contact owned by the existing melee Trace/Resolver or projectile delivery path, select at most one authored Player Camera Shake from Data.Reaction.Small, Data.Reaction.Big, or Data.Reaction.Launch.
-  - Preserve existing hit-stop, target-side reaction classification, damage ownership, and camera ownership. The first lethal Health decrease attributable to that accepted Player contact is included in the same tier mapping once (when the authored class resolves) before the existing death cleanup; later Dead-state callbacks remain silent. Misses, invalid targets, direct Attribute writes, non-Player sources, Guard/Parry absorption, Poise-only effects, cancellation, and teardown remain no-shake paths.
-  - Prerequisites are the established reaction classifier, impact/hit-stop boundary, and B1/B1A weak-reference/lifecycle conventions plus a readback-confirmed authored set of three shake classes. No new Tag, damage route, GameplayCue, dispatcher, or global camera transform.
-  - Success requires exact-tier and exactly-once Automation, hit-stop coexistence, exclusion and cleanup coverage, manual PolyQuestEditor compilation, Editor readback, and focused Scene01 PIE. Authored shake assets remain user-owned Content WIP.
 
 - [ ] TODO-03A7: Selected Melee Motion-Warp Contact Assist v1
   - After an Editor asset audit, adopt Motion Warping only for explicitly named Player attacks whose selected Montage has verified Root Motion and a matching warp window/target name. Enemy adoption is optional and requires a separate concrete authored need.
@@ -112,7 +107,7 @@ For older completed stages, validation evidence, and exact historical wording, s
   - Add only the HUD/debug surfaces needed to make validated Poise, target, damage, and later route state legible while retaining the ASC-backed read-only ownership of TODO-07A1.
 
 - [ ] TODO-07B: Feedback, Presentation Retune, And Demo Polish v1
-  - TODO-07B1/07B1A, TODO-07B2, and TODO-07B3 are delivered; TODO-07B4 is tracked above as the pre-ranged attacker-impact gate. The remaining umbrella owns later focused VFX/SFX/camera/navigation retuning and demo polish, not new combat ownership.
+  - TODO-07B1/07B1A, TODO-07B2, TODO-07B3, and TODO-07B4 are delivered. The remaining umbrella owns later focused VFX/SFX/camera/navigation retuning and demo polish, not new combat ownership.
   - Re-author final Montage composition and Notify timing only after the selected animation set is stable. Reuse the proven TODO-02F rate lifecycle; do not add overlapping playback-rate systems or use Motion Warping for locomotion.
 
 ## Recommendations
@@ -138,6 +133,7 @@ For older completed stages, validation evidence, and exact historical wording, s
 - TODO-03A3E's native Automation coverage primarily uses transient test seams; direct overlap/delegate depth and an explicit assertion that a stale E snapshot leaves equipment unchanged remain validation debt. Close only if a future interaction regression or dedicated test-depth stage needs those paths; this is not a blocker for TODO-07B4.
 - `PolyQuest.Equipment.TransactionMatrix` still depends on a local WIP Guard asset and an unapproved test-path repair. Keep that source change and `Content/**` asset outside this stage; close in a separately approved equipment/asset baseline with user readback.
 - `Config/Automation/Presets/1.json` is not a complete test manifest. The 25/25 result recorded in the archived TODO-03A3E closeout comes from the user's manual selection of all current PolyQuest suites, not from the preset; a preset refresh is optional config maintenance, not a TODO-03A3E blocker.
+- TODO-07B4 source and focused Automation are confirmed, and the user has confirmed the focused Scene01 PIE route. This closeout does not contain a separate manual `PolyQuestEditor` compile record or six-field `BP_Player` Editor readback; treat the attacker-field authoring baseline as uncurated until those exact gates are read back. The debt closes before packaging or a clean authored-fixture claim and is not a blocker for the next source-only planning slice.
 
 ## Deferred TODOs
 

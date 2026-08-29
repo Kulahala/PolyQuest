@@ -5,6 +5,7 @@
 #include "Abilities/GameplayAbilityTypes.h"
 #include "AbilitySystem/CharacterAttributeSet.h"
 #include "AbilitySystemComponent.h"
+#include "Character/Player/PlayerCharacter.h"
 #include "Combat/Melee/CombatTeamAgent.h"
 #include "Combat/Reaction/HitReactionClassifier.h"
 #include "Combat/Reaction/HitReactionImpactResolver.h"
@@ -374,6 +375,11 @@ void AEnemyCharacter::HandleCombatImpactFeedback(const FGameplayEffectSpec& Effe
 	if (!InstigatorTeamTag.IsValid() || !PlayerTeamTag.IsValid() || !InstigatorTeamTag.MatchesTagExact(PlayerTeamTag))
 	{
 		return;
+	}
+
+	if (APlayerCharacter* PlayerCharacter = Cast<APlayerCharacter>(InstigatorActor))
+	{
+		PlayerCharacter->TriggerAttackerImpactCameraShake(ReactionTier);
 	}
 
 	float HitStopDuration = SmallImpactHitStopDurationSeconds;

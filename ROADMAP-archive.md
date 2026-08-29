@@ -1018,3 +1018,14 @@ TODO-03A3E World Pickup Interaction Prompt v1
 - **未声称证据**：没有独立 Development Editor 编译日志或新的 Editor readback；Automation/PIE 结果不替代这些证据。`Config/Automation/Presets/1.json` 不是完整测试清单，25/25 来自用户手动选择，不从 preset 推断。
 - **排除项与债务**：`WeaponEquipmentComponentAutomationTests.cpp` 的未批准 TransactionMatrix 修复、本地 Guard WIP 资产、全部 Config/Content WIP 和其他 Source WIP 均未纳入；真实 overlap/delegate 深度与失效 E 快照不改装备的直接断言仍是非阻塞验证债务，TransactionMatrix 资产依赖留待单独批准的装备/资产基线阶段。
 - **提交边界**：阶段实现提交为 `6a96fc1`；本节文档维护不改变该提交的代码/资产范围。
+
+## TODO-07B4 Implementation Closeout (2026-08-29; working-tree snapshot at HEAD `9c2ca48`, not clean)
+
+> 本节是 TODO-07B4 的历史收口记录。归档时工作区包含既有 `AGENTS.md`、Config、Content/** 与其他 Source WIP，因此不是干净 checkout 快照；本节不替代源码、Config 或实际资产作为运行时权威。
+
+- **范围与所有权**：`AEnemyCharacter::OnHealthAttributeChanged()` 继续负责同一 GameplayEffect Spec 的 Health 去重、ReactionTier 分类和 lethal 顺序；`HandleCombatImpactFeedback()` 在精确 `Team.Player` 过滤后只向真正的 `APlayerCharacter` 转发一次 attacker-impact Shake。Player 独立读取 `Small/Big/LaunchAttackerImpactCameraShakeClass`，受击路径继续读取原三字段；两组字段可以引用同一 Camera Shake 资产，但不存在隐式回退。PlayerCameraManager、活动 Shake 弱引用、同档重启/换档和 UnPossessed/EndPlay 清理仍由 Player 统一拥有。
+- **用户运行证据**：用户确认 focused `PolyQuest.Combat.AttackerImpactCameraShake` Automation 再次 `Success`，并确认 `/Game/Maps/Scene01` PIE 通过，覆盖攻击者命中镜头冲击与既有顿帧共存的体验路径。
+- **静态与复核证据**：Gemini 报告 Rider error-level 检查无诊断和 `git diff --check` 通过；Main 用 CodeGraph 与 code-review-graph 做一跳结构/影响核对，并完成一轮独立 defect-first fresh review。修复前发现的测试字段隔离 P2 已由 attacker-only fixture 清空受击字段后再配置的断言闭环；修复后未发现 P0/P1/P2 blocker，不执行第二轮 adversarial review。
+- **未声称证据**：本次记录没有独立手动 `PolyQuestEditor` 编译日志，也没有六字段 `BP_Player` Editor readback；不以 Automation 或 PIE 替代这些证据。缺失 attacker 字段时测试产生的 fail-closed warning 是预期负向断言，不是运行时错误。
+- **排除项与债务**：未修改或纳入 `AGENTS.md`、`Config/Automation/Presets/1.json`、全部 `Content/**`、`WeaponEquipmentComponentAutomationTests.cpp`、Build.cs、uproject、Gameplay Tags、Resolver/Trace/Projectile 和其他 WIP。六字段作者化 readback/手动编译证据作为 Roadmap validation debt，closure trigger 是在可提交的作者化基线或打包前完成对应读回；不阻塞下一阶段的源代码计划。
+- **提交边界**：TODO-07B4 的四个批准 Source/test 路径与本阶段文档一并提交；最终提交 hash 以 Git 历史为准。

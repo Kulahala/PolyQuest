@@ -1,322 +1,175 @@
-# TODO-03A3E: World Pickup Interaction Prompt v1
+# TODO-07B4：Player Attacker-Impact Camera Shake And Reaction-Tier Mapping v1
 
-> 本阶段建立现有世界武器拾取物的本地交互提示。提示只表达当前可交互候选，不拥有输入、装备、GAS 或交易状态。实现由 Gemini 按冻结范围执行；Main 保留架构、验证解释、review、文档和提交所有权。
+> 本阶段只补齐玩家攻击命中敌人时的三档镜头冲击反馈。GAS、现有伤害路径、Hit-Stop、敌人受击分类和用户资产所有权保持不变。攻击者反馈与玩家受击/防御反馈使用独立配置字段，但允许引用同一组 Camera Shake 资产；两者继续共用既有单一运行时 Shake 生命周期。实现由手动/out-of-band Gemini 执行；Main 保留契约、验证解释、Fresh Review、文档和提交所有权。
 
-## Plan State
+## Plan State And Route
 
-- **状态**：实现、用户确认的 Automation/PIE 门禁、Gemini 严格 self-review、Main 单轮 defect-first fresh review、文档收口与提交均已完成。
-- **仓库/基线**：E:\GameDevelop\PolyQuest，main @ 397bea6。
-- **当前工作区**：保留 Config/**、Content/** 及未批准 Source WIP；本阶段只收口下方批准的 10 个 Source/test 路径和项目文档。数量不作为提交边界或测试套件权威。
-- **Outer**：ue-stage-workflow。
-- **Primary**：ue5-world-interaction。
-- **Support**：ue5-ui-umg-slate、ue5-cpp-gameplay、ue5-debug-validation。
-- **Execution route**：manual/out-of-band Gemini。
-- **Plan explorers**：0（由 Main 完成只读探索）。
-- **Implementation executors**：1（Gemini）。
-- **Main parallel work**：none。
+- **状态**：字段解耦修复已完成；用户已确认 focused Automation 与 Scene01 PIE，Main 已完成一轮独立 defect-first fresh review；本次收口不重复运行已覆盖门禁。
+- **仓库/基线**：`E:\GameDevelop\PolyQuest`，`main @ 9c2ca481902806e3ff064cbdfba9268a4d4761fa`（`9c2ca48`）。
+- **当前工作区**：保留 `Config/Automation/Presets/1.json`、全部 `Content/**` WIP，以及 `Source/PolyQuest/Private/Tests/WeaponEquipmentComponentAutomationTests.cpp`；这些路径不属于本阶段。
+- **Outer**：`ue-stage-workflow`。
+- **Primary**：`ue5-cpp-gameplay`。
+- **Support**：`ue5-debug-validation`。
+- **Route reason**：这是已有 GAS Health/GameplayEffect 反馈边界上的窄 C++ 生命周期扩展，不涉及 Blueprint/资产写入、相机系统重构或新伤害路径。
+- **Execution route**：`manual/out-of-band Gemini`。
+- **Plan explorers**：`0`（由 Main 完成只读定点探索）。
+- **Implementation executors**：`1`（Gemini）。
+- **Main parallel work**：`none`。
 - **Contract owner**：Main；**implementation writer**：Gemini。
-- **引擎 API 依据**：D:\UE\UE_5.8 中确认的 OnCharacterMovementUpdated、Overlap delegate 和 SceneComponent::UpdateOverlaps API。
+- **引擎依据**：`D:\UE\UE_5.8` 中现有 `APlayerCameraManager::StartCameraShake/StopCameraShake`、`bSingleInstance` 和项目当前 Camera Shake 生命周期实现。
 
-## Objective
+## Objective And Player Value
 
-在现有 AWorldWeaponPickup overlap、CanInteract 和最近候选装备路径上增加一个事件驱动的本地提示：
+当前玩家攻击已经有由 `AEnemyCharacter::HandleCombatImpactFeedback()` 发起的顿帧，但攻击者本地镜头没有对应的冲击反馈。完成后，玩家对敌人的有效 Small/Big/Launch 命中会分别得到三档镜头震动，并与现有顿帧同时发生；死亡命中也只反馈一次。
 
-    Overlap / pickup 状态 / 玩家移动 / Dead 状态 / FormerOwner Timer
-        -> APlayerCharacter 候选解析
-        -> Player-owned 当前候选快照
-        -> APolyQuestPlayerController
-        -> 被动 UWorldInteractionPromptWidget
+唯一生产触发边界：
 
-玩家按 E 时只使用与提示相同的当前候选快照；不在输入回调中重新扫描或隐式改选另一个拾取物。
+```text
+AEnemyCharacter::OnHealthAttributeChanged
+    -> (同一 GameplayEffect Spec 的 Health 去重)
+    -> AEnemyCharacter::HandleCombatImpactFeedback
+    -> APlayerCharacter::TriggerAttackerImpactCameraShake
+    -> attacker-specific tier resolver
+    -> 共享 Camera Manager / 活动 Shake 生命周期
+```
 
-## Current Source And Asset Facts
+这里的 `HandleCombatImpactFeedback()` 是已存在的权威 Health-decrease 边界。不得从 Trace Task、Melee Resolver、Projectile Resolver、Projectile Actor 或任意 Tick 另起通知路径。
 
-- APlayerCharacter::HandleInteractStarted 现在只消费 Player-owned 的 CurrentWorldPickupCandidate；候选失效时本次输入 Fail-Closed 并刷新提示，不在输入回调中重新扫描或隐式换选。
-- UWeaponEquipmentComponent::TryEquipWorldPickup 仍是唯一世界拾取装备变更路径；不得让 UI 或候选解析直接改装备、ASC 或 GameplayEffect。
-- AWorldWeaponPickup 的 InteractionSphere 是 QueryOnly、仅响应 Pawn overlap；CanInteract 已包含销毁、Definition、交互重入、玩家死亡和 FormerOwner 冷却条件。
-- APolyQuestPlayerController 已拥有本地 PlayerVitalHUDWidget；UMG 和 Slate 已在 PolyQuest.Build.cs 中，无需新增模块依赖。
-- UWeaponDefinition 是抽象 UDataAsset 基类；本阶段新增的显示名称不参与武器有效性、GAS 或交易判断。
-- E:\GameDevelop\Test\Content\_GAME\BP\UI\HUD\WBP_InteractionPrompt.uasset 序列化为旧 Test 项目的 /Script/Test.InteractionPromptWidget，不能直接迁移为 PolyQuest 运行时资产。
+## Frozen Runtime Contract
 
-## Frozen Product And Runtime Contracts
+### Player API And Camera Ownership
 
-### Prompt text
+在 `PlayerCharacter.h/.cpp` 增加一个窄的 C++-only 公共方法：
 
-- UWeaponDefinition 新增本地化 FText InteractionDisplayName。
-- 有名称时显示：拾取 {0}。
-- 为空时显示：拾取。
-- 使用固定本地化 key：NSLOCTEXT("PolyQuest", "PromptWithWeapon", "拾取 {0}") 和 NSLOCTEXT("PolyQuest", "PromptFallback", "拾取")，再通过 FText::Format 组合；空文本合法，不增加名称清洗、Config 字段或 Gameplay Tag。
+```cpp
+void TriggerAttackerImpactCameraShake(EHitReactionTier ReactionTier);
+```
 
-### Candidate ownership and arbitration
+契约：
 
-- APlayerCharacter 持有 TSet<TWeakObjectPtr<AWorldWeaponPickup>> WorldPickupCandidates，以及一个 TWeakObjectPtr<AWorldWeaponPickup> CurrentWorldPickupCandidate。
-- 解析只遍历 Player-owned 集合，清理失效/销毁对象，调用 AWorldWeaponPickup::CanInteract(this) 做资格门。
-- 保留当前最近距离和 Actor 名称字典序 tie-break 规则，不重写既有排序语义。
-- AWorldWeaponPickup 提供 GetFormerOwnerRemainingTime(const APlayerCharacter* Requester) const；只有 FormerOwner.Get() == Requester 且冷却仍在时才返回剩余秒数，其他请求者一律返回 0.0f。
-- 每次解析先 ClearTimer(FormerOwnerInteractionRefreshTimerHandle)，再记录所有仍属于该 Player 的冷却候选中的最早剩余时间；存在等待时设置一个一次性 Timer，没有等待时保持 Timer 清除/失效。
-- 当前候选失效时，E 本次输入直接失败并刷新提示；不得重新扫描，也不得把另一个候选用于同一次输入。
-- 交易成功、交易失败、pickup 状态改变或当前候选变更后刷新；TryEquipWorldPickup 仍是唯一 mutation。
+- 不使用 `UFUNCTION`，不暴露 Blueprint，不增加 Delegate、Tag、Config 或网络接口。
+- 入口检查 `HasAuthority()`、`IsActorBeingDestroyed()`、ASC 有效性和现有 `State.Status.Dead`；不满足条件直接返回。
+- 保留现有 `SmallHitFeedbackCameraShakeClass`、`BigHitFeedbackCameraShakeClass`、`LaunchHitFeedbackCameraShakeClass` 字段名和序列化路径；它们只表示 Player 受击/防御侧的配置，不再在注释或行为上声称同时覆盖攻击者反馈。
+- 新增三个独立的 `EditDefaultsOnly` attacker 配置字段，名称固定为 `SmallAttackerImpactCameraShakeClass`、`BigAttackerImpactCameraShakeClass`、`LaunchAttackerImpactCameraShakeClass`，分类放在 `Combat|Feedback|AttackerImpact`；不新增 `UFUNCTION`、Config、Tag、Delegate 或网络接口。
+- `TriggerHitFeedbackCameraShake(ReactionTier)` 只能读取既有受击字段；`TriggerAttackerImpactCameraShake(ReactionTier)` 只能读取 attacker 字段，禁止从另一组字段回退或隐式借用。
+- 允许把同一 `UCameraShakeBase` 资产类分别填入两组字段；资产复用不等于字段复用。新 attacker 字段为空时 fail-closed，不得因为受击字段有值而产生攻击震屏。
+- 为避免复制逻辑，可抽出一个只接收“已解析 Shake class”的最小私有启动 helper；受击和攻击路径继续共用 `PlayerCameraManager`、活动 Shake 弱引用、同档重启/换档停止和清理状态，不新增第二个运行时 Shake 通道。
+- `Data.Reaction.Small/Big/Launch` 分别映射到各自路径的同名三档；`None`、`Invalid` 或对应路径缺少类时不启动、不替换当前活动 Shake，并保留按路径区分的缺失配置告警状态（如现有实现需要）。
+- 保留同档 `bSingleInstance` 重启、换档停止旧实例、Originating `PlayerCameraManager` 弱引用，以及 `UnPossessed()/EndPlay()` 的现有清理。
+- 测试专用配置 seam 必须把受击字段与 attacker 字段分开设置；不得用一个 seam 同时写入两组字段来掩盖耦合。
 
-### Event-driven refresh
+### Enemy Forwarding Boundary
 
-- Pickup BeginOverlap/EndOverlap 注册或注销 Player。
-- SetWeaponDefinition、InitializeDroppedPickup、BeginInteraction、EndInteraction、SetInteractionEnabled、EndPlay 通知重叠 Player。
-- Player 在 BeginPlay 完成交互初始化，在任何现有体力 authority early return 之前绑定移动事件并进行一次 overlap seed。
-- PossessedBy 幂等地重新 seed/refresh；UnPossessed 和 EndPlay 清集合、清 Timer、隐藏提示并解绑移动 delegate。
-- 使用 UE 5.8 的 FCharacterMovementUpdatedSignature（float DeltaSeconds, FVector OldLocation, FVector OldVelocity）；只有位置确实改变且候选集合非空时刷新。
-- 不在 Player 或 Controller Tick 中加入交互轮询；GetOverlappingActors 只允许用于初始化/重新 possession 的 seed。
-- 复用现有 DeadStateTagChangedHandle 与 OnSprintRelevantTagChanged：Dead count > 0 时清理/隐藏，回到 0 时重新 seed/refresh；不增加第二个 Dead delegate。
+在 `EnemyCharacter.cpp`：
 
-### Widget and Controller ownership
+- 增加对 `Character/Player/PlayerCharacter.h` 的实现文件 include。
+- 保留现有 `Instigator` 获取、`UCombatTeamAgent` 检查和 `Team.Player` 精确过滤。
+- 通过 `Cast<APlayerCharacter>(InstigatorActor)` 识别真正 Player；过滤通过后调用上述桥接方法。
+- 调用桥接方法不改变既有 Hit-Stop、ImpactSound、Blood Niagara 的顺序或参数；这些仍由 Enemy 目标侧拥有。
+- 保留 `OnHealthAttributeChanged()` 的 `EffectSpec.GetModifiedAttribute(Health)` 去重和 lethal 先反馈、后 `SetDeadState()` 的顺序。
+- Player-team 但不是 `APlayerCharacter` 的来源继续得到既有目标反馈，不得到 Camera Shake；非 Player team 完全不进入该路径。
+- 不增加 HitResult 必需条件；既有声音/Hit-Stop 的位置回退语义保持不变。
 
-- 新增 UWorldInteractionPromptWidget，继承 UUserWidget，只有一个必需的 BindWidget TextBlock，名称必须为 PromptText。
-- Widget 提供 SetPromptText(const FText&)；即使测试或错误资产造成空绑定也必须安全返回。这里保留 BindWidget 而不是 BindWidgetOptional：PromptText 是本阶段的必需 Editor 契约，缺失应暴露资产配置错误，但不能造成 C++ 崩溃；Widget 仍不拥有输入、候选、GAS、装备、Timer 或 Tick。
-- APolyQuestPlayerController 新增 InteractionPromptClass 和 Transient InteractionPromptInstance。
-- 只有本地 Controller、非 Dedicated Server 创建；BeginPlay/OnPossess 幂等创建一个实例并加入 viewport 一次。
-- 初始和隐藏状态为 Collapsed；显示状态为 HitTestInvisible，避免吞掉 E 输入。
-- OnUnPossess 隐藏，EndPlay 移除并清空；缺少 class 只 warning 一次，不能阻断装备交互。
-- 不改变 PlayerVitalHUDWidget、既有 InputMode 或 Controller 的 hit-stop Tick。
+### Exactly-Once And Exclusions
 
-### Pickup lifecycle safeguards
+每个被接受的 Health-damaging GE Spec 最多触发一个 attacker Shake：
 
-- CanInteract 可增加 InteractionSphere 存在和 GetCollisionEnabled() != NoCollision 检查，但不得要求组件已注册。
-- SetInteractionEnabled 调用 UpdateOverlaps 前必须检查 InteractionSphere->IsRegistered()；deferred FinishSpawning 前不得假定组件已注册。
-- 通知重叠 Player 时使用 weak-pointer 快照，避免回调、销毁或 unregister 修改遍历中的集合。
-- 不改变 StageDisplacedDrops、交易回滚、源 pickup 销毁或临时掉落物的既有顺序。
-
-## Public/API Surface To Freeze
-
-### WeaponDefinition
-
-    UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|World Pickup")
-    FText InteractionDisplayName;
-
-### WorldInteractionPromptWidget
-
-    void SetPromptText(const FText& InText);
-
-    #if WITH_DEV_AUTOMATION_TESTS
-    void SetTestPromptTextBlock(UTextBlock* InTextBlock);
-    UTextBlock* GetTestPromptTextBlock() const;
-    #endif
-
-### PolyQuestPlayerController
-
-    void ShowInteractionPrompt(const FText& InText);
-    void HideInteractionPrompt();
-
-    #if WITH_DEV_AUTOMATION_TESTS
-    void SetTestInteractionPromptClass(TSubclassOf<UWorldInteractionPromptWidget> InClass);
-    UWorldInteractionPromptWidget* GetTestInteractionPromptInstance() const;
-    void TriggerTestEnsureInteractionPromptCreated();
-    void TriggerTestShowInteractionPrompt(const FText& InText);
-    void TriggerTestHideInteractionPrompt();
-    #endif
-
-这些接口均为最小 C++/Automation seam；不要增加 Blueprint 输入接口、通用交互接口、网络 RPC 或新的状态源。
-
-### PlayerCharacter
-
-    void RegisterWorldPickupCandidate(AWorldWeaponPickup* Pickup);
-    void UnregisterWorldPickupCandidate(AWorldWeaponPickup* Pickup);
-    void RefreshWorldPickupInteractionPrompt();
-    void ClearWorldPickupInteractionState();
-    AWorldWeaponPickup* GetCurrentWorldPickupCandidate() const;
-
-新增的移动回调必须匹配引擎动态 delegate：
-
-    UFUNCTION()
-    void HandleCharacterMovementUpdated(float DeltaSeconds, FVector OldLocation, FVector OldVelocity);
-
-FormerOwner 刷新 Timer、pickup state 通知和 teardown helper 必须是窄的内部 C++ 路径。
-
-### WorldWeaponPickup
-
-新增 Begin/End overlap 回调、重叠 Player weak set、通知 helper，以及精确签名为 GetFormerOwnerRemainingTime(const APlayerCharacter* Requester) const 的 private 冷却读取函数。该函数必须按请求者过滤并在冷却结束、世界无效或请求者不匹配时返回 0.0f；必要时使用 friend class APlayerCharacter；不得把这些内部状态扩大为 Blueprint API。
+- 同一 Spec 的多个 Health modifiers 只触发一次；不同 Spec 即使共享 Context 也各自触发一次。
+- 首次 lethal Health decrease 在 Enemy 进入 Dead 清理前触发一次；后续 Dead-state 回调静默。
+- Miss、无效/死亡/销毁目标、Guard/Parry absorption、Poise-only GE、直接 Attribute 写入、非 Player 来源、取消和 teardown 均不震屏。
+- `None` 与多 Reaction Tag 导致的 `Invalid` 是合法 no-shake，不得选择“最高档”或隐式回退到 Small。
 
 ## Approved Change Paths
 
-Gemini 只可修改以下路径：
+Gemini 只可修改以下四个路径：
 
-1. E:\GameDevelop\PolyQuest\Source\PolyQuest\Public\Combat\Equipment\WeaponDefinition.h
-2. E:\GameDevelop\PolyQuest\Source\PolyQuest\Public\UI\WorldInteractionPromptWidget.h
-3. E:\GameDevelop\PolyQuest\Source\PolyQuest\Private\UI\WorldInteractionPromptWidget.cpp
-4. E:\GameDevelop\PolyQuest\Source\PolyQuest\Public\Framework\PolyQuestPlayerController.h
-5. E:\GameDevelop\PolyQuest\Source\PolyQuest\Private\Framework\PolyQuestPlayerController.cpp
-6. E:\GameDevelop\PolyQuest\Source\PolyQuest\Public\Character\Player\PlayerCharacter.h
-7. E:\GameDevelop\PolyQuest\Source\PolyQuest\Private\Character\Player\PlayerCharacter.cpp
-8. E:\GameDevelop\PolyQuest\Source\PolyQuest\Public\Combat\Equipment\WorldWeaponPickup.h
-9. E:\GameDevelop\PolyQuest\Source\PolyQuest\Private\Combat\Equipment\WorldWeaponPickup.cpp
-10. E:\GameDevelop\PolyQuest\Source\PolyQuest\Private\Tests\WorldInteractionPromptAutomationTests.cpp
+1. `E:\GameDevelop\PolyQuest\Source\PolyQuest\Public\Character\Player\PlayerCharacter.h`
+2. `E:\GameDevelop\PolyQuest\Source\PolyQuest\Private\Character\Player\PlayerCharacter.cpp`
+3. `E:\GameDevelop\PolyQuest\Source\PolyQuest\Private\Character\Enemy\EnemyCharacter.cpp`
+4. `E:\GameDevelop\PolyQuest\Source\PolyQuest\Private\Tests\CombatHitFeedbackAutomationTests.cpp`
 
-禁止修改 Config/**、Content/**、PolyQuest.uproject、Source/PolyQuest/PolyQuest.Build.cs、Gameplay Tags、输入资产、其他 Source 文件和项目文档。
+共享契约归属：`PlayerCharacter.h/.cpp` 的 Camera Shake/ASC/Dead 生命周期由 Main 负责；`EnemyCharacter.cpp` 的 Health/Team/feedback 边界由 Main 负责。Gemini 只能实现上述冻结调用，不得改变所有权或公共契约。
 
-## Automation Test Contract
+如需修改 `EnemyCharacter.h`、Resolver/Trace/Projectile 文件、Build.cs、uproject、Config、Gameplay Tags、Input、Content 或任何未列路径，必须停止并把证据交回 Main，不得绕过计划。
 
-新增套件名：
+## Automation Contract
 
-    PolyQuest.UI.WorldInteractionPrompt
+在现有 `CombatHitFeedbackAutomationTests.cpp` 中增加独立套件：
 
-至少覆盖：
+```text
+PolyQuest.Combat.AttackerImpactCameraShake
+```
 
-- Native Widget 文本 setter、PromptText 注入和空绑定安全。
-- 有名称/空名称两种固定提示文本。
-- 最近候选、等距 Actor 名称 tie-break 和失效 weak pointer 清理。
-- 无 WeaponDefinition、NoCollision、bInteractionInProgress、Dead、FormerOwner 冷却过滤。
-- BeginOverlap/EndOverlap register/unregister。
-- 玩家实际移动事件导致最近候选变化，且没有交互 Tick 扫描。
-- FormerOwner 冷却结束后一次性 Timer 刷新；每次重新解析都会主动清除旧 Timer，当前无等待项时不得残留活动 Timer。
-- E 使用缓存候选；缓存失效时不替换为第二候选。
-- Controller 创建幂等、Collapsed/HitTestInvisible、UnPossess/EndPlay 清理。
-- 现有 PolyQuest.Equipment.TransactionMatrix 回归；不复制或重写装备交易逻辑。
+复用现有 `FCombatAutomationFixture`、transient Player/Enemy/Controller 和三种 `TestHitFeedbackCameraShake`；不得新建平行 fixture 或修改 Resolver 请求结构。测试使用带 Player Instigator 和有效 Hit Context 的 transient、带动态 Reaction Tags 的 GE Spec，直接覆盖共同的 `Enemy Health delegate -> HandleCombatImpactFeedback` 边界；既有 Melee/Projectile Resolver 套件作为未改动的交付回归门。
 
-测试只使用原生 transient fixture 和 test-only seam，不依赖新 WBP、地图或导入资产。
+最低断言集合：
 
-## User-Owned Editor And Runtime Gates
+- Small、Big、Launch 精确选择对应测试 Shake class。
+- 字段解耦：仅配置受击字段时，Enemy health damage 的 attacker 路径不启动；仅配置 attacker 字段时，attacker 路径按三档映射；两组字段分别配置不发生隐式回退。
+- Player 自身受击/Parry 路径仍只读取受击字段；attacker 字段为空或更换时不改变该路径结果。
+- 同档命中重启同一实例并只增加一次 start 计数；换档停止旧实例并启动新实例。
+- None/Invalid 不增加计数、不替换活动实例；既有 Hit-Stop 行为不回归。
+- 单一 GE Spec 多个 Health modifiers exactly-once；独立 Specs 各自一次。
+- 首次 lethal 在 Enemy Dead 前完成一次；Dead 后再次 Health GE 不再启动。
+- Poise-only、直接 base Attribute 写入、非 Player source、Guard/Parry absorption 不启动。
+- 无本地 Controller、Player Dead、Destroy/UnPossess/EndPlay 后不产生或不保留 stale Shake。
+- 现有 Hit-Stop 请求计数、Small/Big/Launch 时序与 Camera Shake 共存。
 
-用户在 Editor 中负责：
+不得把测试数量写死为某个历史数字；交接记录实际运行的 suite/result。
 
-1. 新建 /Game/_UI/Interaction/WBP_WorldInteractionPrompt。
-2. 将父类设置为 UWorldInteractionPromptWidget，并添加名称严格为 PromptText 的 TextBlock。
-3. 在 /Game/BP/Game/BP_PlayerController 设置 InteractionPromptClass。
-4. 至少一个现有 WeaponDefinition 填写 InteractionDisplayName，另准备一个空名称 Definition。
-5. 保持 Content/Input/Actions/IA_Interact.uasset 和 Content/Input/IMC_Default.uasset 的 E 映射不变。
-6. 不导入、复制、删除或重命名旧 Test Widget。
+## Execution Order And Static Gate
 
-用户验证顺序：
+Gemini 执行顺序：
 
-- 手动 VS2022 编译 PolyQuestEditor（Development Editor）。
-- Editor readback：WBP 父类、PromptText、Controller class、WeaponDefinition 名称和输入映射。
-- Scene01 focused PIE：进入/离开范围、最近候选、同范围移动切换、等距 tie-break、空名称 fallback、FormerOwner 冷却、交易成功/失败、死亡、UnPossess、销毁和 teardown。
-- 明确验证：缓存候选在 E 前失效时，不会偷偷装备另一个候选。
+1. 读取最新 `AGENTS.md`、本 `plan.md`，并用 CodeGraph 定点确认 `OnHealthAttributeChanged -> HandleCombatImpactFeedback`、`TriggerHitFeedbackCameraShake` 和直接 callers/callees。
+2. 在 Player 头文件加入三个 attacker 字段、最小声明/测试 seam，并把既有字段注释收敛为受击/防御语义。
+3. 在 Player cpp 为两组字段建立独立解析路径，抽取必要的最小共享启动 helper；保持桥接、ASC/authority/dead 检查和既有清理生命周期。
+4. 在 Enemy cpp 保持 Player 类型识别和单一转发调用，不能借此改变既有反馈副作用和 lethal 顺序。
+5. 在现有测试文件中加入字段解耦断言及必要的 transient GE helper；不修改生产 Resolver/GE 路径。
+6. 阅读最终 diff，运行 `git diff --check`，并在可用时对四个 C++ 文件运行 Rider `lint_files`/`get_file_problems`；完成严格 defect-first self-review，重点确认没有 attacker -> received 字段回退。
+7. 交接时列出 changed paths、调用链核对、静态检查结果、未运行的用户门禁、self-review findings 和 remaining risks，然后停止。
 
-在用户证据到达前，不得把 Source 静态检查、CodeGraph、git diff --check 或 Gemini self-review 写成编译、Editor、Automation 或 PIE 证明。
+Gemini 不得编译、启动 Editor、运行 Automation/PIE、打包、stage、commit、reset、清理 WIP 或修改项目文档。
 
-## Static Review And Closeout
+## User-Owned Validation Gates
 
-Gemini 交接时读取最终 diff，使用 CodeGraph 核对关键调用链，运行 `git diff --check`，并在可用时运行 Rider `lint_files` 或 `get_file_problems`，随后完成严格 defect-first implementation self-review。Gemini 未执行编译、Editor、Automation/PIE、打包或提交。
+实现交接后由用户负责：
 
-Main 在用户验证后完成一轮独立 defect-first fresh review，审查范围限定为本阶段批准文件及一跳直接调用边界；未发现 P0/P1/P2 blocker。普通阶段收口不追加第二轮 adversarial review。
+1. 手动编译 `PolyQuestEditor`（VS2022，Development Editor）。
+2. Editor readback：确认 `BP_Player` 的受击字段和 attacker 字段分别存在且可独立配置。v1 允许两组字段引用同一组资产：
+   - `/Game/_FeedBack/Camera/CS_PlayerHit_Small`
+   - `/Game/_FeedBack/Camera/CS_PlayerHit_Big`
+   - `/Game/_FeedBack/Camera/CS_PlayerHit_Launch`
+   受击三字段和 attacker 三字段各自读回为对应资产类，并确认三者是有效 `UCameraShakeBase` 且 `bSingleInstance=true`；不新增、复制或重绑资产。若 attacker 字段未配置，必须记录为未通过该门禁，不能以旧版共享字段验证替代。
+3. 运行新增 focused suite 及现有相关 Hit Feedback、Melee、Projectile、Guard/Parry 回归套件。
+4. 在 `/Game/Maps/Scene01` PIE 验证：实际 melee 与 Bow/projectile 的三档命中、顿帧共存、lethal 单次反馈、Miss/Defense/Poise-only 排除，以及 UnPossess/Destroy/teardown 清理。
 
-验证和 review 通过后，Main 才更新：
+Source 静态检查、CodeGraph、`git diff --check` 和 Gemini self-review 不能代替上述编译、Editor readback、Automation 或 PIE 证据。
 
-- ARCHITECTURE.md：记录稳定的 Prompt ownership、Player 候选快照、事件驱动生命周期和装备边界。
-- ROADMAP.md：更新当前基线和下一阶段顺序；`Active Milestones` 只保留开放阶段，详细完成记录追加到 `ROADMAP-archive.md`，并登记实际存在的资产/验证债务。
-- README.md：只补充必要的公开状态和证据摘要。
-- plan.md：写入本阶段 closeout，直到下一阶段获准后再替换。
+## Documentation And Review Closeout
 
-用户已明确批准本阶段提交。只按批准路径 staging；现有 Config/Content WIP 与未批准 Source WIP 不清理、不回滚、不纳入提交。
+只有用户门禁完成且 Main review 通过后：
+
+- `ARCHITECTURE.md`：记录 Enemy 目标侧反馈只负责转发 Player attacker impact，PlayerCameraManager 和三档 Shake 仍由 Player 拥有；不再写“Enemy has no Camera Shake path”这类与转发契约冲突的描述。
+- `ROADMAP.md`：更新实际完成基线，移除活动路线中的完整 07B4 完成块，保持 `TODO-03A7 -> TODO-05A -> TODO-05B -> TODO-03C` 顺序，并登记真实验证债务。
+- `ROADMAP-archive.md`：追加 TODO-07B4 详细 closeout、证据类别、排除项和未关闭债务。
+- `README.md`：只更新必要的公开状态和已证实证据。
+- `plan.md`：保留本阶段 closeout，直到下一阶段获准后再替换。
+
+Main 对最终四个批准文件做一轮独立 defect-first fresh review，范围为批准文件及受影响符号一跳直接 callers/callees；重点检查 exactly-once、lethal ordering、authority/local-controller、Dead/teardown、weak reference、None/Invalid 和防御排除。普通收口不追加第二轮 adversarial review，也不派独立 Reviewer。
 
 ## Non-Goals
 
-- 不复用旧 Test Widget，不导入或手工修改任何 uasset/umap。
-- 不新增通用交互接口、库存/奖励系统、网络复制、RPC、GAS Ability、GameplayEffect、GameplayCue 或新的 Gameplay Tag。
-- 不改变装备交易、回滚、掉落生成、Damage/Defense、Lock-On、Bow 或 Enemy AI。
-- 不把提示刷新加入 Tick，不在 E 输入中重新扫描或自动换候选。
-- 不修改 Build.cs、uproject、Config、输入资产、Blueprint 图、地图、动画、Niagara、音频或无关 WIP。
-
-## Gemini Handoff Prompt (Historical Execution Record)
-
-> 以下是已完成实现阶段的历史交接提示，仅用于追溯批准边界，不是当前执行指令。
-
-你是 PolyQuest 的实现执行者 Gemini。
-
-仓库 cwd：E:\GameDevelop\PolyQuest
-基线：main @ 397bea6
-引擎源码：D:\UE\UE_5.8
-
-先读取 E:\GameDevelop\PolyQuest\AGENTS.md、E:\GameDevelop\PolyQuest\plan.md，以及本 TODO-03A3E 计划。
-
-Outer: ue-stage-workflow
-Primary: ue5-world-interaction
-Support: ue5-ui-umg-slate, ue5-cpp-gameplay, ue5-debug-validation
-Execution route: manual/out-of-band Gemini
-
-Contract owner: Main
-Implementation writer: Gemini
-
-只实现本计划冻结的 Source/test slice，并且只修改 Approved Change Paths 中的 10 个路径。共享 ASC/AttributeSet、Gameplay Tag、Input、装备交易、生命周期和 UI ownership 契约由 Main 拥有；你不得改变它们。
-
-执行顺序：
-
-1. 先在头文件中完成最小 reflected API、forward declarations、Automation seams 和生命周期回调声明。
-2. 实现被动 Prompt Widget 与 Controller 本地幂等创建/显示/隐藏/teardown。
-3. 在 Player 建立候选集合、Resolver、CurrentWorldPickupCandidate、FormerOwner 一次性 Timer，并把初始化放在 BeginPlay 的 stamina early return 之前。
-4. 将现有 E 处理改为只读缓存候选，再调用 CanInteract 和 TryEquipWorldPickup；失效时本次 no-op/refresh，不切换候选。
-5. 在 Pickup 绑定 Begin/End Overlap、维护重叠 Player weak set，并覆盖所有列出的状态通知；UpdateOverlaps 前检查 IsRegistered。
-6. 添加 PolyQuest.UI.WorldInteractionPrompt Automation 测试和最小 test-only seam。
-
-固定文本必须使用以下 NSLOCTEXT key，再由 FText::Format 组合：
-
-    NSLOCTEXT("PolyQuest", "PromptWithWeapon", "拾取 {0}")
-    NSLOCTEXT("PolyQuest", "PromptFallback", "拾取")
-
-FormerOwner getter 必须接收当前 Player 请求者并严格检查 FormerOwner.Get() == Requester；每次 Resolver 刷新前先 ClearTimer，无需等待时保持清除状态。PromptText 继续使用必需 BindWidget，setter 必须 null-safe。
-
-禁止：
-
-- 修改任何 Content、Config、文档、Build.cs、uproject、Gameplay Tags 或输入资产。
-- 复用 E:\GameDevelop\Test 的 WBP_InteractionPrompt.uasset。
-- 新建第二套装备或资格逻辑、通用交互接口、网络/RPC、GAS/GE/Cue、Tick 轮询。
-- 清理、回滚、覆盖任何现有 WIP。
-- 编译、启动 Editor、运行 Automation/PIE、打包或提交。
-
-若需要未列出的文件、公开 API、Tag、Input、Config、资产或生命周期规则，立即停止并把证据返回 Main，不要自行绕过。
-
-完成交接时列出：
-
-- changed paths
-- 每个路径的行为摘要
-- CodeGraph、git diff --check、Rider 静态检查结果
-- 未执行的编译/Editor/Automation/PIE 门禁
-- strict self-review findings
-- remaining risks
-
-不要修改项目文档，不要提交。
+- 不新增或修改 Gameplay Tag、GameplayEffect、GameplayCue、Damage 路径、Resolver、Trace Task、Projectile、Hit-Stop 数值或全局相机变换。
+- 不新增 attacker 专用 Camera Shake 资产、反馈 Dispatcher、第二个运行时 Shake 通道或 Enemy camera shake；本阶段明确允许且要求新增三项 attacker 配置字段。
+- Gemini 不修改 Content/Config/Blueprint/Montage/AnimBP/Niagara/音频/Input/Build.cs/uproject；用户可在 Editor 的 `BP_Player` 默认值中独立填写新增 attacker 字段（允许复用现有三项 Camera Shake 资产），这不属于 Gemini 的文件改动范围。
+- 不改变 Lock-On、Bow targeting、装备、Poise、Stance Break、Death、AI 或多人/复制边界。
+- 不清理、回滚、覆盖或提交任何既有 WIP。
 
 ## Closeout Record
 
-### Scope accepted
-
-本阶段最终只包含以下 10 个批准路径：
-
-1. `Source/PolyQuest/Public/Combat/Equipment/WeaponDefinition.h`
-2. `Source/PolyQuest/Public/UI/WorldInteractionPromptWidget.h`
-3. `Source/PolyQuest/Private/UI/WorldInteractionPromptWidget.cpp`
-4. `Source/PolyQuest/Public/Framework/PolyQuestPlayerController.h`
-5. `Source/PolyQuest/Private/Framework/PolyQuestPlayerController.cpp`
-6. `Source/PolyQuest/Public/Character/Player/PlayerCharacter.h`
-7. `Source/PolyQuest/Private/Character/Player/PlayerCharacter.cpp`
-8. `Source/PolyQuest/Public/Combat/Equipment/WorldWeaponPickup.h`
-9. `Source/PolyQuest/Private/Combat/Equipment/WorldWeaponPickup.cpp`
-10. `Source/PolyQuest/Private/Tests/WorldInteractionPromptAutomationTests.cpp`
-
-实现保持以下边界：`APlayerCharacter` 持有弱候选集合和当前候选快照；Overlap、移动、拾取状态、FormerOwner 冷却、Dead、Possess 和 teardown 事件驱动同一解析器；Controller 只拥有本地被动 Prompt；`UWeaponEquipmentComponent::TryEquipWorldPickup` 仍是唯一装备变更路径。未增加 Tick 轮询、通用交互框架、Gameplay Tag、Input/Config 路由或第二套交易逻辑。
-
-### Evidence
-
-- **用户运行证据**：用户手动勾选当前全部 PolyQuest Automation 套件，25/25 为 `Success`；用户确认 focused `Scene01` PIE 覆盖提示显隐、最近候选切换、E 装备/失败交互、FormerOwner 冷却恢复、重新 Possess 与 teardown。
-- **静态证据**：Gemini 报告 CodeGraph 调用链核对、Rider error-level 检查无诊断，`git diff --check -- Source/PolyQuest` 退出码为 0；warning-level 中的既有命名/风格提示不记为零警告。
-- **复核证据**：Main 在用户修复与复测后完成一轮受控 defect-first fresh review，未发现 P0/P1/P2 blocker；未进行第二轮 adversarial review，也未派遣独立 Reviewer。
-- **未声称证据**：本记录没有独立 Development Editor 编译日志或新的 Editor readback 记录；Automation/PIE 结果不替代该类证据。`Config/Automation/Presets/1.json` 不是完整套件清单，25/25 数量来自用户手动选择，不从该 preset 推断。
-
-### Exclusions and remaining debt
-
-- `Source/PolyQuest/Private/Tests/WeaponEquipmentComponentAutomationTests.cpp` 的 TransactionMatrix 路径修复不属于本阶段；未跟踪的 `Content/_Abilities/Weapon/LightSword/Guard/GA_Guard_Sowrd.uasset`、全部 Config/Content WIP 以及其他 Source WIP 均不纳入、不清理、不回滚。
-- Automation 主要通过 transient test seam 驱动，真实 overlap/delegate 深度和“失效 E 快照绝不改变装备”的直接断言仍是非阻塞验证债务；只有未来出现交互回归或专门测试深度阶段时才关闭。
-- TransactionMatrix 的本地 WIP 资产依赖保留到后续经批准的装备/资产基线阶段，并以用户 Editor readback 作为关闭条件。
-
-### Documentation and commit boundary
-
-- `ARCHITECTURE.md` 已补充 Prompt、候选快照、事件驱动刷新、Controller/Widget 与 Pickup 的稳定所有权契约。
-- `ROADMAP.md` 按项目惯例保留本阶段起始基线 `main @ 397bea6`、`TODO-07B4 → TODO-03A7 → TODO-05A → TODO-05B → TODO-03C` 的开放顺序和必要债务/依赖指针；TODO-03A3E 的详细 closeout 已追加到 `ROADMAP-archive.md`，阶段完成提交为 `6a96fc1`，TODO-05C 继续退役。
-- `README.md` 已补充公开状态和证据边界；`AGENTS.md` 已加入受控 fresh review 范围、证据短路和输出预算规则。
-- 原阶段实现提交只包含上述 10 个 Source/test 路径与五份文档（`AGENTS.md`、`ARCHITECTURE.md`、`ROADMAP.md`、`README.md`、`plan.md`）；Config/Content WIP 与未批准测试改动明确排除。
-
-阶段收口状态（原阶段提交）：用户已批准并完成本阶段提交；未暂存的 Config/Content/其他 Source WIP 仍保留在工作区，未被本次提交触碰。
-
-## Documentation Maintenance Follow-up (2026-08-29)
-
-- `ROADMAP.md` 的完整 TODO-03A3E 完成块已移出活动路线；活动路线只保留开放里程碑，阶段起始基线仍按项目惯例记录为 `397bea6`，阶段完成提交为 `6a96fc1`。
-- TODO-03A3E 的详细完成、验证证据、排除项和非阻塞债务已追加到 `ROADMAP-archive.md`。本 `plan.md` 继续作为最近阶段的详细交接记录，直到下一阶段计划正式替换它。
-- 本次维护提交仅包含 `AGENTS.md`、`ROADMAP.md`、`ROADMAP-archive.md` 和 `plan.md`；所有 Config/Content/Source WIP 继续排除。
+- **Implementation**：Player 受击与攻击者命中 Shake 使用两组独立的三档字段；Enemy 只在既有权威 Health/Team 反馈边界转发 ReactionTier；两路共用 PlayerCameraManager、活动实例和 UnPossessed/EndPlay 清理，不增加第二条伤害或反馈通道。
+- **User evidence**：用户确认 `PolyQuest.Combat.AttackerImpactCameraShake` focused Automation 再次 `Success`，并确认 Scene01 PIE 通过。Automation 覆盖字段解耦、三档映射、同档/换档、exactly-once、lethal、排除项和 teardown。
+- **Static/review evidence**：Gemini 报告 Rider error-level 检查无诊断与 `git diff --check` 通过；CodeGraph/Code-review-graph 仅作结构/影响辅助。Main 完成一轮独立 defect-first fresh review，字段隔离修复已核对，未发现 P0/P1/P2 blocker；不追加第二轮 adversarial review。
+- **Unverified gates**：本记录没有独立的手动 `PolyQuestEditor` 编译日志或 `BP_Player` 六字段 Editor readback；不从 Automation/PIE 推断它们，已在 `ROADMAP.md` 登记具体 closure trigger。
+- **Scope/commit**：阶段提交只包含四个批准 Source/test 路径与本阶段文档；`AGENTS.md`、Config、Content/**、`WeaponEquipmentComponentAutomationTests.cpp` 和其他 WIP 排除在外。本次收口父基线为 `9c2ca48`；最终提交 hash 以 Git 历史为准，不在本记录中自引用。

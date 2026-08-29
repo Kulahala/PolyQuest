@@ -211,6 +211,16 @@ void APlayerCharacter::ConfigureTestHitFeedbackCameraShakes(
 	LaunchHitFeedbackCameraShakeClass = InLaunchClass;
 }
 
+void APlayerCharacter::ConfigureTestAttackerImpactCameraShakes(
+	TSubclassOf<UCameraShakeBase> InSmallClass,
+	TSubclassOf<UCameraShakeBase> InBigClass,
+	TSubclassOf<UCameraShakeBase> InLaunchClass)
+{
+	SmallAttackerImpactCameraShakeClass = InSmallClass;
+	BigAttackerImpactCameraShakeClass = InBigClass;
+	LaunchAttackerImpactCameraShakeClass = InLaunchClass;
+}
+
 void APlayerCharacter::TriggerTestHandleInteractStarted()
 {
 	HandleInteractStarted(FInputActionValue());
@@ -597,6 +607,29 @@ bool APlayerCharacter::TryResolveIncomingDefense(
 void APlayerCharacter::TriggerParrySuccessCameraShake()
 {
 	TriggerHitFeedbackCameraShake(EHitReactionTier::Big);
+}
+
+void APlayerCharacter::TriggerAttackerImpactCameraShake(const EHitReactionTier ReactionTier)
+{
+	if (!HasAuthority() || IsActorBeingDestroyed())
+	{
+		return;
+	}
+
+	const UAbilitySystemComponent* CharacterASC = GetAbilitySystemComponent();
+	if (!CharacterASC)
+	{
+		return;
+	}
+
+	const bool bIsDead = DeadStateTag.IsValid() && CharacterASC->HasMatchingGameplayTag(DeadStateTag);
+	if (bIsDead)
+	{
+		return;
+	}
+
+	const TSubclassOf<UCameraShakeBase> ResolvedClass = ResolveAttackerImpactCameraShakeClass(ReactionTier);
+	StartHitFeedbackCameraShakeInstance(ResolvedClass);
 }
 
 UPlayerParryAbility* APlayerCharacter::FindActiveParryAbility() const
@@ -2321,16 +2354,62 @@ TSubclassOf<UCameraShakeBase> APlayerCharacter::ResolveHitFeedbackCameraShakeCla
 	}
 }
 
-void APlayerCharacter::TriggerHitFeedbackCameraShake(const EHitReactionTier ReactionTier)
+TSubclassOf<UCameraShakeBase> APlayerCharacter::ResolveAttackerImpactCameraShakeClass(const EHitReactionTier ReactionTier)
 {
-	APlayerController* PlayerController = Cast<APlayerController>(GetController());
-	if (!PlayerController || !PlayerController->IsLocalController() || !PlayerController->PlayerCameraManager)
+	switch (ReactionTier)
+	{
+	case EHitReactionTier::Small:
+		if (SmallAttackerImpactCameraShakeClass)
+		{
+			return SmallAttackerImpactCameraShakeClass;
+		}
+		if (!bHasLoggedMissingSmallAttackerImpactCameraShakeClass)
+		{
+			UE_LOG(LogPolyQuest, Warning, TEXT("'%s' is missing SmallAttackerImpactCameraShakeClass."), *GetNameSafe(this));
+			bHasLoggedMissingSmallAttackerImpactCameraShakeClass = true;
+		}
+		return nullptr;
+
+	case EHitReactionTier::Big:
+		if (BigAttackerImpactCameraShakeClass)
+		{
+			return BigAttackerImpactCameraShakeClass;
+		}
+		if (!bHasLoggedMissingBigAttackerImpactCameraShakeClass)
+		{
+			UE_LOG(LogPolyQuest, Warning, TEXT("'%s' is missing BigAttackerImpactCameraShakeClass."), *GetNameSafe(this));
+			bHasLoggedMissingBigAttackerImpactCameraShakeClass = true;
+		}
+		return nullptr;
+
+	case EHitReactionTier::Launch:
+		if (LaunchAttackerImpactCameraShakeClass)
+		{
+			return LaunchAttackerImpactCameraShakeClass;
+		}
+		if (!bHasLoggedMissingLaunchAttackerImpactCameraShakeClass)
+		{
+			UE_LOG(LogPolyQuest, Warning, TEXT("'%s' is missing LaunchAttackerImpactCameraShakeClass."), *GetNameSafe(this));
+			bHasLoggedMissingLaunchAttackerImpactCameraShakeClass = true;
+		}
+		return nullptr;
+
+	case EHitReactionTier::None:
+	case EHitReactionTier::Invalid:
+	default:
+		return nullptr;
+	}
+}
+
+void APlayerCharacter::StartHitFeedbackCameraShakeInstance(const TSubclassOf<UCameraShakeBase> ResolvedClass)
+{
+	if (!ResolvedClass)
 	{
 		return;
 	}
 
-	const TSubclassOf<UCameraShakeBase> ResolvedClass = ResolveHitFeedbackCameraShakeClass(ReactionTier);
-	if (!ResolvedClass)
+	APlayerController* PlayerController = Cast<APlayerController>(GetController());
+	if (!PlayerController || !PlayerController->IsLocalController() || !PlayerController->PlayerCameraManager)
 	{
 		return;
 	}
@@ -2365,6 +2444,12 @@ void APlayerCharacter::TriggerHitFeedbackCameraShake(const EHitReactionTier Reac
 		TestLastHitFeedbackCameraShake = StartedShake;
 #endif
 	}
+}
+
+void APlayerCharacter::TriggerHitFeedbackCameraShake(const EHitReactionTier ReactionTier)
+{
+	const TSubclassOf<UCameraShakeBase> ResolvedClass = ResolveHitFeedbackCameraShakeClass(ReactionTier);
+	StartHitFeedbackCameraShakeInstance(ResolvedClass);
 }
 
 void APlayerCharacter::ClearActiveHitFeedbackCameraShake()

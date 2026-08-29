@@ -16,6 +16,7 @@
 #include "Materials/MaterialInstanceDynamic.h"
 #include "Tests/CombatAutomationFixture.h"
 #include "Tests/TestHitFeedbackCameraShake.h"
+#include "GameplayEffect.h"
 #include "Tests/TestPoiseRecoveryGE.h"
 #include "Tests/TestProjectileDamageGE.h"
 
@@ -84,6 +85,41 @@ namespace
 			Spec.Data->AppendDynamicAssetTags(*DynamicTags);
 		}
 		return TargetASC->ApplyGameplayEffectSpecToSelf(*Spec.Data.Get()).WasSuccessfullyApplied();
+	}
+
+	bool ApplyMultiModifierDamage(
+		UAbilitySystemComponent* SourceASC,
+		UAbilitySystemComponent* TargetASC,
+		const FGameplayTagContainer* DynamicTags = nullptr)
+	{
+		if (!SourceASC || !TargetASC)
+		{
+			return false;
+		}
+
+		UGameplayEffect* MultiModEffect = NewObject<UGameplayEffect>(GetTransientPackage());
+		MultiModEffect->DurationPolicy = EGameplayEffectDurationType::Instant;
+
+		FGameplayModifierInfo Mod1;
+		Mod1.Attribute = UCharacterAttributeSet::GetHealthAttribute();
+		Mod1.ModifierOp = EGameplayModOp::Additive;
+		Mod1.ModifierMagnitude = FGameplayEffectModifierMagnitude(FScalableFloat(-10.0f));
+		MultiModEffect->Modifiers.Add(Mod1);
+
+		FGameplayModifierInfo Mod2;
+		Mod2.Attribute = UCharacterAttributeSet::GetHealthAttribute();
+		Mod2.ModifierOp = EGameplayModOp::Additive;
+		Mod2.ModifierMagnitude = FGameplayEffectModifierMagnitude(FScalableFloat(-10.0f));
+		MultiModEffect->Modifiers.Add(Mod2);
+
+		FGameplayEffectContextHandle Context = SourceASC->MakeEffectContext();
+		FGameplayEffectSpec Spec(MultiModEffect, Context, 1.0f);
+		if (DynamicTags)
+		{
+			Spec.AppendDynamicAssetTags(*DynamicTags);
+		}
+
+		return TargetASC->ApplyGameplayEffectSpecToSelf(Spec).WasSuccessfullyApplied();
 	}
 }
 
@@ -613,6 +649,255 @@ bool FCombatHitFeedbackAutomationTest::RunTest(const FString& Parameters)
 	UGameplayStatics::SetGlobalTimeDilation(World, 1.0f);
 
 	Enemy->Destroy();
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCombatAttackerImpactCameraShakeAutomationTest, "PolyQuest.Combat.AttackerImpactCameraShake", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FCombatAttackerImpactCameraShakeAutomationTest::RunTest(const FString& Parameters)
+{
+	if (!TestNotNull(TEXT("Engine is available for the attacker impact camera shake fixture"), GEngine))
+	{
+		return false;
+	}
+
+	FWorldContext& WorldContext = GEngine->CreateNewWorldContext(EWorldType::Game);
+	UWorld* World = UWorld::CreateWorld(EWorldType::Game, false, TEXT("CombatAttackerImpactCameraShakeTestWorld"));
+	WorldContext.SetCurrentWorld(World);
+	FWorldCleanup Cleanup{ World };
+	if (!TestNotNull(TEXT("Test World created"), World))
+	{
+		return false;
+	}
+
+	FURL WorldURL;
+	World->InitializeActorsForPlay(WorldURL);
+	World->BeginPlay();
+
+	APlayerCharacter* Player = FCombatAutomationFixture::SpawnPlayer(World, FTransform(FRotator::ZeroRotator, FVector::ZeroVector));
+	AEnemyCharacter* Enemy = FCombatAutomationFixture::SpawnPassiveEnemy(World, FTransform(FRotator::ZeroRotator, FVector(250.0f, 0.0f, 0.0f)));
+	APolyQuestPlayerController* Controller = World->SpawnActor<APolyQuestPlayerController>();
+	if (!TestNotNull(TEXT("Player fixture created"), Player) || !TestNotNull(TEXT("Enemy fixture created"), Enemy) || !TestNotNull(TEXT("Local PlayerController created"), Controller))
+	{
+		return false;
+	}
+
+	Controller->DispatchBeginPlay();
+	Controller->SetAsLocalPlayerController();
+	Controller->Possess(Player);
+	TestTrue(TEXT("Controller is local for Player camera feedback"), Controller->IsLocalController());
+	TestNotNull(TEXT("Controller has a PlayerCameraManager for shake feedback"), Controller->PlayerCameraManager.Get());
+
+	UAbilitySystemComponent* SourceASC = Player->GetAbilitySystemComponent();
+	UAbilitySystemComponent* PlayerASC = Player->GetAbilitySystemComponent();
+	UAbilitySystemComponent* EnemyASC = Enemy->GetAbilitySystemComponent();
+	TestNotNull(TEXT("Player ASC available"), PlayerASC);
+	TestNotNull(TEXT("Enemy ASC available"), EnemyASC);
+	if (!PlayerASC || !EnemyASC)
+	{
+		return false;
+	}
+
+	const FGameplayTag SmallReactionTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Data.Reaction.Small")), false);
+	const FGameplayTag BigReactionTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Data.Reaction.Big")), false);
+	const FGameplayTag LaunchReactionTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Data.Reaction.Launch")), false);
+	const FGameplayTag DeadTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Status.Dead")), false);
+
+	PlayerASC->SetNumericAttributeBase(UCharacterAttributeSet::GetMaxHealthAttribute(), 1000.0f);
+	PlayerASC->SetNumericAttributeBase(UCharacterAttributeSet::GetHealthAttribute(), 1000.0f);
+	EnemyASC->SetNumericAttributeBase(UCharacterAttributeSet::GetMaxHealthAttribute(), 1000.0f);
+	EnemyASC->SetNumericAttributeBase(UCharacterAttributeSet::GetHealthAttribute(), 1000.0f);
+
+	FGameplayTagContainer SmallTags;
+	SmallTags.AddTag(SmallReactionTag);
+	FGameplayTagContainer BigTags;
+	BigTags.AddTag(BigReactionTag);
+	FGameplayTagContainer LaunchTags;
+	LaunchTags.AddTag(LaunchReactionTag);
+
+	// 1. Field Decoupling: Only received hit classes configured initially by SpawnPlayer; attacker classes are null -> no attacker shake
+	TestTrue(TEXT("Player attacks Enemy before attacker shake classes are configured"), ApplyDamage(SourceASC, EnemyASC, &SmallTags));
+	TestEqual(TEXT("Unconfigured attacker classes do not trigger shake on Enemy hit"), Player->GetTestHitFeedbackCameraShakeStartCount(), 0);
+	TestNull(TEXT("Active shake remains null when attacker shake classes are unconfigured"), Player->GetTestActiveHitFeedbackCameraShake());
+
+	// Configure strictly attacker-only Shake classes (clear received-hit classes to verify attacker path does not depend on them)
+	Player->ConfigureTestHitFeedbackCameraShakes(nullptr, nullptr, nullptr);
+	Player->ConfigureTestAttackerImpactCameraShakes(
+		UTestSmallHitFeedbackCameraShake::StaticClass(),
+		UTestBigHitFeedbackCameraShake::StaticClass(),
+		UTestLaunchHitFeedbackCameraShake::StaticClass());
+
+	// 2. Small tier attack selects Small test shake and triggers co-existing hit-stop
+	TestTrue(TEXT("Player attacks Enemy with Small reaction tier"), ApplyDamage(SourceASC, EnemyASC, &SmallTags));
+	TestEqual(TEXT("Small tier hit increments Player shake start count"), Player->GetTestHitFeedbackCameraShakeStartCount(), 1);
+	UCameraShakeBase* SmallShake = Player->GetTestLastHitFeedbackCameraShake();
+	TestNotNull(TEXT("Small tier started a valid shake instance"), SmallShake);
+	TestTrue(TEXT("Small tier selects Small test shake class"), SmallShake && SmallShake->IsA<UTestSmallHitFeedbackCameraShake>());
+	TestTrue(TEXT("Small shake is active"), SmallShake && SmallShake->IsActive());
+	TestTrue(TEXT("Player active shake matches Small shake"), Player->GetTestActiveHitFeedbackCameraShake() == SmallShake);
+	TestTrue(TEXT("Controller hit-stop is active after Small hit"), Controller->IsTestHitStopActive());
+	TestEqual(TEXT("Small hit selects 0.03s duration"), Enemy->GetTestLastImpactHitStopDuration(), 0.03f);
+	TestEqual(TEXT("Small hit selects 0.1 dilation"), Enemy->GetTestLastImpactHitStopTimeDilation(), 0.1f);
+	AdvanceHitFeedbackTimer(World, 0.05f);
+	TestFalse(TEXT("Small hit-stop expires"), Controller->IsTestHitStopActive());
+
+	// 3. Repeated Small tier reuses single-instance Small shake
+	TickHitFeedbackTestWorld(World, 0.06f);
+	TestTrue(TEXT("Repeated Small tier attack applies"), ApplyDamage(SourceASC, EnemyASC, &SmallTags));
+	TestEqual(TEXT("Repeated Small tier increments shake count"), Player->GetTestHitFeedbackCameraShakeStartCount(), 2);
+	TestTrue(TEXT("Repeated Small tier reuses active Small shake"), SmallShake && Player->GetTestLastHitFeedbackCameraShake() == SmallShake);
+	TestTrue(TEXT("Small shake remains active after same-tier restart"), SmallShake && SmallShake->IsActive());
+	AdvanceHitFeedbackTimer(World, 0.25f);
+
+	// 4. Big tier attack selects Big test shake and stops Small shake
+	TestTrue(TEXT("Big tier attack on Enemy applies"), ApplyDamage(SourceASC, EnemyASC, &BigTags));
+	TestEqual(TEXT("Big tier hit increments Player shake count"), Player->GetTestHitFeedbackCameraShakeStartCount(), 3);
+	UCameraShakeBase* BigShake = Player->GetTestLastHitFeedbackCameraShake();
+	TestNotNull(TEXT("Big tier started a valid shake instance"), BigShake);
+	TestTrue(TEXT("Big tier selects Big test shake class"), BigShake && BigShake->IsA<UTestBigHitFeedbackCameraShake>());
+	TestTrue(TEXT("Big shake is active"), BigShake && BigShake->IsActive());
+	TestFalse(TEXT("Small shake stopped on transition to Big tier"), SmallShake && SmallShake->IsActive());
+	TestTrue(TEXT("Player active shake matches Big shake"), Player->GetTestActiveHitFeedbackCameraShake() == BigShake);
+	TestTrue(TEXT("Controller hit-stop is active after Big hit"), Controller->IsTestHitStopActive());
+	TestEqual(TEXT("Big hit selects 0.05s duration"), Enemy->GetTestLastImpactHitStopDuration(), 0.05f);
+	TestEqual(TEXT("Big hit selects 0.03 dilation"), Enemy->GetTestLastImpactHitStopTimeDilation(), 0.03f);
+	AdvanceHitFeedbackTimer(World, 0.08f);
+	TestFalse(TEXT("Big hit-stop expires"), Controller->IsTestHitStopActive());
+
+	// 5. Launch tier attack selects Launch test shake and stops Big shake
+	TestTrue(TEXT("Launch tier attack on Enemy applies"), ApplyDamage(SourceASC, EnemyASC, &LaunchTags));
+	TestEqual(TEXT("Launch tier hit increments Player shake count"), Player->GetTestHitFeedbackCameraShakeStartCount(), 4);
+	UCameraShakeBase* LaunchShake = Player->GetTestLastHitFeedbackCameraShake();
+	TestNotNull(TEXT("Launch tier started a valid shake instance"), LaunchShake);
+	TestTrue(TEXT("Launch tier selects Launch test shake class"), LaunchShake && LaunchShake->IsA<UTestLaunchHitFeedbackCameraShake>());
+	TestTrue(TEXT("Launch shake is active"), LaunchShake && LaunchShake->IsActive());
+	TestFalse(TEXT("Big shake stopped on transition to Launch tier"), BigShake && BigShake->IsActive());
+	TestTrue(TEXT("Player active shake matches Launch shake"), Player->GetTestActiveHitFeedbackCameraShake() == LaunchShake);
+	TestTrue(TEXT("Controller hit-stop is active after Launch hit"), Controller->IsTestHitStopActive());
+	TestEqual(TEXT("Launch hit selects 0.05s duration"), Enemy->GetTestLastImpactHitStopDuration(), 0.05f);
+	TestEqual(TEXT("Launch hit selects 0.05 dilation"), Enemy->GetTestLastImpactHitStopTimeDilation(), 0.05f);
+	AdvanceHitFeedbackTimer(World, 0.08f);
+	TestFalse(TEXT("Launch hit-stop expires"), Controller->IsTestHitStopActive());
+
+	// 6. Decoupling: Player received hit path still uses received hit classes independently of attacker classes
+	Player->ConfigureTestAttackerImpactCameraShakes(nullptr, nullptr, nullptr);
+	Player->ConfigureTestHitFeedbackCameraShakes(
+		UTestSmallHitFeedbackCameraShake::StaticClass(),
+		UTestBigHitFeedbackCameraShake::StaticClass(),
+		UTestLaunchHitFeedbackCameraShake::StaticClass());
+	const int32 ShakeCountBeforeReceivedHit = Player->GetTestHitFeedbackCameraShakeStartCount();
+	TestTrue(TEXT("Player received Small tier hit damage"), ApplyDamage(SourceASC, PlayerASC, &SmallTags));
+	TestEqual(TEXT("Player received hit uses received hit classes even when attacker classes are null"), Player->GetTestHitFeedbackCameraShakeStartCount(), ShakeCountBeforeReceivedHit + 1);
+	UCameraShakeBase* ReceivedSmallShake = Player->GetTestLastHitFeedbackCameraShake();
+	TestNotNull(TEXT("Received hit started Small shake"), ReceivedSmallShake);
+	TestTrue(TEXT("Received hit selects Small test shake"), ReceivedSmallShake && ReceivedSmallShake->IsA<UTestSmallHitFeedbackCameraShake>());
+	AdvanceHitFeedbackTimer(World, 0.25f);
+
+	// Restore attacker classes for remaining attacker tests
+	Player->ConfigureTestAttackerImpactCameraShakes(
+		UTestSmallHitFeedbackCameraShake::StaticClass(),
+		UTestBigHitFeedbackCameraShake::StaticClass(),
+		UTestLaunchHitFeedbackCameraShake::StaticClass());
+
+	// Re-establish Launch shake on attacker path
+	TestTrue(TEXT("Launch tier attack re-establishes active Launch shake"), ApplyDamage(SourceASC, EnemyASC, &LaunchTags));
+	LaunchShake = Player->GetTestLastHitFeedbackCameraShake();
+	TestNotNull(TEXT("Active Launch shake re-established"), LaunchShake);
+
+	// 7. None and Invalid multi-tier tags do not trigger shake and do not replace active Launch shake
+	const int32 ShakeCountBeforeNone = Player->GetTestHitFeedbackCameraShakeStartCount();
+	TestTrue(TEXT("None tier attack on Enemy applies"), ApplyDamage(SourceASC, EnemyASC));
+	TestEqual(TEXT("None tier attack does not increment Player shake count"), Player->GetTestHitFeedbackCameraShakeStartCount(), ShakeCountBeforeNone);
+	TestTrue(TEXT("Active Launch shake remains active after None tier hit"), LaunchShake && LaunchShake->IsActive());
+	TestTrue(TEXT("Active shake unchanged after None tier hit"), Player->GetTestActiveHitFeedbackCameraShake() == LaunchShake);
+
+	FGameplayTagContainer InvalidTags;
+	InvalidTags.AddTag(SmallReactionTag);
+	InvalidTags.AddTag(BigReactionTag);
+	TestTrue(TEXT("Invalid multi-tier attack on Enemy applies"), ApplyDamage(SourceASC, EnemyASC, &InvalidTags));
+	TestEqual(TEXT("Invalid multi-tier attack does not increment Player shake count"), Player->GetTestHitFeedbackCameraShakeStartCount(), ShakeCountBeforeNone);
+	TestTrue(TEXT("Active Launch shake remains active after Invalid multi-tier hit"), LaunchShake && LaunchShake->IsActive());
+	TestTrue(TEXT("Active shake unchanged after Invalid multi-tier hit"), Player->GetTestActiveHitFeedbackCameraShake() == LaunchShake);
+	AdvanceHitFeedbackTimer(World, 0.25f);
+
+	// 8. Single GE Spec with multiple Health modifiers triggers exactly one Player shake (deduplication)
+	const int32 ShakeCountBeforeMultiMod = Player->GetTestHitFeedbackCameraShakeStartCount();
+	TestTrue(TEXT("Multi-modifier Health GE applies to Enemy"), ApplyMultiModifierDamage(SourceASC, EnemyASC, &BigTags));
+	TestEqual(TEXT("Single GE Spec with multiple Health modifiers triggers exactly one Player shake"), Player->GetTestHitFeedbackCameraShakeStartCount(), ShakeCountBeforeMultiMod + 1);
+	AdvanceHitFeedbackTimer(World, 0.25f);
+
+	// 9. Two independent GE Specs each trigger Player shake
+	const int32 ShakeCountBeforeTwoSpecs = Player->GetTestHitFeedbackCameraShakeStartCount();
+	TestTrue(TEXT("First independent GE applies"), ApplyDamage(SourceASC, EnemyASC, &SmallTags));
+	TestTrue(TEXT("Second independent GE applies"), ApplyDamage(SourceASC, EnemyASC, &SmallTags));
+	TestEqual(TEXT("Two independent GE Specs each trigger Player shake"), Player->GetTestHitFeedbackCameraShakeStartCount(), ShakeCountBeforeTwoSpecs + 2);
+	AdvanceHitFeedbackTimer(World, 0.25f);
+
+	// 10. Lethal hit triggers exactly once before Enemy Dead state, subsequent damage is silent
+	EnemyASC->SetNumericAttributeBase(UCharacterAttributeSet::GetHealthAttribute(), 25.0f);
+	const int32 ShakeCountBeforeLethal = Player->GetTestHitFeedbackCameraShakeStartCount();
+	TestTrue(TEXT("Lethal attack applies to Enemy"), ApplyDamage(SourceASC, EnemyASC, &BigTags));
+	TestTrue(TEXT("Enemy enters Dead state"), Enemy->IsDead());
+	TestEqual(TEXT("Lethal hit triggers exactly one attacker shake"), Player->GetTestHitFeedbackCameraShakeStartCount(), ShakeCountBeforeLethal + 1);
+
+	const int32 ShakeCountAfterLethal = Player->GetTestHitFeedbackCameraShakeStartCount();
+	TestTrue(TEXT("Attack on Dead Enemy applies"), ApplyDamage(SourceASC, EnemyASC, &BigTags));
+	TestEqual(TEXT("Attack on Dead Enemy does not trigger attacker shake"), Player->GetTestHitFeedbackCameraShakeStartCount(), ShakeCountAfterLethal);
+	AdvanceHitFeedbackTimer(World, 0.25f);
+
+	// 11. Poise-only, direct base write, and non-Player source exclusions
+	AEnemyCharacter* FreshEnemy = FCombatAutomationFixture::SpawnPassiveEnemy(World, FTransform(FRotator::ZeroRotator, FVector(500.0f, 0.0f, 0.0f)));
+	UAbilitySystemComponent* FreshEnemyASC = FreshEnemy->GetAbilitySystemComponent();
+	FreshEnemyASC->SetNumericAttributeBase(UCharacterAttributeSet::GetMaxHealthAttribute(), 1000.0f);
+	FreshEnemyASC->SetNumericAttributeBase(UCharacterAttributeSet::GetHealthAttribute(), 1000.0f);
+	FreshEnemyASC->SetNumericAttributeBase(UCharacterAttributeSet::GetMaxPoiseAttribute(), 100.0f);
+	FreshEnemyASC->SetNumericAttributeBase(UCharacterAttributeSet::GetPoiseAttribute(), 50.0f);
+
+	const int32 ShakeCountBeforeExclusions = Player->GetTestHitFeedbackCameraShakeStartCount();
+	const FGameplayTag PoiseRecoveryTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Data.Poise.Recovery")), false);
+	FGameplayEffectContextHandle PoiseContext = SourceASC->MakeEffectContext();
+	FGameplayEffectSpecHandle PoiseSpec = SourceASC->MakeOutgoingSpec(UTestPoiseRecoveryGE::StaticClass(), 1.0f, PoiseContext);
+	if (PoiseSpec.IsValid() && PoiseSpec.Data.IsValid())
+	{
+		PoiseSpec.Data->SetSetByCallerMagnitude(PoiseRecoveryTag, 10.0f);
+		FreshEnemyASC->ApplyGameplayEffectSpecToSelf(*PoiseSpec.Data.Get());
+	}
+	TestEqual(TEXT("Poise-only effect does not trigger Player shake"), Player->GetTestHitFeedbackCameraShakeStartCount(), ShakeCountBeforeExclusions);
+
+	FreshEnemyASC->SetNumericAttributeBase(UCharacterAttributeSet::GetHealthAttribute(), 800.0f);
+	TestEqual(TEXT("Direct base Health write does not trigger Player shake"), Player->GetTestHitFeedbackCameraShakeStartCount(), ShakeCountBeforeExclusions);
+
+	AEnemyCharacter* AttackingEnemy = FCombatAutomationFixture::SpawnPassiveEnemy(World, FTransform(FRotator::ZeroRotator, FVector(750.0f, 0.0f, 0.0f)));
+	UAbilitySystemComponent* AttackingEnemyASC = AttackingEnemy->GetAbilitySystemComponent();
+	TestTrue(TEXT("Enemy-to-Enemy damage applies"), ApplyDamage(AttackingEnemyASC, FreshEnemyASC, &BigTags));
+	TestEqual(TEXT("Enemy-to-Enemy damage does not trigger Player shake"), Player->GetTestHitFeedbackCameraShakeStartCount(), ShakeCountBeforeExclusions);
+	AttackingEnemy->Destroy();
+
+	// 12. Player Dead and UnPossessed exclusions
+	PlayerASC->AddLooseGameplayTag(DeadTag);
+	const int32 ShakeCountBeforePlayerDead = Player->GetTestHitFeedbackCameraShakeStartCount();
+	TestTrue(TEXT("Damage while Player is Dead applies to Enemy"), ApplyDamage(SourceASC, FreshEnemyASC, &BigTags));
+	TestEqual(TEXT("Dead Player does not trigger attacker shake"), Player->GetTestHitFeedbackCameraShakeStartCount(), ShakeCountBeforePlayerDead);
+	PlayerASC->RemoveLooseGameplayTag(DeadTag);
+
+	Controller->UnPossess();
+	const int32 ShakeCountBeforeUnPossess = Player->GetTestHitFeedbackCameraShakeStartCount();
+	TestTrue(TEXT("Damage while Player is UnPossessed applies to Enemy"), ApplyDamage(SourceASC, FreshEnemyASC, &BigTags));
+	TestEqual(TEXT("UnPossessed Player does not trigger attacker shake"), Player->GetTestHitFeedbackCameraShakeStartCount(), ShakeCountBeforeUnPossess);
+	Controller->Possess(Player);
+
+	// 13. Player Destroy / EndPlay stops active shake and clears state
+	TestTrue(TEXT("Launch tier attack to setup active shake before Player Destroy"), ApplyDamage(SourceASC, FreshEnemyASC, &LaunchTags));
+	UCameraShakeBase* ActiveShakeBeforeDestroy = Player->GetTestLastHitFeedbackCameraShake();
+	TestNotNull(TEXT("Active shake exists before Destroy"), ActiveShakeBeforeDestroy);
+	TestTrue(TEXT("Active shake is playing before Destroy"), ActiveShakeBeforeDestroy && ActiveShakeBeforeDestroy->IsActive());
+	Player->Destroy();
+	TestFalse(TEXT("Player Destroy stops active camera shake"), ActiveShakeBeforeDestroy && ActiveShakeBeforeDestroy->IsActive());
+	TestNull(TEXT("Active camera shake is cleared on Destroy"), Player->GetTestActiveHitFeedbackCameraShake());
+
+	FreshEnemy->Destroy();
+	Enemy->Destroy();
+	Controller->Destroy();
 	return true;
 }
 
