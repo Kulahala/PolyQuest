@@ -20,6 +20,8 @@
 
 本节“Confirmed Baseline Facts”记录的是实现前基线；实现后的事实、验证类别和剩余债务以本计划末尾的 Closeout Record 为准。
 
+本文件是阶段详基线的主记录：父提交、工作区快照、批准范围、验证收据和 Closeout Record 以此为准；`ROADMAP.md` 只维护路线、依赖、开放里程碑、债务触发器和轻量阶段指针。下方 `90ad381` 是本阶段当时的父基线，按历史视角保留。
+
 ## Objective And Player Value
 
 固定斜视角下，玩家已锁定一个近距离敌人并开始首段轻攻击时，现有 Root Motion 可能把玩家带到敌人前方不稳定的位置。本阶段要回答一个问题：**在当前有效 Lock-On、目标与玩家满足有限几何条件、且首段 Montage 具备已读回的 Root Motion/Motion-Warping 窗口时，能否把玩家一次性贴近目标的 authored contact point；其余情况是否完全保持旧攻击行为。**

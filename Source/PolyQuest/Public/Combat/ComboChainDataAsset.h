@@ -26,8 +26,8 @@ struct POLYQUEST_API FComboChainEntry
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "MotionWarping", meta = (EditCondition = "bUseMotionWarping", ClampMin = "0.0", UIMin = "0.0", ToolTip = "期望停距（厘米）。吸附计算时人与目标中心的期望距离。若动画自带前踏 Root Motion，需根据步长预留停距以防贴脸。"))
 	float WarpStopDistance = 190.0f;
 
-	/** 最大滑步吸附距离（厘米）。允许系统向前额外补正的最大位移。最远有效触发距离 = 期望停距 + 此值。 */
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "MotionWarping", meta = (EditCondition = "bUseMotionWarping", ClampMin = "0.0", UIMin = "0.0", ToolTip = "最大滑步吸附距离（厘米）。允许系统向前额外补正的最大位移。最远有效触发距离 = 期望停距 + 此值。"))
+	/** 最大水平修正距离（厘米）。允许玩家当前位置到最终 WarpLocation 的最大水平位移；它不是目标的最大距离。 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "MotionWarping", meta = (EditCondition = "bUseMotionWarping", ClampMin = "0.0", UIMin = "0.0", ToolTip = "最大水平修正距离（厘米）。允许玩家当前位置到最终 WarpLocation 的最大水平位移；它不是目标的最大距离。"))
 	float MaxWarpDistance = 110.0f;
 
 	/** 最大允许吸附夹角（度）。玩家水平朝向与目标方向的最大夹角，超出此范围将不触发吸附。 */

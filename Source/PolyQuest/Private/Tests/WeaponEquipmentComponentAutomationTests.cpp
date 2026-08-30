@@ -1253,7 +1253,7 @@ bool FWeaponEquipmentComponentTransactionMatrixTest::RunTest(const FString& Para
 			UClass* ShieldGuardClass = StaticLoadClass(UGameplayAbility::StaticClass(), nullptr, TEXT("/Game/_Abilities/Weapon/Shield/GA_PlayerShieldGuard.GA_PlayerShieldGuard_C"));
 			TestNotNull(TEXT("GA_PlayerShieldGuard blueprint class loaded"), ShieldGuardClass);
 
-			UClass* SwordGuardClass = StaticLoadClass(UGameplayAbility::StaticClass(), nullptr, TEXT("/Game/_Abilities/Weapon/Shield/GA_Guard_Sowrd.GA_Guard_Sowrd_C"));
+			UClass* SwordGuardClass = StaticLoadClass(UGameplayAbility::StaticClass(), nullptr, TEXT("/Game/_Abilities/Weapon/LightSword/Guard/GA_Guard_Sowrd.GA_Guard_Sowrd_C"));
 			TestNotNull(TEXT("GA_Guard_Sowrd blueprint class loaded"), SwordGuardClass);
 
 			if (ShieldGuardClass && SwordGuardClass)
