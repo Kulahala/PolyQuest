@@ -3,6 +3,7 @@
 #include "CoreMinimal.h"
 #include "AbilitySystem/Abilities/StaminaActionAbility.h"
 #include "Abilities/GameplayAbilityTypes.h"
+#include "Combat/Melee/MeleeMotionWarping.h"
 #include "SprintAttackAbility.generated.h"
 
 class UAbilityTask_PlayMontageAndWait;
@@ -50,6 +51,21 @@ protected:
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Sprint Attack", meta = (ToolTip = "冲刺攻击判定命中时施加的伤害 GameplayEffect 类。"))
 	TSubclassOf<UGameplayEffect> DamageGameplayEffectClass;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Sprint Attack|Motion Warping", meta = (ToolTip = "是否启用冲刺攻击近战 Root Motion 接触位移辅助（Motion Warping）。"))
+	bool bUseMotionWarping = false;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Sprint Attack|Motion Warping", meta = (ToolTip = "Motion Warping 目标名称，需与动画 Montage 中 AnimNotifyState_MotionWarping 的 TargetName 一致。"))
+	FName WarpTargetName = FName(TEXT("MeleeContact"));
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Sprint Attack|Motion Warping", meta = (ClampMin = "0.0", ToolTip = "攻击停距（cm），角色与目标接触点之间的水平期望间距。"))
+	float WarpStopDistance = 190.0f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Sprint Attack|Motion Warping", meta = (ClampMin = "0.0", ToolTip = "最大位移修正距离（cm），超出此范围不执行接触位移修正。"))
+	float MaxWarpDistance = 110.0f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Sprint Attack|Motion Warping", meta = (ClampMin = "0.0", ClampMax = "180.0", ToolTip = "最大有效修正夹角（度），超过此角度判定为偏角过大不予修正。"))
+	float MaxWarpAngleDegrees = 60.0f;
 
 private:
 	UPROPERTY(Transient)
@@ -128,6 +144,39 @@ private:
 	void SetDodgeCancelable(bool bShouldBeCancelable);
 	void SetRuntimeActionTags(bool bShouldApply);
 	void RestoreBaselineMontageRate();
+	void TryApplyMeleeMotionWarpTarget(class APlayerCharacter* PlayerCharacter);
+	void ResetMeleeMotionWarpState();
+
+	FMeleeMotionWarpSnapshot MeleeMotionWarpSnapshot;
 
 	TWeakObjectPtr<const class UAnimNotifyState_AttackTraceWindow> ActiveTraceNotifyState;
+
+#if WITH_DEV_AUTOMATION_TESTS
+public:
+	void SetTestCurrentActorInfo(const FGameplayAbilityActorInfo* InActorInfo) { CurrentActorInfo = InActorInfo; }
+	void SetTestBoundAnimInstance(UAnimInstance* InAnimInstance) { BoundAnimInstance = InAnimInstance; }
+	void SetTestActiveMontage(UAnimMontage* InMontage) { ActiveMontage = InMontage; }
+	void SetTestBypassMontageActiveCheck(bool bBypass) { bTestBypassMontageActiveCheck = bBypass; }
+	bool GetTestBypassMontageActiveCheck() const { return bTestBypassMontageActiveCheck; }
+	void Test_TryApplyMeleeMotionWarpTarget(APlayerCharacter* InPlayer) { TryApplyMeleeMotionWarpTarget(InPlayer); }
+	void TestResetMeleeMotionWarpState() { ResetMeleeMotionWarpState(); }
+	bool HasTestMeleeMotionWarpSnapshot() const { return MeleeMotionWarpSnapshot.CapturedTarget.IsValid(); }
+	bool HasTestMeleeMotionWarpCaptureAttempted() const { return MeleeMotionWarpSnapshot.bAttemptedCapture; }
+	FVector GetTestMeleeMotionWarpCapturedLocation() const { return MeleeMotionWarpSnapshot.CapturedTargetLocation; }
+	bool GetTestMeleeMotionWarpCapturedOnGround() const { return MeleeMotionWarpSnapshot.bCapturedTargetOnGround; }
+	void SetTestMotionWarpConfig(bool bInUseWarp, FName InTargetName, float InStopDist, float InMaxDist, float InMaxAngle)
+	{
+		bUseMotionWarping = bInUseWarp;
+		WarpTargetName = InTargetName;
+		WarpStopDistance = InStopDist;
+		MaxWarpDistance = InMaxDist;
+		MaxWarpAngleDegrees = InMaxAngle;
+	}
+	void SetTestEndAbilityRequested(bool bRequested) { bEndAbilityRequested = bRequested; }
+	bool Test_IsRuntimeActionTagsApplied() const { return bRuntimeActionTagsApplied; }
+	bool Test_IsDodgeCancelable() const { return bDodgeCancelable; }
+
+private:
+	bool bTestBypassMontageActiveCheck = false;
+#endif
 };

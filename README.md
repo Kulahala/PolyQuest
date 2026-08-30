@@ -142,6 +142,8 @@ PolyQuest 是一个以 UE 5.8、C++ 与 GAS 为核心的单机低多边形动作
 
 `TODO-03A7B` 已完成玩家 Light Combo entry 0..2 的窄 Motion-Warp adoption 与生命周期收口：每段独立 opt-in，首个合法段落只捕获一次静态 Lock-On 位置/接地快照，后续段落复用快照而不重选；Task/Montage 激活失败、目标死亡/销毁、`ClearLockedTarget()`、UnPossess、取消和 EndPlay 都 Fail-Closed 清理，近战 Trace/Resolver/Damage 路径不变。用户已确认 focused Automation 与 Scene01 PIE；没有独立手动 `PolyQuestEditor` 编译或 entry 1/2 Editor readback，因此作者化字段仍是本地 WIP，不宣称干净检出可复现。
 
+`TODO-03A7C` 已完成 Charged release 与 Sprint Attack 的源码级 Motion-Warp adoption：Charged 只在成功提交并确认主动 Montage 后、恢复播放前尝试一次；Sprint 只在 Montage Task/Montage 双重活跃门禁后、取消 Sprint 前尝试一次。两者各自拥有静态目标快照，复用同一纯几何 evaluator 和 Player 窄桥，失败与取消不改变 Cost、Trace/Resolver/Damage、Guard/Dodge 或 Sprint 所有权。用户已确认 focused Automation 与 Scene01 PIE；GA/Montage Notify、Modifier、Root Motion 和独立手动编译/readback 尚未形成干净作者化基线，相关资产继续作为本地 WIP。
+
 `TODO-01C4` 已完成玩家专属的起身翻滚路线。现有 `ActionDodgeCancelWindow` 只会在匹配且仍活跃的 Player Launch `LandingRecovery` Montage 中授权普通的接地 Dodge；该阶段对 `State.Action.CanCancel.Dodge` 的 scoped loose-tag 贡献会在窗口结束和所有 Launch 清理路径中移除。Dodge 仍会先提交其正常 Cost，随后才取消 Launch，因此保留“当前 Stamina 大于 0 即可开始、Cost 后钳制到 0”的软透支规则；连续输入在 Dodge 自身恢复窗口到来前不会覆盖新起手。用户已确认 Automation 与聚焦 PIE，Montage/GA/GE 作者化资产继续保留为本地 WIP。
 
 `TODO-02C3H` 已完成仅限敌人的“落地后延迟姿态破坏”路线。Enemy Launch 的 Takeoff 真正启动后，Poise 归零会变为一个由 Enemy 持有的 pending intent，而不会在空中进入 Stance Break；只有自然完成 LandingRecovery、且 Launch 清理已释放 `State.Action.HitReacting` 后，才能分发现有的 Stance Break 事件。飞行期 Poise 恢复为正值会清除意图；死亡、teardown 或异常结束不会产生延迟破韧，存活且 Poise 为零的敌人则通过既有恢复 GameplayEffect 恢复 Poise。玩家 Guard/Parry 与立即生效的 Player Guard Break 故意保持不变。用户已确认 `PolyQuest.Combat.HitReaction` Automation 和聚焦 PIE；作者化资产仍是本地 WIP。

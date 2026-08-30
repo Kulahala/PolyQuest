@@ -3,6 +3,7 @@
 #include "CoreMinimal.h"
 #include "AbilitySystem/Abilities/StaminaActionAbility.h"
 #include "Abilities/GameplayAbilityTypes.h"
+#include "Combat/Melee/MeleeMotionWarping.h"
 #include "GameplayTagContainer.h"
 #include "LightAttackAbility.generated.h"
 
@@ -174,22 +175,6 @@ private:
 	void RestoreBaselineMontageRate();
 	void TryApplyMeleeMotionWarpTarget(class APlayerCharacter* PlayerCharacter, const struct FComboChainEntry& EntryConfig);
 	void ResetMeleeMotionWarpState();
-
-	struct FMeleeMotionWarpSnapshot
-	{
-		bool bAttemptedCapture = false;
-		TWeakObjectPtr<class AEnemyCharacter> CapturedTarget;
-		FVector CapturedTargetLocation = FVector::ZeroVector;
-		bool bCapturedTargetOnGround = false;
-
-		void Reset()
-		{
-			bAttemptedCapture = false;
-			CapturedTarget = nullptr;
-			CapturedTargetLocation = FVector::ZeroVector;
-			bCapturedTargetOnGround = false;
-		}
-	};
 
 	FMeleeMotionWarpSnapshot MeleeMotionWarpSnapshot;
 

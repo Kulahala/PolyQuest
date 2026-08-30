@@ -11,7 +11,7 @@ This file is the active route: it records the durable dependency order, open mil
 > The TODO-03A7 parent-baseline wording below is a retained historical snapshot from that task's closeout. It is not the template for future stages; future detailed baselines belong in `plan.md`.
 
 - This stage closeout is based on parent `main @ 90ad381` (the committed `TODO-07B4` stage); `TODO-03A7` is implemented and user-PIE-confirmed in the approved stage change, but has no separate manual `PolyQuestEditor` compile or Editor-readback record. Lock-On acquisition/cycle remain strict with fixed per-axis `15%` retention for an already-owned target, while Bow keeps its independent `6%` automatic Target Assist boundary.
-- The product route is `/Game/Maps/Scene01` with a fixed elevated oblique camera and a desktop Controller/input boundary. `TODO-03A7B` has an implementation closeout with user-confirmed focused Automation and Scene01 PIE; no separate manual `PolyQuestEditor` compile or Motion-Warp Editor-readback record is available, so its authored-baseline validation debt remains open. The next planning pointer is `TODO-03A7C`; the detailed stage record remains in `plan.md`.
+- The product route is `/Game/Maps/Scene01` with a fixed elevated oblique camera and a desktop Controller/input boundary. `TODO-03A7B` has an implementation closeout with user-confirmed focused Automation and Scene01 PIE; no separate manual `PolyQuestEditor` compile or Motion-Warp Editor-readback record is available, so its authored-baseline validation debt remains open. `TODO-03A7C` now has a source implementation closeout for Charged release and Sprint Attack Motion-Warp adoption with the same user-confirmed focused Automation and Scene01 PIE gates; its authored GA/Montage/Notify/Root Motion readback and separate manual compile record remain open. The next planning pointer is `TODO-03A7D`; detailed stage records remain in `plan.md`.
 - Mutable GameplayAbility/GameplayEffect, Montage, AnimBP, Blueprint, input, DataAsset, map, Niagara, sound, and imported Content remain user-owned local WIP. Manual compilation, Editor readback, PIE/visual checks, imported-asset decisions, packaging, and final commit approval remain separate gates.
 
 ## Current Player-Combat Sequence
@@ -19,11 +19,11 @@ This file is the active route: it records the durable dependency order, open mil
 Before introducing the first ranged enemy, the player-combat route is:
 
 Implemented/PIE-confirmed: TODO-03A3E → TODO-07B4 → TODO-03A7 (entry 0 only)
-Current implementation closeout: TODO-03A7B (Light entry 0..2 lifecycle adoption; focused Automation and Scene01 PIE confirmed; compile/readback debt remains)
-Next player-combat slices: TODO-03A7C → TODO-03A7D → TODO-05A → TODO-05B → TODO-07B5 → TODO-07B6 → TODO-03C
+Current implementation closeouts: TODO-03A7B (Light entry 0..2 lifecycle adoption) → TODO-03A7C (Charged/Sprint source adoption; authored compile/readback debt remains)
+Next player-combat slices: TODO-03A7D → TODO-05A → TODO-05B → TODO-07B5 → TODO-07B6 → TODO-03C
 Later optional enemy adoption: TODO-03A7E (after the first ranged-enemy gate)
 
-`TODO-03A7` remains deliberately limited to the selected Light entry 0; `TODO-03A7B` now owns the bounded Light entry 0..2 implementation and lifecycle bridge, while authored compile/readback closure remains a separate validation debt. Later Player adoption slices reuse the narrow component/evaluator/bridge only after their own Montage and Root Motion evidence. TODO-07B4 is a deliberately early presentation gate and is technically independent of Motion Warping. The punish dependency remains `TODO-05A → TODO-05B`; the Small Reaction retrigger remains an explicit `TODO-07B5` gate because it changes GAS re-entry and Montage cleanup semantics for both Player and Enemy. `TODO-03A4B` is conditional equipment work and is not a prerequisite unless a partial-Guard weapon is intentionally authored.
+`TODO-03A7` remains deliberately limited to the selected Light entry 0; `TODO-03A7B` owns the bounded Light entry 0..2 implementation and lifecycle bridge, while authored compile/readback closure remains a separate validation debt. `TODO-03A7C` owns the bounded Charged release and Sprint Attack source lifecycles, reusing the narrow evaluator/Player bridge without creating a global target-follow service; its authored opt-in/readback debt remains separate. Later Player adoption slices reuse these narrow primitives only after their own Montage and Root Motion evidence. TODO-07B4 is a deliberately early presentation gate and is technically independent of Motion Warping. The punish dependency remains `TODO-05A → TODO-05B`; the Small Reaction retrigger remains an explicit `TODO-07B5` gate because it changes GAS re-entry and Montage cleanup semantics for both Player and Enemy. `TODO-03A4B` is conditional equipment work and is not a prerequisite unless a partial-Guard weapon is intentionally authored.
 
 ## Route Constraints
 
@@ -39,14 +39,7 @@ For older completed stages, validation evidence, and exact historical wording, s
 
 ### Player Combat Closure
 
-- [ ] TODO-03A7B: Light Combo Motion-Warp Adoption v1 (implementation complete; authored compile/readback debt open)
-  - The bounded source/test slice now covers entry 0..2 explicit opt-in, one-shot static snapshots, entry replacement, task/montage activation rollback, target invalidation, `ClearLockedTarget()`, Light-only `UnPossessed()` cancellation, and stale-target prevention without changing the shared Trace/Resolver/Damage path.
-  - The user confirmed focused `PolyQuest.Combat.PlayerMeleeMotionWarping` Automation and Scene01 PIE. Direct Notify/Modifier, Root Motion, target-name, timing-window, and entry 1/2 authoring readback plus a separately recorded manual `PolyQuestEditor` compile remain required before calling this a clean authored baseline; unsuitable entries may remain opt-out.
-
-- [ ] TODO-03A7C: Charged/Sprint Melee Motion-Warp Adoption v1
-  - Evaluate `UChargedAttackAbility` and `USprintAttackAbility` as separate authored Root Motion lifecycles. Adopt only explicitly named Montages with a verified Notify window and independent release/cancel/teardown behavior.
-  - Reuse only the narrow Player bridge/evaluator where the activation snapshot semantics match; do not make Light's combo state or a shared global target follow these abilities.
-  - Keep existing cost, action tags, Trace/Resolver/Damage, Dodge cancellation, and Sprint ownership unchanged; close with focused Automation, compile/readback, and Scene01 PIE evidence.
+- The source implementation closeouts for `TODO-03A7B` (Light entry `0..2`) and `TODO-03A7C` (Charged release/Sprint Attack) are recorded in `plan.md` and `ROADMAP-archive.md`; their authored Montage/Notify/Root Motion readback and separate manual compile records remain non-blocking validation debt. The next open slice is `TODO-03A7D`.
 
 - [ ] TODO-03A7D: Melee Skill Motion-Warp Adoption v1
   - Audit `UPlayerMeleeSkillAbility` and its actual authored skills one at a time. Each skill must prove its own target snapshot, Montage Notify/Root Motion compatibility, range/angle policy, and all interruption/death/teardown cleanup before adoption.
@@ -166,6 +159,7 @@ For older completed stages, validation evidence, and exact historical wording, s
 - TODO-07B4 source and focused Automation are confirmed, and the user has confirmed the focused Scene01 PIE route. This closeout does not contain a separate manual `PolyQuestEditor` compile record or six-field `BP_Player` Editor readback; treat the attacker-field authoring baseline as uncurated until those exact gates are read back. The debt closes before packaging or a clean authored-fixture claim and is not a blocker for the next source-only planning slice.
 - TODO-03A7 source and focused Automation/Scene01 PIE are confirmed. Its remaining debt is no separately recorded manual `PolyQuestEditor` compile or Motion-Warp asset readback; the production-entry coverage debt was addressed in TODO-03A7B. Close the authored readback before claiming a clean baseline; it is not a blocker for drafting the next player-combat plan.
 - TODO-03A7B source, focused Automation, and Scene01 PIE are confirmed, but no independent manual `PolyQuestEditor` compile or entry 1/2 Motion-Warp Editor readback is recorded. Keep this as a non-blocking authored-validation debt; close when the user records the compile and the named `DA_Combo_StraightSword`/Montage/AnimBP/component readback, or record an evidence-backed no-adoption result for unsuitable entries. The current 3.14 seam does not independently construct a post-`ReadyForActivation()` synchronous task end; close that coverage gap only if a deterministic seam is available without weakening production task gates.
+- TODO-03A7C source, focused Automation, and Scene01 PIE are confirmed for Charged release and Sprint Attack. No independent manual `PolyQuestEditor` compile or per-Ability GA/Montage/Notify/Modifier/Root Motion Editor readback is recorded; keep this as non-blocking authored-validation debt. Close it with the named asset readback and compile, or with real evidence-backed no-adoption for an unsuitable Ability. The existing test seam does not replace production Task/Montage timing proof.
 
 ## Deferred TODOs
 

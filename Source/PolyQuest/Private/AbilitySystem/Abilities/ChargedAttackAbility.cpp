@@ -9,8 +9,11 @@
 #include "Animation/AnimMontage.h"
 #include "Animation/Combat/AnimNotifyState_ActionWindows.h"
 #include "Character/BaseCharacter.h"
+#include "Character/Enemy/EnemyCharacter.h"
 #include "Character/Player/PlayerCharacter.h"
 #include "Components/SkeletalMeshComponent.h"
+#include "Engine/Engine.h"
+#include "GameFramework/CharacterMovementComponent.h"
 #include "GameplayEffect.h"
 #include "GameplayTagContainer.h"
 #include "PolyQuest.h"
@@ -92,6 +95,9 @@ void UChargedAttackAbility::ActivateAbility(
 	const FGameplayAbilityActivationInfo ActivationInfo,
 	const FGameplayEventData* TriggerEventData)
 {
+#if WITH_DEV_AUTOMATION_TESTS
+	bTestBypassMontageActiveCheck = false;
+#endif
 	bEndAbilityRequested = false;
 	bDodgeCancelable = false;
 	bChargingStateApplied = false;
@@ -103,9 +109,14 @@ void UChargedAttackAbility::ActivateAbility(
 	PoiseDamageMagnitude = 0.0f;
 	ActiveMontage = nullptr;
 	BoundAnimInstance = nullptr;
+	ResetMeleeMotionWarpState();
 
 	UAbilitySystemComponent* AbilitySystemComponent = GetAbilitySystemComponentFromActorInfo();
 	APlayerCharacter* PlayerCharacter = Cast<APlayerCharacter>(GetAvatarActorFromActorInfo());
+	if (PlayerCharacter)
+	{
+		PlayerCharacter->ClearMeleeMotionWarpTargets();
+	}
 	USkeletalMeshComponent* SkeletalMesh = PlayerCharacter ? PlayerCharacter->GetMesh() : nullptr;
 	UAnimInstance* AnimInstance = SkeletalMesh ? SkeletalMesh->GetAnimInstance() : nullptr;
 	const bool bReleasedPrimaryHandoff = IsChargedReleaseHandoffEvent(TriggerEventData, PlayerCharacter);
@@ -178,7 +189,7 @@ void UChargedAttackAbility::ActivateAbility(
 		return;
 	}
 
-	if (!BoundAnimInstance->Montage_IsActive(ActiveMontage.Get()))
+	if (!IsValid(BoundAnimInstance) || !IsValid(ActiveMontage) || !BoundAnimInstance->Montage_IsActive(ActiveMontage.Get()))
 	{
 		UE_LOG(LogPolyQuest, Warning, TEXT("Charged attack activation aborted for '%s': montage '%s' did not start."), *GetNameSafe(PlayerCharacter), *GetNameSafe(ChargedAttackMontage));
 		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
@@ -210,11 +221,20 @@ void UChargedAttackAbility::EndAbility(
 	}
 
 	bEndAbilityRequested = true;
+#if WITH_DEV_AUTOMATION_TESTS
+	bTestBypassMontageActiveCheck = false;
+#endif
 	bHoldCancelWindowLatchedAcrossPause = false;
 	SetCharging(false);
 	SetDodgeCancelable(false);
 	CloseTraceWindow();
 	RestoreBaselineMontageRate();
+
+	if (APlayerCharacter* PlayerCharacter = Cast<APlayerCharacter>(GetAvatarActorFromActorInfo()))
+	{
+		PlayerCharacter->ClearMeleeMotionWarpTargets();
+	}
+	ResetMeleeMotionWarpState();
 
 	if (BoundAnimInstance)
 	{
@@ -425,7 +445,15 @@ void UChargedAttackAbility::BeginRelease(float HeldDuration)
 		return;
 	}
 
-	if (!BoundAnimInstance || !ActiveMontage || !BoundAnimInstance->Montage_IsActive(ActiveMontage.Get()))
+#if WITH_DEV_AUTOMATION_TESTS
+	const bool bMontageActive = IsValid(BoundAnimInstance) && IsValid(ActiveMontage)
+		&& (bTestBypassMontageActiveCheck || BoundAnimInstance->Montage_IsActive(ActiveMontage.Get()));
+#else
+	const bool bMontageActive = IsValid(BoundAnimInstance) && IsValid(ActiveMontage)
+		&& BoundAnimInstance->Montage_IsActive(ActiveMontage.Get());
+#endif
+
+	if (!bMontageActive)
 	{
 		UE_LOG(LogPolyQuest, Warning, TEXT("Charged attack release failed for '%s': active montage '%s' is unavailable."), *GetNameSafe(GetAvatarActorFromActorInfo()), *GetNameSafe(ActiveMontage));
 		EndFromMontage(true);
@@ -439,6 +467,11 @@ void UChargedAttackAbility::BeginRelease(float HeldDuration)
 	DamageMultiplier = FMath::Lerp(1.0f, MaximumDamageMultiplier, ChargeAlpha);
 	PoiseDamageMagnitude = -FMath::Lerp(MinimumPoiseDamage, MaximumPoiseDamage, ChargeAlpha);
 	bReleaseStarted = true;
+
+	if (APlayerCharacter* PlayerCharacter = Cast<APlayerCharacter>(GetAvatarActorFromActorInfo()))
+	{
+		TryApplyMeleeMotionWarpTarget(PlayerCharacter);
+	}
 
 	if (bMontagePausedAtHoldReady)
 	{
@@ -639,4 +672,163 @@ void UChargedAttackAbility::SetDodgeCancelable(bool bShouldBeCancelable)
 	}
 
 	bDodgeCancelable = false;
+}
+
+void UChargedAttackAbility::ResetMeleeMotionWarpState()
+{
+	MeleeMotionWarpSnapshot.Reset();
+}
+
+void UChargedAttackAbility::TryApplyMeleeMotionWarpTarget(APlayerCharacter* PlayerCharacter)
+{
+	FMeleeMotionWarpConfig WarpConfig;
+	WarpConfig.bUseMotionWarping = bUseMotionWarping;
+	WarpConfig.WarpTargetName = WarpTargetName;
+	WarpConfig.WarpStopDistance = WarpStopDistance;
+	WarpConfig.MaxWarpDistance = MaxWarpDistance;
+	WarpConfig.MaxWarpAngleDegrees = MaxWarpAngleDegrees;
+
+	// 1. Validate basic motion warp configuration before attempting any target queries.
+	// Illegal or disabled configurations do NOT consume the one-shot capture opportunity.
+	if (!FMeleeMotionWarpingLifecycle::IsConfigValid(WarpConfig))
+	{
+		if (IsValid(PlayerCharacter) && !PlayerCharacter->IsActorBeingDestroyed())
+		{
+			PlayerCharacter->ClearMeleeMotionWarpTargets();
+		}
+		return;
+	}
+
+	// 2. Consume the one-shot capture opportunity on the very first legal opt-in attempt,
+	// BEFORE any Player, World, Controller, ASC, or Lock-On queries.
+	const bool bIsFirstLegalCaptureAttempt = !MeleeMotionWarpSnapshot.bAttemptedCapture;
+	if (bIsFirstLegalCaptureAttempt)
+	{
+		MeleeMotionWarpSnapshot.bAttemptedCapture = true;
+	}
+
+	// 3. Safety checks on Player and context
+	if (!IsValid(PlayerCharacter) || PlayerCharacter->IsActorBeingDestroyed())
+	{
+		return;
+	}
+
+	UWorld* World = PlayerCharacter->GetWorld();
+	const AController* Controller = PlayerCharacter->GetController();
+	const UAbilitySystemComponent* AbilityASC = GetAbilitySystemComponentFromActorInfo();
+	if (!World || !IsValid(Controller) || Controller->IsActorBeingDestroyed()
+		|| !IsValid(AbilityASC) || AbilityASC->GetOwnerActor() != PlayerCharacter || PlayerCharacter->GetAbilitySystemComponent() != AbilityASC)
+	{
+		PlayerCharacter->ClearMeleeMotionWarpTargets();
+		return;
+	}
+
+	// 4. Perform snapshot capture if this was the first legal capture attempt
+	if (bIsFirstLegalCaptureAttempt)
+	{
+		AEnemyCharacter* OriginalTarget = PlayerCharacter->GetLockedTarget();
+		if (!IsValid(OriginalTarget) || OriginalTarget->IsActorBeingDestroyed() || OriginalTarget->IsDead() || OriginalTarget->GetWorld() != World)
+		{
+#if !(UE_BUILD_SHIPPING || UE_BUILD_TEST)
+			if (GEngine)
+			{
+				GEngine->AddOnScreenDebugMessage(-1, 2.0f, FColor::Silver, TEXT("[MotionWarp] 未锁定目标 (LockOn)"));
+			}
+#endif
+			PlayerCharacter->ClearMeleeMotionWarpTargets();
+			return;
+		}
+
+		AEnemyCharacter* ValidatedTarget = PlayerCharacter->ResolveValidLockedTarget();
+		if (!IsValid(ValidatedTarget) || ValidatedTarget != OriginalTarget || ValidatedTarget->IsActorBeingDestroyed() || ValidatedTarget->IsDead() || ValidatedTarget->GetWorld() != World)
+		{
+#if !(UE_BUILD_SHIPPING || UE_BUILD_TEST)
+			if (GEngine)
+			{
+				GEngine->AddOnScreenDebugMessage(-1, 2.0f, FColor::Orange, TEXT("[MotionWarp] 目标验证失败或发生死亡切换"));
+			}
+#endif
+			PlayerCharacter->ClearMeleeMotionWarpTargets();
+			return;
+		}
+
+		const FVector TargetLoc = ValidatedTarget->GetActorLocation();
+		if (!FMath::IsFinite(TargetLoc.X) || !FMath::IsFinite(TargetLoc.Y) || !FMath::IsFinite(TargetLoc.Z))
+		{
+			PlayerCharacter->ClearMeleeMotionWarpTargets();
+			return;
+		}
+
+		const UCharacterMovementComponent* TargetMoveComp = ValidatedTarget->GetCharacterMovement();
+		const bool bTargetOnGround = TargetMoveComp && TargetMoveComp->IsMovingOnGround();
+
+		// Record successful snapshot
+		MeleeMotionWarpSnapshot.CapturedTarget = ValidatedTarget;
+		MeleeMotionWarpSnapshot.CapturedTargetLocation = TargetLoc;
+		MeleeMotionWarpSnapshot.bCapturedTargetOnGround = bTargetOnGround;
+	}
+
+	// 5. Subsequent / current entry target validation
+	if (!MeleeMotionWarpSnapshot.CapturedTarget.IsValid())
+	{
+		PlayerCharacter->ClearMeleeMotionWarpTargets();
+		return;
+	}
+
+	AEnemyCharacter* TargetActor = MeleeMotionWarpSnapshot.CapturedTarget.Get();
+	if (!IsValid(TargetActor) || TargetActor->IsActorBeingDestroyed() || TargetActor->IsDead() || TargetActor->GetWorld() != World)
+	{
+		PlayerCharacter->ClearMeleeMotionWarpTargets();
+		return;
+	}
+
+	// 6. Evaluate motion warp transform using cached target snapshot and current player transform/state
+	const UCharacterMovementComponent* PlayerMoveComp = PlayerCharacter->GetCharacterMovement();
+	const bool bPlayerOnGround = PlayerMoveComp && PlayerMoveComp->IsMovingOnGround();
+	const FVector PlayerLoc = PlayerCharacter->GetActorLocation();
+	const FVector PlayerForward = PlayerCharacter->GetActorForwardVector();
+	const float Dist2D = FVector::Dist2D(PlayerLoc, MeleeMotionWarpSnapshot.CapturedTargetLocation);
+
+	FTransform WarpTransform;
+	if (FMeleeMotionWarpingLifecycle::EvaluateMeleeMotionWarpTransform(
+		PlayerLoc,
+		PlayerForward,
+		bPlayerOnGround,
+		MeleeMotionWarpSnapshot.CapturedTargetLocation,
+		MeleeMotionWarpSnapshot.bCapturedTargetOnGround,
+		WarpConfig,
+		WarpTransform))
+	{
+		const bool bSetSuccess = PlayerCharacter->SetMeleeMotionWarpTarget(WarpConfig.WarpTargetName, WarpTransform);
+		if (!bSetSuccess)
+		{
+			PlayerCharacter->ClearMeleeMotionWarpTargets();
+			return;
+		}
+
+#if !(UE_BUILD_SHIPPING || UE_BUILD_TEST)
+		if (GEngine)
+		{
+			const float CorrectionDist = FVector::Dist2D(PlayerLoc, WarpTransform.GetLocation());
+			GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Green,
+				FString::Printf(TEXT("[MotionWarp] 成功触发！目标=%s, 距离=%.1fcm, 停距=%.1fcm, 修正=%.1fcm"),
+					*GetNameSafe(TargetActor), Dist2D, WarpConfig.WarpStopDistance, CorrectionDist));
+		}
+		UE_LOG(LogPolyQuest, Log, TEXT("[MotionWarp] Applied warp target '%s' on '%s' (Dist2D=%.1f)"),
+			*WarpConfig.WarpTargetName.ToString(), *GetNameSafe(PlayerCharacter), Dist2D);
+#endif
+	}
+	else
+	{
+		PlayerCharacter->ClearMeleeMotionWarpTargets();
+#if !(UE_BUILD_SHIPPING || UE_BUILD_TEST)
+		if (GEngine)
+		{
+			GEngine->AddOnScreenDebugMessage(-1, 2.0f, FColor::Yellow,
+				FString::Printf(TEXT("[MotionWarp] 判定未通过 (距离=%.1fcm, 允许: %.1f~%.1fcm, 地面=%d/%d)"),
+					Dist2D, WarpConfig.WarpStopDistance, WarpConfig.WarpStopDistance + WarpConfig.MaxWarpDistance,
+					bPlayerOnGround ? 1 : 0, MeleeMotionWarpSnapshot.bCapturedTargetOnGround ? 1 : 0));
+		}
+#endif
+	}
 }

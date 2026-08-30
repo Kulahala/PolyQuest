@@ -1051,3 +1051,25 @@ TODO-03A3E World Pickup Interaction Prompt v1
 - **未声称证据与验证债务**：没有独立手动 `PolyQuestEditor` Development Editor 编译，也没有逐项 entry 1/2 Motion-Warp Notify/Modifier/Root Motion/窗口 Editor readback；作者化 baseline 仍为本地 WIP。现有 3.14 seam 未独立构造 `ReadyForActivation()` 返回后同步 `EndTask()`，生产顺序已静态复核；该覆盖债务非本次提交 blocker，关闭触发器是未来可安全建立确定性 seam 时补测。
 - **文档与规则**：`plan.md` 保留详细基线、执行记录、证据和债务；`ROADMAP.md` 仅更新当前/下一阶段指针与 canonical debt；`ARCHITECTURE.md` 更新稳定的 entry 0..2 Motion-Warp 合同；`README.md` 更新公开状态；`AGENTS.md` 增加 `ReadyForActivation()` 同步重入门禁规则。
 - **排除项与提交边界**：全部 `Content/**`、`Config/Automation/Presets/1.json`、其他 Source/文档 WIP、Blueprint/Montage/AnimBP/DataAsset/地图、`PolyQuest.uproject`、`Build.cs`、Gameplay Tags、Engine/旧 Test 项目均未修改或暂存；无资产清理、回滚或导入。最终提交 hash 以 Git 历史为准。
+
+## TODO-03A7B Final Commit Closeout (2026-08-31; HEAD `ae0139b`, working-tree not clean)
+
+> 本节补充 TODO-03A7B 的最终提交视角。`HEAD` 为 `ae0139be10c3273cc8311c19d0210bb1d2e0cbc4`，工作区仍含用户的 Config/Content WIP，因此不是干净 checkout 快照；本节仅作历史追溯，不替代源码、Config 或实际资产作为运行时权威。
+
+- **提交与范围**：`ae0139b` 完成 Light Combo entry `0..2` 的显式 opt-in、一次性静态 Lock-On 快照、Task/Montage 两级门禁、目标死亡/销毁与 UnPossess 清理桥接，并同步阶段文档/规则。`Content/**`、`Config/Automation/Presets/1.json`、其他 Source WIP、Blueprint/Montage/AnimBP/DataAsset/地图、`PolyQuest.uproject`、`Build.cs` 和 Gameplay Tags 未纳入。
+- **用户证据**：用户确认修复后的 `PolyQuest.Combat.PlayerMeleeMotionWarping` focused Automation 与 `/Game/Maps/Scene01` PIE 通过；该证据只覆盖实际运行场景，不扩展为全量回归、手动编译或作者化资产 readback。
+- **静态/复核证据**：Gemini 报告 Rider errors-only 无 error、`git diff --check` 通过；Main 完成批准范围内的一轮 diff-first、定点 CodeGraph/补充 code-review-graph 与 defect-first fresh review，未发现 P0/P1/P2 blocker；未执行第二轮 adversarial review。
+- **未解决债务**：没有独立记录的手动 `PolyQuestEditor` Development Editor 编译，也没有逐项 entry 1/2 Motion-Warp Notify、Modifier、Root Motion、目标名和时间窗的 Editor readback；`ReadyForActivation()` 同步 `EndTask()` 的无头重入夹具也未独立构造。这些是验证债务，不改写为运行时失败或 no-adoption。
+- **后续指针**：下一阶段为 `TODO-03A7C`。它应以当前 `ae0139b` 为仓库基线，分别审查 Charged/Sprint 的实际 Montage 与 Root Motion 适配；本归档中的 `90ad381`、`c91fbfd` 只保留各自历史任务视角，不能当作当前 HEAD。
+
+## TODO-03A7C Charged/Sprint Melee Motion-Warp Adoption Closeout (2026-08-31; HEAD `ae0139b`, working-tree not clean)
+
+> 本节记录 TODO-03A7C 的源码实现与用户验证收口。归档快照的 `HEAD` 为 `ae0139be10c3273cc8311c19d0210bb1d2e0cbc4`；工作区仍含用户的 Config/Content WIP、其他 Source WIP 与本阶段未提交变更，因此不是干净 checkout 快照。本节只作历史追溯，不替代源码、Config 或实际资产作为运行时权威。
+
+- **范围与所有权**：9 个批准 Source/test 路径完成共享的无状态 `MeleeMotionWarping` config/snapshot/evaluator、Light 兼容 wrapper、Charged release 与 Sprint Attack 的独立 Ability-owned 静态快照接入。Charged 在成功 Cost/Commit、主动 Montage 活跃、Damage/Poise 设置和 `bReleaseStarted` 之后、`Montage_Resume()` 之前尝试一次；Sprint 在 Montage Task active/unfinished 与 Montage active 两级门禁之后、Guard/Sprint 取消之前尝试一次。两者只使用现有 Player bridge，不改变 ASC/AttributeSet、Gameplay Tags/Input、Cost、Trace/Resolver/Damage、Guard/Dodge 或 Sprint ownership。
+- **Main 窄修复**：Main 在已批准的 Charged/Sprint cpp 内补充 Montage/AnimInstance `IsValid()` 门禁，未改变公开 API、时序、架构或资产范围。该修复符合项目后来记录的范围/可逆性例外；严重级别本身不授予实现权限。
+- **用户证据**：用户确认最终修复后的 `PolyQuest.Combat.PlayerMeleeMotionWarping` focused Automation 成功，并确认 Scene01 PIE 通过；该证据只覆盖实际运行场景，不扩展为全量回归、手动编译或 Editor readback。
+- **静态与复核证据**：Gemini 报告批准文件 Rider error-level 检查无 error、`git diff --check` 通过；Main 完成定点 CodeGraph/补充 code-review-graph 影响核对与一轮 diff-first defect-first fresh review，未发现需要返工的阻塞缺陷。图结果与 test gap 只作静态影响提示，不作运行时证明；未执行第二轮 adversarial review。
+- **未声称证据与验证债务**：没有独立的 VS2022 `PolyQuestEditor` Development Editor 编译记录，也没有逐项 Charged/Sprint GA/Montage/Notify/Modifier/Root Motion/目标名/时间窗的 Editor readback；现有测试 seam 不能替代真实生产 Task/Montage 异步时序证明。关闭触发器是用户完成相应编译/readback，或对不适用 Ability 提供真实 evidence-backed no-adoption；这些债务不阻塞下一阶段源码计划。
+- **排除项与提交边界**：全部 `Content/**`、`Config/Automation/Presets/1.json`、其他 Source/文档 WIP、`PolyQuest.uproject`、`Build.cs`、Gameplay Tags、Input、旧 Test 项目和用户资产均未纳入本阶段；无资产清理、回滚、导入或 Editor 写入。阶段候选提交仅限 9 个批准 Source/test 路径与明确文档收口，须待用户另行批准后 staging/commit。
+- **后续指针**：下一阶段为 `TODO-03A7D：Melee Skill Motion-Warp Adoption v1`；本阶段不提前实现或改写其计划。

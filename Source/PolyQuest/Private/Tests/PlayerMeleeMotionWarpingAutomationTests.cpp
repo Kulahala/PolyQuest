@@ -8,11 +8,14 @@
 
 #include "AbilitySystemComponent.h"
 #include "AbilitySystemLog.h"
+#include "AbilitySystem/Abilities/ChargedAttackAbility.h"
 #include "AbilitySystem/Abilities/LightAttackAbility.h"
+#include "AbilitySystem/Abilities/SprintAttackAbility.h"
 #include "Animation/AnimMontage.h"
 #include "Character/Enemy/EnemyCharacter.h"
 #include "Character/Player/PlayerCharacter.h"
 #include "Combat/ComboChainDataAsset.h"
+#include "Combat/Melee/MeleeMotionWarping.h"
 #include "Engine/Engine.h"
 #include "Engine/World.h"
 #include "GameFramework/CharacterMovementComponent.h"
@@ -46,6 +49,13 @@ bool FPlayerMeleeMotionWarpingAutomationTest::RunTest(const FString&)
 			TestEqual(TEXT("Default MaxWarpDistance is 110.0f"), DefaultConstructedEntry.MaxWarpDistance, 110.0f);
 			TestEqual(TEXT("Default MaxWarpAngleDegrees is 60.0f"), DefaultConstructedEntry.MaxWarpAngleDegrees, 60.0f);
 
+			const FMeleeMotionWarpConfig DefaultSharedConfig;
+			TestFalse(TEXT("Default shared config bUseMotionWarping is false"), DefaultSharedConfig.bUseMotionWarping);
+			TestEqual(TEXT("Default shared config WarpTargetName is MeleeContact"), DefaultSharedConfig.WarpTargetName, FName(TEXT("MeleeContact")));
+			TestEqual(TEXT("Default shared config WarpStopDistance is 190.0f"), DefaultSharedConfig.WarpStopDistance, 190.0f);
+			TestEqual(TEXT("Default shared config MaxWarpDistance is 110.0f"), DefaultSharedConfig.MaxWarpDistance, 110.0f);
+			TestEqual(TEXT("Default shared config MaxWarpAngleDegrees is 60.0f"), DefaultSharedConfig.MaxWarpAngleDegrees, 60.0f);
+
 			FComboChainEntry DisabledEntry = ValidEntry;
 			DisabledEntry.bUseMotionWarping = false;
 			TestFalse(TEXT("Disabled entry fails closed"),
@@ -53,12 +63,43 @@ bool FPlayerMeleeMotionWarpingAutomationTest::RunTest(const FString&)
 					FVector(0, 0, 0), FVector(1, 0, 0), true,
 					FVector(140, 0, 0), true, DisabledEntry, OutTransform));
 
+			FMeleeMotionWarpConfig SharedDisabledConfig;
+			SharedDisabledConfig.bUseMotionWarping = false;
+			SharedDisabledConfig.WarpTargetName = FName(TEXT("MeleeContact"));
+			SharedDisabledConfig.WarpStopDistance = 100.0f;
+			SharedDisabledConfig.MaxWarpDistance = 60.0f;
+			SharedDisabledConfig.MaxWarpAngleDegrees = 60.0f;
+			FTransform SharedOutTransform;
+			TestFalse(TEXT("Disabled shared config fails closed"),
+				FMeleeMotionWarpingLifecycle::EvaluateMeleeMotionWarpTransform(
+					FVector(0, 0, 0), FVector(1, 0, 0), true,
+					FVector(140, 0, 0), true, SharedDisabledConfig, SharedOutTransform));
+
 			FComboChainEntry NoneNameEntry = ValidEntry;
 			NoneNameEntry.WarpTargetName = NAME_None;
 			TestFalse(TEXT("NAME_None warp target fails closed"),
 				ULightAttackAbility::EvaluateMeleeMotionWarpTransform(
 					FVector(0, 0, 0), FVector(1, 0, 0), true,
 					FVector(140, 0, 0), true, NoneNameEntry, OutTransform));
+
+			// Direct equivalence assertion between Light wrapper and shared evaluator
+			FTransform LightTransform;
+			FTransform HelperTransform;
+			const bool bLightResult = ULightAttackAbility::EvaluateMeleeMotionWarpTransform(
+				FVector(0, 0, 0), FVector(1, 0, 0), true,
+				FVector(140, 0, 0), true, ValidEntry, LightTransform);
+			FMeleeMotionWarpConfig ValidSharedConfig;
+			ValidSharedConfig.bUseMotionWarping = ValidEntry.bUseMotionWarping;
+			ValidSharedConfig.WarpTargetName = ValidEntry.WarpTargetName;
+			ValidSharedConfig.WarpStopDistance = ValidEntry.WarpStopDistance;
+			ValidSharedConfig.MaxWarpDistance = ValidEntry.MaxWarpDistance;
+			ValidSharedConfig.MaxWarpAngleDegrees = ValidEntry.MaxWarpAngleDegrees;
+			const bool bHelperResult = FMeleeMotionWarpingLifecycle::EvaluateMeleeMotionWarpTransform(
+				FVector(0, 0, 0), FVector(1, 0, 0), true,
+				FVector(140, 0, 0), true, ValidSharedConfig, HelperTransform);
+			TestTrue(TEXT("Light wrapper and shared helper produce identical true result"), bLightResult && bHelperResult);
+			TestEqual(TEXT("Light wrapper and shared helper produce identical transform location"), LightTransform.GetLocation(), HelperTransform.GetLocation());
+			TestEqual(TEXT("Light wrapper and shared helper produce identical transform rotation"), LightTransform.GetRotation(), HelperTransform.GetRotation());
 		}
 
 		// 1.2 Config non-finite and out-of-range boundaries
@@ -804,6 +845,254 @@ bool FPlayerMeleeMotionWarpingAutomationTest::RunTest(const FString&)
 
 					Player->TestUnPossessed();
 					TestEqual(TEXT("UnPossessed() immediately cleared warp targets"), Player->GetTestMeleeMotionWarpTargetCount(), 0);
+
+					// Restore possession for subsequent sections
+					PlayerController->UnPossess();
+					PlayerController->Possess(Player);
+					if (UCharacterMovementComponent* PlayerMoveComp = Player->GetCharacterMovement())
+					{
+						PlayerMoveComp->SetMovementMode(MOVE_Walking);
+					}
+					if (UCharacterMovementComponent* EnemyMoveComp = Enemy->GetCharacterMovement())
+					{
+						EnemyMoveComp->SetMovementMode(MOVE_Walking);
+					}
+				}
+
+				// -------------------------------------------------------------------------
+				// SECTION 4: Charged Attack Motion Warping Matrix (UChargedAttackAbility)
+				// -------------------------------------------------------------------------
+				{
+					UChargedAttackAbility* ChargedAbility = NewObject<UChargedAttackAbility>(Player);
+					if (TestNotNull(TEXT("ChargedAbility constructed"), ChargedAbility))
+					{
+						ChargedAbility->SetTestCurrentActorInfo(Player->GetAbilitySystemComponent()->AbilityActorInfo.Get());
+
+						// 4.1 Defaults: bUseMotionWarping is false, WarpTargetName is MeleeContact
+						{
+							Player->ClearMeleeMotionWarpTargets();
+							Player->SetTestLockedTarget(Enemy);
+							ChargedAbility->TestResetMeleeMotionWarpState();
+
+							ChargedAbility->Test_TryApplyMeleeMotionWarpTarget(Player);
+							TestFalse(TEXT("Charged attack default config does not attempt capture"), ChargedAbility->HasTestMeleeMotionWarpCaptureAttempted());
+							TestFalse(TEXT("Charged attack default config does not record snapshot"), ChargedAbility->HasTestMeleeMotionWarpSnapshot());
+							TestEqual(TEXT("Charged attack default config writes 0 warp targets"), Player->GetTestMeleeMotionWarpTargetCount(), 0);
+						}
+
+						// 4.2 HoldReady/Charging does not capture or write warp targets
+						{
+							ChargedAbility->SetTestMotionWarpConfig(true, FName(TEXT("MeleeContact")), 100.0f, 60.0f, 60.0f);
+							Player->ClearMeleeMotionWarpTargets();
+							Player->SetTestLockedTarget(Enemy);
+							ChargedAbility->TestResetMeleeMotionWarpState();
+
+							ChargedAbility->Test_SimulateHoldReady();
+							TestTrue(TEXT("HoldReady latched state"), ChargedAbility->Test_IsMontagePausedAtHoldReady());
+							TestFalse(TEXT("HoldReady did not attempt capture"), ChargedAbility->HasTestMeleeMotionWarpCaptureAttempted());
+							TestFalse(TEXT("HoldReady did not record snapshot"), ChargedAbility->HasTestMeleeMotionWarpSnapshot());
+							TestEqual(TEXT("HoldReady wrote 0 warp targets"), Player->GetTestMeleeMotionWarpTargetCount(), 0);
+						}
+
+						// 4.3 Successful release captures target once and writes warp target to player
+						{
+							Player->SetActorLocation(FVector(0.0f, 0.0f, 100.0f));
+							Enemy->SetActorLocation(FVector(140.0f, 0.0f, 100.0f));
+							if (UCharacterMovementComponent* PlayerMoveComp = Player->GetCharacterMovement())
+							{
+								PlayerMoveComp->SetMovementMode(MOVE_Walking);
+							}
+							if (UCharacterMovementComponent* EnemyMoveComp = Enemy->GetCharacterMovement())
+							{
+								EnemyMoveComp->SetMovementMode(MOVE_Walking);
+							}
+							Player->ClearMeleeMotionWarpTargets();
+							Player->SetTestLockedTarget(Enemy);
+							ChargedAbility->TestResetMeleeMotionWarpState();
+							ChargedAbility->SetTestMotionWarpConfig(true, FName(TEXT("MeleeContact")), 100.0f, 60.0f, 60.0f);
+
+							ChargedAbility->Test_TryApplyMeleeMotionWarpTarget(Player);
+							TestTrue(TEXT("Charged release consumed capture attempt"), ChargedAbility->HasTestMeleeMotionWarpCaptureAttempted());
+							TestTrue(TEXT("Charged release recorded snapshot"), ChargedAbility->HasTestMeleeMotionWarpSnapshot());
+							TestEqual(TEXT("Charged release wrote 1 warp target"), Player->GetTestMeleeMotionWarpTargetCount(), 1);
+							TestTrue(TEXT("Captured location matches enemy"), FMath::IsNearlyEqual(ChargedAbility->GetTestMeleeMotionWarpCapturedLocation().X, 140.0f, 0.1f));
+						}
+
+						// 4.4 Static snapshot: moving target or changing lock after capture does not alter cached snapshot
+						{
+							Enemy->SetActorLocation(FVector(500.0f, 0.0f, 100.0f));
+							Player->TestClearLockedTarget();
+
+							ChargedAbility->Test_TryApplyMeleeMotionWarpTarget(Player);
+							TestTrue(TEXT("Charged snapshot location remains unchanged after enemy moved and lock cleared"),
+								FMath::IsNearlyEqual(ChargedAbility->GetTestMeleeMotionWarpCapturedLocation().X, 140.0f, 0.1f));
+
+							// Restore enemy location
+							Enemy->SetActorLocation(FVector(140.0f, 0.0f, 100.0f));
+							if (UCharacterMovementComponent* EnemyMoveComp = Enemy->GetCharacterMovement())
+							{
+								EnemyMoveComp->SetMovementMode(MOVE_Walking);
+							}
+							Player->SetTestLockedTarget(Enemy);
+						}
+
+						// 4.5 Target invalidated (Dead) clears warp targets on next evaluation
+						{
+							if (UAbilitySystemComponent* EnemyASC = Enemy->GetAbilitySystemComponent())
+							{
+								EnemyASC->AddLooseGameplayTag(FGameplayTag::RequestGameplayTag(FName(TEXT("State.Status.Dead")), false));
+							}
+							ChargedAbility->Test_TryApplyMeleeMotionWarpTarget(Player);
+							TestEqual(TEXT("Dead target evaluation clears player warp targets in charged attack"), Player->GetTestMeleeMotionWarpTargetCount(), 0);
+
+							// Restore enemy alive
+							if (UAbilitySystemComponent* EnemyASC = Enemy->GetAbilitySystemComponent())
+							{
+								EnemyASC->SetLooseGameplayTagCount(FGameplayTag::RequestGameplayTag(FName(TEXT("State.Status.Dead")), false), 0);
+							}
+						}
+
+						// 4.6 Reset and EndAbility clean up state
+						{
+							Player->SetActorLocation(FVector(0.0f, 0.0f, 100.0f));
+							Enemy->SetActorLocation(FVector(140.0f, 0.0f, 100.0f));
+							if (UCharacterMovementComponent* PlayerMoveComp = Player->GetCharacterMovement())
+							{
+								PlayerMoveComp->SetMovementMode(MOVE_Walking);
+							}
+							if (UCharacterMovementComponent* EnemyMoveComp = Enemy->GetCharacterMovement())
+							{
+								EnemyMoveComp->SetMovementMode(MOVE_Walking);
+							}
+							Player->SetTestLockedTarget(Enemy);
+							ChargedAbility->TestResetMeleeMotionWarpState();
+							ChargedAbility->Test_TryApplyMeleeMotionWarpTarget(Player);
+							TestEqual(TEXT("Player has 1 warp target in charged test"), Player->GetTestMeleeMotionWarpTargetCount(), 1);
+
+							ChargedAbility->TestResetMeleeMotionWarpState();
+							Player->ClearMeleeMotionWarpTargets();
+							TestFalse(TEXT("Snapshot reset in charged test"), ChargedAbility->HasTestMeleeMotionWarpSnapshot());
+							TestFalse(TEXT("Capture attempt reset in charged test"), ChargedAbility->HasTestMeleeMotionWarpCaptureAttempted());
+							TestEqual(TEXT("Player warp targets cleared in charged test"), Player->GetTestMeleeMotionWarpTargetCount(), 0);
+
+							// EndAbility resets test bypass flag
+							ChargedAbility->SetTestBypassMontageActiveCheck(true);
+							TestTrue(TEXT("Charged ability bypass set to true for test"), ChargedAbility->GetTestBypassMontageActiveCheck());
+							ChargedAbility->EndAbility(FGameplayAbilitySpecHandle(), ChargedAbility->GetCurrentActorInfo(), FGameplayAbilityActivationInfo(), true, false);
+							TestFalse(TEXT("Charged ability EndAbility resets test bypass flag"), ChargedAbility->GetTestBypassMontageActiveCheck());
+						}
+					}
+				}
+
+				// -------------------------------------------------------------------------
+				// SECTION 5: Sprint Attack Motion Warping Matrix (USprintAttackAbility)
+				// -------------------------------------------------------------------------
+				{
+					USprintAttackAbility* SprintAbility = NewObject<USprintAttackAbility>(Player);
+					if (TestNotNull(TEXT("SprintAbility constructed"), SprintAbility))
+					{
+						SprintAbility->SetTestCurrentActorInfo(Player->GetAbilitySystemComponent()->AbilityActorInfo.Get());
+
+						// 5.1 Defaults: bUseMotionWarping is false, WarpTargetName is MeleeContact
+						{
+							Player->ClearMeleeMotionWarpTargets();
+							Player->SetTestLockedTarget(Enemy);
+							SprintAbility->TestResetMeleeMotionWarpState();
+
+							SprintAbility->Test_TryApplyMeleeMotionWarpTarget(Player);
+							TestFalse(TEXT("Sprint attack default config does not attempt capture"), SprintAbility->HasTestMeleeMotionWarpCaptureAttempted());
+							TestFalse(TEXT("Sprint attack default config does not record snapshot"), SprintAbility->HasTestMeleeMotionWarpSnapshot());
+							TestEqual(TEXT("Sprint attack default config writes 0 warp targets"), Player->GetTestMeleeMotionWarpTargetCount(), 0);
+						}
+
+						// 5.2 Successful apply captures target once and writes warp target to player
+						{
+							Player->SetActorLocation(FVector(0.0f, 0.0f, 100.0f));
+							Enemy->SetActorLocation(FVector(140.0f, 0.0f, 100.0f));
+							if (UCharacterMovementComponent* PlayerMoveComp = Player->GetCharacterMovement())
+							{
+								PlayerMoveComp->SetMovementMode(MOVE_Walking);
+							}
+							if (UCharacterMovementComponent* EnemyMoveComp = Enemy->GetCharacterMovement())
+							{
+								EnemyMoveComp->SetMovementMode(MOVE_Walking);
+							}
+							Player->ClearMeleeMotionWarpTargets();
+							Player->SetTestLockedTarget(Enemy);
+							SprintAbility->TestResetMeleeMotionWarpState();
+							SprintAbility->SetTestMotionWarpConfig(true, FName(TEXT("MeleeContact")), 100.0f, 60.0f, 60.0f);
+
+							SprintAbility->Test_TryApplyMeleeMotionWarpTarget(Player);
+							TestTrue(TEXT("Sprint attack consumed capture attempt"), SprintAbility->HasTestMeleeMotionWarpCaptureAttempted());
+							TestTrue(TEXT("Sprint attack recorded snapshot"), SprintAbility->HasTestMeleeMotionWarpSnapshot());
+							TestEqual(TEXT("Sprint attack wrote 1 warp target"), Player->GetTestMeleeMotionWarpTargetCount(), 1);
+							TestTrue(TEXT("Sprint captured location matches enemy"), FMath::IsNearlyEqual(SprintAbility->GetTestMeleeMotionWarpCapturedLocation().X, 140.0f, 0.1f));
+						}
+
+						// 5.3 Static snapshot: moving target or changing lock after capture does not alter cached snapshot
+						{
+							Enemy->SetActorLocation(FVector(500.0f, 0.0f, 100.0f));
+							Player->TestClearLockedTarget();
+
+							SprintAbility->Test_TryApplyMeleeMotionWarpTarget(Player);
+							TestTrue(TEXT("Sprint snapshot location remains unchanged after enemy moved and lock cleared"),
+								FMath::IsNearlyEqual(SprintAbility->GetTestMeleeMotionWarpCapturedLocation().X, 140.0f, 0.1f));
+
+							// Restore enemy location
+							Enemy->SetActorLocation(FVector(140.0f, 0.0f, 100.0f));
+							if (UCharacterMovementComponent* EnemyMoveComp = Enemy->GetCharacterMovement())
+							{
+								EnemyMoveComp->SetMovementMode(MOVE_Walking);
+							}
+							Player->SetTestLockedTarget(Enemy);
+						}
+
+						// 5.4 Target invalidated (Dead) clears warp targets on next evaluation
+						{
+							if (UAbilitySystemComponent* EnemyASC = Enemy->GetAbilitySystemComponent())
+							{
+								EnemyASC->AddLooseGameplayTag(FGameplayTag::RequestGameplayTag(FName(TEXT("State.Status.Dead")), false));
+							}
+							SprintAbility->Test_TryApplyMeleeMotionWarpTarget(Player);
+							TestEqual(TEXT("Dead target evaluation clears player warp targets in sprint attack"), Player->GetTestMeleeMotionWarpTargetCount(), 0);
+
+							// Restore enemy alive
+							if (UAbilitySystemComponent* EnemyASC = Enemy->GetAbilitySystemComponent())
+							{
+								EnemyASC->SetLooseGameplayTagCount(FGameplayTag::RequestGameplayTag(FName(TEXT("State.Status.Dead")), false), 0);
+							}
+						}
+
+						// 5.5 Reset and EndAbility clean up state
+						{
+							Player->SetActorLocation(FVector(0.0f, 0.0f, 100.0f));
+							Enemy->SetActorLocation(FVector(140.0f, 0.0f, 100.0f));
+							if (UCharacterMovementComponent* PlayerMoveComp = Player->GetCharacterMovement())
+							{
+								PlayerMoveComp->SetMovementMode(MOVE_Walking);
+							}
+							if (UCharacterMovementComponent* EnemyMoveComp = Enemy->GetCharacterMovement())
+							{
+								EnemyMoveComp->SetMovementMode(MOVE_Walking);
+							}
+							Player->SetTestLockedTarget(Enemy);
+							SprintAbility->TestResetMeleeMotionWarpState();
+							SprintAbility->Test_TryApplyMeleeMotionWarpTarget(Player);
+							TestEqual(TEXT("Player has 1 warp target in sprint test"), Player->GetTestMeleeMotionWarpTargetCount(), 1);
+
+							SprintAbility->TestResetMeleeMotionWarpState();
+							Player->ClearMeleeMotionWarpTargets();
+							TestFalse(TEXT("Sprint snapshot reset"), SprintAbility->HasTestMeleeMotionWarpSnapshot());
+							TestFalse(TEXT("Sprint capture attempt reset"), SprintAbility->HasTestMeleeMotionWarpCaptureAttempted());
+							TestEqual(TEXT("Player warp targets cleared in sprint test"), Player->GetTestMeleeMotionWarpTargetCount(), 0);
+
+							// EndAbility resets test bypass flag
+							SprintAbility->SetTestBypassMontageActiveCheck(true);
+							TestTrue(TEXT("Sprint ability bypass set to true for test"), SprintAbility->GetTestBypassMontageActiveCheck());
+							SprintAbility->EndAbility(FGameplayAbilitySpecHandle(), SprintAbility->GetCurrentActorInfo(), FGameplayAbilityActivationInfo(), true, false);
+							TestFalse(TEXT("Sprint ability EndAbility resets test bypass flag"), SprintAbility->GetTestBypassMontageActiveCheck());
+						}
+					}
 				}
 			}
 		}
