@@ -1073,3 +1073,16 @@ TODO-03A3E World Pickup Interaction Prompt v1
 - **未声称证据与验证债务**：没有独立的 VS2022 `PolyQuestEditor` Development Editor 编译记录，也没有逐项 Charged/Sprint GA/Montage/Notify/Modifier/Root Motion/目标名/时间窗的 Editor readback；现有测试 seam 不能替代真实生产 Task/Montage 异步时序证明。关闭触发器是用户完成相应编译/readback，或对不适用 Ability 提供真实 evidence-backed no-adoption；这些债务不阻塞下一阶段源码计划。
 - **排除项与提交边界**：全部 `Content/**`、`Config/Automation/Presets/1.json`、其他 Source/文档 WIP、`PolyQuest.uproject`、`Build.cs`、Gameplay Tags、Input、旧 Test 项目和用户资产均未纳入本阶段；无资产清理、回滚、导入或 Editor 写入。阶段候选提交仅限 9 个批准 Source/test 路径与明确文档收口，须待用户另行批准后 staging/commit。
 - **后续指针**：下一阶段为 `TODO-03A7D：Melee Skill Motion-Warp Adoption v1`；本阶段不提前实现或改写其计划。
+
+## TODO-03A7D Melee Skill Motion-Warp Adoption Source Closeout (2026-08-31; working-tree snapshot at parent HEAD `2472045`, not clean)
+
+> 本节记录 TODO-03A7D 的源码实施收口。归档快照基于提交 `2472045`，工作区仍含用户的 `Content/**`、`Config/**` 与本阶段 Source/文档 WIP，因此不是干净 checkout；本节只作历史追溯，不替代源码、Config 或实际资产作为运行时权威。
+
+- **范围与所有权**：`UPlayerMeleeSkillAbility` 完成默认关闭的五项 Motion-Warp 配置、Ability-owned 一次性静态 Lock-On 快照、共享几何 evaluator 接入、Montage/AbilityTask 激活门禁和 EndAbility 清理；`APlayerCharacter::UnPossessed()` 以独立 `Ability.Skill.Melee` Tag 容器取消技能，不改变 `Ability.Attack.Light` 或其他类别。唯一 `Trace -> Resolver -> Damage GE` 路径、ASC、Input、Gameplay Tags、Guard/Parry 与装备所有权保持不变。
+- **Main 窄修复**：Main 在批准的 `PlayerMeleeSkillAbility.cpp::ActivateAbility()` 内补充六个 Notify Task 的 `ReadyForActivation()` 前后重入/有效性守卫及最终 Player/World 门禁；未改变公开 API、架构、资产或玩家伤害合同。
+- **用户证据**：用户确认修复后的 `PolyQuest.Combat.PlayerMeleeMotionWarping` focused Automation 成功；用户在初始实现交接时确认过 Scene01 PIE。修复后没有单独的新 PIE 收据，故不将其扩展为最新视觉回归或全量套件证明。
+- **静态与复核证据**：Gemini 报告批准文件 Rider error-level 检查无 error、`git diff --check` 通过；Main 完成一轮批准范围内的 diff-first defect-first fresh review，未发现 P0/P1/P2 blocker。未执行第二轮 adversarial review。
+- **未声称证据与验证债务**：没有独立手动 `PolyQuestEditor` Development Editor 编译记录，也没有 `GA_Skill_Whirlwind` 父类、五项配置、Montage Notify/Modifier/Root Motion/目标名/时间窗的逐项 Editor readback；作者化资产继续是本地 WIP。现有 test seam 不替代真实生产 Task/Montage 异步时序证明。上述是非阻塞 authored-validation debt，关闭触发器是用户完成指定 readback/编译，或提供真实 evidence-backed no-adoption。
+- **文档与路线**：`plan.md` 保存本阶段详细基线、实现、证据和债务；`ROADMAP.md` 将 `TODO-03A7D` 记为源码收口并插入后续 `TODO-03H5：Post-Motion-Warp Combat Health Review v1`；由于缺少资产 readback，`ARCHITECTURE.md` 与 `README.md` 不写入 Whirlwind 已采用事实。
+- **排除项与提交边界**：全部 `Content/**`、`Config/Automation/Presets/1.json`、其他 Source/文档 WIP、Blueprint/Montage/AnimBP/DataAsset/地图、`PolyQuest.uproject`、`Build.cs`、Gameplay Tags、旧 Test 项目和用户资产均未纳入；无资产清理、回滚、导入或 Editor 写入。最终提交 hash 以 Git 历史为准。
+- **后续指针**：下一项为 `TODO-03H5：Post-Motion-Warp Combat Health Review v1`；该审查先于 `TODO-05A`，只修真实的生命周期/所有权/数据完整性或玩家回归阻塞，不扩展 Motion-Warp 功能。

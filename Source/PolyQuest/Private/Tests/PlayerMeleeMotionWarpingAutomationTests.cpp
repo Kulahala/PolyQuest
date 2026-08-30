@@ -10,6 +10,7 @@
 #include "AbilitySystemLog.h"
 #include "AbilitySystem/Abilities/ChargedAttackAbility.h"
 #include "AbilitySystem/Abilities/LightAttackAbility.h"
+#include "AbilitySystem/Abilities/PlayerMeleeSkillAbility.h"
 #include "AbilitySystem/Abilities/SprintAttackAbility.h"
 #include "Animation/AnimMontage.h"
 #include "Character/Enemy/EnemyCharacter.h"
@@ -22,6 +23,8 @@
 #include "GameFramework/PlayerController.h"
 #include "MotionWarpingComponent.h"
 #include "Tests/CombatAutomationFixture.h"
+#include "Tests/TestLaunchFacingSmoothingAbility.h"
+#include "Tests/TestMeleeTrailAbility.h"
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FPlayerMeleeMotionWarpingAutomationTest, "PolyQuest.Combat.PlayerMeleeMotionWarping", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 
@@ -1091,6 +1094,308 @@ bool FPlayerMeleeMotionWarpingAutomationTest::RunTest(const FString&)
 							TestTrue(TEXT("Sprint ability bypass set to true for test"), SprintAbility->GetTestBypassMontageActiveCheck());
 							SprintAbility->EndAbility(FGameplayAbilitySpecHandle(), SprintAbility->GetCurrentActorInfo(), FGameplayAbilityActivationInfo(), true, false);
 							TestFalse(TEXT("Sprint ability EndAbility resets test bypass flag"), SprintAbility->GetTestBypassMontageActiveCheck());
+						}
+					}
+				}
+
+				// -------------------------------------------------------------------------
+				// SECTION 6: Melee Skill Motion Warping Matrix (UPlayerMeleeSkillAbility)
+				// -------------------------------------------------------------------------
+				{
+					UPlayerMeleeSkillAbility* SkillAbility = NewObject<UPlayerMeleeSkillAbility>(Player);
+					if (TestNotNull(TEXT("SkillAbility constructed"), SkillAbility))
+					{
+						SkillAbility->SetTestCurrentActorInfo(Player->GetAbilitySystemComponent()->AbilityActorInfo.Get());
+
+						// 6.1 Defaults: bUseMotionWarping is false, WarpTargetName is MeleeContact
+						{
+							Player->ClearMeleeMotionWarpTargets();
+							Player->SetTestLockedTarget(Enemy);
+							SkillAbility->TestResetMeleeMotionWarpState();
+
+							SkillAbility->Test_TryApplyMeleeMotionWarpTarget(Player);
+							TestFalse(TEXT("Melee skill default config does not attempt capture"), SkillAbility->HasTestMeleeMotionWarpCaptureAttempted());
+							TestFalse(TEXT("Melee skill default config does not record snapshot"), SkillAbility->HasTestMeleeMotionWarpSnapshot());
+							TestEqual(TEXT("Melee skill default config writes 0 warp targets"), Player->GetTestMeleeMotionWarpTargetCount(), 0);
+						}
+
+						// 6.2 Enabled with No Lock-on consumes capture attempt and writes 0 warp targets
+						{
+							Player->ClearMeleeMotionWarpTargets();
+							Player->TestClearLockedTarget();
+							SkillAbility->TestResetMeleeMotionWarpState();
+							SkillAbility->SetTestMotionWarpConfig(true, FName(TEXT("MeleeContact")), 100.0f, 60.0f, 60.0f);
+
+							SkillAbility->Test_TryApplyMeleeMotionWarpTarget(Player);
+							TestTrue(TEXT("Melee skill with no lock-on consumed capture attempt"), SkillAbility->HasTestMeleeMotionWarpCaptureAttempted());
+							TestFalse(TEXT("Melee skill with no lock-on has no snapshot"), SkillAbility->HasTestMeleeMotionWarpSnapshot());
+							TestEqual(TEXT("Melee skill with no lock-on writes 0 warp targets"), Player->GetTestMeleeMotionWarpTargetCount(), 0);
+						}
+
+						// 6.3 Invalid config (NAME_None / negative distance) does not consume capture attempt and clears warp targets
+						{
+							Player->SetTestLockedTarget(Enemy);
+							SkillAbility->TestResetMeleeMotionWarpState();
+							SkillAbility->SetTestMotionWarpConfig(true, NAME_None, 100.0f, -10.0f, 60.0f);
+
+							SkillAbility->Test_TryApplyMeleeMotionWarpTarget(Player);
+							TestFalse(TEXT("Melee skill with invalid config does not consume capture attempt"), SkillAbility->HasTestMeleeMotionWarpCaptureAttempted());
+							TestFalse(TEXT("Melee skill with invalid config has no snapshot"), SkillAbility->HasTestMeleeMotionWarpSnapshot());
+							TestEqual(TEXT("Melee skill with invalid config writes 0 warp targets"), Player->GetTestMeleeMotionWarpTargetCount(), 0);
+						}
+
+						// 6.4 Successful apply captures target once and writes warp target to player
+						{
+							Player->SetActorLocation(FVector(0.0f, 0.0f, 100.0f));
+							Enemy->SetActorLocation(FVector(140.0f, 0.0f, 100.0f));
+							if (UCharacterMovementComponent* PlayerMoveComp = Player->GetCharacterMovement())
+							{
+								PlayerMoveComp->SetMovementMode(MOVE_Walking);
+							}
+							if (UCharacterMovementComponent* EnemyMoveComp = Enemy->GetCharacterMovement())
+							{
+								EnemyMoveComp->SetMovementMode(MOVE_Walking);
+							}
+							Player->ClearMeleeMotionWarpTargets();
+							Player->SetTestLockedTarget(Enemy);
+							SkillAbility->TestResetMeleeMotionWarpState();
+							SkillAbility->SetTestMotionWarpConfig(true, FName(TEXT("MeleeContact")), 100.0f, 60.0f, 60.0f);
+
+							SkillAbility->Test_TryApplyMeleeMotionWarpTarget(Player);
+							TestTrue(TEXT("Melee skill consumed capture attempt"), SkillAbility->HasTestMeleeMotionWarpCaptureAttempted());
+							TestTrue(TEXT("Melee skill recorded snapshot"), SkillAbility->HasTestMeleeMotionWarpSnapshot());
+							TestEqual(TEXT("Melee skill wrote 1 warp target"), Player->GetTestMeleeMotionWarpTargetCount(), 1);
+							TestTrue(TEXT("Melee skill captured location matches enemy"), FMath::IsNearlyEqual(SkillAbility->GetTestMeleeMotionWarpCapturedLocation().X, 140.0f, 0.1f));
+							TestTrue(TEXT("Melee skill captured on ground is true"), SkillAbility->GetTestMeleeMotionWarpCapturedOnGround());
+
+							FTransform StoredTransform;
+							Player->HasTestMeleeMotionWarpTarget(FName(TEXT("MeleeContact")), &StoredTransform);
+							TestTrue(TEXT("Melee skill warp target X is 40cm (140 - 100)"), FMath::IsNearlyEqual(StoredTransform.GetLocation().X, 40.0f, 0.1f));
+						}
+
+						// 6.5 Static snapshot: moving target or changing lock after capture does not alter cached snapshot
+						{
+							Enemy->SetActorLocation(FVector(500.0f, 0.0f, 100.0f));
+							Player->TestClearLockedTarget();
+
+							SkillAbility->Test_TryApplyMeleeMotionWarpTarget(Player);
+							TestTrue(TEXT("Melee skill snapshot location remains unchanged after enemy moved and lock cleared"),
+								FMath::IsNearlyEqual(SkillAbility->GetTestMeleeMotionWarpCapturedLocation().X, 140.0f, 0.1f));
+
+							// Restore enemy location
+							Enemy->SetActorLocation(FVector(140.0f, 0.0f, 100.0f));
+							if (UCharacterMovementComponent* EnemyMoveComp = Enemy->GetCharacterMovement())
+							{
+								EnemyMoveComp->SetMovementMode(MOVE_Walking);
+							}
+							Player->SetTestLockedTarget(Enemy);
+						}
+
+						// 6.6 Target invalidated (Dead / Off-ground) clears warp targets
+						{
+							// 1. Dead target during subsequent evaluation clears warp targets
+							if (UAbilitySystemComponent* EnemyASC = Enemy->GetAbilitySystemComponent())
+							{
+								EnemyASC->AddLooseGameplayTag(FGameplayTag::RequestGameplayTag(FName(TEXT("State.Status.Dead")), false));
+							}
+							SkillAbility->Test_TryApplyMeleeMotionWarpTarget(Player);
+							TestEqual(TEXT("Dead target evaluation clears player warp targets in melee skill"), Player->GetTestMeleeMotionWarpTargetCount(), 0);
+
+							// Restore enemy alive
+							if (UAbilitySystemComponent* EnemyASC = Enemy->GetAbilitySystemComponent())
+							{
+								EnemyASC->SetLooseGameplayTagCount(FGameplayTag::RequestGameplayTag(FName(TEXT("State.Status.Dead")), false), 0);
+							}
+
+							// Re-apply warp target with alive grounded enemy
+							SkillAbility->Test_TryApplyMeleeMotionWarpTarget(Player);
+							TestEqual(TEXT("Re-evaluated alive enemy restores 1 warp target"), Player->GetTestMeleeMotionWarpTargetCount(), 1);
+
+							// 2. Off-ground (Falling) enemy during initial capture records bCapturedTargetOnGround=false and evaluates to 0 warp targets
+							SkillAbility->TestResetMeleeMotionWarpState();
+							Player->ClearMeleeMotionWarpTargets();
+							if (UCharacterMovementComponent* EnemyMoveComp = Enemy->GetCharacterMovement())
+							{
+								EnemyMoveComp->SetMovementMode(MOVE_Falling);
+							}
+							SkillAbility->Test_TryApplyMeleeMotionWarpTarget(Player);
+							TestTrue(TEXT("Off-ground enemy capture attempted"), SkillAbility->HasTestMeleeMotionWarpCaptureAttempted());
+							TestTrue(TEXT("Off-ground enemy recorded snapshot"), SkillAbility->HasTestMeleeMotionWarpSnapshot());
+							TestFalse(TEXT("Off-ground enemy recorded bCapturedTargetOnGround as false"), SkillAbility->GetTestMeleeMotionWarpCapturedOnGround());
+							TestEqual(TEXT("Off-ground enemy evaluation clears player warp targets in melee skill"), Player->GetTestMeleeMotionWarpTargetCount(), 0);
+
+							// Restore enemy grounded
+							if (UCharacterMovementComponent* EnemyMoveComp = Enemy->GetCharacterMovement())
+							{
+								EnemyMoveComp->SetMovementMode(MOVE_Walking);
+							}
+							SkillAbility->TestResetMeleeMotionWarpState();
+							SkillAbility->Test_TryApplyMeleeMotionWarpTarget(Player);
+							TestTrue(TEXT("Restored grounded enemy re-establishes bCapturedTargetOnGround as true"), SkillAbility->GetTestMeleeMotionWarpCapturedOnGround());
+							TestEqual(TEXT("Restored grounded enemy re-establishes 1 warp target"), Player->GetTestMeleeMotionWarpTargetCount(), 1);
+						}
+
+						// 6.7 Context failure on first legal attempt consumes capture attempt and fails closed (no retargeting upon recovery)
+						{
+							AEnemyCharacter* ContextEnemy = FCombatAutomationFixture::SpawnPassiveEnemy(World, FTransform(FRotator::ZeroRotator, FVector(140.0f, 0.0f, 100.0f)));
+							if (TestNotNull(TEXT("ContextEnemy spawned for skill context test"), ContextEnemy))
+							{
+								ContextEnemy->SetTestCombatTeamTag(FGameplayTag::RequestGameplayTag(FName(TEXT("Team.Enemy")), false));
+								if (UCharacterMovementComponent* ContextMoveComp = ContextEnemy->GetCharacterMovement())
+								{
+									ContextMoveComp->SetMovementMode(MOVE_Walking);
+								}
+
+								SkillAbility->TestResetMeleeMotionWarpState();
+								Player->ClearMeleeMotionWarpTargets();
+								Player->SetTestLockedTarget(ContextEnemy);
+
+								// Invalidate controller context BEFORE first legal entry
+								PlayerController->UnPossess();
+
+								SkillAbility->Test_TryApplyMeleeMotionWarpTarget(Player);
+								TestTrue(TEXT("Melee skill with detached controller consumed capture attempt"), SkillAbility->HasTestMeleeMotionWarpCaptureAttempted());
+								TestFalse(TEXT("Melee skill with detached controller did not record snapshot"), SkillAbility->HasTestMeleeMotionWarpSnapshot());
+								TestEqual(TEXT("Melee skill with detached controller wrote 0 warp targets"), Player->GetTestMeleeMotionWarpTargetCount(), 0);
+
+								// Restore controller possession and lock
+								PlayerController->Possess(Player);
+								Player->SetTestLockedTarget(ContextEnemy);
+
+								// Subsequent attempt must not retarget
+								SkillAbility->Test_TryApplyMeleeMotionWarpTarget(Player);
+								TestFalse(TEXT("Melee skill does not re-target after prior context failure"), SkillAbility->HasTestMeleeMotionWarpSnapshot());
+								TestEqual(TEXT("Melee skill wrote 0 warp targets after context failure"), Player->GetTestMeleeMotionWarpTargetCount(), 0);
+							}
+						}
+
+						// 6.8 Invalid player/ungrounded context early exit safety
+						{
+							// Null player handling
+							SkillAbility->Test_TryApplyMeleeMotionWarpTarget(nullptr);
+
+							// Player falling clears warp targets
+							if (UCharacterMovementComponent* PlayerMoveComp = Player->GetCharacterMovement())
+							{
+								PlayerMoveComp->SetMovementMode(MOVE_Falling);
+							}
+							SkillAbility->Test_TryApplyMeleeMotionWarpTarget(Player);
+							TestEqual(TEXT("Ungrounded player evaluation clears warp targets"), Player->GetTestMeleeMotionWarpTargetCount(), 0);
+
+							// Restore player walking
+							if (UCharacterMovementComponent* PlayerMoveComp = Player->GetCharacterMovement())
+							{
+								PlayerMoveComp->SetMovementMode(MOVE_Walking);
+							}
+						}
+
+						// 6.9 ResetMeleeMotionWarpState helper and EndAbility teardown cleanup
+						{
+							Player->SetActorLocation(FVector(0.0f, 0.0f, 100.0f));
+							Enemy->SetActorLocation(FVector(140.0f, 0.0f, 100.0f));
+							if (UCharacterMovementComponent* PlayerMoveComp = Player->GetCharacterMovement())
+							{
+								PlayerMoveComp->SetMovementMode(MOVE_Walking);
+							}
+							if (UCharacterMovementComponent* EnemyMoveComp = Enemy->GetCharacterMovement())
+							{
+								EnemyMoveComp->SetMovementMode(MOVE_Walking);
+							}
+							Player->SetTestLockedTarget(Enemy);
+							SkillAbility->TestResetMeleeMotionWarpState();
+							SkillAbility->SetTestMotionWarpConfig(true, FName(TEXT("MeleeContact")), 100.0f, 60.0f, 60.0f);
+							SkillAbility->Test_TryApplyMeleeMotionWarpTarget(Player);
+							TestEqual(TEXT("Player has 1 warp target before reset check"), Player->GetTestMeleeMotionWarpTargetCount(), 1);
+							TestTrue(TEXT("Skill has snapshot before reset check"), SkillAbility->HasTestMeleeMotionWarpSnapshot());
+							TestTrue(TEXT("Skill has capture attempted before reset check"), SkillAbility->HasTestMeleeMotionWarpCaptureAttempted());
+
+							// Standalone TestResetMeleeMotionWarpState resets snapshot and capture attempt
+							SkillAbility->TestResetMeleeMotionWarpState();
+							TestFalse(TEXT("TestResetMeleeMotionWarpState clears snapshot"), SkillAbility->HasTestMeleeMotionWarpSnapshot());
+							TestFalse(TEXT("TestResetMeleeMotionWarpState clears capture attempt"), SkillAbility->HasTestMeleeMotionWarpCaptureAttempted());
+
+							// Re-populate a real warp target and snapshot
+							SkillAbility->Test_TryApplyMeleeMotionWarpTarget(Player);
+							TestEqual(TEXT("Player has 1 warp target before EndAbility teardown"), Player->GetTestMeleeMotionWarpTargetCount(), 1);
+							TestTrue(TEXT("Skill has snapshot before EndAbility teardown"), SkillAbility->HasTestMeleeMotionWarpSnapshot());
+							TestTrue(TEXT("Skill has capture attempted before EndAbility teardown"), SkillAbility->HasTestMeleeMotionWarpCaptureAttempted());
+
+							SkillAbility->SetTestBypassMontageActiveCheck(true);
+							TestTrue(TEXT("Skill ability bypass set to true for test"), SkillAbility->GetTestBypassMontageActiveCheck());
+
+							// Call EndAbility directly WITHOUT pre-clearing targets or snapshot manually
+							SkillAbility->EndAbility(FGameplayAbilitySpecHandle(), SkillAbility->GetCurrentActorInfo(), FGameplayAbilityActivationInfo(), true, false);
+
+							// Assert that EndAbility cleaned up warp targets, snapshot, capture attempt, and test bypass flag
+							TestEqual(TEXT("Player warp targets cleared directly by EndAbility"), Player->GetTestMeleeMotionWarpTargetCount(), 0);
+							TestFalse(TEXT("Skill snapshot reset directly by EndAbility"), SkillAbility->HasTestMeleeMotionWarpSnapshot());
+							TestFalse(TEXT("Skill capture attempt reset directly by EndAbility"), SkillAbility->HasTestMeleeMotionWarpCaptureAttempted());
+							TestFalse(TEXT("Skill ability EndAbility resets test bypass flag"), SkillAbility->GetTestBypassMontageActiveCheck());
+						}
+
+						// 6.10 UnPossessed() cancellation regression using test abilities
+						{
+							if (UAbilitySystemComponent* PlayerASC = Player->GetAbilitySystemComponent())
+							{
+								// Unpossess controller so standalone LocalOnly test abilities can activate cleanly without mock players
+								PlayerController->UnPossess();
+								PlayerASC->InitAbilityActorInfo(Player, Player);
+
+								const FGameplayTag MeleeSkillTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Skill.Melee")), false);
+								const FGameplayTag GuardTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Defense.Guard")), false);
+
+								// Configure CDO tags for the test ability classes
+								UTestMeleeTrailAbility::StaticClass()->GetDefaultObject<UGameplayAbility>()->AbilityTags.AddTag(MeleeSkillTag);
+								UTestLaunchFacingSmoothingAbility::StaticClass()->GetDefaultObject<UGameplayAbility>()->AbilityTags.AddTag(GuardTag);
+
+								// 1. Grant trail ability with Melee Skill tag
+								FGameplayAbilitySpec SkillSpec(UTestMeleeTrailAbility::StaticClass(), 1, INDEX_NONE, Player);
+								SkillSpec.DynamicAbilityTags.AddTag(MeleeSkillTag);
+								const FGameplayAbilitySpecHandle SkillHandle = PlayerASC->GiveAbility(SkillSpec);
+
+								// 2. Grant smoothing ability with Guard tag
+								FGameplayAbilitySpec GuardSpec(UTestLaunchFacingSmoothingAbility::StaticClass(), 1, INDEX_NONE, Player);
+								GuardSpec.DynamicAbilityTags.AddTag(GuardTag);
+								const FGameplayAbilitySpecHandle GuardHandle = PlayerASC->GiveAbility(GuardSpec);
+
+								// Activate both
+								const bool bSkillActivated = PlayerASC->TryActivateAbility(SkillHandle);
+								const bool bGuardActivated = PlayerASC->TryActivateAbility(GuardHandle);
+								TestTrue(TEXT("Skill test ability activated"), bSkillActivated);
+								TestTrue(TEXT("Guard test ability activated"), bGuardActivated);
+
+								FGameplayAbilitySpec* ActiveSkillSpec = PlayerASC->FindAbilitySpecFromHandle(SkillHandle);
+								FGameplayAbilitySpec* ActiveGuardSpec = PlayerASC->FindAbilitySpecFromHandle(GuardHandle);
+								TestTrue(TEXT("ActiveSkillSpec is active before UnPossess"), ActiveSkillSpec && ActiveSkillSpec->IsActive());
+								TestTrue(TEXT("ActiveGuardSpec is active before UnPossess"), ActiveGuardSpec && ActiveGuardSpec->IsActive());
+
+								// Trigger UnPossess
+								Player->TriggerTestUnPossessed();
+
+								TestFalse(TEXT("UnPossessed cancelled Ability.Skill.Melee ability"), ActiveSkillSpec && ActiveSkillSpec->IsActive());
+								TestTrue(TEXT("UnPossessed did NOT cancel Ability.Defense.Guard ability"), ActiveGuardSpec && ActiveGuardSpec->IsActive());
+
+								// Cleanup test specs and CDO tags
+								if (ActiveGuardSpec && ActiveGuardSpec->IsActive())
+								{
+									if (UTestLaunchFacingSmoothingAbility* GuardAbilityInstance = Cast<UTestLaunchFacingSmoothingAbility>(ActiveGuardSpec->GetPrimaryInstance()))
+									{
+										GuardAbilityInstance->EndAbility(GuardHandle, GuardAbilityInstance->GetCurrentActorInfo(), GuardAbilityInstance->GetCurrentActivationInfo(), true, false);
+									}
+								}
+								PlayerASC->ClearAbility(SkillHandle);
+								PlayerASC->ClearAbility(GuardHandle);
+
+								UTestMeleeTrailAbility::StaticClass()->GetDefaultObject<UGameplayAbility>()->AbilityTags.Reset();
+								UTestLaunchFacingSmoothingAbility::StaticClass()->GetDefaultObject<UGameplayAbility>()->AbilityTags.Reset();
+
+								// Restore controller possession
+								PlayerController->Possess(Player);
+								if (UCharacterMovementComponent* PlayerMoveComp = Player->GetCharacterMovement())
+								{
+									PlayerMoveComp->SetMovementMode(MOVE_Walking);
+								}
+							}
 						}
 					}
 				}

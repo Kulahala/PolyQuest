@@ -254,6 +254,14 @@ void APlayerCharacter::UnPossessed()
 			LightAttackTags.AddTag(LightAttackTag);
 			ASC->CancelAbilities(&LightAttackTags);
 		}
+
+		const FGameplayTag MeleeSkillTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Skill.Melee")), false);
+		if (MeleeSkillTag.IsValid())
+		{
+			FGameplayTagContainer MeleeSkillTags;
+			MeleeSkillTags.AddTag(MeleeSkillTag);
+			ASC->CancelAbilities(&MeleeSkillTags);
+		}
 	}
 
 	OnCharacterMovementUpdated.RemoveDynamic(this, &APlayerCharacter::HandleCharacterMovementUpdated);
