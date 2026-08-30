@@ -1,0 +1,17 @@
+# Unreal Engine intermediate & build artifacts
+Intermediate/
+Binaries/
+DerivedDataCache/
+Saved/
+Build/
+
+# IDE & tool metadata
+.vs/
+.idea/
+.codex/
+.zcode/
+.codegraph/
+.code-review-graph/
+
+# Raw external resource packages
+Content/Assets/
