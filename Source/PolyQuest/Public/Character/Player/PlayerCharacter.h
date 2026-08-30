@@ -282,6 +282,9 @@ public:
 	/** Clears all melee motion warp targets from this Player. C++ narrow bridge. */
 	void ClearMeleeMotionWarpTargets();
 
+	/** Clears melee motion warp targets if the current locked target matches InvalidatedTarget. */
+	void ClearMeleeMotionWarpTargetsForInvalidatedTarget(const class AEnemyCharacter* InvalidatedTarget);
+
 	/** True only when physical Sprint intent and current movement state permit a new Sprint request. */
 	bool CanAttemptSprint() const;
 
@@ -569,8 +572,11 @@ private:
 	FTimerHandle FormerOwnerInteractionRefreshTimerHandle;
 
 #if WITH_DEV_AUTOMATION_TESTS
+public:
 	TFunction<bool(const FVector&, FVector2D&, FVector2D&)> TestLockOnProjectionHook;
 	TOptional<FVector2D> TestLockOnCursorPosition;
 	bool bTestBypassLockOnValidation = false;
+	void TestClearLockedTarget() { ClearLockedTarget(); }
+	void TestUnPossessed() { UnPossessed(); }
 #endif
 };

@@ -173,6 +173,46 @@ private:
 	void SetDodgeCancelable(bool bShouldBeCancelable);
 	void RestoreBaselineMontageRate();
 	void TryApplyMeleeMotionWarpTarget(class APlayerCharacter* PlayerCharacter, const struct FComboChainEntry& EntryConfig);
+	void ResetMeleeMotionWarpState();
+
+	struct FMeleeMotionWarpSnapshot
+	{
+		bool bAttemptedCapture = false;
+		TWeakObjectPtr<class AEnemyCharacter> CapturedTarget;
+		FVector CapturedTargetLocation = FVector::ZeroVector;
+		bool bCapturedTargetOnGround = false;
+
+		void Reset()
+		{
+			bAttemptedCapture = false;
+			CapturedTarget = nullptr;
+			CapturedTargetLocation = FVector::ZeroVector;
+			bCapturedTargetOnGround = false;
+		}
+	};
+
+	FMeleeMotionWarpSnapshot MeleeMotionWarpSnapshot;
 
 	TWeakObjectPtr<const class UAnimNotifyState_AttackTraceWindow> ActiveTraceNotifyState;
+
+#if WITH_DEV_AUTOMATION_TESTS
+public:
+	void SetTestComboDefinition(UComboChainDataAsset* InComboDefinition) { ComboDefinition = InComboDefinition; }
+	void SetTestBoundAnimInstance(UAnimInstance* InAnimInstance) { BoundAnimInstance = InAnimInstance; }
+	void SetTestActorInfo(const FGameplayAbilityActorInfo* InActorInfo) { CurrentActorInfo = InActorInfo; }
+	void SetTestBypassMontageActiveCheck(bool bBypass) { bTestBypassMontageActiveCheck = bBypass; }
+	bool GetTestBypassMontageActiveCheck() const { return bTestBypassMontageActiveCheck; }
+	bool TestStartComboEntry(int32 EntryIndex) { return StartComboEntry(EntryIndex); }
+	void TestResetMeleeMotionWarpState() { ResetMeleeMotionWarpState(); }
+	bool HasTestMeleeMotionWarpSnapshot() const { return MeleeMotionWarpSnapshot.CapturedTarget.IsValid(); }
+	bool HasTestMeleeMotionWarpCaptureAttempted() const { return MeleeMotionWarpSnapshot.bAttemptedCapture; }
+	FVector GetTestMeleeMotionWarpCapturedLocation() const { return MeleeMotionWarpSnapshot.CapturedTargetLocation; }
+	bool GetTestMeleeMotionWarpCapturedOnGround() const { return MeleeMotionWarpSnapshot.bCapturedTargetOnGround; }
+	int32 GetTestActiveEntryIndex() const { return ActiveEntryIndex; }
+	void SetTestActiveEntryIndex(int32 InIndex) { ActiveEntryIndex = InIndex; }
+	void SetTestEndAbilityRequested(bool bRequested) { bEndAbilityRequested = bRequested; }
+
+private:
+	bool bTestBypassMontageActiveCheck = false;
+#endif
 };

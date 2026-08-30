@@ -1,253 +1,273 @@
-# TODO-03A7：Selected Melee Motion-Warp Contact Assist v1
+# TODO-03A7B：Light Combo Motion-Warp Adoption v1
 
-> 本阶段只为玩家首段轻攻击建立一个受锁定目标约束、一次性快照、有限距离/角度的 Motion Warping 接触辅助。它是可选的动画表现层，不改变 Lock-On、GAS、Trace/Resolver、Projectile 或伤害权威。实现由 `manual/out-of-band Gemini` 执行；Main 保留契约、范围、验证解释、Fresh Review、文档和提交所有权。
+## 摘要
 
-## Plan State And Route
+唯一推荐阶段是：把已完成的玩家轻攻击 Combo entry 0 Motion Warping 合同，扩展到明确选中的零基 entry 1/2；不扩展为“主角所有近战攻击”的通用系统。
 
-- **状态**：实现与文档收口已完成；Gemini 已完成严格 self-review，用户已确认 focused Automation 与 Scene01 PIE 通过，Main 已完成一轮独立 defect-first fresh review；用户已明确批准按本记录边界提交。
-- **仓库/父基线**：`E:\GameDevelop\PolyQuest`，`main @ 90ad3818afce10e8edae26157664573c1394fcd6`（`TODO-07B4` 提交）。
-- **工作区**：当前工作区有既存 `ROADMAP.md`、`Config/**`、大量 `Content/**` 以及 `Source/PolyQuest/Private/Tests/WeaponEquipmentComponentAutomationTests.cpp` WIP；它们不是本阶段基线，也不得清理、回滚或纳入实现提交。工作区不是 clean checkout。
-- **Outer**：`ue-stage-workflow`。
-- **Primary**：`ue5-cpp-gameplay`。
-- **Support**：`ue5-debug-validation`。
-- **Route reason**：这是一个局部 GAS Ability + Player 组件生命周期扩展，涉及 UE 5.8 MotionWarping 模块和动画资产采用门禁；不需要通用 targeting、相机或动画框架重构。
-- **Execution route**：`manual/out-of-band Gemini`。
-- **Plan explorers**：`0`（Main 完成范围内定点探索；不派发 in-app explorer）。
-- **Implementation executors**：`1`（Gemini）。
-- **Main parallel work**：`none`。
-- **Contract owner**：Main；**implementation writer**：Gemini。
-- **探索预算**：只查看批准文件、受影响符号的一跳 callers/callees、MotionWarping 直接 API，以及本阶段点名的三个资产接口；出现未列文件或跨模块契约冲突立即停工回报。
+提交基线是 `E:\GameDevelop\PolyQuest` 的 `main @ c91fbfdaab49e933922e902b92565859506f9351`。`c8b72c6` 是上一阶段 TODO-03A7 的 entry 0 实现，`c91fbfd` 是最近的文档/装备测试路径收口。`90ad381` 继续作为 TODO-03A7 当时的历史父基线，不改写成当前仓库基线；它反映的是当时最新提交尚未落地的任务视角。
 
-本节“Confirmed Baseline Facts”记录的是实现前基线；实现后的事实、验证类别和剩余债务以本计划末尾的 Closeout Record 为准。
+实施前工作树不是 clean checkout：2026-08-30 的 `git status --short` 共 325 项（286 个 tracked、39 个 untracked），其中 318 个 `Content/**`（279 个 tracked、39 个 untracked）、1 个 `Config/**`、4 个 `Source/**`，另有 `plan.md` 与 `ROADMAP-archive.md` 文档 WIP。现有 Source WIP 是 `LightAttackAbility.h/.cpp`、`PlayerCharacter.cpp` 和 `PlayerMeleeMotionWarpingAutomationTests.cpp`；它们是本阶段当前工作树起点，Gemini 必须在其上增量修改，不得重置、覆盖、清理或把未批准的 `Config/**`、`Content/**`、其他文档/Source WIP 纳入本阶段。
 
-本文件是阶段详基线的主记录：父提交、工作区快照、批准范围、验证收据和 Closeout Record 以此为准；`ROADMAP.md` 只维护路线、依赖、开放里程碑、债务触发器和轻量阶段指针。下方 `90ad381` 是本阶段当时的父基线，按历史视角保留。
+## 当前收口状态（2026-08-31）
 
-## Objective And Player Value
+- 六个批准 Source/test 文件的 entry 0..2 adoption 与生命周期修复已完成；用户已确认 focused `PolyQuest.Combat.PlayerMeleeMotionWarping` Automation 和 `/Game/Maps/Scene01` PIE 通过，Main 已完成批准范围内的 defect-first fresh review，未发现 P0/P1/P2 blocker。
+- Gemini 报告 Rider errors-only 检查和 `git diff --check` 通过。本记录没有独立的手动 `PolyQuestEditor` Development Editor 编译或 Motion-Warp Editor readback，因此不宣称 clean authored baseline；该验证债务的关闭触发器保留在 `ROADMAP.md`。
+- 当前阶段状态是“实现完成、作者化验证债务待收口”，不是完整 authored closure；后续计划指针为 `TODO-03A7C`，不得据此跳过后续用户门禁。
 
-固定斜视角下，玩家已锁定一个近距离敌人并开始首段轻攻击时，现有 Root Motion 可能把玩家带到敌人前方不稳定的位置。本阶段要回答一个问题：**在当前有效 Lock-On、目标与玩家满足有限几何条件、且首段 Montage 具备已读回的 Root Motion/Motion-Warping 窗口时，能否把玩家一次性贴近目标的 authored contact point；其余情况是否完全保持旧攻击行为。**
+## 目标与玩家体验问题
 
-唯一生产路径：
+以提交基线 `c91fbfd` 的生产行为看，`ULightAttackAbility::StartComboEntry()` 只在 `EntryIndex == 0` 时尝试 Motion Warping；后续轻攻击段落即使有合适的 Root Motion，也可能在锁定目标前停止或出现明显空挥。当前工作树已有 Gemini 的 entry 1/2 adoption WIP，本阶段 handoff 是在该 WIP 上完成并修正合同，不得按 clean checkout 重做或覆盖已有实现。
+
+本阶段解决：
+
+- entry 0 保持现有行为并做回归；
+- entry 1、entry 2 各自独立 opt-in；
+- 只有通过资产 readback 和 PIE 证明适用的段落才开启；
+- 不适用的段落保持 `bUseMotionWarping=false`，普通连段继续工作。
+
+`PolyQuest.uproject`、`PolyQuest.Build.cs`、`FComboChainEntry` 的 Motion-Warp 字段、Player-owned `UMotionWarpingComponent` 和现有 evaluator 已存在，不需要重复建设。
+
+## 冻结的运行时契约
+
+1. **显式索引门控**
+
+   只允许零基 entry `0..2` 进入 Light Combo Motion-Warp 路径。即使未来 entry 3 或更高段落错误地把 `bUseMotionWarping` 打开，也必须 fail-closed；不能简单删除 `EntryIndex == 0` 判断而隐式采用未来资产。
+
+2. **每段独立 opt-in**
+
+   每个 entry 使用自己的 `bUseMotionWarping`、`WarpTargetName`、`WarpStopDistance`、`MaxWarpDistance` 和 `MaxWarpAngleDegrees`。禁用段落必须先清掉上一段的 Warp Target，再继续普通 Montage/Trace/Combo 逻辑。
+
+3. **一次性 Combo 目标快照**
+
+   默认采用“首个合法 opt-in 段落懒捕获”：
+
+   - “合法 opt-in”同时要求 entry 索引在 `0..2`、`bUseMotionWarping=true`，且 Warp Target Name、有限值、非负距离和 `[0,180]` 角度等基础配置通过；禁用或配置非法的 entry 不读取 Lock-On，也不消耗本次捕获机会；
+   - 第一个合法 opt-in entry 在任何目标查询前先把 `bTargetCaptureAttempted` 置为 `true`，然后只读取一次 `GetLockedTarget()`；缺失有效 Player、ASC 或 Controller 也算本次捕获失败；
+   - 原目标必须先通过 UObject 有效性/销毁检查，再检查存活，并且 `ResolveValidLockedTarget()` 必须返回同一个目标；死亡交接、自动替换或验证失败均 fail-closed；
+   - 捕获成功后保存目标的弱引用、有限的 Actor-center 位置和**捕获当时**的目标接地布尔值；即使该 entry 的几何评估或 Player bridge 写入失败，也保留这份快照供后续合法 entry 复用；
+   - entry 0 关闭时，entry 1/2 可以成为首次捕获者；
+   - 一旦首次捕获尝试失败，本次 Ability 生命周期内不得因锁定变化而再次选敌；
+   - 后续 entry 先检查缓存弱引用仍然有效且目标未销毁，再检查存活；失败时清理 Player Warp Target 并 fail-closed；不得因失败重新捕获；
+   - 后续 entry 不再读取当前 Lock-On、不调用 `ResolveValidLockedTarget()`、不读取目标当前位置或当前接地状态，只使用缓存位置和缓存接地布尔值；
+   - 每个后续 entry 仍可用自己的参数、当前 Player 位置/朝向和当前 Player 接地状态重新调用同一个纯 evaluator，因此能独立通过或拒绝，但不会跟随目标移动。
+
+   Ability 必须拥有非反射、Ability-instance-owned 的快照状态（至少包含捕获尝试标志、`TWeakObjectPtr<AEnemyCharacter>`、缓存位置和缓存目标接地状态）。`ResetMeleeMotionWarpState()` 必须幂等：在 `ActivateAbility()` 开始处，以及激活准备失败和 `EndAbility()` 首次实际清理路径执行，清空弱引用、位置、接地状态和捕获尝试标志；它只重置 Ability 内部状态，不替代 Player bridge 的目标清理。**单个 entry 的几何/bridge 失败不得重置已成功捕获的快照**，否则后续 entry 无法复用；状态不能跨 Ability 激活泄漏。
+
+4. **写入与清理顺序**
+
+   `StartComboEntry()` 在新 Montage 真正激活前：
+
+   - 清理上一段全部 Player melee Warp Target（包括禁用、非法、超出索引和评估失败的 entry）；
+   - 依据批准索引和 entry opt-in 决定是否尝试应用；
+   - 通过 `APlayerCharacter::SetMeleeMotionWarpTarget()` 写入静态 Transform，并检查其 `bool` 返回值；bridge 拒绝时不得假报成功或重选目标；
+   - 启动失败、同步结束、Montage identity/active 检查失败、entry 替换、取消、自然结束、目标死亡、离地、UnPossess 和 EndPlay 后不得留下 stale target。
+
+   不新增 Player 组件、不把组件移到 `ABaseCharacter`，不新增通用 Warp dispatcher、Tick、Timer、追踪或自动重选。
+
+5. **最小生命周期窄桥（本轮扩大边界）**
+
+   - `APlayerCharacter::ClearLockedTarget()` 每次调用都必须清理 `ClearMeleeMotionWarpTargets()`，即使当前弱引用已经无效；不得改变 Lock-On acquisition/cycle 或死亡重选的既有语义。
+   - 在 `APlayerCharacter` 增加仅供 C++ 的窄桥 `ClearMeleeMotionWarpTargetsForInvalidatedTarget(const AEnemyCharacter* InvalidatedTarget)`（不加 `UFUNCTION`、Delegate、Tag、Input 或 RPC）。它只在 `LockedTarget` 仍指向该目标时清理 Warp Target，不得清除 `LockedTarget` 或 `LastValidLockedTargetCandidate`；现有 `ValidateCurrentLockedTarget() -> TryRetargetAfterLockedTargetDeath()` 仍是唯一一次性死亡 retarget 路径。
+   - `AEnemyCharacter::HandleDeath()` 在死亡 teardown 开始处、`AEnemyCharacter::EndPlay()` 在 `Super::EndPlay()` 前，通过当前单机 Player 的一对一直接查找调用上述桥；桥接必须在目标进入不可比较状态前按弱引用/指针身份核对、检查 Player/World、幂等清理。`EndPlay` 覆盖 Destroyed teardown；不得新增全局 Dispatcher、广播 Delegate、Tick、Timer、持续跟随或自动重选。
+   - `APlayerCharacter::UnPossessed()` 保持现有 Warp 清理先行，然后在 `Super::UnPossessed()` 前通过 ASC 和精确的 `Ability.Attack.Light` Gameplay Tag 只取消 Light Combo Ability，再继续既有委托/交互清理；不得用 `CancelAllAbilities()`，不得连带取消 Guard、Parry、Bow、Dodge 或其他能力，并保证取消回调重入安全。
+   - `StartComboEntry()` 必须在所有早退路径（无效 Entry/Bound Anim/Montage、Montage Task 创建失败、同步 `ReadyForActivation()` 结束、Montage identity/active 检查失败等）之前尽可能取得当前 Player 并清掉旧 Warp Target；Player 无效时只安全返回，不得解引用。`TryApplyMeleeMotionWarpTarget()` 每次使用都检查当前 Player、Controller、ASC、World，以及缓存目标的 UObject 有效性、`IsActorBeingDestroyed()`、World 一致性和死亡状态；任何失败都清理并 fail-closed。
+   - `bTestBypassMontageActiveCheck` 必须在 Ability 激活和结束边界重置；测试标志最多绕过最终 `Montage_IsActive` 结果，不得绕过真实 `UAbilityTask_PlayMontageAndWait` 创建/激活、目标验证、清理或 evaluator。
+   - `PlayerCharacter.cpp` 现有左上角实时距离 Debug HUD（`#if !(UE_BUILD_SHIPPING || UE_BUILD_TEST)`、稳定 debug message key `1002`）必须保留其 debug-only 性质和输出语义；生命周期修复不得把它变成 gameplay 真值、不得移入 Shipping，也不得借机重构 Tick。若需防止销毁目标解引用，只加等价的有效性保护。
+
+6. **GAS 与伤害边界**
+
+   `ULightAttackAbility` 继续保持现有 `InstancedPerActor`、`ServerOnly`、成本、状态标签、Combo Window、Rate Window 和 `EndAbility()` 生命周期。
+
+   唯一近战伤害路径保持：
+
+   `UAbilityTask_MeleeTraceWindow -> FMeleeHitResolver -> Damage GameplayEffect`
+
+ Motion Warping 只影响 Root Motion 接触表现，不改 ASC、AttributeSet、GameplayEffect、Trace、Resolver、Lock-On、Bow/Projectile、Guard/Parry 或 Enemy AI。
+
+## Gemini 审阅反馈的决策
+
+- **采纳**：Ability 私有快照的显式生命周期重置、弱引用与死亡/销毁防御、缓存目标接地状态、entry 上限具名常量，以及全部测试 seam 的 `WITH_DEV_AUTOMATION_TESTS` 隔离。
+- **澄清而非照搬**：本计划继续使用“首个**合法** opt-in”定义。`bUseMotionWarping=true` 但名称/数值配置非法的 entry 不读取 Lock-On、也不消耗捕获机会；只有配置合法后真正开始捕获，失败才锁定本次 Ability。否则 entry 0 的坏配置会意外阻断 entry 1/2 的合法采用。
+- **保留快照**：首个合法 entry 已捕获目标但当前几何或 bridge 写入失败时，不重置快照；后续合法 entry 仍可用自己的参数重评估。只有 Ability 激活边界或终止清理才重置快照。
+- **收窄 seam**：无头测试最多绕过最终 `Montage_IsActive` 结果门槛，不能跳过真实 Montage task 创建/激活、目标验证、清理或 evaluator；task 本身无法建立时停工回报。
+- **本轮生命周期复核**：当前 WIP 已覆盖 entry adoption 和 Ability 内部快照，但仍有跨对象清理缺口：`ClearLockedTarget()` 不保证同步清 Warp、Enemy 死亡/销毁可能等到下一帧才清理、`UnPossessed()` 未精确取消 Light Combo、`StartComboEntry()` 的最前置早退可能遗留目标，且测试 bypass 标志没有完整的 Ability 生命周期复位。只通过 Player/Enemy 一对一桥接和取消路径补齐这些缺口，不改变 Lock-On retarget、伤害链或资产范围。
+- **调试信息决策**：现有 `PlayerCharacter.cpp` 左上角实时距离 HUD 是用户明确要求保留的 debug instrumentation；它不属于本阶段 gameplay 合同，不能因生命周期修复被删除、迁移或升级为运行时真值。
+
+## 批准的实现路径
+
+实现阶段只允许修改：
+
+- `E:\GameDevelop\PolyQuest\Source\PolyQuest\Public\AbilitySystem\Abilities\LightAttackAbility.h`
+- `E:\GameDevelop\PolyQuest\Source\PolyQuest\Private\AbilitySystem\Abilities\LightAttackAbility.cpp`
+- `E:\GameDevelop\PolyQuest\Source\PolyQuest\Public\Character\Player\PlayerCharacter.h`
+- `E:\GameDevelop\PolyQuest\Source\PolyQuest\Private\Character\Player\PlayerCharacter.cpp`
+- `E:\GameDevelop\PolyQuest\Source\PolyQuest\Private\Character\Enemy\EnemyCharacter.cpp`
+- `E:\GameDevelop\PolyQuest\Source\PolyQuest\Private\Tests\PlayerMeleeMotionWarpingAutomationTests.cpp`
+
+文件级职责与约束：
+
+- `LightAttackAbility.h/.cpp`：保持 `EvaluateMeleeMotionWarpTransform()` 唯一生产数学入口；维护非反射、Ability-instance-owned 快照、具名 entry 上限门控、捕获/复用/清理、所有 `StartComboEntry()` 早退清理，以及测试 seam 生命周期。不得改 Damage GE、Trace Task、Combo Window、成本、输入、其他 Ability 或生产 public/Blueprint API。
+- `PlayerCharacter.h/.cpp`：只增加 `ClearMeleeMotionWarpTargetsForInvalidatedTarget(const AEnemyCharacter* InvalidatedTarget)` 这一 C++ 窄桥，并在 `ClearLockedTarget()`、`UnPossessed()` 接入清理/精确 Light Ability 取消；UnPossessed 保持 Warp 清理先行、Light-only cancel、再执行既有委托/交互清理和 `Super`。不得改变 Lock-On acquisition/cycle、死亡 retarget、Bow、装备、Guard/Parry、Movement 或现有 Tick 语义。左上角实时距离 Debug HUD 必须保留原 debug-only 宏、message key `1002` 和输出语义。
+- `EnemyCharacter.cpp`：只在 `HandleDeath()` 与 `EndPlay()` 通过当前单机 Player 的一对一直接查找调用上述 invalidation bridge；不得修改 Enemy AI/StateTree/Poise/Death 语义、Enemy header、全局事件或新增目标系统。
+- `PlayerMeleeMotionWarpingAutomationTests.cpp`：只扩展现有 `PolyQuest.Combat.PlayerMeleeMotionWarping`，通过真实生产入口和现有 fixture 验证生命周期；不得复制 evaluator 数学、直接操作组件内部数组或创建第二套目标写入路径。
+- 生产 public/Blueprint API 不增加新的 Gameplay Tag、Input、Config 或 DataAsset 字段；不改 `ComboChainDataAsset.h`、`PolyQuest.uproject`、`Build.cs`、Config、Content、其他 Ability、Trace/Resolver、Projectile/Bow、Enemy header。
+
+为覆盖生产入口，允许在 `WITH_DEV_AUTOMATION_TESTS` 下增加极窄 seam：
+
+- 设置测试用 `ComboDefinition`、`CurrentActorInfo` 和 `BoundAnimInstance`；
+- `TestStartComboEntry(int32)` 直接调用真实 `StartComboEntry()`；如无头夹具无法让 transient Montage 通过最终播放状态检查，可用一个明确命名的测试标志**仅绕过 `Montage_IsActive` 结果门槛**，仍必须创建/激活真实 `UAbilityTask_PlayMontageAndWait` 并执行 entry 门控、清理、快照、evaluator 和 Player bridge；task 创建或 `ReadyForActivation()` 本身若无法建立，立即停止回报，不扩大 bypass；
+- seam 的声明、定义和所有调用点都必须由 `#if WITH_DEV_AUTOMATION_TESTS` 包裹，测试标志默认关闭并在 Ability 激活/结束生命周期重置，不进入 Shipping/正式运行时 API；
+- 测试可以使用现有 Player fixture/test hook 安排真实 Lock-On、Controller 和接地前置，但不得直接注入 Ability 的“已捕获目标”结果，也不得复制几何公式来代替真实 `StartComboEntry()` 路径。
+
+如果该 seam 需要额外文件、Engine 修改或改变生产 Montage 行为，立即停止并返回证据，不扩大范围。
+
+## Automation 计划
+
+继续使用现有套件：
+
+`PolyQuest.Combat.PlayerMeleeMotionWarping`
+
+重点补齐：
+
+- entry 0/1/2 opt-in 成功路径；
+- entry 0/1/2 disabled 时不写目标；
+- entry 3+ 即使错误 opt-in 也不采用；
+- 禁用/非法 opt-in 不消耗捕获机会，随后合法 entry 可以首次捕获；合法 entry 首次无锁或验证失败后，后续新锁定不得重试；
+- entry 替换先清旧目标，新的 opt-in 才写新目标；
+- entry 0/1/2 捕获后改变 Lock-On、移动目标或目标接地状态，后续 entry 仍使用原始静态位置/接地快照；
+- 捕获成功但首段几何/bridge 失败时，后续合法 entry 可复用同一快照；目标死亡/销毁后不得复用；
+- Ability 结束后再次激活不会继承旧快照或失败锁定标志；
+- 不同 entry 参数和 Warp Target Name 的独立使用；
+- 过近、修正距离、角度、接地、NaN/Inf、空名称和非法配置的 fail-closed；
+- `ClearLockedTarget()` 立即清理 Warp Target；Enemy `HandleDeath()`/`EndPlay()` 的一对一 invalidation bridge 立即清理当前锁定目标的 Warp，但保留既有一次性死亡 retarget 所需的锁定候选；Destroy/销毁后不得复用；
+- `UnPossessed()` 只取消 `Ability.Attack.Light`，并与既有清理顺序安全重入；
+- `StartComboEntry()` 的无效 Entry、缺失 Anim/Montage、Montage Task 创建失败、同步结束和 inactive identity/active 检查等早退路径均无残留；
+- 启动失败、同步结束、取消、自然结束、目标死亡、UnPossess、Falling、EndPlay 后无残留；
+- `bTestBypassMontageActiveCheck` 在 Ability 生命周期边界复位且不能绕过真实 Montage Task 创建/激活；
+- 既有 entry 0 行为、Montage identity、Combo continuation 和普通 Trace/伤害入口不回归。
+
+测试中的 `100/60/60` 仍只是边界夹具；生产默认值保持 `190cm / 110cm / 60°`。
+
+无法在无头夹具中证明真实 Notify、Root Motion 或视觉接触的部分，只能标为 seam/static coverage，不得冒充 Editor 或 PIE 证据。
+
+## 用户资产与验证门槛
+
+用户拥有 `.uasset`/`.umap` 作者化和运行验证。本阶段不手工编辑、导入、移动、复制、重定向或提交资产。
+
+必须由用户在 Editor readback 中逐项确认：
+
+- `DA_Combo_StraightSword` 的 entry 0/1/2 当前 opt-in 状态；
+- 每个启用 entry 对应的 `AM_Sword_LightAttack01/02/03` 直接包含 `AnimNotifyState_MotionWarping`；
+- Modifier、目标名、平移/旋转设置和 Notify 时间窗一致；
+- 每个采用 Montage 的 Root Motion 可由 `ABP_Player_Dungeon` 驱动；
+- Player 只有一个 `UMotionWarpingComponent`，且 `bSearchForWindowsInAnimsWithinMontages=false`；
+- 不得凭文件名推断 Root Motion、Notify、Modifier 或目标名已经正确。
+
+证据分层：
+
+- **静态**：最终 diff、CodeGraph 定点调用链、必要的 code-review-graph 影响提示、Rider lint/problem、`git diff --check`。图结果不是运行时证明；当前 code-review-graph 索引落后时只作补充导航。
+- **编译**：用户在 VS2022 手动编译 `PolyQuestEditor`（Development Editor）。
+- **Automation**：用户运行上述 focused suite，以及 Light Attack、Melee Trace/Resolver、Lock-On、Projectile/Bow、Guard/Parry 回归套件；数量按实际记录。
+- **Editor readback**：逐项确认 entry 1/2 的作者化 adoption 条件。
+- **PIE**：用户在 `/Game/Maps/Scene01` 验证 entry 0/1/2 连段、无锁、过近、超距离、超角度、空中、目标移动、目标切换、取消、死亡/销毁、`ClearLockedTarget()`、UnPossess、重新 Possess、地图 teardown，以及 Trace/伤害、Lock-On、Bow 无回归；额外确认死亡时 Warp 立即清除但既有一次性 retarget 仍只发生一次，UnPossess 只终止 Light Combo。
+
+（实施前记录）TODO-03A7 已有的 focused Automation 和 Scene01 PIE 结果只能作为 entry 0 历史证据；当时的 TODO-03A7B Automation/PIE 结果不自动覆盖后来新增的生命周期桥。实施后的生产入口覆盖、用户证据和剩余债务以本计划“当前收口状态”及末尾“实施与文档收口记录”为准。缺少 readback 不是 no-adoption；只有实际配置不适用或 PIE 失败才可记录 evidence-backed no-adoption。当前工作树的左上角距离 HUD 仅是用户要求保留的 debug instrumentation；静态存在或显示本身不构成 gameplay/PIE 证明。
+
+## 成功标准与关闭条件
+
+本阶段只有在以下条件全部满足后才能标记完成：
+
+- entry 0 回归通过；
+- entry 1 和 entry 2 各自得到明确结果：`adopted` 或基于真实 readback/PIE 的 `no-adoption`；
+- `StartComboEntry` 的替换、快照、不重选和清理矩阵通过；
+- 快照在 Ability 激活/结束边界正确重置，且首次失败锁定与后续弱引用死亡防御有生产入口覆盖；
+- `ClearLockedTarget()`、Enemy death/EndPlay invalidation bridge、UnPossess Light-only cancel 和 `StartComboEntry()` 全部早退路径的生命周期矩阵通过；
+- 左上角实时距离 HUD 保持 debug-only、无空悬引用/无 Shipping 影响，且不成为 Motion-Warp 或 Lock-On 的状态真值；
+- 既有 Trace/Resolver/Damage、Lock-On、Bow、Guard/Parry 无行为回归；
+- 用户手动编译、Editor readback、focused Automation、Scene01 PIE 均有独立记录；
+- Main 完成一次批准范围内的 defect-first fresh review；
+- 文档完成收口后，等待用户明确批准才 staging/commit（本次批准已收到）。
+
+如果两个候选 Montage 都不适用，保持 entry 1/2 关闭也可以关闭本阶段；不能为了“完成 TODO”强行打开资产字段。
+
+## 文档、执行与依赖
+
+执行路线：
+
+- Outer：`ue-stage-workflow`
+- Primary：`ue5-cpp-gameplay`
+- Support：`ue5-debug-validation`
+- Executor：`manual/out-of-band Gemini`
+- `Contract owner: Main`
+- 本阶段 `Implementation executors: 1（Gemini，已完成实现与 self-review）`；执行路线为 manual/out-of-band，不通过 in-app orchestration 派发。
+
+Main 负责架构、`plan.md`、文档、验证解释、fresh review、staging 和提交；用户负责 Editor authoring、手动编译、Editor readback、PIE/视觉验证和最终 commit approval。TODO-03A7 closeout 已在本轮替换前归档；`ROADMAP.md` 的 `90ad381` 父基线继续保持当时视角，本轮不改写它，也不把它当当前 HEAD；`ROADMAP.md` 只保留轻量里程碑、依赖和债务指针，`ARCHITECTURE.md` 只记录验证后的稳定合同。
+
+依赖顺序固定为：
+
+`TODO-03A7B → TODO-03A7C → TODO-03A7D → TODO-05A → TODO-05B → TODO-07B5 → TODO-07B6 → TODO-03C`
+
+`TODO-03A7E` 仍放在首个远程敌人之后，属于可选 Enemy Motion-Warp 阶段；装备、拾取、AI/StateTree、Poise、Persistence 和其他近战家族不是本阶段前置。
+
+## Gemini 执行提示词（已执行记录）
 
 ```text
-PrimaryAttack input
-  -> GAS grants/activates ULightAttackAbility
-  -> ULightAttackAbility::ActivateAbility
-  -> StartComboEntry(0)
-  -> (valid opt-in entry only) APlayerCharacter narrow warp-target bridge
-  -> UMotionWarpingComponent + montage AnimNotifyState_MotionWarping
-  -> existing Root Motion playback
+你是 PolyQuest TODO-03A7B 的实现执行者。工作目录固定为 E:\GameDevelop\PolyQuest；提交基线为 main @ c91fbfdaab49e933922e902b92565859506f9351。当前工作树不是 clean checkout：已有 LightAttackAbility.h/.cpp、PlayerCharacter.cpp、PlayerMeleeMotionWarpingAutomationTests.cpp 的 TODO-03A7B WIP，以及大量 Config/Content WIP；先读取最新 AGENTS.md、当前 plan.md 和 git status，保留这些变更，绝不 reset、checkout、清理或覆盖。以 plan.md 的 TODO-03A7B 条款为唯一执行合同。执行路线是 manual/out-of-band Gemini，不通过 in-app orchestration。Outer Skill 为 ue-stage-workflow，Primary Skill 为 ue5-cpp-gameplay，Support Skill 为 ue5-debug-validation。
+
+【所有权与允许路径】
+Contract owner: Main；implementation writer: Gemini。只允许修改以下六个绝对路径：
+1. E:\GameDevelop\PolyQuest\Source\PolyQuest\Public\AbilitySystem\Abilities\LightAttackAbility.h
+2. E:\GameDevelop\PolyQuest\Source\PolyQuest\Private\AbilitySystem\Abilities\LightAttackAbility.cpp
+3. E:\GameDevelop\PolyQuest\Source\PolyQuest\Public\Character\Player\PlayerCharacter.h
+4. E:\GameDevelop\PolyQuest\Source\PolyQuest\Private\Character\Player\PlayerCharacter.cpp
+5. E:\GameDevelop\PolyQuest\Source\PolyQuest\Private\Character\Enemy\EnemyCharacter.cpp
+6. E:\GameDevelop\PolyQuest\Source\PolyQuest\Private\Tests\PlayerMeleeMotionWarpingAutomationTests.cpp
+只读参考路径为 `E:\GameDevelop\PolyQuest\AGENTS.md`、`E:\GameDevelop\PolyQuest\plan.md`，以及 Unreal 资产 `/Game/_DataAssets/Player_Combat/DA_Combo_StraightSword`、`/Game/BP/Montages/LightSword/AM_Sword_LightAttack01`、`/Game/BP/Montages/LightSword/AM_Sword_LightAttack02`、`/Game/BP/Montages/LightSword/AM_Sword_LightAttack03`、`/Game/BP/Characters/Player/Animations/ABP_Player_Dungeon`；只能核对，不能写入、导入、移动、复制、重定向或提交。`ROADMAP.md`、`ARCHITECTURE.md`、`README.md`、其他 Source（列出的六个除外）和全部 Config/Content WIP 均不得修改。
+
+共享契约文件的函数边界：
+- `LightAttackAbility.h`：只维护非反射的 Ability 私有快照状态/私有 helper，以及 `WITH_DEV_AUTOMATION_TESTS` 下的最小 seam；不得改变现有生产 Blueprint/reflected API 或 `EvaluateMeleeMotionWarpTransform` 签名。
+- `LightAttackAbility.cpp`：只调整 `ActivateAbility`、`EndAbility`、`StartComboEntry`、`TryApplyMeleeMotionWarpTarget` 及为本合同所需的同文件私有 helper/具名常量；不得重写其他攻击、Trace、Combo、成本或事件逻辑。
+- `PlayerCharacter.h/.cpp`：只增加非反射 C++ 窄桥 `ClearMeleeMotionWarpTargetsForInvalidatedTarget(const AEnemyCharacter* InvalidatedTarget)`，并在 `ClearLockedTarget`、`UnPossessed` 接入本计划的清理/取消；不得改动 Lock-On acquisition/cycle、死亡 retarget、Bow、装备、Guard/Parry 或 Movement 语义。`PlayerCharacter.cpp` 现有左上角实时距离 Debug HUD（`#if !(UE_BUILD_SHIPPING || UE_BUILD_TEST)`、message key `1002`）必须原样保留其 debug-only 输出；不得重构 Tick，最多只能添加等价销毁目标保护。
+- `EnemyCharacter.cpp`：只在 `HandleDeath` 和 `EndPlay` 调用 Player invalidation bridge；不得修改 Enemy header、AI/StateTree、Poise、Death 业务语义或新增全局事件。
+- `PlayerMeleeMotionWarpingAutomationTests.cpp`：只扩展现有 `PolyQuest.Combat.PlayerMeleeMotionWarping` 套件，调用真实 `StartComboEntry` 和现有 Player/Enemy fixture；不得复制 evaluator 数学、直接操作组件内部数组或创建第二套目标写入路径。
+
+【冻结运行时合同】
+- Light Ability 继续 `InstancedPerActor`、`ServerOnly`；ASC、AttributeSet、GameplayEffect、GameplayTag、Input、Config、DataAsset 字段和唯一伤害链 `UAbilityTask_MeleeTraceWindow -> FMeleeHitResolver -> Damage GameplayEffect` 均不变。
+- 只有零基 entry 0、1、2 允许进入 Motion-Warp 路径；使用 `.cpp` 私有具名常量（值为 2）统一门控，entry 3+ 即使 opt-in 也 fail-closed，不影响普通连段。每次 entry 替换先清 `ClearMeleeMotionWarpTargets`，并检查 `SetMeleeMotionWarpTarget` 的 bool 结果。
+- “合法 opt-in”同时要求索引 0..2、`bUseMotionWarping=true`、非空目标名、有限且非负距离、角度在 [0,180]。禁用/非法 entry 不读取 Lock-On、不消耗捕获机会；首个合法 entry 才能把捕获尝试标志置 true，并只读取一次 `GetLockedTarget()`。原目标须先通过 UObject 有效性、`IsActorBeingDestroyed` 和死亡检查，再由 `ResolveValidLockedTarget()` 返回同一指针；失败即本 Ability 生命周期 fail-closed，不因锁定变化重选。
+- 成功捕获只保存目标弱引用、有限 Actor-center 位置和捕获时目标接地状态；后续 entry 不再读取 Lock-On、Resolve、目标当前位置或当前接地状态，只用缓存与当前 Player 状态调用同一 evaluator。单个 evaluator/bridge 失败不得清掉成功快照，但必须清理 Player Warp Target。
+- `ResetMeleeMotionWarpState` 必须幂等，并在 `ActivateAbility` 开始、激活准备失败和 `EndAbility` 首次实际清理路径执行；状态不得跨 Ability 激活泄漏。`bTestBypassMontageActiveCheck` 同样在 Ability 激活/结束边界复位。
+
+【本轮生命周期窄桥合同】
+- `APlayerCharacter::ClearLockedTarget()` 每次调用都清 `ClearMeleeMotionWarpTargets()`，即使当前锁定弱引用无效；不得在此新增 acquisition/cycle 或 retarget。
+- `ClearMeleeMotionWarpTargetsForInvalidatedTarget` 只在 `LockedTarget` 仍等于传入 Enemy 时清 Warp，不清 `LockedTarget` 或 `LastValidLockedTargetCandidate`；在 Enemy 进入不可比较状态前按弱引用/指针身份核对。`AEnemyCharacter::HandleDeath()` 在死亡 teardown 开始处、`EndPlay()` 在 `Super::EndPlay()` 前通过当前单机 Player 的一对一直接查找调用它；桥接必须检查 World/对象有效性、幂等，并保留现有 `ValidateCurrentLockedTarget() -> TryRetargetAfterLockedTargetDeath()` 的一次性死亡 retarget。不得使用全局 Dispatcher、广播 Delegate、Tick、Timer 或自动重选。
+- `APlayerCharacter::UnPossessed()` 保持 Warp 清理先行，在 `Super::UnPossessed()` 前用 ASC 和精确 `Ability.Attack.Light` Tag 只取消 Light Combo Ability，再执行既有交互/委托解绑；不得 `CancelAllAbilities()`，不得连带取消 Guard/Parry/Bow/Dodge/其他能力，并处理取消回调重入。
+- `StartComboEntry()` 在无效 Entry/Bound Anim/Montage、Montage Task 创建失败、`ReadyForActivation()` 同步结束、Montage identity/active 失败等每条早退前尽可能取得当前 Player 并清旧 Warp；Player 无效时安全返回，不得解引用。每次 Motion-Warp 尝试都检查当前 Player/Controller/ASC/World、缓存目标有效性/销毁状态/World 一致性/死亡状态；失败清理并 fail-closed。
+- 不改现有左上角距离 HUD 的 debug-only 语义，不把它当作 gameplay 真值或 Motion-Warp 状态来源。
+
+【测试 seam】
+- 所有 seam 声明、定义、测试标志和调用点严格放在 `#if WITH_DEV_AUTOMATION_TESTS`；Shipping/正式运行时不可见。`TestStartComboEntry(int32)` 必须直接调用真实 `StartComboEntry`。
+- 如无头夹具只在最终 `Montage_IsActive` 结果处失败，可仅绕过该结果门槛；仍必须创建/激活真实 `UAbilityTask_PlayMontageAndWait` 并执行门控、清理、快照、evaluator、Player bridge。task 创建/激活失败就停止回报，不扩大 bypass，不注入“已捕获目标”，不复制边界公式。
+- Automation 至少覆盖 entry 0/1/2、entry 3+、禁用/非法不消耗捕获、首次无锁失败锁定、快照静态位置/接地复用、entry 替换、Ability 重置、目标死亡与 Destroy/EndPlay、`ClearLockedTarget` 立即清理、UnPossessed 只取消 Light、`StartComboEntry` 早退清理，以及既有 entry 0/evaluator/bridge 回归。优先复用现有 fixture；需要新增测试 seam 时仍不得改变生产 API。
+
+【执行顺序】
+1. 读取 AGENTS.md、plan.md、当前 git status；若 `.codegraph` 存在，用一次定点查询核对 `ActivateAbility -> StartComboEntry -> TryApplyMeleeMotionWarpTarget -> EndAbility` 及 Player/Enemy bridge；code-review-graph 只能作补充影响证据。
+2. 在六个批准文件内做最小增量实现；保留现有 Source WIP 和距离 HUD，不改生产 evaluator、伤害链、资产或配置。
+3. 扩展现有 Automation suite，记录生命周期覆盖与任何无法在无头环境证明的缺口。
+4. 做一次实现者 self-review：读取最终 diff，检查异步回调/弱引用/空值/销毁/重入/Tag 精确性，运行 `git diff --check`；若 Rider lint/problem 可用，只检查六个批准 C++ 文件。报告 changed paths、静态证据、self-review findings 和未运行门禁。
+
+【用户门禁与证据】
+你不得编译、运行 UBT/Build.bat、启动或写入 Unreal Editor、运行 Automation/PIE、打包、stage、commit、reset、删除、清理 WIP 或修改资产。用户随后负责 VS2022 Development Editor 编译、Editor readback、focused Automation 和 Scene01 PIE；报告必须把静态/seam 证据与这些未运行的用户门禁分开，不能声称运行时或视觉通过。Editor readback 至少核对 `DA_Combo_StraightSword` entry 0/1/2 的 opt-in、采用 Montage 的直接 Motion-Warp Notify/Modifier/目标名/时间窗、Root Motion 与 `ABP_Player_Dungeon`、以及 Player 单一 `UMotionWarpingComponent` 的窗口搜索设置。
+
+【停止条件】
+如果需要第七个路径、Enemy header、额外 public/reflected API、Player/Combo/DataAsset/Tag/Input/Config/资产改动，或发现 UE API/现有生命周期与本合同冲突，立即停止并把证据交回 Main；不要绕过、猜测、扩大范围或提交。完成后只返回交接报告，不继续做下一阶段。
 ```
 
-`UAbilityTask_MeleeTraceWindow -> FMeleeHitResolver -> Damage GameplayEffect` 仍是唯一近战伤害路径；Motion Warping 不得从 Trace、Resolver、Projectile 或 Tick 另起任何路径。
+## 实施与文档收口记录（2026-08-31）
 
-## Confirmed Baseline Facts
-
-- `FComboChainEntry` 当前只有 `Montage` 字段。
-- `ULightAttackAbility` 为 `InstancedPerActor`、`ServerOnly`；`ActivateAbility()` 先执行既有 `ApplyLockAwareActionFacing()`，`StartComboEntry()` 是首段和连段段落的唯一播放切换入口，已有 Montage identity、Trace/Combo/Rate Window 和统一 `EndAbility()` 清理。
-- `APlayerCharacter` 当前没有 `UMotionWarpingComponent`；`ABaseCharacter` 只拥有共享 ASC、AttributeSet、Melee Trace/Trail 等组件，不能把本功能放入共享基类。
-- `PolyQuest.uproject` 当前启用 `AnimationWarping`，未启用 `MotionWarping`；`PolyQuest.Build.cs` 当前没有 `MotionWarping` 模块依赖。
-- UE 5.8 引擎插件位于 `D:\UE\UE_5.8\Engine\Plugins\Animation\MotionWarping`，本计划使用的直接 API 是 `UMotionWarpingComponent::AddOrUpdateWarpTargetFromTransform`、`RemoveWarpTarget`、`RemoveAllWarpTargets`、`FindWarpTarget`，以及 `UAnimNotifyState_MotionWarping` / `URootMotionModifier_SkewWarp`。
-- 现有作者化入口是本地 WIP：
-  - `E:\GameDevelop\PolyQuest\Content\_DataAssets\Player_Combat\DA_Combo_StraightSword.uasset`
-  - `E:\GameDevelop\PolyQuest\Content\BP\Montages\LightSword\AM_Sword_LightAttack01.uasset`
-  - `E:\GameDevelop\PolyQuest\Content\BP\Characters\Player\Animations\ABP_Player_Dungeon.uasset`
-  静态二进制字符串只能确认引用关系，不能证明 Root Motion、Notify、Modifier 或时间窗口已正确配置；这些必须由用户在 Editor readback 门禁中确认。
-
-## Frozen Runtime Contract
-
-### 1. Plugin And Module Boundary
-
-- 在 `PolyQuest.uproject` 保留现有 `AnimationWarping`，仅按编译需要增加 `MotionWarping` Runtime 插件条目；不得修改其他插件、Target、地图或 Config。
-- 在 `PolyQuest.Build.cs` 的 `PrivateDependencyModuleNames` 仅增加 `"MotionWarping"`；`PlayerCharacter.h` 只做 `UMotionWarpingComponent` 前置声明，插件头文件只在 `.cpp` 引入。若 UE 5.8 的 UHT/编译证据确实要求 Public 依赖，必须停工回报证据，不得无理由扩大公开模块边界。
-- 若 Engine 5.8 实际 API/模块名与上述静态核对不符，Gemini 必须停止并返回证据；不得改 Engine 源码、复制插件或用自制替代组件绕过。
-
-### 2. Player Ownership And Narrow Bridge
-
-- 只有 `APlayerCharacter` 创建并拥有一个 `UMotionWarpingComponent`；不得把组件加入 `ABaseCharacter`、Enemy 或全局 Subsystem。
-- 组件使用 `TObjectPtr` 和现有 Components 风格，设置 `bSearchForWindowsInAnimsWithinMontages = false`，要求 Motion-Warping Notify 直接作者在选定 Montage 上；不得依赖嵌套 Sequence 的隐式搜索。
-- 在 `APlayerCharacter` 提供仅供 C++ 的窄桥（不加 `UFUNCTION`、Delegate、Tag、Input、RPC）：
-  - `bool SetMeleeMotionWarpTarget(FName WarpTargetName, const FTransform& TargetTransform)`：检查组件、有效名称和有限 Transform 后调用 `AddOrUpdateWarpTargetFromTransform`。
-  - `void ClearMeleeMotionWarpTargets()`：清除本功能在 Player-owned 组件上建立的目标；v1 该组件没有其他生产使用者，不得用它建立通用 Warp dispatcher。
-- Player 在 `UnPossessed()`、`EndPlay()`，以及明确发生的离地/攻击 teardown 路径清除本功能目标；清理必须在现有 `Super`/ASC 取消顺序中安全执行。不得清理其他角色或创建第二个 Motion Warping 生命周期。
-- Ability 为 `ServerOnly`，目标写入遵循现有单机服务器权威；不新增复制/RPC/客户端预测契约。
-- `APlayerCharacter::SetMeleeMotionWarpTarget` 和 `ClearMeleeMotionWarpTargets` 是唯一组件写入/清理桥；不得让测试或 Ability 直接持有并操作组件内部数组。
-
-### 3. Authored Combo Entry Data
-
-在 `FComboChainEntry` 增加以下窄配置，默认关闭且不迁移现有资产值：
-
-```cpp
-bool bUseMotionWarping = false;
-FName WarpTargetName = FName(TEXT("MeleeContact"));
-float WarpStopDistance = 190.0f;
-float MaxWarpDistance = 110.0f;
-float MaxWarpAngleDegrees = 60.0f;
-```
-
-契约：
-
-- 配置是每个 Combo entry 的 authored opt-in；v1 只计划在 `DA_Combo_StraightSword` 的 entry 0（`AM_Sword_LightAttack01`）开启。entry 1/2、Charged、Sprint Attack、Melee Skill、Bow 均保持关闭/不接入。
-- `WarpStopDistance` 是目标前方的期望停距；`MaxWarpDistance` 是**玩家当前位置到最终 WarpLocation 的最大水平修正距离**，不是目标最大距离；`MaxWarpAngleDegrees` 是玩家当前水平前向与目标方向的最大夹角。
-- 缺失名称、非有限值、负距离、角度不在 `[0, 180]` 或其他非法配置均 fail-closed：只禁用 Warp，普通轻攻击仍按旧路径启动。不得用硬编码资产路径或隐式默认目标掩盖错误。
-- 字段只提供数据，不成为新的输入、Tag、伤害或状态真值源。
-
-### 4. One-Shot Target Snapshot And Geometry
-
-`ULightAttackAbility` 拥有目标验证、快照、写入和清理；Player 只负责组件桥接。首段 `StartComboEntry(0)` 在 `NewMontageTask->ReadyForActivation()` **之前**尝试写入目标。
-
-快照与判定固定如下：
-
-1. 先读取当前 `APlayerCharacter::GetLockedTarget()`；无锁、空指针、死亡或销毁的原始目标直接禁用 Warp，不调用会触发死亡交接的验证路径。Player 无有效 ASC/Controller 时同样不写目标。
-2. 对仍存活的原始目标最多调用一次现有 `ResolveValidLockedTarget()` 做当前资格验证；若验证失败、发生死亡交接或返回的目标不是最初读取的目标，本次 Warp 必须禁用。不得因本阶段自动扫描、重选或偷换目标。
-3. Player 与目标都必须处于可用的地面状态（使用现有 `CharacterMovement` 地面判定）；空中、正在 teardown 或非法世界状态只禁用 Warp。
-4. 使用目标 `GetActorLocation()` 作为 Actor center，不使用 Bow 的上躯干瞄准点：
-
-   ```text
-   PlayerLocation = Player->GetActorLocation()
-   TargetLocation = LockedTarget->GetActorLocation()
-   ToTarget2D = Normalize2D(TargetLocation - PlayerLocation)
-   WarpLocation = TargetLocation - ToTarget2D * WarpStopDistance
-   WarpLocation.Z = PlayerLocation.Z
-   WarpYaw = ToTarget2D 的水平 Yaw
-   WarpTransform = (WarpYaw, WarpLocation)
-   ```
-
-5. 先对 Player/Target 位置、前向和配置的每个分量执行 `FMath::IsFinite`；`ToTarget2D.SizeSquared2D()` 必须大于 `KINDA_SMALL_NUMBER` 且归一化、修正距离和最终 Yaw 仍有限。目标水平距离小于等于 `WarpStopDistance`、`PlayerLocation -> WarpLocation` 的水平修正距离大于 `MaxWarpDistance`、或前向夹角大于 `MaxWarpAngleDegrees` 时不写目标；边界采用有限值下的明确 `<=` 接受、`>` 拒绝语义。
-6. 目标 Transform 是静态快照：调用 `AddOrUpdateWarpTargetFromTransform`，不使用 `AddOrUpdateWarpTargetFromComponent`，`bFollowComponent` 不参与；目标移动、Lock-On 切换或后续视角变化不得更新本次 Warp。
-7. Combo continuation 不重新选择或重新验证目标。entry 切换前清除上一段目标；只有下一段也显式 opt-in 时才可复用本次已经保存的快照。v1 entry 1/2 关闭，因此不会产生新的目标。
-
-几何数学必须集中在一个无副作用的生产评估器（建议命名 `EvaluateMeleeMotionWarpTransform`）中，生产路径和测试 seam 共用该入口。评估器只接收已快照的 Player/Target 位置、水平前向、地面布尔值和 `FComboChainEntry`，输出 `FTransform`；不得查询世界、Lock-On、ASC 或修改组件。Lock/死亡/Controller/权限等状态验证留在 Ability 外层包装，`WITH_DEV_AUTOMATION_TESTS` seam 只能转调同一评估器，禁止复制第二套边界数学。
-
-### 5. Montage And Lifecycle Safety
-
-- 选定 entry 的目标写入、旧目标清理、Montage identity 更新和 `ReadyForActivation()` 的顺序必须避免同步结束/启动失败留下 stale target。
-- `EndAbility()` 必须显式取得当前 Player 并调用 `ClearMeleeMotionWarpTargets()`；Montage 创建失败、`ReadyForActivation()` 同步结束、`Montage_IsActive()` 失败、取消、自然结束、entry 替换、Player Dead、UnPossess 和 EndPlay 都必须经统一清理路径移除 Warp Target，重复调用须安全。
-- 若无法启用 Warp，必须继续执行原有 `CommitAbility`、Montage、Trace Window、Combo Window、Rate Window 和 `EndAbility()` 语义；不因 Warp 失败取消普通攻击，不重复扣费，不重复触发伤害。
-- 不在 Tick 中追踪目标、不添加 Timer、Tick 委托、LOS 查询、自动朝向覆盖或全局相机变换。既有 `ApplyLockAwareActionFacing()` 保持原顺序和所有权。
-
-## Approved Change Paths
-
-Gemini 只可修改以下八个绝对路径：
-
-1. `E:\GameDevelop\PolyQuest\PolyQuest.uproject`
-2. `E:\GameDevelop\PolyQuest\Source\PolyQuest\PolyQuest.Build.cs`
-3. `E:\GameDevelop\PolyQuest\Source\PolyQuest\Public\Combat\ComboChainDataAsset.h`
-4. `E:\GameDevelop\PolyQuest\Source\PolyQuest\Public\AbilitySystem\Abilities\LightAttackAbility.h`
-5. `E:\GameDevelop\PolyQuest\Source\PolyQuest\Private\AbilitySystem\Abilities\LightAttackAbility.cpp`
-6. `E:\GameDevelop\PolyQuest\Source\PolyQuest\Public\Character\Player\PlayerCharacter.h`
-7. `E:\GameDevelop\PolyQuest\Source\PolyQuest\Private\Character\Player\PlayerCharacter.cpp`
-8. `E:\GameDevelop\PolyQuest\Source\PolyQuest\Private\Tests\PlayerMeleeMotionWarpingAutomationTests.cpp`
-
-文件级职责冻结：
-
-- `uproject`：仅 MotionWarping 插件启用条目。
-- `Build.cs`：仅 MotionWarping 模块依赖。
-- `ComboChainDataAsset.h`：仅 `FComboChainEntry` 的五项 opt-in 数据及必要的最小访问接口。
-- `LightAttackAbility.h/.cpp`：仅快照/几何判定、StartComboEntry 前写入、entry 切换/失败/EndAbility 清理和测试 seam；不得改 Damage GE、Trace Task、输入或其他 Ability。
-- `PlayerCharacter.h/.cpp`：仅 Player-owned component、窄桥和现有 Possess/Movement/EndPlay 清理；不得改变 Lock-On/Bow/装备/Hit Reaction 行为。
-- 新测试文件：仅本阶段独立套件，不改动现有测试文件或生产 Resolver。
-
-所有共享契约文件：`Contract owner: Main; implementation writer: Gemini`。如需 `EnemyCharacter.*`、其他 Ability、Trace/Resolver/Projectile、Config、Gameplay Tags、Input、Content、`.uasset/.umap` 或任何第九个路径，必须停止并把证据交回 Main。
-
-## Automation Contract
-
-新增独立套件：
-
-```text
-PolyQuest.Combat.PlayerMeleeMotionWarping
-```
-
-使用 transient Player/Enemy/Controller 与最小 test seam；测试必须调用与生产相同的快照/几何/清理代码，不复制一套数学。至少覆盖：
-
-- entry 默认关闭时不写 Warp Target；显式开启且有有效锁定时通过生产评估器生成正确的静态 Location、水平 Yaw 和目标名称。
-- `WarpStopDistance`、`MaxWarpDistance`、`MaxWarpAngleDegrees` 的接受/拒绝边界及逐分量有限值检查；NaN/Inf、零向量、空名称、负值和非法角度 fail-closed。
-- 无锁、空目标、目标死亡/销毁、Player 或目标空中、过近、超过修正距离、超过角度、缺失组件/Controller/ASC 时不写 Warp，但普通攻击启动结果不被改写。
-- 目标移动、Lock-On 切换或视角变化后，已写入的 Transform 不变；Combo continuation 不重新选目标。
-- Montage 启动失败、同步结束、取消、自然结束、entry 替换、Player Dead、UnPossess、EndPlay 后无 stale target；重复清理安全且不崩溃。
-- 现有 `StartComboEntry` 的 Montage identity、Trace Window/伤害入口、Combo continuation、Lock-aware facing 与 Bow/Projectile/Lock-On 相关回归不被改动。测试数量按实际运行记录，不硬编码历史套件总数。
-
-测试若无法在无头环境证明真正的 Root Motion/Notify 执行，必须明确标为 seam/static coverage，并把真实 Motion-Warping adoption 留给用户 Editor/PIE 门禁；不得用测试 seam 冒充视觉证明。
-
-## Execution Order And Static Gate
-
-1. Gemini 先读取最新 `AGENTS.md`、本 `plan.md`、当前 `git status`，用 CodeGraph 定点核对 `ULightAttackAbility::ActivateAbility -> StartComboEntry -> EndAbility` 及 Player Lock-On/生命周期一跳调用；不做全仓库漫游。
-2. 读取 UE 5.8 MotionWarping 头文件确认 include、模块和 `FindWarpTarget`/Remove API；若与计划冲突立即停工。
-3. 先加入 uproject/Build.cs 最小模块边界，再加入 `FComboChainEntry` 五项数据；保持现有资产默认关闭。
-4. 在 Player 增加 component、窄桥和 teardown 清理；不把组件放入 `ABaseCharacter`，不新增通用 dispatcher。
-5. 在 `ULightAttackAbility` 实现一次性快照、有限几何判定、写入时序和统一清理；entry 1/2 不得隐式重查目标。
-6. 新建独立 Automation suite，优先覆盖 fail-closed、边界、快照不跟随和生命周期，再覆盖轻攻击/Trace 回归。
-7. 读取最终 diff，运行 `git diff --check`；端点可用时仅对八个批准路径中的 C++ 文件运行 Rider `lint_files`/`get_file_problems`，并确认生产与测试 seam 都调用同一评估器；完成一次严格实现者 self-review。CodeGraph/code-review-graph 只作静态/影响补充，不是编译或运行时证明。
-8. Gemini 不得编译、启动 Editor、运行 Automation/PIE、打包、修改任何资产/Config/文档、stage、commit、reset、删除或清理 WIP；交接后停止。
-
-## User-Owned Validation Gates
-
-实现交接后由用户负责以下门禁，结果必须按证据类别记录：
-
-1. 手动编译 `PolyQuestEditor`（VS2022，Development Editor）。
-2. Editor readback：确认 `MotionWarping` 插件启用、Player 只有一个 `UMotionWarpingComponent`、`bSearchForWindowsInAnimsWithinMontages=false`；确认 `ABP_Player_Dungeon` 的 Root Motion 模式可驱动 Montage Root Motion；确认 `AM_Sword_LightAttack01` **直接**包含 `AnimNotifyState_MotionWarping`，其 Modifier 为 `URootMotionModifier_SkewWarp`，目标名为 `MeleeContact`，平移开启、忽略 Z、旋转/朝向设置和 Notify 时间窗覆盖首段接触；确认 `DA_Combo_StraightSword` entry 0 开启五项配置，entry 1/2 仍关闭。该门禁用于确认作者化 adoption 与 clean-checkout baseline；缺少独立 readback 时，不宣称该 baseline，并登记验证债务。只有 readback 或 PIE 证据显示配置不适用/失败时，才以 evidence-backed `no-adoption` 结束。
-3. 运行 focused `PolyQuest.Combat.PlayerMeleeMotionWarping` 及现有 Light Attack、Melee Trace/Resolver、Lock-On、Projectile/Bow、Guard/Parry 回归套件；套件数量按实际记录。
-4. 在 `/Game/Maps/Scene01` PIE 验证：采用的 entry 0 调参为 `WarpStopDistance=190cm`、`MaxWarpDistance=110cm`、`MaxWarpAngleDegrees=60°`；无锁、过近、修正超限、角度超限、空中时普通攻击照常且不吸附；目标在攻击开始后移动不被追踪；连段、取消、死亡、UnPossess、重新 Possess 和地图 teardown 后无残留目标；Trace/伤害、Lock-On、Bow 行为不回归。Automation 中的 `100/60/60` 仅是独立边界矩阵夹具，不代表生产资产调参。
-
-源码静态检查、CodeGraph、Automation seam 和 Gemini self-review 不能替代用户编译、Editor readback 或 PIE/视觉证据。
-
-## Known Debt And Blocker Decision
-
-- 用户已确认 Scene01 PIE 通过；首段贴近以及取消/离地/teardown 的具体子场景来自 Gemini 交接报告，Main 本轮未再次运行这些场景。本轮没有独立的手动 `PolyQuestEditor` 编译记录，也没有逐项 Editor readback 记录，因此不能把本阶段描述成可由 clean checkout 重现的作者化资产基线。该债务的 closure trigger 是在后续 adoption slice 前补齐编译与 `ABP_Player_Dungeon`、`AM_Sword_LightAttack01`、`DA_Combo_StraightSword` 的定点 readback；不是当前源码 blocker。
-- focused Automation `PolyQuest.Combat.PlayerMeleeMotionWarping` 已由用户确认通过，但主要覆盖共享 evaluator、Player bridge 和清理 seam，没有完整驱动 `StartComboEntry(0) -> TryApplyMeleeMotionWarpTarget` 的生产入口。closure trigger 是 `TODO-03A7B` 的首段/后续 entry adoption 矩阵或一个明确的生产入口测试 seam；不是当前运行时 blocker。
-- MotionWarping 是 UE 5.8 插件 API；本轮已完成引擎头文件/模块静态核对，不能以此替代用户编译证据，也不复制插件或修改 Engine。
-- Actor center 与具体动画 contact point 的美术调校可在后续 adoption slice 中处理；不得用扩大边界或动态追踪掩盖体验问题。
-- 当前 `Content/**`、Config 和其他 Source WIP 继续保留；它们不是本阶段 blocker，也不是提交候选。
-
-## Documentation And Review Closeout
-
-- `ARCHITECTURE.md`：同步 Player-owned MotionWarping、entry 0 一次性静态快照、有限几何与统一清理契约；不写未来调参清单。
-- `ROADMAP.md`：将 `TODO-03A7` 从开放阶段移出，加入玩家后续 Motion-Warp adoption 拆片、敌人后置阶段和上述两项验证债务；不伪造新的提交 SHA。
-- `ROADMAP-archive.md`：本轮不追加；只有下一阶段获准替换本 `plan.md` 时，才按 AGENTS.md 归档本阶段详细 closeout。
-- `README.md`：本阶段没有新增可独立公开的稳定基线；不把缺少编译/readback 的源码能力写成 clean-checkout 资产事实。
-- `plan.md`：保留本阶段 closeout，直到下一阶段获准替换。
-
-Main 已对批准实现文件完成**一轮**独立 defect-first fresh review，范围为批准文件及受影响符号一跳 callers/callees。未发现 P0/P1/P2 blocker；未追加第二轮 adversarial review，也未派独立 Reviewer。
-
-## Commit Boundary
-
-阶段提交候选仅为八个批准路径与必要文档收尾；明确排除全部 `Content/**`、`Config/**`、其他 Source WIP、测试 preset、地图、Blueprint、Montage、AnimBP、Niagara、音频、Gameplay Tags、Input、旧 Test 项目和 Engine 源码。提交必须等待用户明确批准，并以实际 staged diff 为准。
-
-## Non-Goals
-
-- 不为 Enemy、Charged/Sprint/Skill/Bow、Hit Reaction、处决、Locomotion 或全局 Root Motion 增加 Motion Warping。
-- 不改变 Lock-On acquisition/retention/cycle、Bow 6% Target Assist、装备/拾取、Poise/Stance Break、AI/StateTree、Projectile 或任何 Damage GameplayEffect。
-- 不新增自动扫描、临时选敌、LOS/相机逻辑、Tick/Timer 跟踪、通用 targeting/warp/feedback framework、GameplayCue、Tag、Input、RPC、复制或多人支持。
-- 不手工编辑、导入、移动、复制、重定向或删除 `.uasset/.umap`；不修改用户作者化字段作为代码实现的隐式前置条件。
-- 不清理、回滚、覆盖、stage 或提交既有 WIP。
-
-## Gemini Handoff Prompt
-
-以下提示在 Main 确认本计划后交给 Gemini；它冻结执行边界，不授予额外架构权限：
-
-> 你是 TODO-03A7 的实现执行者。工作目录必须是 `E:\GameDevelop\PolyQuest`，父基线为 `90ad3818afce10e8edae26157664573c1394fcd6`；先读取最新 `AGENTS.md` 和当前 `plan.md`。执行路线是 `manual/out-of-band Gemini`，Outer 为 `ue-stage-workflow`，Primary Skill 为 `ue5-cpp-gameplay`，Support Skill 为 `ue5-debug-validation`。`Contract owner: Main; implementation writer: Gemini`。
->
-> 只允许修改 plan 中列出的八个绝对路径：`PolyQuest.uproject`（仅启用 MotionWarping）、`PolyQuest.Build.cs`（仅在 PrivateDependencyModuleNames 增加 MotionWarping）、`ComboChainDataAsset.h`（仅增加五项 entry 数据）、`LightAttackAbility.h/.cpp`（仅一次性快照/纯几何评估器/StartComboEntry 写入/统一清理）、`PlayerCharacter.h/.cpp`（仅 Player-owned UMotionWarpingComponent、窄 C++ bridge、Possess/Movement/EndPlay 清理）和新建 `PlayerMeleeMotionWarpingAutomationTests.cpp`（仅独立 suite `PolyQuest.Combat.PlayerMeleeMotionWarping`）。不得修改 `ABaseCharacter`、Enemy、Trace/Resolver、Projectile/Bow、其他 Ability、Config、Gameplay Tags、Input、Content、Blueprint、Montage、AnimBP、地图、Engine 或文档。
->
-> 冻结行为：组件只在 Player；`bSearchForWindowsInAnimsWithinMontages=false`；entry 默认 `bUseMotionWarping=false`，v1 只允许首段 `AM_Sword_LightAttack01` 的 entry 0 opt-in。先读取原始 `GetLockedTarget()`，无锁/死亡/销毁时直接 fail-closed；对仍存活的原始目标最多调用一次 `ResolveValidLockedTarget()`，若发生死亡交接或返回不同目标也 fail-closed，不得接受自动 retarget。Player/目标空中、非法 ASC 或 Controller 同样不写目标。使用 Actor center 和水平公式 `WarpLocation = TargetLocation - Normalize2D(TargetLocation-PlayerLocation)*WarpStopDistance`，将 Z 固定为 Player Z，朝向为水平目标 Yaw；生产采用的 `WarpStopDistance=190cm`、`MaxWarpDistance=110cm`（玩家到 WarpLocation 的水平修正上限）、`MaxWarpAngleDegrees=60°`，有限边界 `<=` 接受、`>` 拒绝；Automation 可用 `100/60/60` 独立夹具测试边界。调用 `AddOrUpdateWarpTargetFromTransform` 写静态快照，绝不 Tick/follow/重查目标；连段不重新选择目标。启动失败、同步结束、取消、替换、死亡、UnPossess、EndPlay 必须清理，Warp 失败时普通轻攻击照常运行，伤害路径完全不变。
->
-> 先用 CodeGraph 定点核对 `ActivateAbility -> StartComboEntry -> EndAbility` 和 Player 生命周期，再确认 UE 5.8 插件头文件/API。几何数学必须由一个无副作用生产评估器提供，测试 seam 只能转调它；不得在测试中复制边界公式。若需要未列文件、修改公共契约、添加 Tag/Input/Config/资产、改变 Lock-On/Trace/Damage 或无法确认模块/API，立即停止并把证据交回 Main；不得绕过边界。不得编译、启动 Editor、运行 Automation/PIE、打包、stage、commit、reset、删除或清理 WIP。
->
-> 测试必须走生产快照/几何/清理代码，覆盖默认关闭、正确静态 Transform、停距/修正距离/角度边界、NaN/Inf、无锁/死亡/销毁/空中/过近、目标移动不跟随、连段不重选、启动失败/取消/自然结束/替换/死亡/UnPossess/EndPlay 清理，以及 Light Attack/Trace/Lock-On/Bow 回归。读取最终 diff，运行 `git diff --check`，端点可用时对批准 C++ 文件运行 Rider lint/problem 检查；完成严格 self-review，列出 changed paths、静态证据、未运行的用户门禁和 remaining risks。self-review 不得称为 Main fresh review。
-
-## Acceptance Contract
-
-本阶段实现/采用判定沿用以下门禁；未单独提供的证据必须保留为验证债务，不得推断：
-
-1. 批准源码与模块边界通过用户 `PolyQuestEditor` Development Editor 编译。
-2. Editor readback 用于证明 Player component、首段 Montage Notify/SkewWarp、AnimBP Root Motion 和 entry 0 配置均真实存在且匹配契约，并支持 clean-checkout authored-baseline 声明；缺少独立 readback 时保留验证债务，不把它与已确认的 PIE 结果混同。只有证据显示配置不适用或运行失败时，才明确记录 no-adoption。
-3. focused Automation 与相关回归通过，且测试覆盖不依赖固定历史套件数量。
-4. Scene01 PIE 证明有限贴近、无锁/超限 fail-closed、静态快照不追踪、连段/取消/teardown 清理及既有 Trace/伤害行为无回归。
-5. Main 完成一轮受控 defect-first fresh review，随后同步文档并等待用户明确提交批准。
-
-## Closeout Record (2026-08-30; implementation closeout based on parent HEAD `90ad381`; pre-commit working-tree snapshot was not clean)
-
-- **Implementation**：八个批准路径已完成 Player entry 0 Motion-Warp contact assist；默认关闭、静态 Lock-On 快照、有限距离/角度/地面判定、`Forward2D.Normalize()` fail-closed、防止死亡交接偷换目标，以及 entry/取消/同步失败/离地/UnPossess/EndPlay 清理均已核对。既有 Trace Window、`FMeleeHitResolver`、Damage GameplayEffect、Lock-On 和 Bow 路径未改动。
-- **User evidence**：用户确认 `PolyQuest.Combat.PlayerMeleeMotionWarping` Automation 通过，并确认 Scene01 PIE 通过；Gemini 报告 `git diff --check` 与 Rider errors-only 检查无诊断。这里不把这些结果表述为独立编译或 Editor readback 证据。
-- **Main fresh review**：一轮、受控、一跳范围的 defect-first review 完成；未发现 P0/P1/P2 blocker。重点核对 `StartComboEntry(0) -> TryApplyMeleeMotionWarpTarget -> EvaluateMeleeMotionWarpTransform`、静态目标不跟随、清理路径、有限值防御和普通伤害回归。
-- **Validation debt**：无独立手动 `PolyQuestEditor` 编译/readback 记录；Automation 尚未完整驱动生产 `StartComboEntry` 入口。两项 closure trigger 已登记到 `ROADMAP.md`，不阻塞下一玩家 source slice 的计划制定。
-- **Scope**：本阶段提交候选为八个批准路径与阶段文档；`AGENTS.md`、`Config/**`、全部 `Content/**`、其他 Source WIP、测试 preset、资产作者化和 Engine 源码明确排除。文档收口轮中 Main 未自行编译、启动 Editor 或运行 Automation/PIE；用户/Gemini 的验证证据已在上方按类别记录，提交仅在用户批准后按此边界执行。
+- **实现范围**：`LightAttackAbility.h/.cpp` 完成零基 entry `0..2` 的显式门控、每段 opt-in、首个合法 entry 的一次性 Lock-On 快照、静态位置/接地复用、task/montage 两级激活门禁与安全 rollback；目标无效、死亡/销毁、离地、取消、UnPossess、EndPlay 和各类 `StartComboEntry()` 早退均 fail-closed 清理。`PlayerCharacter`/`EnemyCharacter` 只增加窄桥和精确 `Ability.Attack.Light` 取消，未改变 Lock-On retarget 或 `UAbilityTask_MeleeTraceWindow -> FMeleeHitResolver -> Damage GameplayEffect` 唯一路径。左上角距离 HUD 仍保持 `#if !(UE_BUILD_SHIPPING || UE_BUILD_TEST)` 与 debug message key `1002` 的 debug-only 语义。
+- **修改路径**：六个批准 Source/test 文件，以及 Main 为同步生命周期规则直接补充的 `AGENTS.md` 条款；本次文档收口另更新 `plan.md`、`ROADMAP.md`、`ARCHITECTURE.md`、`README.md` 和本归档文件。
+- **用户证据**：用户确认修复后的 `PolyQuest.Combat.PlayerMeleeMotionWarping` focused Automation 成功，且确认 Scene01 PIE 通过。该证据覆盖用户实际运行的 focused 场景，不扩展为未运行的全量回归、编译或资产读回结论。
+- **静态/复核证据**：Gemini 报告 Rider errors-only 无 error、`git diff --check` 通过；Main 使用定点 CodeGraph、补充 code-review-graph 和一跳 diff-first fresh review，未发现 P0/P1/P2 blocker。没有进行第二轮 adversarial review，也没有重新运行用户的 Editor/Automation/PIE 门禁。
+- **未解决验证债务**：没有单独记录的手动 `PolyQuestEditor` Development Editor 编译，也没有逐项 `DA_Combo_StraightSword`/entry 1/2 Motion-Warp Notify、Modifier、Root Motion 和窗口设置的 Editor readback；因此不宣称 clean authored baseline。现有 3.14 测试证明终止前置门禁与清理，但没有独立构造 `ReadyForActivation()` 返回后同步 `EndTask()` 的无头重入夹具；生产顺序已静态复核，这不是本次提交 blocker，关闭触发器已登记在 `ROADMAP.md`。
+- **范围与提交边界**：明确排除全部 `Content/**`、`Config/Automation/Presets/1.json`、其他 Source/文档 WIP、Blueprint/Montage/AnimBP/DataAsset/地图、`PolyQuest.uproject`、`Build.cs`、Gameplay Tags、Engine/旧 Test 项目；不清理、不回滚、不修改资产。提交前父 HEAD 为 `c91fbfdaab49e933922e902b92565859506f9351`，`90ad381` 继续只表示上次 TODO-03A7 的历史任务视角。

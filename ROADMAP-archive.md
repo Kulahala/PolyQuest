@@ -1029,3 +1029,25 @@ TODO-03A3E World Pickup Interaction Prompt v1
 - **未声称证据**：本次记录没有独立手动 `PolyQuestEditor` 编译日志，也没有六字段 `BP_Player` Editor readback；不以 Automation 或 PIE 替代这些证据。缺失 attacker 字段时测试产生的 fail-closed warning 是预期负向断言，不是运行时错误。
 - **排除项与债务**：未修改或纳入 `AGENTS.md`、`Config/Automation/Presets/1.json`、全部 `Content/**`、`WeaponEquipmentComponentAutomationTests.cpp`、Build.cs、uproject、Gameplay Tags、Resolver/Trace/Projectile 和其他 WIP。六字段作者化 readback/手动编译证据作为 Roadmap validation debt，closure trigger 是在可提交的作者化基线或打包前完成对应读回；不阻塞下一阶段的源代码计划。
 - **提交边界**：TODO-07B4 的四个批准 Source/test 路径与本阶段文档一并提交；最终提交 hash 以 Git 历史为准。
+
+## TODO-03A7 Selected Melee Motion-Warp Contact Assist Closeout (2026-08-30; working-tree snapshot at HEAD `c91fbfd`, not clean)
+
+> 本节保留被 TODO-03A7B 替换前的 `plan.md` 收口事实。归档快照位于当前 HEAD `c91fbfd`，工作区仍含用户的 Config/Content WIP，因此不是干净 checkout；实现本身的历史父基线是 `90ad381`，不能将其改写为当前仓库基线。本文件仅供追溯，不是运行时权威。
+
+- **范围与所有权**：TODO-03A7 只为 Player 的 Light Combo entry 0 引入显式 opt-in 的 Motion Warping 接触辅助；Player 独占一个 `UMotionWarpingComponent`，Ability 负责 Lock-On 一次性快照、有限距离/角度/接地判定和清理，Player C++ bridge 只负责组件写入/清理。Charged、Sprint、Skill、Bow、Enemy、Locomotion、Hit Reaction、Projectile 和全局 targeting 均未接入。
+- **运行时合同**：entry 默认关闭；生产参数为 `WarpStopDistance=190cm`、`MaxWarpDistance=110cm`、`MaxWarpAngleDegrees=60°`。无锁、死亡/销毁目标、死亡交接、非法 ASC/Controller、空中、非有限或超界几何均 fail-closed，Warp 失败不阻止普通轻攻击。目标以 Actor center 的静态 Transform 写入，不 Tick 跟随、不重选。
+- **清理与伤害边界**：entry 替换、Montage 启动/同步失败、取消、自然结束、离地、Player 死亡、UnPossess 和 EndPlay 均清除 stale Warp Target；唯一近战伤害路径仍是 `UAbilityTask_MeleeTraceWindow -> FMeleeHitResolver -> Damage GameplayEffect`。
+- **历史验证证据**：用户确认 `PolyQuest.Combat.PlayerMeleeMotionWarping` Automation 与 `/Game/Maps/Scene01` PIE 通过；Gemini 报告 Rider errors-only 检查和 `git diff --check` 通过。没有独立手动 `PolyQuestEditor` Development Editor 编译记录、逐项 Motion-Warp Editor readback，Automation 也未完整驱动生产 `StartComboEntry(0)` 入口；这些是验证债务，不被改写成 no-adoption 或运行时失败。
+- **历史复核与提交**：Main 完成一轮受控 defect-first fresh review，未发现 P0/P1/P2 blocker；实现提交为 `c8b72c63522baea4a4c1fed983d48f226b20357d`。随后文档/测试路径收口提交为当前 HEAD `c91fbfdaab49e933922e902b92565859506f9351`；`WeaponEquipmentComponentAutomationTests.cpp` 已在该提交中，不是本阶段未提交 Source WIP。
+- **排除项与后续指针**：全部 Config/Content、其他 Source WIP、测试 preset、Blueprint/Montage/AnimBP/地图、Engine 源码和旧 Test 项目均未纳入。后续玩家 Motion-Warp 采用拆片从 `TODO-03A7B` 开始；本节中的 `90ad381` 仅表示当时任务视角的父提交。
+
+## TODO-03A7B Light Combo Motion-Warp Adoption Closeout (2026-08-31; working-tree snapshot at parent HEAD `c91fbfd`, not clean)
+
+> 本节记录 TODO-03A7B 的实现与验证收口。快照基于父 HEAD `c91fbfdaab49e933922e902b92565859506f9351`，工作区仍含用户的 Config/Content 及其他 WIP，因此不是干净 checkout；本节是历史追溯，不是源码、Config 或实际资产的运行时权威。`90ad381` 继续只表示上一阶段任务视角的历史父基线。
+
+- **范围与所有权**：六个批准 Source/test 文件完成 Light Combo entry `0..2` 显式门控、每段 opt-in、一次性静态 Lock-On 快照、任务/蒙太奇激活两级门禁、rollback 与生命周期清理。Player/Enemy 仅通过窄桥处理 `ClearLockedTarget()`、目标死亡/销毁和 UnPossess 的 Light-only 取消；左上角距离 HUD 保持 debug-only。唯一近战伤害路径仍为 `UAbilityTask_MeleeTraceWindow -> FMeleeHitResolver -> Damage GameplayEffect`，未引入通用 dispatcher、自动重选或其他攻击家族 Motion Warping。
+- **用户证据**：用户确认修复后的 `PolyQuest.Combat.PlayerMeleeMotionWarping` focused Automation 成功，并确认 `/Game/Maps/Scene01` PIE 通过。该证据只覆盖用户实际运行的 focused 场景，不扩展为全量回归、编译或资产读回结论。
+- **静态与复核证据**：Gemini 报告 Rider errors-only 无 error、`git diff --check` 通过；Main 以 diff-first、一跳 CodeGraph 和补充 code-review-graph 完成 defect-first fresh review，未发现 P0/P1/P2 blocker。没有执行第二轮 adversarial review。
+- **未声称证据与验证债务**：没有独立手动 `PolyQuestEditor` Development Editor 编译，也没有逐项 entry 1/2 Motion-Warp Notify/Modifier/Root Motion/窗口 Editor readback；作者化 baseline 仍为本地 WIP。现有 3.14 seam 未独立构造 `ReadyForActivation()` 返回后同步 `EndTask()`，生产顺序已静态复核；该覆盖债务非本次提交 blocker，关闭触发器是未来可安全建立确定性 seam 时补测。
+- **文档与规则**：`plan.md` 保留详细基线、执行记录、证据和债务；`ROADMAP.md` 仅更新当前/下一阶段指针与 canonical debt；`ARCHITECTURE.md` 更新稳定的 entry 0..2 Motion-Warp 合同；`README.md` 更新公开状态；`AGENTS.md` 增加 `ReadyForActivation()` 同步重入门禁规则。
+- **排除项与提交边界**：全部 `Content/**`、`Config/Automation/Presets/1.json`、其他 Source/文档 WIP、Blueprint/Montage/AnimBP/DataAsset/地图、`PolyQuest.uproject`、`Build.cs`、Gameplay Tags、Engine/旧 Test 项目均未修改或暂存；无资产清理、回滚或导入。最终提交 hash 以 Git 历史为准。

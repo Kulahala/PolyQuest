@@ -17,6 +17,11 @@
 #include "GameplayEffect.h"
 #include "PolyQuest.h"
 
+namespace
+{
+	constexpr int32 MaxMotionWarpAllowedEntryIndex = 2;
+}
+
 ULightAttackAbility::ULightAttackAbility()
 {
 	InstancingPolicy = EGameplayAbilityInstancingPolicy::InstancedPerActor;
@@ -56,6 +61,10 @@ void ULightAttackAbility::ActivateAbility(
 	const FGameplayEventData*)
 {
 	bEndAbilityRequested = false;
+	ResetMeleeMotionWarpState();
+#if WITH_DEV_AUTOMATION_TESTS
+	bTestBypassMontageActiveCheck = false;
+#endif
 	bDodgeCancelable = false;
 	bComboInputWindowOpen = false;
 	bComboBranchWindowOpen = false;
@@ -162,6 +171,10 @@ void ULightAttackAbility::EndAbility(
 	}
 
 	bEndAbilityRequested = true;
+	ResetMeleeMotionWarpState();
+#if WITH_DEV_AUTOMATION_TESTS
+	bTestBypassMontageActiveCheck = false;
+#endif
 	SetDodgeCancelable(false);
 	CloseTraceWindow();
 	RestoreBaselineMontageRate();
@@ -424,16 +437,31 @@ bool ULightAttackAbility::ValidateComboDefinition() const
 
 bool ULightAttackAbility::StartComboEntry(int32 EntryIndex)
 {
+	APlayerCharacter* PlayerCharacter = Cast<APlayerCharacter>(GetAvatarActorFromActorInfo());
+	if (!IsValid(PlayerCharacter) || PlayerCharacter->IsActorBeingDestroyed())
+	{
+		return false;
+	}
+
+	UWorld* World = PlayerCharacter->GetWorld();
+	if (bEndAbilityRequested || !CurrentActorInfo || !World)
+	{
+		PlayerCharacter->ClearMeleeMotionWarpTargets();
+		return false;
+	}
+
 	const FComboChainEntry* Entry = ComboDefinition ? ComboDefinition->GetEntry(EntryIndex) : nullptr;
 	UAnimMontage* EntryMontage = Entry ? Entry->Montage.Get() : nullptr;
-	if (bEndAbilityRequested || !BoundAnimInstance || !EntryMontage)
+	if (!IsValid(BoundAnimInstance) || !IsValid(EntryMontage))
 	{
+		PlayerCharacter->ClearMeleeMotionWarpTargets();
 		return false;
 	}
 
 	UAbilityTask_PlayMontageAndWait* NewMontageTask = UAbilityTask_PlayMontageAndWait::CreatePlayMontageAndWaitProxy(this, NAME_None, EntryMontage);
 	if (!NewMontageTask)
 	{
+		PlayerCharacter->ClearMeleeMotionWarpTargets();
 		return false;
 	}
 
@@ -452,35 +480,71 @@ bool ULightAttackAbility::StartComboEntry(int32 EntryIndex)
 	ActiveEntryMontage = EntryMontage;
 	MontageTask = NewMontageTask;
 
-	APlayerCharacter* PlayerCharacter = Cast<APlayerCharacter>(GetAvatarActorFromActorInfo());
-	if (PlayerCharacter)
+	PlayerCharacter->ClearMeleeMotionWarpTargets();
+	if (Entry && Entry->bUseMotionWarping && EntryIndex >= 0 && EntryIndex <= MaxMotionWarpAllowedEntryIndex)
 	{
-		PlayerCharacter->ClearMeleeMotionWarpTargets();
-		if (Entry && Entry->bUseMotionWarping && EntryIndex == 0)
-		{
-			TryApplyMeleeMotionWarpTarget(PlayerCharacter, *Entry);
-		}
+		TryApplyMeleeMotionWarpTarget(PlayerCharacter, *Entry);
+	}
+	else if (Entry && Entry->bUseMotionWarping && EntryIndex > MaxMotionWarpAllowedEntryIndex)
+	{
+		UE_LOG(LogPolyQuest, Verbose, TEXT("Light attack entry %d requested Motion Warping but exceeds maximum allowed entry index (%d); fail-closed."), EntryIndex, MaxMotionWarpAllowedEntryIndex);
 	}
 
 	NewMontageTask->ReadyForActivation();
 
-	// A zero-length or otherwise immediately completed Montage can synchronously run EndAbility.
-	if (bEndAbilityRequested)
+	// 1. Synchronously ended ability or destroyed context check
+	if (bEndAbilityRequested || !IsValid(PlayerCharacter) || PlayerCharacter->IsActorBeingDestroyed()
+		|| !IsValid(BoundAnimInstance) || !IsValid(EntryMontage) || !IsValid(NewMontageTask)
+		|| MontageTask.Get() != NewMontageTask)
 	{
-		if (PlayerCharacter)
+		// Ability has already ended or context was invalidated; EndAbility() has performed canonical teardown.
+		// We must NOT resurrect previous montage task or entry identity.
+		if (IsValid(NewMontageTask) && !NewMontageTask->IsFinished())
+		{
+			NewMontageTask->EndTask();
+		}
+		if (IsValid(PlayerCharacter) && !PlayerCharacter->IsActorBeingDestroyed())
 		{
 			PlayerCharacter->ClearMeleeMotionWarpTargets();
 		}
 		return false;
 	}
 
-	if (!BoundAnimInstance->Montage_IsActive(EntryMontage))
+	// 2. Task activation state validation on valid active ability
+	const bool bTaskActive = NewMontageTask->IsActive() && !NewMontageTask->IsFinished();
+	if (!bTaskActive)
 	{
-		NewMontageTask->EndTask();
+		if (IsValid(NewMontageTask) && !NewMontageTask->IsFinished())
+		{
+			NewMontageTask->EndTask();
+		}
 		MontageTask = PreviousMontageTask;
 		ActiveEntryIndex = PreviousEntryIndex;
 		ActiveEntryMontage = PreviousEntryMontage;
-		if (PlayerCharacter)
+		if (IsValid(PlayerCharacter) && !PlayerCharacter->IsActorBeingDestroyed())
+		{
+			PlayerCharacter->ClearMeleeMotionWarpTargets();
+		}
+		return false;
+	}
+
+	// 3. Montage playback active check (bypassable strictly for headless test environments)
+#if WITH_DEV_AUTOMATION_TESTS
+	const bool bMontageActive = bTestBypassMontageActiveCheck || BoundAnimInstance->Montage_IsActive(EntryMontage);
+#else
+	const bool bMontageActive = BoundAnimInstance->Montage_IsActive(EntryMontage);
+#endif
+
+	if (!bMontageActive)
+	{
+		if (IsValid(NewMontageTask) && !NewMontageTask->IsFinished())
+		{
+			NewMontageTask->EndTask();
+		}
+		MontageTask = PreviousMontageTask;
+		ActiveEntryIndex = PreviousEntryIndex;
+		ActiveEntryMontage = PreviousEntryMontage;
+		if (IsValid(PlayerCharacter) && !PlayerCharacter->IsActorBeingDestroyed())
 		{
 			PlayerCharacter->ClearMeleeMotionWarpTargets();
 		}
@@ -765,71 +829,142 @@ bool ULightAttackAbility::EvaluateMeleeMotionWarpTransform(
 	return true;
 }
 
+void ULightAttackAbility::ResetMeleeMotionWarpState()
+{
+	MeleeMotionWarpSnapshot.Reset();
+}
+
 void ULightAttackAbility::TryApplyMeleeMotionWarpTarget(APlayerCharacter* PlayerCharacter, const FComboChainEntry& EntryConfig)
 {
-	if (!PlayerCharacter)
+	// 1. Validate basic entry motion warp configuration before attempting any target queries.
+	// Illegal or disabled configurations do NOT consume the one-shot capture opportunity.
+	if (!EntryConfig.bUseMotionWarping
+		|| EntryConfig.WarpTargetName.IsNone()
+		|| !FMath::IsFinite(EntryConfig.WarpStopDistance) || EntryConfig.WarpStopDistance < 0.0f
+		|| !FMath::IsFinite(EntryConfig.MaxWarpDistance) || EntryConfig.MaxWarpDistance < 0.0f
+		|| !FMath::IsFinite(EntryConfig.MaxWarpAngleDegrees) || EntryConfig.MaxWarpAngleDegrees < 0.0f || EntryConfig.MaxWarpAngleDegrees > 180.0f)
+	{
+		if (IsValid(PlayerCharacter) && !PlayerCharacter->IsActorBeingDestroyed())
+		{
+			PlayerCharacter->ClearMeleeMotionWarpTargets();
+		}
+		return;
+	}
+
+	// 2. Consume the one-shot capture opportunity on the very first legal opt-in entry,
+	// BEFORE any Player, World, Controller, ASC, or Lock-On queries.
+	const bool bIsFirstLegalCaptureAttempt = !MeleeMotionWarpSnapshot.bAttemptedCapture;
+	if (bIsFirstLegalCaptureAttempt)
+	{
+		MeleeMotionWarpSnapshot.bAttemptedCapture = true;
+	}
+
+	// 3. Safety checks on Player and context
+	if (!IsValid(PlayerCharacter) || PlayerCharacter->IsActorBeingDestroyed())
 	{
 		return;
 	}
 
-	const UAbilitySystemComponent* ASC = GetAbilitySystemComponentFromActorInfo();
+	UWorld* World = PlayerCharacter->GetWorld();
 	const AController* Controller = PlayerCharacter->GetController();
-	if (!ASC || !Controller)
+	const UAbilitySystemComponent* AbilityASC = GetAbilitySystemComponentFromActorInfo();
+	if (!World || !IsValid(Controller) || Controller->IsActorBeingDestroyed()
+		|| !IsValid(AbilityASC) || AbilityASC->GetOwnerActor() != PlayerCharacter || PlayerCharacter->GetAbilitySystemComponent() != AbilityASC)
 	{
+		PlayerCharacter->ClearMeleeMotionWarpTargets();
 		return;
 	}
 
-	AEnemyCharacter* OriginalTarget = PlayerCharacter->GetLockedTarget();
-	if (!OriginalTarget || OriginalTarget->IsDead() || !IsValid(OriginalTarget))
+	// 4. Perform snapshot capture if this was the first legal capture attempt
+	if (bIsFirstLegalCaptureAttempt)
 	{
-#if !(UE_BUILD_SHIPPING || UE_BUILD_TEST)
-		if (GEngine)
+		AEnemyCharacter* OriginalTarget = PlayerCharacter->GetLockedTarget();
+		if (!IsValid(OriginalTarget) || OriginalTarget->IsActorBeingDestroyed() || OriginalTarget->IsDead() || OriginalTarget->GetWorld() != World)
 		{
-			GEngine->AddOnScreenDebugMessage(-1, 2.0f, FColor::Silver, TEXT("[MotionWarp] 未锁定目标 (LockOn)"));
-		}
-#endif
-		return;
-	}
-
-	AEnemyCharacter* ValidatedTarget = PlayerCharacter->ResolveValidLockedTarget();
-	if (!ValidatedTarget || ValidatedTarget != OriginalTarget || ValidatedTarget->IsDead() || !IsValid(ValidatedTarget))
-	{
 #if !(UE_BUILD_SHIPPING || UE_BUILD_TEST)
-		if (GEngine)
-		{
-			GEngine->AddOnScreenDebugMessage(-1, 2.0f, FColor::Orange, TEXT("[MotionWarp] 目标验证失败或发生死亡切换"));
-		}
+			if (GEngine)
+			{
+				GEngine->AddOnScreenDebugMessage(-1, 2.0f, FColor::Silver, TEXT("[MotionWarp] 未锁定目标 (LockOn)"));
+			}
 #endif
+			PlayerCharacter->ClearMeleeMotionWarpTargets();
+			return;
+		}
+
+		AEnemyCharacter* ValidatedTarget = PlayerCharacter->ResolveValidLockedTarget();
+		if (!IsValid(ValidatedTarget) || ValidatedTarget != OriginalTarget || ValidatedTarget->IsActorBeingDestroyed() || ValidatedTarget->IsDead() || ValidatedTarget->GetWorld() != World)
+		{
+#if !(UE_BUILD_SHIPPING || UE_BUILD_TEST)
+			if (GEngine)
+			{
+				GEngine->AddOnScreenDebugMessage(-1, 2.0f, FColor::Orange, TEXT("[MotionWarp] 目标验证失败或发生死亡切换"));
+			}
+#endif
+			PlayerCharacter->ClearMeleeMotionWarpTargets();
+			return;
+		}
+
+		const FVector TargetLoc = ValidatedTarget->GetActorLocation();
+		if (!FMath::IsFinite(TargetLoc.X) || !FMath::IsFinite(TargetLoc.Y) || !FMath::IsFinite(TargetLoc.Z))
+		{
+			PlayerCharacter->ClearMeleeMotionWarpTargets();
+			return;
+		}
+
+		const UCharacterMovementComponent* TargetMoveComp = ValidatedTarget->GetCharacterMovement();
+		const bool bTargetOnGround = TargetMoveComp && TargetMoveComp->IsMovingOnGround();
+
+		// Record successful snapshot
+		MeleeMotionWarpSnapshot.CapturedTarget = ValidatedTarget;
+		MeleeMotionWarpSnapshot.CapturedTargetLocation = TargetLoc;
+		MeleeMotionWarpSnapshot.bCapturedTargetOnGround = bTargetOnGround;
+	}
+
+	// 5. Subsequent / current entry target validation
+	if (!MeleeMotionWarpSnapshot.CapturedTarget.IsValid())
+	{
+		PlayerCharacter->ClearMeleeMotionWarpTargets();
 		return;
 	}
 
+	AEnemyCharacter* TargetActor = MeleeMotionWarpSnapshot.CapturedTarget.Get();
+	if (!IsValid(TargetActor) || TargetActor->IsActorBeingDestroyed() || TargetActor->IsDead() || TargetActor->GetWorld() != World)
+	{
+		PlayerCharacter->ClearMeleeMotionWarpTargets();
+		return;
+	}
+
+	// 3. Evaluate motion warp transform using cached target snapshot and current player transform/state
 	const UCharacterMovementComponent* PlayerMoveComp = PlayerCharacter->GetCharacterMovement();
-	const UCharacterMovementComponent* TargetMoveComp = ValidatedTarget->GetCharacterMovement();
 	const bool bPlayerOnGround = PlayerMoveComp && PlayerMoveComp->IsMovingOnGround();
-	const bool bTargetOnGround = TargetMoveComp && TargetMoveComp->IsMovingOnGround();
-
 	const FVector PlayerLoc = PlayerCharacter->GetActorLocation();
-	const FVector TargetLoc = ValidatedTarget->GetActorLocation();
-	const float Dist2D = FVector::Dist2D(PlayerLoc, TargetLoc);
+	const FVector PlayerForward = PlayerCharacter->GetActorForwardVector();
+	const float Dist2D = FVector::Dist2D(PlayerLoc, MeleeMotionWarpSnapshot.CapturedTargetLocation);
 
 	FTransform WarpTransform;
 	if (EvaluateMeleeMotionWarpTransform(
 		PlayerLoc,
-		PlayerCharacter->GetActorForwardVector(),
+		PlayerForward,
 		bPlayerOnGround,
-		TargetLoc,
-		bTargetOnGround,
+		MeleeMotionWarpSnapshot.CapturedTargetLocation,
+		MeleeMotionWarpSnapshot.bCapturedTargetOnGround,
 		EntryConfig,
 		WarpTransform))
 	{
-		PlayerCharacter->SetMeleeMotionWarpTarget(EntryConfig.WarpTargetName, WarpTransform);
+		const bool bSetSuccess = PlayerCharacter->SetMeleeMotionWarpTarget(EntryConfig.WarpTargetName, WarpTransform);
+		if (!bSetSuccess)
+		{
+			PlayerCharacter->ClearMeleeMotionWarpTargets();
+			return;
+		}
+
 #if !(UE_BUILD_SHIPPING || UE_BUILD_TEST)
 		if (GEngine)
 		{
 			const float CorrectionDist = FVector::Dist2D(PlayerLoc, WarpTransform.GetLocation());
 			GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Green,
 				FString::Printf(TEXT("[MotionWarp] 成功触发！目标=%s, 距离=%.1fcm, 停距=%.1fcm, 修正=%.1fcm"),
-					*GetNameSafe(ValidatedTarget), Dist2D, EntryConfig.WarpStopDistance, CorrectionDist));
+					*GetNameSafe(TargetActor), Dist2D, EntryConfig.WarpStopDistance, CorrectionDist));
 		}
 		UE_LOG(LogPolyQuest, Log, TEXT("[MotionWarp] Applied warp target '%s' on '%s' (Dist2D=%.1f)"),
 			*EntryConfig.WarpTargetName.ToString(), *GetNameSafe(PlayerCharacter), Dist2D);
@@ -837,13 +972,14 @@ void ULightAttackAbility::TryApplyMeleeMotionWarpTarget(APlayerCharacter* Player
 	}
 	else
 	{
+		PlayerCharacter->ClearMeleeMotionWarpTargets();
 #if !(UE_BUILD_SHIPPING || UE_BUILD_TEST)
 		if (GEngine)
 		{
 			GEngine->AddOnScreenDebugMessage(-1, 2.0f, FColor::Yellow,
 				FString::Printf(TEXT("[MotionWarp] 判定未通过 (距离=%.1fcm, 允许: %.1f~%.1fcm, 地面=%d/%d)"),
 					Dist2D, EntryConfig.WarpStopDistance, EntryConfig.WarpStopDistance + EntryConfig.MaxWarpDistance,
-					bPlayerOnGround ? 1 : 0, bTargetOnGround ? 1 : 0));
+					bPlayerOnGround ? 1 : 0, MeleeMotionWarpSnapshot.bCapturedTargetOnGround ? 1 : 0));
 		}
 #endif
 	}

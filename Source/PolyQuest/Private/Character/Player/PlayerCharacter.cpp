@@ -244,6 +244,18 @@ void APlayerCharacter::UnPossessed()
 {
 	ClearActiveHitFeedbackCameraShake();
 	ClearMeleeMotionWarpTargets();
+
+	if (UAbilitySystemComponent* ASC = GetAbilitySystemComponent())
+	{
+		const FGameplayTag LightAttackTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Attack.Light")), false);
+		if (LightAttackTag.IsValid())
+		{
+			FGameplayTagContainer LightAttackTags;
+			LightAttackTags.AddTag(LightAttackTag);
+			ASC->CancelAbilities(&LightAttackTags);
+		}
+	}
+
 	OnCharacterMovementUpdated.RemoveDynamic(this, &APlayerCharacter::HandleCharacterMovementUpdated);
 	ClearWorldPickupInteractionState();
 	Super::UnPossessed();
@@ -1150,6 +1162,17 @@ void APlayerCharacter::Tick(float DeltaSeconds)
 	if (LockedTarget.IsValid())
 	{
 		ValidateCurrentLockedTarget();
+#if !(UE_BUILD_SHIPPING || UE_BUILD_TEST)
+		if (GEngine && LockedTarget.IsValid())
+		{
+			const AEnemyCharacter* TargetActor = LockedTarget.Get();
+			const float Dist2D = FVector::Dist2D(GetActorLocation(), TargetActor->GetActorLocation());
+			const float Dist3D = FVector::Distance(GetActorLocation(), TargetActor->GetActorLocation());
+			const FString Msg = FString::Printf(TEXT("[LockOn 实时距离] 目标: %s | 水平距离(2D): %.1f cm (%.2f m) | 直线距离(3D): %.1f cm"),
+				*GetNameSafe(TargetActor), Dist2D, Dist2D * 0.01f, Dist3D);
+			GEngine->AddOnScreenDebugMessage(1002, 0.0f, FColor::Turquoise, Msg);
+		}
+#endif
 	}
 	else
 	{
@@ -1567,6 +1590,8 @@ void APlayerCharacter::SetLockedTarget(AEnemyCharacter* NewTarget, const FPlayer
 
 void APlayerCharacter::ClearLockedTarget()
 {
+	ClearMeleeMotionWarpTargets();
+
 	if (AEnemyCharacter* PreviousTarget = LockedTarget.Get())
 	{
 		PreviousTarget->SetPlayerLockOnHighlighted(false);
@@ -1575,6 +1600,14 @@ void APlayerCharacter::ClearLockedTarget()
 	LockedTarget.Reset();
 	LastValidLockedTargetCandidate.Reset();
 	UpdateActionFacingRotationMode();
+}
+
+void APlayerCharacter::ClearMeleeMotionWarpTargetsForInvalidatedTarget(const AEnemyCharacter* InvalidatedTarget)
+{
+	if (InvalidatedTarget && LockedTarget.Get() == InvalidatedTarget)
+	{
+		ClearMeleeMotionWarpTargets();
+	}
 }
 
 bool APlayerCharacter::SetMeleeMotionWarpTarget(FName WarpTargetName, const FTransform& TargetTransform)

@@ -83,6 +83,16 @@ void AEnemyCharacter::BeginPlay()
 void AEnemyCharacter::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
 	bDeathTeardownStarted = true;
+	if (UWorld* World = GetWorld())
+	{
+		if (APlayerCharacter* Player = Cast<APlayerCharacter>(UGameplayStatics::GetPlayerCharacter(World, 0)))
+		{
+			if (IsValid(Player) && !Player->IsActorBeingDestroyed() && Player->GetWorld() == World)
+			{
+				Player->ClearMeleeMotionWarpTargetsForInvalidatedTarget(this);
+			}
+		}
+	}
 	PendingDeathRagdollVelocityChange = FVector::ZeroVector;
 	ClearPoiseRecovery();
 	if (UWorld* World = GetWorld())
@@ -810,6 +820,16 @@ void AEnemyCharacter::HandleDeath()
 	}
 
 	bDeathTeardownStarted = true;
+	if (UWorld* World = GetWorld())
+	{
+		if (APlayerCharacter* Player = Cast<APlayerCharacter>(UGameplayStatics::GetPlayerCharacter(World, 0)))
+		{
+			if (IsValid(Player) && !Player->IsActorBeingDestroyed() && Player->GetWorld() == World)
+			{
+				Player->ClearMeleeMotionWarpTargetsForInvalidatedTarget(this);
+			}
+		}
+	}
 	SetPlayerLockOnHighlighted(false);
 	HideEnemyHealthBar();
 	ClearPoiseRecovery();
