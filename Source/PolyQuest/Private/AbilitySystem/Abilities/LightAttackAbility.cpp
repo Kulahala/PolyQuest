@@ -733,8 +733,9 @@ bool ULightAttackAbility::EvaluateMeleeMotionWarpTransform(
 	FMeleeMotionWarpConfig WarpConfig;
 	WarpConfig.bUseMotionWarping = EntryConfig.bUseMotionWarping;
 	WarpConfig.WarpTargetName = EntryConfig.WarpTargetName;
+	WarpConfig.MinTriggerDistance = EntryConfig.MinTriggerDistance;
 	WarpConfig.WarpStopDistance = EntryConfig.WarpStopDistance;
-	WarpConfig.MaxWarpDistance = EntryConfig.MaxWarpDistance;
+	WarpConfig.MaxTriggerDistance = EntryConfig.MaxTriggerDistance;
 	WarpConfig.MaxWarpAngleDegrees = EntryConfig.MaxWarpAngleDegrees;
 
 	return FMeleeMotionWarpingLifecycle::EvaluateMeleeMotionWarpTransform(
@@ -754,13 +755,17 @@ void ULightAttackAbility::ResetMeleeMotionWarpState()
 
 void ULightAttackAbility::TryApplyMeleeMotionWarpTarget(APlayerCharacter* PlayerCharacter, const FComboChainEntry& EntryConfig)
 {
+	FMeleeMotionWarpConfig WarpConfig;
+	WarpConfig.bUseMotionWarping = EntryConfig.bUseMotionWarping;
+	WarpConfig.WarpTargetName = EntryConfig.WarpTargetName;
+	WarpConfig.MinTriggerDistance = EntryConfig.MinTriggerDistance;
+	WarpConfig.WarpStopDistance = EntryConfig.WarpStopDistance;
+	WarpConfig.MaxTriggerDistance = EntryConfig.MaxTriggerDistance;
+	WarpConfig.MaxWarpAngleDegrees = EntryConfig.MaxWarpAngleDegrees;
+
 	// 1. Validate basic entry motion warp configuration before attempting any target queries.
 	// Illegal or disabled configurations do NOT consume the one-shot capture opportunity.
-	if (!EntryConfig.bUseMotionWarping
-		|| EntryConfig.WarpTargetName.IsNone()
-		|| !FMath::IsFinite(EntryConfig.WarpStopDistance) || EntryConfig.WarpStopDistance < 0.0f
-		|| !FMath::IsFinite(EntryConfig.MaxWarpDistance) || EntryConfig.MaxWarpDistance < 0.0f
-		|| !FMath::IsFinite(EntryConfig.MaxWarpAngleDegrees) || EntryConfig.MaxWarpAngleDegrees < 0.0f || EntryConfig.MaxWarpAngleDegrees > 180.0f)
+	if (!FMeleeMotionWarpingLifecycle::IsConfigValid(WarpConfig))
 	{
 		if (IsValid(PlayerCharacter) && !PlayerCharacter->IsActorBeingDestroyed())
 		{
@@ -896,7 +901,7 @@ void ULightAttackAbility::TryApplyMeleeMotionWarpTarget(APlayerCharacter* Player
 		{
 			GEngine->AddOnScreenDebugMessage(-1, 2.0f, FColor::Yellow,
 				FString::Printf(TEXT("[MotionWarp] 判定未通过 (距离=%.1fcm, 允许: %.1f~%.1fcm, 地面=%d/%d)"),
-					Dist2D, EntryConfig.WarpStopDistance, EntryConfig.WarpStopDistance + EntryConfig.MaxWarpDistance,
+					Dist2D, EntryConfig.MinTriggerDistance, EntryConfig.MaxTriggerDistance,
 					bPlayerOnGround ? 1 : 0, MeleeMotionWarpSnapshot.bCapturedTargetOnGround ? 1 : 0));
 		}
 #endif

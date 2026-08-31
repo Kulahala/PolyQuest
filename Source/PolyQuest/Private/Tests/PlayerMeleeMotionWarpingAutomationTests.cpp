@@ -37,8 +37,9 @@ bool FPlayerMeleeMotionWarpingAutomationTest::RunTest(const FString&)
 		FComboChainEntry ValidEntry;
 		ValidEntry.bUseMotionWarping = true;
 		ValidEntry.WarpTargetName = FName(TEXT("MeleeContact"));
-		ValidEntry.WarpStopDistance = 100.0f;
-		ValidEntry.MaxWarpDistance = 60.0f;
+		ValidEntry.MinTriggerDistance = 100.0f;
+		ValidEntry.WarpStopDistance = 150.0f;
+		ValidEntry.MaxTriggerDistance = 250.0f;
 		ValidEntry.MaxWarpAngleDegrees = 60.0f;
 
 		FTransform OutTransform;
@@ -48,15 +49,17 @@ bool FPlayerMeleeMotionWarpingAutomationTest::RunTest(const FString&)
 			const FComboChainEntry DefaultConstructedEntry;
 			TestFalse(TEXT("Default bUseMotionWarping is false"), DefaultConstructedEntry.bUseMotionWarping);
 			TestEqual(TEXT("Default WarpTargetName is MeleeContact"), DefaultConstructedEntry.WarpTargetName, FName(TEXT("MeleeContact")));
+			TestEqual(TEXT("Default MinTriggerDistance is 190.0f"), DefaultConstructedEntry.MinTriggerDistance, 190.0f);
 			TestEqual(TEXT("Default WarpStopDistance is 190.0f"), DefaultConstructedEntry.WarpStopDistance, 190.0f);
-			TestEqual(TEXT("Default MaxWarpDistance is 110.0f"), DefaultConstructedEntry.MaxWarpDistance, 110.0f);
+			TestEqual(TEXT("Default MaxTriggerDistance is 300.0f"), DefaultConstructedEntry.MaxTriggerDistance, 300.0f);
 			TestEqual(TEXT("Default MaxWarpAngleDegrees is 60.0f"), DefaultConstructedEntry.MaxWarpAngleDegrees, 60.0f);
 
 			const FMeleeMotionWarpConfig DefaultSharedConfig;
 			TestFalse(TEXT("Default shared config bUseMotionWarping is false"), DefaultSharedConfig.bUseMotionWarping);
 			TestEqual(TEXT("Default shared config WarpTargetName is MeleeContact"), DefaultSharedConfig.WarpTargetName, FName(TEXT("MeleeContact")));
+			TestEqual(TEXT("Default shared config MinTriggerDistance is 190.0f"), DefaultSharedConfig.MinTriggerDistance, 190.0f);
 			TestEqual(TEXT("Default shared config WarpStopDistance is 190.0f"), DefaultSharedConfig.WarpStopDistance, 190.0f);
-			TestEqual(TEXT("Default shared config MaxWarpDistance is 110.0f"), DefaultSharedConfig.MaxWarpDistance, 110.0f);
+			TestEqual(TEXT("Default shared config MaxTriggerDistance is 300.0f"), DefaultSharedConfig.MaxTriggerDistance, 300.0f);
 			TestEqual(TEXT("Default shared config MaxWarpAngleDegrees is 60.0f"), DefaultSharedConfig.MaxWarpAngleDegrees, 60.0f);
 
 			FComboChainEntry DisabledEntry = ValidEntry;
@@ -64,93 +67,139 @@ bool FPlayerMeleeMotionWarpingAutomationTest::RunTest(const FString&)
 			TestFalse(TEXT("Disabled entry fails closed"),
 				ULightAttackAbility::EvaluateMeleeMotionWarpTransform(
 					FVector(0, 0, 0), FVector(1, 0, 0), true,
-					FVector(140, 0, 0), true, DisabledEntry, OutTransform));
+					FVector(200, 0, 0), true, DisabledEntry, OutTransform));
 
 			FMeleeMotionWarpConfig SharedDisabledConfig;
 			SharedDisabledConfig.bUseMotionWarping = false;
 			SharedDisabledConfig.WarpTargetName = FName(TEXT("MeleeContact"));
-			SharedDisabledConfig.WarpStopDistance = 100.0f;
-			SharedDisabledConfig.MaxWarpDistance = 60.0f;
+			SharedDisabledConfig.MinTriggerDistance = 100.0f;
+			SharedDisabledConfig.WarpStopDistance = 150.0f;
+			SharedDisabledConfig.MaxTriggerDistance = 250.0f;
 			SharedDisabledConfig.MaxWarpAngleDegrees = 60.0f;
 			FTransform SharedOutTransform;
 			TestFalse(TEXT("Disabled shared config fails closed"),
 				FMeleeMotionWarpingLifecycle::EvaluateMeleeMotionWarpTransform(
 					FVector(0, 0, 0), FVector(1, 0, 0), true,
-					FVector(140, 0, 0), true, SharedDisabledConfig, SharedOutTransform));
+					FVector(200, 0, 0), true, SharedDisabledConfig, SharedOutTransform));
 
 			FComboChainEntry NoneNameEntry = ValidEntry;
 			NoneNameEntry.WarpTargetName = NAME_None;
 			TestFalse(TEXT("NAME_None warp target fails closed"),
 				ULightAttackAbility::EvaluateMeleeMotionWarpTransform(
 					FVector(0, 0, 0), FVector(1, 0, 0), true,
-					FVector(140, 0, 0), true, NoneNameEntry, OutTransform));
+					FVector(200, 0, 0), true, NoneNameEntry, OutTransform));
 
 			// Direct equivalence assertion between Light wrapper and shared evaluator
 			FTransform LightTransform;
 			FTransform HelperTransform;
 			const bool bLightResult = ULightAttackAbility::EvaluateMeleeMotionWarpTransform(
 				FVector(0, 0, 0), FVector(1, 0, 0), true,
-				FVector(140, 0, 0), true, ValidEntry, LightTransform);
+				FVector(200, 0, 0), true, ValidEntry, LightTransform);
 			FMeleeMotionWarpConfig ValidSharedConfig;
 			ValidSharedConfig.bUseMotionWarping = ValidEntry.bUseMotionWarping;
 			ValidSharedConfig.WarpTargetName = ValidEntry.WarpTargetName;
+			ValidSharedConfig.MinTriggerDistance = ValidEntry.MinTriggerDistance;
 			ValidSharedConfig.WarpStopDistance = ValidEntry.WarpStopDistance;
-			ValidSharedConfig.MaxWarpDistance = ValidEntry.MaxWarpDistance;
+			ValidSharedConfig.MaxTriggerDistance = ValidEntry.MaxTriggerDistance;
 			ValidSharedConfig.MaxWarpAngleDegrees = ValidEntry.MaxWarpAngleDegrees;
 			const bool bHelperResult = FMeleeMotionWarpingLifecycle::EvaluateMeleeMotionWarpTransform(
 				FVector(0, 0, 0), FVector(1, 0, 0), true,
-				FVector(140, 0, 0), true, ValidSharedConfig, HelperTransform);
+				FVector(200, 0, 0), true, ValidSharedConfig, HelperTransform);
 			TestTrue(TEXT("Light wrapper and shared helper produce identical true result"), bLightResult && bHelperResult);
 			TestEqual(TEXT("Light wrapper and shared helper produce identical transform location"), LightTransform.GetLocation(), HelperTransform.GetLocation());
 			TestEqual(TEXT("Light wrapper and shared helper produce identical transform rotation"), LightTransform.GetRotation(), HelperTransform.GetRotation());
 		}
 
-		// 1.2 Config non-finite and out-of-range boundaries
+		// 1.2 Config non-finite, out-of-range, and invalid ordering boundaries
 		{
 			constexpr float NaN = std::numeric_limits<float>::quiet_NaN();
 			constexpr float Inf = std::numeric_limits<float>::infinity();
 
 			FComboChainEntry BadConfig = ValidEntry;
+			BadConfig.MinTriggerDistance = -5.0f;
+			TestFalse(TEXT("Negative MinTriggerDistance fails closed"),
+				ULightAttackAbility::EvaluateMeleeMotionWarpTransform(
+					FVector(0, 0, 0), FVector(1, 0, 0), true,
+					FVector(200, 0, 0), true, BadConfig, OutTransform));
+
+			BadConfig = ValidEntry;
 			BadConfig.WarpStopDistance = -10.0f;
 			TestFalse(TEXT("Negative WarpStopDistance fails closed"),
 				ULightAttackAbility::EvaluateMeleeMotionWarpTransform(
 					FVector(0, 0, 0), FVector(1, 0, 0), true,
-					FVector(140, 0, 0), true, BadConfig, OutTransform));
+					FVector(200, 0, 0), true, BadConfig, OutTransform));
 
 			BadConfig = ValidEntry;
-			BadConfig.MaxWarpDistance = -5.0f;
-			TestFalse(TEXT("Negative MaxWarpDistance fails closed"),
+			BadConfig.MaxTriggerDistance = -5.0f;
+			TestFalse(TEXT("Negative MaxTriggerDistance fails closed"),
 				ULightAttackAbility::EvaluateMeleeMotionWarpTransform(
 					FVector(0, 0, 0), FVector(1, 0, 0), true,
-					FVector(140, 0, 0), true, BadConfig, OutTransform));
+					FVector(200, 0, 0), true, BadConfig, OutTransform));
 
 			BadConfig = ValidEntry;
 			BadConfig.MaxWarpAngleDegrees = -1.0f;
 			TestFalse(TEXT("Negative MaxWarpAngleDegrees fails closed"),
 				ULightAttackAbility::EvaluateMeleeMotionWarpTransform(
 					FVector(0, 0, 0), FVector(1, 0, 0), true,
-					FVector(140, 0, 0), true, BadConfig, OutTransform));
+					FVector(200, 0, 0), true, BadConfig, OutTransform));
 
 			BadConfig = ValidEntry;
 			BadConfig.MaxWarpAngleDegrees = 181.0f;
 			TestFalse(TEXT("MaxWarpAngleDegrees > 180 fails closed"),
 				ULightAttackAbility::EvaluateMeleeMotionWarpTransform(
 					FVector(0, 0, 0), FVector(1, 0, 0), true,
-					FVector(140, 0, 0), true, BadConfig, OutTransform));
+					FVector(200, 0, 0), true, BadConfig, OutTransform));
+
+			BadConfig = ValidEntry;
+			BadConfig.MinTriggerDistance = NaN;
+			TestFalse(TEXT("NaN MinTriggerDistance fails closed"),
+				ULightAttackAbility::EvaluateMeleeMotionWarpTransform(
+					FVector(0, 0, 0), FVector(1, 0, 0), true,
+					FVector(200, 0, 0), true, BadConfig, OutTransform));
 
 			BadConfig = ValidEntry;
 			BadConfig.WarpStopDistance = NaN;
 			TestFalse(TEXT("NaN WarpStopDistance fails closed"),
 				ULightAttackAbility::EvaluateMeleeMotionWarpTransform(
 					FVector(0, 0, 0), FVector(1, 0, 0), true,
-					FVector(140, 0, 0), true, BadConfig, OutTransform));
+					FVector(200, 0, 0), true, BadConfig, OutTransform));
 
 			BadConfig = ValidEntry;
-			BadConfig.MaxWarpDistance = Inf;
-			TestFalse(TEXT("Inf MaxWarpDistance fails closed"),
+			BadConfig.MaxTriggerDistance = Inf;
+			TestFalse(TEXT("Inf MaxTriggerDistance fails closed"),
 				ULightAttackAbility::EvaluateMeleeMotionWarpTransform(
 					FVector(0, 0, 0), FVector(1, 0, 0), true,
-					FVector(140, 0, 0), true, BadConfig, OutTransform));
+					FVector(200, 0, 0), true, BadConfig, OutTransform));
+
+			// Invalid ordering: Min > Stop
+			BadConfig = ValidEntry;
+			BadConfig.MinTriggerDistance = 160.0f;
+			BadConfig.WarpStopDistance = 150.0f;
+			BadConfig.MaxTriggerDistance = 250.0f;
+			TestFalse(TEXT("MinTriggerDistance > WarpStopDistance fails closed"),
+				ULightAttackAbility::EvaluateMeleeMotionWarpTransform(
+					FVector(0, 0, 0), FVector(1, 0, 0), true,
+					FVector(200, 0, 0), true, BadConfig, OutTransform));
+
+			// Invalid ordering: Stop > Max
+			BadConfig = ValidEntry;
+			BadConfig.MinTriggerDistance = 100.0f;
+			BadConfig.WarpStopDistance = 260.0f;
+			BadConfig.MaxTriggerDistance = 250.0f;
+			TestFalse(TEXT("WarpStopDistance > MaxTriggerDistance fails closed"),
+				ULightAttackAbility::EvaluateMeleeMotionWarpTransform(
+					FVector(0, 0, 0), FVector(1, 0, 0), true,
+					FVector(200, 0, 0), true, BadConfig, OutTransform));
+
+			// Invalid ordering: Min > Max
+			BadConfig = ValidEntry;
+			BadConfig.MinTriggerDistance = 300.0f;
+			BadConfig.WarpStopDistance = 200.0f;
+			BadConfig.MaxTriggerDistance = 250.0f;
+			TestFalse(TEXT("MinTriggerDistance > MaxTriggerDistance fails closed"),
+				ULightAttackAbility::EvaluateMeleeMotionWarpTransform(
+					FVector(0, 0, 0), FVector(1, 0, 0), true,
+					FVector(200, 0, 0), true, BadConfig, OutTransform));
 		}
 
 		// 1.3 Ground state requirement
@@ -158,17 +207,17 @@ bool FPlayerMeleeMotionWarpingAutomationTest::RunTest(const FString&)
 			TestFalse(TEXT("Player airborne fails closed"),
 				ULightAttackAbility::EvaluateMeleeMotionWarpTransform(
 					FVector(0, 0, 0), FVector(1, 0, 0), false,
-					FVector(140, 0, 0), true, ValidEntry, OutTransform));
+					FVector(200, 0, 0), true, ValidEntry, OutTransform));
 
 			TestFalse(TEXT("Target airborne fails closed"),
 				ULightAttackAbility::EvaluateMeleeMotionWarpTransform(
 					FVector(0, 0, 0), FVector(1, 0, 0), true,
-					FVector(140, 0, 0), false, ValidEntry, OutTransform));
+					FVector(200, 0, 0), false, ValidEntry, OutTransform));
 
 			TestFalse(TEXT("Both airborne fails closed"),
 				ULightAttackAbility::EvaluateMeleeMotionWarpTransform(
 					FVector(0, 0, 0), FVector(1, 0, 0), false,
-					FVector(140, 0, 0), false, ValidEntry, OutTransform));
+					FVector(200, 0, 0), false, ValidEntry, OutTransform));
 		}
 
 		// 1.4 Coordinate finite checks & Zero distance
@@ -178,17 +227,17 @@ bool FPlayerMeleeMotionWarpingAutomationTest::RunTest(const FString&)
 			TestFalse(TEXT("Player location with NaN fails closed"),
 				ULightAttackAbility::EvaluateMeleeMotionWarpTransform(
 					FVector(NaN, 0, 0), FVector(1, 0, 0), true,
-					FVector(140, 0, 0), true, ValidEntry, OutTransform));
+					FVector(200, 0, 0), true, ValidEntry, OutTransform));
 
 			TestFalse(TEXT("Target location with NaN fails closed"),
 				ULightAttackAbility::EvaluateMeleeMotionWarpTransform(
 					FVector(0, 0, 0), FVector(1, 0, 0), true,
-					FVector(140, NaN, 0), true, ValidEntry, OutTransform));
+					FVector(200, NaN, 0), true, ValidEntry, OutTransform));
 
 			TestFalse(TEXT("Player forward with NaN fails closed"),
 				ULightAttackAbility::EvaluateMeleeMotionWarpTransform(
 					FVector(0, 0, 0), FVector(NaN, 0, 0), true,
-					FVector(140, 0, 0), true, ValidEntry, OutTransform));
+					FVector(200, 0, 0), true, ValidEntry, OutTransform));
 
 			TestFalse(TEXT("Coincident 2D locations fail closed"),
 				ULightAttackAbility::EvaluateMeleeMotionWarpTransform(
@@ -196,58 +245,124 @@ bool FPlayerMeleeMotionWarpingAutomationTest::RunTest(const FString&)
 					FVector(50, 50, 100), true, ValidEntry, OutTransform));
 		}
 
-		// 1.5 Distance boundaries (WarpStopDistance=100cm, MaxWarpDistance=60cm)
+		// 1.5 Distance boundaries: Min=100cm, Stop=150cm, Max=250cm
 		{
-			// Target distance <= 100cm -> rejected (<= rejected)
-			TestFalse(TEXT("Target distance 50cm <= 100cm fails closed"),
+			// 1.5.1 D < MinTriggerDistance -> fail closed
+			TestFalse(TEXT("Target distance 80cm < 100cm MinTriggerDistance fails closed"),
 				ULightAttackAbility::EvaluateMeleeMotionWarpTransform(
 					FVector(0, 0, 0), FVector(1, 0, 0), true,
-					FVector(50, 0, 0), true, ValidEntry, OutTransform));
+					FVector(80, 0, 0), true, ValidEntry, OutTransform));
 
-			TestFalse(TEXT("Target distance 100cm <= 100cm fails closed (exact stop distance boundary)"),
-				ULightAttackAbility::EvaluateMeleeMotionWarpTransform(
-					FVector(0, 0, 0), FVector(1, 0, 0), true,
-					FVector(100, 0, 0), true, ValidEntry, OutTransform));
-
-			// Target distance = 140cm -> WarpLocation = (40, 0, 0), correction = 40cm <= 60cm -> Accepted
-			TestTrue(TEXT("Target distance 140cm is accepted"),
+			// 1.5.2 D == MinTriggerDistance -> inclusive boundary, passes, bounded reverse displacement
+			TestTrue(TEXT("Target distance 100cm == MinTriggerDistance is accepted (inclusive min boundary)"),
 				ULightAttackAbility::EvaluateMeleeMotionWarpTransform(
 					FVector(0, 0, 50), FVector(1, 0, 0), true,
-					FVector(140, 0, 120), true, ValidEntry, OutTransform));
-			TestTrue(TEXT("WarpLocation X matches expected stop distance offset"),
-				FMath::IsNearlyEqual(OutTransform.GetLocation().X, 40.0f, 0.1f));
-			TestTrue(TEXT("WarpLocation Y is 0"),
+					FVector(100, 0, 120), true, ValidEntry, OutTransform));
+			TestTrue(TEXT("D == Min: WarpLocation X is -50cm (100 - 150, behind player)"),
+				FMath::IsNearlyEqual(OutTransform.GetLocation().X, -50.0f, 0.1f));
+			TestTrue(TEXT("D == Min: WarpLocation Y is 0"),
 				FMath::IsNearlyEqual(OutTransform.GetLocation().Y, 0.0f, 0.1f));
-			TestTrue(TEXT("WarpLocation Z strictly preserves Player Z"),
+			TestTrue(TEXT("D == Min: WarpLocation Z strictly preserves Player Z"),
 				FMath::IsNearlyEqual(OutTransform.GetLocation().Z, 50.0f, 0.1f));
-			TestTrue(TEXT("WarpRotation Yaw is 0 facing target"),
+			TestTrue(TEXT("D == Min: WarpRotation Yaw is 0 facing target despite reverse displacement"),
 				FMath::IsNearlyEqual(OutTransform.Rotator().Yaw, 0.0f, 0.1f));
 
-			// Target distance = 160cm -> WarpLocation = (60, 0, 0), correction = 60cm <= 60cm -> Accepted (exact boundary)
-			TestTrue(TEXT("Target distance 160cm (exact max warp distance 60cm) is accepted"),
+			// 1.5.3 Min < D < Stop -> passes, reverse displacement
+			TestTrue(TEXT("Target distance 120cm (Min < D < Stop) is accepted"),
 				ULightAttackAbility::EvaluateMeleeMotionWarpTransform(
-					FVector(0, 0, 0), FVector(1, 0, 0), true,
-					FVector(160, 0, 0), true, ValidEntry, OutTransform));
-			TestTrue(TEXT("WarpLocation X is 60cm at max boundary"),
-				FMath::IsNearlyEqual(OutTransform.GetLocation().X, 60.0f, 0.1f));
+					FVector(0, 0, 50), FVector(1, 0, 0), true,
+					FVector(120, 0, 120), true, ValidEntry, OutTransform));
+			TestTrue(TEXT("Min < D < Stop: WarpLocation X is -30cm (120 - 150)"),
+				FMath::IsNearlyEqual(OutTransform.GetLocation().X, -30.0f, 0.1f));
+			TestTrue(TEXT("Min < D < Stop: WarpRotation Yaw is 0 facing target"),
+				FMath::IsNearlyEqual(OutTransform.Rotator().Yaw, 0.0f, 0.1f));
 
-			// Target distance = 160.5cm -> correction = 60.5cm > 60cm -> Rejected (> rejected)
-			TestFalse(TEXT("Target distance 160.5cm (> 60cm correction) fails closed"),
+			// 1.5.4 D == WarpStopDistance -> fail closed (zero correction, do not write identity transform)
+			TestFalse(TEXT("Target distance 150cm == WarpStopDistance fails closed (exact stop distance / zero correction)"),
 				ULightAttackAbility::EvaluateMeleeMotionWarpTransform(
 					FVector(0, 0, 0), FVector(1, 0, 0), true,
-					FVector(160.5f, 0, 0), true, ValidEntry, OutTransform));
+					FVector(150, 0, 0), true, ValidEntry, OutTransform));
 
-			TestFalse(TEXT("Target distance 200cm (> 60cm correction) fails closed"),
+			// 1.5.5 Stop < D < Max -> passes, forward displacement
+			TestTrue(TEXT("Target distance 200cm (Stop < D < Max) is accepted"),
+				ULightAttackAbility::EvaluateMeleeMotionWarpTransform(
+					FVector(0, 0, 50), FVector(1, 0, 0), true,
+					FVector(200, 0, 120), true, ValidEntry, OutTransform));
+			TestTrue(TEXT("Stop < D < Max: WarpLocation X is 50cm (200 - 150)"),
+				FMath::IsNearlyEqual(OutTransform.GetLocation().X, 50.0f, 0.1f));
+			TestTrue(TEXT("Stop < D < Max: WarpLocation Z strictly preserves Player Z"),
+				FMath::IsNearlyEqual(OutTransform.GetLocation().Z, 50.0f, 0.1f));
+			TestTrue(TEXT("Stop < D < Max: WarpRotation Yaw is 0 facing target"),
+				FMath::IsNearlyEqual(OutTransform.Rotator().Yaw, 0.0f, 0.1f));
+
+			// 1.5.6 D == MaxTriggerDistance -> inclusive boundary, passes
+			TestTrue(TEXT("Target distance 250cm == MaxTriggerDistance is accepted (inclusive max boundary)"),
 				ULightAttackAbility::EvaluateMeleeMotionWarpTransform(
 					FVector(0, 0, 0), FVector(1, 0, 0), true,
-					FVector(200, 0, 0), true, ValidEntry, OutTransform));
+					FVector(250, 0, 0), true, ValidEntry, OutTransform));
+			TestTrue(TEXT("D == Max: WarpLocation X is 100cm (250 - 150)"),
+				FMath::IsNearlyEqual(OutTransform.GetLocation().X, 100.0f, 0.1f));
+
+			// 1.5.7 D > MaxTriggerDistance -> fail closed
+			TestFalse(TEXT("Target distance 251cm > 250cm MaxTriggerDistance fails closed"),
+				ULightAttackAbility::EvaluateMeleeMotionWarpTransform(
+					FVector(0, 0, 0), FVector(1, 0, 0), true,
+					FVector(251.0f, 0, 0), true, ValidEntry, OutTransform));
+
+			TestFalse(TEXT("Target distance 300cm > 250cm MaxTriggerDistance fails closed"),
+				ULightAttackAbility::EvaluateMeleeMotionWarpTransform(
+					FVector(0, 0, 0), FVector(1, 0, 0), true,
+					FVector(300.0f, 0, 0), true, ValidEntry, OutTransform));
 		}
 
-		// 1.6 Angle boundaries (MaxWarpAngleDegrees = 60.0f)
+		// 1.6 Forward-only regression (Min == Stop default contract)
 		{
-			// Target at 45 deg, distance = 140cm
-			const float TargetX_45 = 140.0f * FMath::Cos(FMath::DegreesToRadians(45.0f));
-			const float TargetY_45 = 140.0f * FMath::Sin(FMath::DegreesToRadians(45.0f));
+			FComboChainEntry ForwardOnlyEntry;
+			ForwardOnlyEntry.bUseMotionWarping = true;
+			ForwardOnlyEntry.WarpTargetName = FName(TEXT("MeleeContact"));
+			ForwardOnlyEntry.MinTriggerDistance = 190.0f;
+			ForwardOnlyEntry.WarpStopDistance = 190.0f;
+			ForwardOnlyEntry.MaxTriggerDistance = 300.0f;
+			ForwardOnlyEntry.MaxWarpAngleDegrees = 60.0f;
+
+			// D < Stop (180cm) -> fail closed
+			TestFalse(TEXT("Forward-only: Target distance 180cm < 190cm fails closed"),
+				ULightAttackAbility::EvaluateMeleeMotionWarpTransform(
+					FVector(0, 0, 0), FVector(1, 0, 0), true,
+					FVector(180, 0, 0), true, ForwardOnlyEntry, OutTransform));
+
+			// D == Stop (190cm) -> fail closed (zero correction)
+			TestFalse(TEXT("Forward-only: Target distance 190cm == Stop distance fails closed"),
+				ULightAttackAbility::EvaluateMeleeMotionWarpTransform(
+					FVector(0, 0, 0), FVector(1, 0, 0), true,
+					FVector(190, 0, 0), true, ForwardOnlyEntry, OutTransform));
+
+			// Stop < D <= Max (240cm) -> passes
+			TestTrue(TEXT("Forward-only: Target distance 240cm passes"),
+				ULightAttackAbility::EvaluateMeleeMotionWarpTransform(
+					FVector(0, 0, 0), FVector(1, 0, 0), true,
+					FVector(240, 0, 0), true, ForwardOnlyEntry, OutTransform));
+			TestTrue(TEXT("Forward-only: WarpLocation X is 50cm (240 - 190)"),
+				FMath::IsNearlyEqual(OutTransform.GetLocation().X, 50.0f, 0.1f));
+
+			// D == Max (300cm) -> passes
+			TestTrue(TEXT("Forward-only: Target distance 300cm passes"),
+				ULightAttackAbility::EvaluateMeleeMotionWarpTransform(
+					FVector(0, 0, 0), FVector(1, 0, 0), true,
+					FVector(300, 0, 0), true, ForwardOnlyEntry, OutTransform));
+
+			// D > Max (310cm) -> fail closed
+			TestFalse(TEXT("Forward-only: Target distance 310cm > 300cm fails closed"),
+				ULightAttackAbility::EvaluateMeleeMotionWarpTransform(
+					FVector(0, 0, 0), FVector(1, 0, 0), true,
+					FVector(310, 0, 0), true, ForwardOnlyEntry, OutTransform));
+		}
+
+		// 1.7 Angle boundaries (MaxWarpAngleDegrees = 60.0f)
+		{
+			// Target at 45 deg, distance = 200cm
+			const float TargetX_45 = 200.0f * FMath::Cos(FMath::DegreesToRadians(45.0f));
+			const float TargetY_45 = 200.0f * FMath::Sin(FMath::DegreesToRadians(45.0f));
 			TestTrue(TEXT("Target at 45 deg <= 60 deg is accepted"),
 				ULightAttackAbility::EvaluateMeleeMotionWarpTransform(
 					FVector(0, 0, 0), FVector(1, 0, 0), true,
@@ -256,8 +371,8 @@ bool FPlayerMeleeMotionWarpingAutomationTest::RunTest(const FString&)
 				FMath::IsNearlyEqual(OutTransform.Rotator().Yaw, 45.0f, 0.1f));
 
 			// Target at 60 deg (exact boundary <= 60 deg)
-			const float TargetX_60 = 140.0f * FMath::Cos(FMath::DegreesToRadians(60.0f));
-			const float TargetY_60 = 140.0f * FMath::Sin(FMath::DegreesToRadians(60.0f));
+			const float TargetX_60 = 200.0f * FMath::Cos(FMath::DegreesToRadians(60.0f));
+			const float TargetY_60 = 200.0f * FMath::Sin(FMath::DegreesToRadians(60.0f));
 			TestTrue(TEXT("Target at 60 deg (exact boundary) is accepted"),
 				ULightAttackAbility::EvaluateMeleeMotionWarpTransform(
 					FVector(0, 0, 0), FVector(1, 0, 0), true,
@@ -266,8 +381,8 @@ bool FPlayerMeleeMotionWarpingAutomationTest::RunTest(const FString&)
 				FMath::IsNearlyEqual(OutTransform.Rotator().Yaw, 60.0f, 0.1f));
 
 			// Target at 60.5 deg (> 60 deg) -> rejected
-			const float TargetX_60_5 = 140.0f * FMath::Cos(FMath::DegreesToRadians(60.5f));
-			const float TargetY_60_5 = 140.0f * FMath::Sin(FMath::DegreesToRadians(60.5f));
+			const float TargetX_60_5 = 200.0f * FMath::Cos(FMath::DegreesToRadians(60.5f));
+			const float TargetY_60_5 = 200.0f * FMath::Sin(FMath::DegreesToRadians(60.5f));
 			TestFalse(TEXT("Target at 60.5 deg > 60 deg fails closed"),
 				ULightAttackAbility::EvaluateMeleeMotionWarpTransform(
 					FVector(0, 0, 0), FVector(1, 0, 0), true,
@@ -277,7 +392,7 @@ bool FPlayerMeleeMotionWarpingAutomationTest::RunTest(const FString&)
 			TestFalse(TEXT("Target at 90 deg fails closed"),
 				ULightAttackAbility::EvaluateMeleeMotionWarpTransform(
 					FVector(0, 0, 0), FVector(1, 0, 0), true,
-					FVector(0, 140, 0), true, ValidEntry, OutTransform));
+					FVector(0, 200, 0), true, ValidEntry, OutTransform));
 
 			// Target behind (180 deg) -> rejected
 			TestFalse(TEXT("Target behind at 180 deg fails closed"),
@@ -469,32 +584,36 @@ bool FPlayerMeleeMotionWarpingAutomationTest::RunTest(const FString&)
 				ComboAsset->Entries[0].Montage = Montage0;
 				ComboAsset->Entries[0].bUseMotionWarping = true;
 				ComboAsset->Entries[0].WarpTargetName = FName(TEXT("MeleeContact_0"));
+				ComboAsset->Entries[0].MinTriggerDistance = 100.0f;
 				ComboAsset->Entries[0].WarpStopDistance = 100.0f;
-				ComboAsset->Entries[0].MaxWarpDistance = 60.0f;
+				ComboAsset->Entries[0].MaxTriggerDistance = 160.0f;
 				ComboAsset->Entries[0].MaxWarpAngleDegrees = 60.0f;
 
 				// Entry 1 (opt-in, distinct params)
 				ComboAsset->Entries[1].Montage = Montage1;
 				ComboAsset->Entries[1].bUseMotionWarping = true;
 				ComboAsset->Entries[1].WarpTargetName = FName(TEXT("MeleeContact_1"));
+				ComboAsset->Entries[1].MinTriggerDistance = 90.0f;
 				ComboAsset->Entries[1].WarpStopDistance = 90.0f;
-				ComboAsset->Entries[1].MaxWarpDistance = 70.0f;
+				ComboAsset->Entries[1].MaxTriggerDistance = 160.0f;
 				ComboAsset->Entries[1].MaxWarpAngleDegrees = 45.0f;
 
 				// Entry 2 (opt-in, distinct params)
 				ComboAsset->Entries[2].Montage = Montage2;
 				ComboAsset->Entries[2].bUseMotionWarping = true;
 				ComboAsset->Entries[2].WarpTargetName = FName(TEXT("MeleeContact_2"));
+				ComboAsset->Entries[2].MinTriggerDistance = 80.0f;
 				ComboAsset->Entries[2].WarpStopDistance = 80.0f;
-				ComboAsset->Entries[2].MaxWarpDistance = 80.0f;
+				ComboAsset->Entries[2].MaxTriggerDistance = 160.0f;
 				ComboAsset->Entries[2].MaxWarpAngleDegrees = 30.0f;
 
 				// Entry 3 (opt-in, but beyond allowed 0..2 index)
 				ComboAsset->Entries[3].Montage = Montage3;
 				ComboAsset->Entries[3].bUseMotionWarping = true;
 				ComboAsset->Entries[3].WarpTargetName = FName(TEXT("MeleeContact_3"));
+				ComboAsset->Entries[3].MinTriggerDistance = 80.0f;
 				ComboAsset->Entries[3].WarpStopDistance = 80.0f;
-				ComboAsset->Entries[3].MaxWarpDistance = 80.0f;
+				ComboAsset->Entries[3].MaxTriggerDistance = 160.0f;
 				ComboAsset->Entries[3].MaxWarpAngleDegrees = 30.0f;
 
 				ULightAttackAbility* Ability = NewObject<ULightAttackAbility>(Player);
@@ -651,15 +770,16 @@ bool FPlayerMeleeMotionWarpingAutomationTest::RunTest(const FString&)
 					Enemy->SetActorLocation(FVector(240.0f, 0.0f, 100.0f)); // 240cm away
 					Player->SetTestLockedTarget(Enemy);
 
-					// Entry 0: WarpStopDistance=100, MaxWarpDistance=60 -> max allowed 160cm -> 240cm fails evaluator
+					// Entry 0: MinTriggerDistance=100, WarpStopDistance=100, MaxTriggerDistance=160 -> 240cm exceeds MaxTriggerDistance -> fails evaluator
 					TestTrue(TEXT("StartComboEntry(0) starts combo"), Ability->TestStartComboEntry(0));
 					TestEqual(TEXT("Entry 0 evaluator fails, 0 targets written"), Player->GetTestMeleeMotionWarpTargetCount(), 0);
 					TestTrue(TEXT("Snapshot was successfully captured despite evaluator failure"), Ability->HasTestMeleeMotionWarpSnapshot());
 					TestTrue(TEXT("Captured location X is 240cm"), FMath::IsNearlyEqual(Ability->GetTestMeleeMotionWarpCapturedLocation().X, 240.0f, 0.1f));
 
-					// Entry 1: configured with larger MaxWarpDistance = 150cm -> max allowed 250cm -> 240cm passes
+					// Entry 1: configured with larger MaxTriggerDistance = 250cm -> 240cm passes
+					ComboAsset->Entries[1].MinTriggerDistance = 100.0f;
 					ComboAsset->Entries[1].WarpStopDistance = 100.0f;
-					ComboAsset->Entries[1].MaxWarpDistance = 150.0f;
+					ComboAsset->Entries[1].MaxTriggerDistance = 250.0f;
 
 					TestTrue(TEXT("StartComboEntry(1) succeeds with relaxed entry config"), Ability->TestStartComboEntry(1));
 					TestTrue(TEXT("Player has recorded MeleeContact_1 from preserved snapshot"), Player->HasTestMeleeMotionWarpTarget(FName(TEXT("MeleeContact_1"))));
@@ -669,8 +789,9 @@ bool FPlayerMeleeMotionWarpingAutomationTest::RunTest(const FString&)
 					TestTrue(TEXT("Warp location X is 140cm (240 - 100)"), FMath::IsNearlyEqual(StoredTransform1.GetLocation().X, 140.0f, 0.1f));
 
 					// Restore Entry 1 & Enemy
+					ComboAsset->Entries[1].MinTriggerDistance = 90.0f;
 					ComboAsset->Entries[1].WarpStopDistance = 90.0f;
-					ComboAsset->Entries[1].MaxWarpDistance = 70.0f;
+					ComboAsset->Entries[1].MaxTriggerDistance = 160.0f;
 					Enemy->SetActorLocation(FVector(140.0f, 0.0f, 100.0f));
 				}
 
@@ -862,6 +983,85 @@ bool FPlayerMeleeMotionWarpingAutomationTest::RunTest(const FString&)
 					}
 				}
 
+				// 3.16 Light Combo reverse bounded displacement integration path (MinTriggerDistance < WarpStopDistance)
+				{
+					Ability->TestResetMeleeMotionWarpState();
+					Ability->SetTestBypassMontageActiveCheck(true);
+					Player->ClearMeleeMotionWarpTargets();
+
+					Player->SetActorLocation(FVector(0.0f, 0.0f, 100.0f));
+					Player->SetActorRotation(FRotator::ZeroRotator);
+					Enemy->SetActorLocation(FVector(100.0f, 0.0f, 100.0f));
+					Player->SetTestLockedTarget(Enemy);
+
+					const FComboChainEntry OldEntry0 = ComboAsset->Entries[0];
+
+					// Configure reverse correction: Min=80, Stop=140, Max=200, Enemy at 100cm (Min <= D < Stop)
+					ComboAsset->Entries[0].bUseMotionWarping = true;
+					ComboAsset->Entries[0].WarpTargetName = FName(TEXT("MeleeContact_0"));
+					ComboAsset->Entries[0].MinTriggerDistance = 80.0f;
+					ComboAsset->Entries[0].WarpStopDistance = 140.0f;
+					ComboAsset->Entries[0].MaxTriggerDistance = 200.0f;
+					ComboAsset->Entries[0].MaxWarpAngleDegrees = 60.0f;
+
+					TestTrue(TEXT("StartComboEntry(0) succeeds for reverse warp configuration"), Ability->TestStartComboEntry(0));
+					TestTrue(TEXT("Reverse warp capture attempt is true"), Ability->HasTestMeleeMotionWarpCaptureAttempted());
+					TestTrue(TEXT("Reverse warp recorded snapshot"), Ability->HasTestMeleeMotionWarpSnapshot());
+					TestEqual(TEXT("Reverse warp wrote exactly 1 warp target"), Player->GetTestMeleeMotionWarpTargetCount(), 1);
+					TestTrue(TEXT("Player recorded MeleeContact_0 target"), Player->HasTestMeleeMotionWarpTarget(FName(TEXT("MeleeContact_0"))));
+
+					FTransform StoredReverseTransform;
+					Player->HasTestMeleeMotionWarpTarget(FName(TEXT("MeleeContact_0")), &StoredReverseTransform);
+					// Target at (100,0,100), Stop=140 => WarpLocation = 100 - 140 = -40cm (located behind player X=0)
+					TestTrue(TEXT("Reverse warp location X is -40cm (100 - 140, behind player)"),
+						FMath::IsNearlyEqual(StoredReverseTransform.GetLocation().X, -40.0f, 0.1f));
+					TestTrue(TEXT("Reverse warp location Y is 0.0f"),
+						FMath::IsNearlyEqual(StoredReverseTransform.GetLocation().Y, 0.0f, 0.1f));
+					TestTrue(TEXT("Reverse warp location Z strictly preserves player Z (100.0f)"),
+						FMath::IsNearlyEqual(StoredReverseTransform.GetLocation().Z, 100.0f, 0.1f));
+					TestTrue(TEXT("Reverse warp rotation Yaw faces target (0 deg) despite reverse displacement"),
+						FMath::IsNearlyEqual(StoredReverseTransform.Rotator().Yaw, 0.0f, 0.1f));
+
+					// Restore Entry 0 & Enemy
+					ComboAsset->Entries[0] = OldEntry0;
+					Enemy->SetActorLocation(FVector(140.0f, 0.0f, 100.0f));
+				}
+
+				// 3.17 Light Combo exact stop distance (D == WarpStopDistance) zero correction fail-closed and target clearing
+				{
+					Ability->TestResetMeleeMotionWarpState();
+					Ability->SetTestBypassMontageActiveCheck(true);
+
+					// Pre-seed an existing warp target to ensure failed evaluation explicitly clears existing targets
+					Player->ClearMeleeMotionWarpTargets();
+					Player->SetMeleeMotionWarpTarget(FName(TEXT("MeleeContact_0")), FTransform(FVector(100.0f, 0.0f, 0.0f)));
+					TestEqual(TEXT("Player has 1 pre-existing warp target before exact stop test"), Player->GetTestMeleeMotionWarpTargetCount(), 1);
+
+					Player->SetActorLocation(FVector(0.0f, 0.0f, 100.0f));
+					Enemy->SetActorLocation(FVector(140.0f, 0.0f, 100.0f)); // D = 140cm
+					Player->SetTestLockedTarget(Enemy);
+
+					const FComboChainEntry OldEntry0 = ComboAsset->Entries[0];
+
+					// Configure exact stop distance: Min=80, Stop=140, Max=200 -> D=140 == Stop=140 -> zero correction rejected
+					ComboAsset->Entries[0].bUseMotionWarping = true;
+					ComboAsset->Entries[0].WarpTargetName = FName(TEXT("MeleeContact_0"));
+					ComboAsset->Entries[0].MinTriggerDistance = 80.0f;
+					ComboAsset->Entries[0].WarpStopDistance = 140.0f;
+					ComboAsset->Entries[0].MaxTriggerDistance = 200.0f;
+					ComboAsset->Entries[0].MaxWarpAngleDegrees = 60.0f;
+
+					TestTrue(TEXT("StartComboEntry(0) executes combo on exact stop distance"), Ability->TestStartComboEntry(0));
+					TestTrue(TEXT("Exact stop distance captured snapshot"), Ability->HasTestMeleeMotionWarpSnapshot());
+					TestEqual(TEXT("Exact stop distance fails closed and clears previous warp targets (count == 0)"),
+						Player->GetTestMeleeMotionWarpTargetCount(), 0);
+					TestFalse(TEXT("Player does not have MeleeContact_0 target on exact stop distance"),
+						Player->HasTestMeleeMotionWarpTarget(FName(TEXT("MeleeContact_0"))));
+
+					// Restore Entry 0
+					ComboAsset->Entries[0] = OldEntry0;
+				}
+
 				// -------------------------------------------------------------------------
 				// SECTION 4: Charged Attack Motion Warping Matrix (UChargedAttackAbility)
 				// -------------------------------------------------------------------------
@@ -885,7 +1085,7 @@ bool FPlayerMeleeMotionWarpingAutomationTest::RunTest(const FString&)
 
 						// 4.2 HoldReady/Charging does not capture or write warp targets
 						{
-							ChargedAbility->SetTestMotionWarpConfig(true, FName(TEXT("MeleeContact")), 100.0f, 60.0f, 60.0f);
+							ChargedAbility->SetTestMotionWarpConfig(true, FName(TEXT("MeleeContact")), 100.0f, 100.0f, 160.0f, 60.0f);
 							Player->ClearMeleeMotionWarpTargets();
 							Player->SetTestLockedTarget(Enemy);
 							ChargedAbility->TestResetMeleeMotionWarpState();
@@ -912,17 +1112,61 @@ bool FPlayerMeleeMotionWarpingAutomationTest::RunTest(const FString&)
 							Player->ClearMeleeMotionWarpTargets();
 							Player->SetTestLockedTarget(Enemy);
 							ChargedAbility->TestResetMeleeMotionWarpState();
-							ChargedAbility->SetTestMotionWarpConfig(true, FName(TEXT("MeleeContact")), 100.0f, 60.0f, 60.0f);
+							ChargedAbility->SetTestMotionWarpConfig(true, FName(TEXT("MeleeContact")), 100.0f, 100.0f, 160.0f, 60.0f);
 
 							ChargedAbility->Test_TryApplyMeleeMotionWarpTarget(Player);
 							TestTrue(TEXT("Charged release consumed capture attempt"), ChargedAbility->HasTestMeleeMotionWarpCaptureAttempted());
 							TestTrue(TEXT("Charged release recorded snapshot"), ChargedAbility->HasTestMeleeMotionWarpSnapshot());
 							TestEqual(TEXT("Charged release wrote 1 warp target"), Player->GetTestMeleeMotionWarpTargetCount(), 1);
 							TestTrue(TEXT("Captured location matches enemy"), FMath::IsNearlyEqual(ChargedAbility->GetTestMeleeMotionWarpCapturedLocation().X, 140.0f, 0.1f));
+
+							FTransform StoredWarp;
+							Player->HasTestMeleeMotionWarpTarget(FName(TEXT("MeleeContact")), &StoredWarp);
+							TestTrue(TEXT("Charged forward warp location X is 40cm (140 - 100)"), FMath::IsNearlyEqual(StoredWarp.GetLocation().X, 40.0f, 0.1f));
 						}
 
-						// 4.4 Static snapshot: moving target or changing lock after capture does not alter cached snapshot
+						// 4.4 Reverse bounded correction, zero correction, and out-of-range coverage
 						{
+							// Reverse correction: Min=80, Stop=120, Max=200, Enemy at 100cm
+							Enemy->SetActorLocation(FVector(100.0f, 0.0f, 100.0f));
+							Player->ClearMeleeMotionWarpTargets();
+							ChargedAbility->TestResetMeleeMotionWarpState();
+							ChargedAbility->SetTestMotionWarpConfig(true, FName(TEXT("MeleeContact")), 80.0f, 120.0f, 200.0f, 60.0f);
+
+							ChargedAbility->Test_TryApplyMeleeMotionWarpTarget(Player);
+							TestEqual(TEXT("Charged reverse correction writes 1 warp target"), Player->GetTestMeleeMotionWarpTargetCount(), 1);
+							FTransform ReverseWarp;
+							Player->HasTestMeleeMotionWarpTarget(FName(TEXT("MeleeContact")), &ReverseWarp);
+							TestTrue(TEXT("Charged reverse warp location X is -20cm (100 - 120)"), FMath::IsNearlyEqual(ReverseWarp.GetLocation().X, -20.0f, 0.1f));
+							TestTrue(TEXT("Charged reverse warp rotation Yaw faces target (0 deg)"), FMath::IsNearlyEqual(ReverseWarp.Rotator().Yaw, 0.0f, 0.1f));
+
+							// Exact stop distance (zero correction) -> fail closed
+							Enemy->SetActorLocation(FVector(120.0f, 0.0f, 100.0f));
+							Player->ClearMeleeMotionWarpTargets();
+							ChargedAbility->TestResetMeleeMotionWarpState();
+							ChargedAbility->Test_TryApplyMeleeMotionWarpTarget(Player);
+							TestEqual(TEXT("Charged exact stop distance fails closed (0 warp targets)"), Player->GetTestMeleeMotionWarpTargetCount(), 0);
+
+							// Out-of-range (> Max) -> fail closed
+							Enemy->SetActorLocation(FVector(250.0f, 0.0f, 100.0f));
+							Player->ClearMeleeMotionWarpTargets();
+							ChargedAbility->TestResetMeleeMotionWarpState();
+							ChargedAbility->Test_TryApplyMeleeMotionWarpTarget(Player);
+							TestEqual(TEXT("Charged out-of-range distance fails closed (0 warp targets)"), Player->GetTestMeleeMotionWarpTargetCount(), 0);
+
+							// Restore Enemy location
+							Enemy->SetActorLocation(FVector(140.0f, 0.0f, 100.0f));
+						}
+
+						// 4.5 Static snapshot: moving target or changing lock after capture does not alter cached snapshot
+						{
+							Player->SetActorLocation(FVector(0.0f, 0.0f, 100.0f));
+							Enemy->SetActorLocation(FVector(140.0f, 0.0f, 100.0f));
+							Player->SetTestLockedTarget(Enemy);
+							ChargedAbility->TestResetMeleeMotionWarpState();
+							ChargedAbility->SetTestMotionWarpConfig(true, FName(TEXT("MeleeContact")), 100.0f, 100.0f, 160.0f, 60.0f);
+							ChargedAbility->Test_TryApplyMeleeMotionWarpTarget(Player);
+
 							Enemy->SetActorLocation(FVector(500.0f, 0.0f, 100.0f));
 							Player->TestClearLockedTarget();
 
@@ -939,7 +1183,7 @@ bool FPlayerMeleeMotionWarpingAutomationTest::RunTest(const FString&)
 							Player->SetTestLockedTarget(Enemy);
 						}
 
-						// 4.5 Target invalidated (Dead) clears warp targets on next evaluation
+						// 4.6 Target invalidated (Dead) clears warp targets on next evaluation
 						{
 							if (UAbilitySystemComponent* EnemyASC = Enemy->GetAbilitySystemComponent())
 							{
@@ -955,7 +1199,7 @@ bool FPlayerMeleeMotionWarpingAutomationTest::RunTest(const FString&)
 							}
 						}
 
-						// 4.6 Reset and EndAbility clean up state
+						// 4.7 Reset and EndAbility clean up state
 						{
 							Player->SetActorLocation(FVector(0.0f, 0.0f, 100.0f));
 							Enemy->SetActorLocation(FVector(140.0f, 0.0f, 100.0f));
@@ -969,6 +1213,7 @@ bool FPlayerMeleeMotionWarpingAutomationTest::RunTest(const FString&)
 							}
 							Player->SetTestLockedTarget(Enemy);
 							ChargedAbility->TestResetMeleeMotionWarpState();
+							ChargedAbility->SetTestMotionWarpConfig(true, FName(TEXT("MeleeContact")), 100.0f, 100.0f, 160.0f, 60.0f);
 							ChargedAbility->Test_TryApplyMeleeMotionWarpTarget(Player);
 							TestEqual(TEXT("Player has 1 warp target in charged test"), Player->GetTestMeleeMotionWarpTargetCount(), 1);
 
@@ -1023,17 +1268,61 @@ bool FPlayerMeleeMotionWarpingAutomationTest::RunTest(const FString&)
 							Player->ClearMeleeMotionWarpTargets();
 							Player->SetTestLockedTarget(Enemy);
 							SprintAbility->TestResetMeleeMotionWarpState();
-							SprintAbility->SetTestMotionWarpConfig(true, FName(TEXT("MeleeContact")), 100.0f, 60.0f, 60.0f);
+							SprintAbility->SetTestMotionWarpConfig(true, FName(TEXT("MeleeContact")), 100.0f, 100.0f, 160.0f, 60.0f);
 
 							SprintAbility->Test_TryApplyMeleeMotionWarpTarget(Player);
 							TestTrue(TEXT("Sprint attack consumed capture attempt"), SprintAbility->HasTestMeleeMotionWarpCaptureAttempted());
 							TestTrue(TEXT("Sprint attack recorded snapshot"), SprintAbility->HasTestMeleeMotionWarpSnapshot());
 							TestEqual(TEXT("Sprint attack wrote 1 warp target"), Player->GetTestMeleeMotionWarpTargetCount(), 1);
 							TestTrue(TEXT("Sprint captured location matches enemy"), FMath::IsNearlyEqual(SprintAbility->GetTestMeleeMotionWarpCapturedLocation().X, 140.0f, 0.1f));
+
+							FTransform StoredWarp;
+							Player->HasTestMeleeMotionWarpTarget(FName(TEXT("MeleeContact")), &StoredWarp);
+							TestTrue(TEXT("Sprint forward warp location X is 40cm (140 - 100)"), FMath::IsNearlyEqual(StoredWarp.GetLocation().X, 40.0f, 0.1f));
 						}
 
-						// 5.3 Static snapshot: moving target or changing lock after capture does not alter cached snapshot
+						// 5.3 Reverse bounded correction, zero correction, and out-of-range coverage
 						{
+							// Reverse correction: Min=80, Stop=120, Max=200, Enemy at 100cm
+							Enemy->SetActorLocation(FVector(100.0f, 0.0f, 100.0f));
+							Player->ClearMeleeMotionWarpTargets();
+							SprintAbility->TestResetMeleeMotionWarpState();
+							SprintAbility->SetTestMotionWarpConfig(true, FName(TEXT("MeleeContact")), 80.0f, 120.0f, 200.0f, 60.0f);
+
+							SprintAbility->Test_TryApplyMeleeMotionWarpTarget(Player);
+							TestEqual(TEXT("Sprint reverse correction writes 1 warp target"), Player->GetTestMeleeMotionWarpTargetCount(), 1);
+							FTransform ReverseWarp;
+							Player->HasTestMeleeMotionWarpTarget(FName(TEXT("MeleeContact")), &ReverseWarp);
+							TestTrue(TEXT("Sprint reverse warp location X is -20cm (100 - 120)"), FMath::IsNearlyEqual(ReverseWarp.GetLocation().X, -20.0f, 0.1f));
+							TestTrue(TEXT("Sprint reverse warp rotation Yaw faces target (0 deg)"), FMath::IsNearlyEqual(ReverseWarp.Rotator().Yaw, 0.0f, 0.1f));
+
+							// Exact stop distance (zero correction) -> fail closed
+							Enemy->SetActorLocation(FVector(120.0f, 0.0f, 100.0f));
+							Player->ClearMeleeMotionWarpTargets();
+							SprintAbility->TestResetMeleeMotionWarpState();
+							SprintAbility->Test_TryApplyMeleeMotionWarpTarget(Player);
+							TestEqual(TEXT("Sprint exact stop distance fails closed (0 warp targets)"), Player->GetTestMeleeMotionWarpTargetCount(), 0);
+
+							// Out-of-range (> Max) -> fail closed
+							Enemy->SetActorLocation(FVector(250.0f, 0.0f, 100.0f));
+							Player->ClearMeleeMotionWarpTargets();
+							SprintAbility->TestResetMeleeMotionWarpState();
+							SprintAbility->Test_TryApplyMeleeMotionWarpTarget(Player);
+							TestEqual(TEXT("Sprint out-of-range distance fails closed (0 warp targets)"), Player->GetTestMeleeMotionWarpTargetCount(), 0);
+
+							// Restore Enemy location
+							Enemy->SetActorLocation(FVector(140.0f, 0.0f, 100.0f));
+						}
+
+						// 5.4 Static snapshot: moving target or changing lock after capture does not alter cached snapshot
+						{
+							Player->SetActorLocation(FVector(0.0f, 0.0f, 100.0f));
+							Enemy->SetActorLocation(FVector(140.0f, 0.0f, 100.0f));
+							Player->SetTestLockedTarget(Enemy);
+							SprintAbility->TestResetMeleeMotionWarpState();
+							SprintAbility->SetTestMotionWarpConfig(true, FName(TEXT("MeleeContact")), 100.0f, 100.0f, 160.0f, 60.0f);
+							SprintAbility->Test_TryApplyMeleeMotionWarpTarget(Player);
+
 							Enemy->SetActorLocation(FVector(500.0f, 0.0f, 100.0f));
 							Player->TestClearLockedTarget();
 
@@ -1050,7 +1339,7 @@ bool FPlayerMeleeMotionWarpingAutomationTest::RunTest(const FString&)
 							Player->SetTestLockedTarget(Enemy);
 						}
 
-						// 5.4 Target invalidated (Dead) clears warp targets on next evaluation
+						// 5.5 Target invalidated (Dead) clears warp targets on next evaluation
 						{
 							if (UAbilitySystemComponent* EnemyASC = Enemy->GetAbilitySystemComponent())
 							{
@@ -1066,7 +1355,7 @@ bool FPlayerMeleeMotionWarpingAutomationTest::RunTest(const FString&)
 							}
 						}
 
-						// 5.5 Reset and EndAbility clean up state
+						// 5.6 Reset and EndAbility clean up state
 						{
 							Player->SetActorLocation(FVector(0.0f, 0.0f, 100.0f));
 							Enemy->SetActorLocation(FVector(140.0f, 0.0f, 100.0f));
@@ -1080,6 +1369,7 @@ bool FPlayerMeleeMotionWarpingAutomationTest::RunTest(const FString&)
 							}
 							Player->SetTestLockedTarget(Enemy);
 							SprintAbility->TestResetMeleeMotionWarpState();
+							SprintAbility->SetTestMotionWarpConfig(true, FName(TEXT("MeleeContact")), 100.0f, 100.0f, 160.0f, 60.0f);
 							SprintAbility->Test_TryApplyMeleeMotionWarpTarget(Player);
 							TestEqual(TEXT("Player has 1 warp target in sprint test"), Player->GetTestMeleeMotionWarpTargetCount(), 1);
 
@@ -1124,7 +1414,7 @@ bool FPlayerMeleeMotionWarpingAutomationTest::RunTest(const FString&)
 							Player->ClearMeleeMotionWarpTargets();
 							Player->TestClearLockedTarget();
 							SkillAbility->TestResetMeleeMotionWarpState();
-							SkillAbility->SetTestMotionWarpConfig(true, FName(TEXT("MeleeContact")), 100.0f, 60.0f, 60.0f);
+							SkillAbility->SetTestMotionWarpConfig(true, FName(TEXT("MeleeContact")), 100.0f, 100.0f, 160.0f, 60.0f);
 
 							SkillAbility->Test_TryApplyMeleeMotionWarpTarget(Player);
 							TestTrue(TEXT("Melee skill with no lock-on consumed capture attempt"), SkillAbility->HasTestMeleeMotionWarpCaptureAttempted());
@@ -1132,11 +1422,11 @@ bool FPlayerMeleeMotionWarpingAutomationTest::RunTest(const FString&)
 							TestEqual(TEXT("Melee skill with no lock-on writes 0 warp targets"), Player->GetTestMeleeMotionWarpTargetCount(), 0);
 						}
 
-						// 6.3 Invalid config (NAME_None / negative distance) does not consume capture attempt and clears warp targets
+						// 6.3 Invalid config (NAME_None / negative distance / invalid ordering) does not consume capture attempt and clears warp targets
 						{
 							Player->SetTestLockedTarget(Enemy);
 							SkillAbility->TestResetMeleeMotionWarpState();
-							SkillAbility->SetTestMotionWarpConfig(true, NAME_None, 100.0f, -10.0f, 60.0f);
+							SkillAbility->SetTestMotionWarpConfig(true, NAME_None, 100.0f, 100.0f, -10.0f, 60.0f);
 
 							SkillAbility->Test_TryApplyMeleeMotionWarpTarget(Player);
 							TestFalse(TEXT("Melee skill with invalid config does not consume capture attempt"), SkillAbility->HasTestMeleeMotionWarpCaptureAttempted());
@@ -1159,7 +1449,7 @@ bool FPlayerMeleeMotionWarpingAutomationTest::RunTest(const FString&)
 							Player->ClearMeleeMotionWarpTargets();
 							Player->SetTestLockedTarget(Enemy);
 							SkillAbility->TestResetMeleeMotionWarpState();
-							SkillAbility->SetTestMotionWarpConfig(true, FName(TEXT("MeleeContact")), 100.0f, 60.0f, 60.0f);
+							SkillAbility->SetTestMotionWarpConfig(true, FName(TEXT("MeleeContact")), 100.0f, 100.0f, 160.0f, 60.0f);
 
 							SkillAbility->Test_TryApplyMeleeMotionWarpTarget(Player);
 							TestTrue(TEXT("Melee skill consumed capture attempt"), SkillAbility->HasTestMeleeMotionWarpCaptureAttempted());
@@ -1173,8 +1463,48 @@ bool FPlayerMeleeMotionWarpingAutomationTest::RunTest(const FString&)
 							TestTrue(TEXT("Melee skill warp target X is 40cm (140 - 100)"), FMath::IsNearlyEqual(StoredTransform.GetLocation().X, 40.0f, 0.1f));
 						}
 
-						// 6.5 Static snapshot: moving target or changing lock after capture does not alter cached snapshot
+						// 6.5 Reverse bounded correction, zero correction, and out-of-range coverage
 						{
+							// Reverse correction: Min=80, Stop=120, Max=200, Enemy at 100cm
+							Enemy->SetActorLocation(FVector(100.0f, 0.0f, 100.0f));
+							Player->ClearMeleeMotionWarpTargets();
+							SkillAbility->TestResetMeleeMotionWarpState();
+							SkillAbility->SetTestMotionWarpConfig(true, FName(TEXT("MeleeContact")), 80.0f, 120.0f, 200.0f, 60.0f);
+
+							SkillAbility->Test_TryApplyMeleeMotionWarpTarget(Player);
+							TestEqual(TEXT("Melee skill reverse correction writes 1 warp target"), Player->GetTestMeleeMotionWarpTargetCount(), 1);
+							FTransform ReverseWarp;
+							Player->HasTestMeleeMotionWarpTarget(FName(TEXT("MeleeContact")), &ReverseWarp);
+							TestTrue(TEXT("Melee skill reverse warp location X is -20cm (100 - 120)"), FMath::IsNearlyEqual(ReverseWarp.GetLocation().X, -20.0f, 0.1f));
+							TestTrue(TEXT("Melee skill reverse warp rotation Yaw faces target (0 deg)"), FMath::IsNearlyEqual(ReverseWarp.Rotator().Yaw, 0.0f, 0.1f));
+
+							// Exact stop distance (zero correction) -> fail closed
+							Enemy->SetActorLocation(FVector(120.0f, 0.0f, 100.0f));
+							Player->ClearMeleeMotionWarpTargets();
+							SkillAbility->TestResetMeleeMotionWarpState();
+							SkillAbility->Test_TryApplyMeleeMotionWarpTarget(Player);
+							TestEqual(TEXT("Melee skill exact stop distance fails closed (0 warp targets)"), Player->GetTestMeleeMotionWarpTargetCount(), 0);
+
+							// Out-of-range (> Max) -> fail closed
+							Enemy->SetActorLocation(FVector(250.0f, 0.0f, 100.0f));
+							Player->ClearMeleeMotionWarpTargets();
+							SkillAbility->TestResetMeleeMotionWarpState();
+							SkillAbility->Test_TryApplyMeleeMotionWarpTarget(Player);
+							TestEqual(TEXT("Melee skill out-of-range distance fails closed (0 warp targets)"), Player->GetTestMeleeMotionWarpTargetCount(), 0);
+
+							// Restore Enemy location
+							Enemy->SetActorLocation(FVector(140.0f, 0.0f, 100.0f));
+						}
+
+						// 6.6 Static snapshot: moving target or changing lock after capture does not alter cached snapshot
+						{
+							Player->SetActorLocation(FVector(0.0f, 0.0f, 100.0f));
+							Enemy->SetActorLocation(FVector(140.0f, 0.0f, 100.0f));
+							Player->SetTestLockedTarget(Enemy);
+							SkillAbility->TestResetMeleeMotionWarpState();
+							SkillAbility->SetTestMotionWarpConfig(true, FName(TEXT("MeleeContact")), 100.0f, 100.0f, 160.0f, 60.0f);
+							SkillAbility->Test_TryApplyMeleeMotionWarpTarget(Player);
+
 							Enemy->SetActorLocation(FVector(500.0f, 0.0f, 100.0f));
 							Player->TestClearLockedTarget();
 
@@ -1191,7 +1521,7 @@ bool FPlayerMeleeMotionWarpingAutomationTest::RunTest(const FString&)
 							Player->SetTestLockedTarget(Enemy);
 						}
 
-						// 6.6 Target invalidated (Dead / Off-ground) clears warp targets
+						// 6.7 Target invalidated (Dead / Off-ground) clears warp targets
 						{
 							// 1. Dead target during subsequent evaluation clears warp targets
 							if (UAbilitySystemComponent* EnemyASC = Enemy->GetAbilitySystemComponent())
@@ -1235,7 +1565,7 @@ bool FPlayerMeleeMotionWarpingAutomationTest::RunTest(const FString&)
 							TestEqual(TEXT("Restored grounded enemy re-establishes 1 warp target"), Player->GetTestMeleeMotionWarpTargetCount(), 1);
 						}
 
-						// 6.7 Context failure on first legal attempt consumes capture attempt and fails closed (no retargeting upon recovery)
+						// 6.8 Context failure on first legal attempt consumes capture attempt and fails closed (no retargeting upon recovery)
 						{
 							AEnemyCharacter* ContextEnemy = FCombatAutomationFixture::SpawnPassiveEnemy(World, FTransform(FRotator::ZeroRotator, FVector(140.0f, 0.0f, 100.0f)));
 							if (TestNotNull(TEXT("ContextEnemy spawned for skill context test"), ContextEnemy))
@@ -1269,7 +1599,7 @@ bool FPlayerMeleeMotionWarpingAutomationTest::RunTest(const FString&)
 							}
 						}
 
-						// 6.8 Invalid player/ungrounded context early exit safety
+						// 6.9 Invalid player/ungrounded context early exit safety
 						{
 							// Null player handling
 							SkillAbility->Test_TryApplyMeleeMotionWarpTarget(nullptr);
@@ -1289,7 +1619,7 @@ bool FPlayerMeleeMotionWarpingAutomationTest::RunTest(const FString&)
 							}
 						}
 
-						// 6.9 ResetMeleeMotionWarpState helper and EndAbility teardown cleanup
+						// 6.10 ResetMeleeMotionWarpState helper and EndAbility teardown cleanup
 						{
 							Player->SetActorLocation(FVector(0.0f, 0.0f, 100.0f));
 							Enemy->SetActorLocation(FVector(140.0f, 0.0f, 100.0f));
@@ -1303,7 +1633,7 @@ bool FPlayerMeleeMotionWarpingAutomationTest::RunTest(const FString&)
 							}
 							Player->SetTestLockedTarget(Enemy);
 							SkillAbility->TestResetMeleeMotionWarpState();
-							SkillAbility->SetTestMotionWarpConfig(true, FName(TEXT("MeleeContact")), 100.0f, 60.0f, 60.0f);
+							SkillAbility->SetTestMotionWarpConfig(true, FName(TEXT("MeleeContact")), 100.0f, 100.0f, 160.0f, 60.0f);
 							SkillAbility->Test_TryApplyMeleeMotionWarpTarget(Player);
 							TestEqual(TEXT("Player has 1 warp target before reset check"), Player->GetTestMeleeMotionWarpTargetCount(), 1);
 							TestTrue(TEXT("Skill has snapshot before reset check"), SkillAbility->HasTestMeleeMotionWarpSnapshot());

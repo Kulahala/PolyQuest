@@ -630,8 +630,9 @@ void UPlayerMeleeSkillAbility::TryApplyMeleeMotionWarpTarget(APlayerCharacter* P
 	FMeleeMotionWarpConfig WarpConfig;
 	WarpConfig.bUseMotionWarping = bUseMotionWarping;
 	WarpConfig.WarpTargetName = WarpTargetName;
+	WarpConfig.MinTriggerDistance = MinTriggerDistance;
 	WarpConfig.WarpStopDistance = WarpStopDistance;
-	WarpConfig.MaxWarpDistance = MaxWarpDistance;
+	WarpConfig.MaxTriggerDistance = MaxTriggerDistance;
 	WarpConfig.MaxWarpAngleDegrees = MaxWarpAngleDegrees;
 
 	// 1. Validate basic motion warp configuration before attempting any target queries.
@@ -772,7 +773,7 @@ void UPlayerMeleeSkillAbility::TryApplyMeleeMotionWarpTarget(APlayerCharacter* P
 		{
 			GEngine->AddOnScreenDebugMessage(-1, 2.0f, FColor::Yellow,
 				FString::Printf(TEXT("[MotionWarp] 判定未通过 (距离=%.1fcm, 允许: %.1f~%.1fcm, 地面=%d/%d)"),
-					Dist2D, WarpConfig.WarpStopDistance, WarpConfig.WarpStopDistance + WarpConfig.MaxWarpDistance,
+					Dist2D, WarpConfig.MinTriggerDistance, WarpConfig.MaxTriggerDistance,
 					bPlayerOnGround ? 1 : 0, MeleeMotionWarpSnapshot.bCapturedTargetOnGround ? 1 : 0));
 		}
 #endif

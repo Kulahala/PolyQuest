@@ -22,13 +22,17 @@ struct POLYQUEST_API FComboChainEntry
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "MotionWarping", meta = (EditCondition = "bUseMotionWarping", ToolTip = "扭曲目标名称，必须与对应动画蒙太奇中 AnimNotifyState_MotionWarping 窗口的 Warp Target Name 严格一致。"))
 	FName WarpTargetName = FName(TEXT("MeleeContact"));
 
+	/** 触发距离下限（厘米）。人与目标中心距离低于此值时不触发吸附；若低于期望停距则允许有界反向拉开。 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "MotionWarping", meta = (EditCondition = "bUseMotionWarping", ClampMin = "0.0", UIMin = "0.0", ToolTip = "触发距离下限（厘米）。人与目标中心距离低于此值时不触发吸附；若低于期望停距则允许有界反向拉开。"))
+	float MinTriggerDistance = 190.0f;
+
 	/** 期望停距（厘米）。吸附计算时人与目标中心的期望距离。若动画自带前踏 Root Motion，需根据步长预留停距以防贴脸。 */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "MotionWarping", meta = (EditCondition = "bUseMotionWarping", ClampMin = "0.0", UIMin = "0.0", ToolTip = "期望停距（厘米）。吸附计算时人与目标中心的期望距离。若动画自带前踏 Root Motion，需根据步长预留停距以防贴脸。"))
 	float WarpStopDistance = 190.0f;
 
-	/** 最大水平修正距离（厘米）。允许玩家当前位置到最终 WarpLocation 的最大水平位移；它不是目标的最大距离。 */
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "MotionWarping", meta = (EditCondition = "bUseMotionWarping", ClampMin = "0.0", UIMin = "0.0", ToolTip = "最大水平修正距离（厘米）。允许玩家当前位置到最终 WarpLocation 的最大水平位移；它不是目标的最大距离。"))
-	float MaxWarpDistance = 110.0f;
+	/** 触发距离上限（厘米）。人与目标中心距离高于此值时不触发吸附修正。 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "MotionWarping", meta = (EditCondition = "bUseMotionWarping", ClampMin = "0.0", UIMin = "0.0", ToolTip = "触发距离上限（厘米）。人与目标中心距离高于此值时不触发吸附修正。"))
+	float MaxTriggerDistance = 300.0f;
 
 	/** 最大允许吸附夹角（度）。玩家水平朝向与目标方向的最大夹角，超出此范围将不触发吸附。 */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "MotionWarping", meta = (EditCondition = "bUseMotionWarping", ClampMin = "0.0", ClampMax = "180.0", UIMin = "0.0", UIMax = "180.0", ToolTip = "最大允许吸附夹角（度）。玩家水平朝向与目标方向的最大夹角，超出此范围将不触发吸附。"))

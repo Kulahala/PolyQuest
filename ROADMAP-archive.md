@@ -1086,3 +1086,14 @@ TODO-03A3E World Pickup Interaction Prompt v1
 - **文档与路线**：`plan.md` 保存本阶段详细基线、实现、证据和债务；`ROADMAP.md` 将 `TODO-03A7D` 记为源码收口并插入后续 `TODO-03H5：Post-Motion-Warp Combat Health Review v1`；由于缺少资产 readback，`ARCHITECTURE.md` 与 `README.md` 不写入 Whirlwind 已采用事实。
 - **排除项与提交边界**：全部 `Content/**`、`Config/Automation/Presets/1.json`、其他 Source/文档 WIP、Blueprint/Montage/AnimBP/DataAsset/地图、`PolyQuest.uproject`、`Build.cs`、Gameplay Tags、旧 Test 项目和用户资产均未纳入；无资产清理、回滚、导入或 Editor 写入。最终提交 hash 以 Git 历史为准。
 - **后续指针**：下一项为 `TODO-03H5：Post-Motion-Warp Combat Health Review v1`；该审查先于 `TODO-05A`，只修真实的生命周期/所有权/数据完整性或玩家回归阻塞，不扩展 Motion-Warp 功能。
+
+## TODO-03A7F Melee Motion-Warp Trigger Range Contract Closeout (2026-08-31; working-tree snapshot at parent HEAD `7c3ddf0`, not clean)
+
+> 本节记录 TODO-03A7F 的源码合同与验证收口。快照基于提交 `7c3ddf0`，工作区同时包含用户的 `Config/Automation/Presets/1.json`、大量 `Content/**` WIP 以及本阶段未提交 Source/文档改动，因此不是干净 HEAD 快照；本节仅作历史追溯，不替代源码、Config 或实际资产作为运行时权威。
+
+- **范围与所有权**：共享 `FMeleeMotionWarpConfig`、`FComboChainEntry` 与 Light、Charged、Sprint、Melee Skill 四个 Player 消费者统一迁移到显式目标距离区间 `MinTriggerDistance <= WarpStopDistance <= MaxTriggerDistance`。`MaxTriggerDistance` 表示目标触发距离上限，不是位移预算；`Min < Stop` 隐式允许有界反向修正，`Min == Stop` 保持前向-only，精确停距为 no-op。既有一次性静态 Lock-On 快照、Player 窄桥、Task/Montage/EndAbility/UnPossess 清理和 `Trace -> Resolver -> Damage GE` 唯一路径保持不变。
+- **实际实现路径**：本阶段修改了 11 个批准 Source/test 文件，包含共享 evaluator、Combo/Ability 字段映射与 debug 范围显示，以及 Section 1-6 的边界、反向、精确停距和四消费者回归覆盖；没有新增 Motion-Warp 消费者、目标跟随、自动重选、伤害路径、Gameplay Tag/Input 或全局服务。
+- **用户证据**：用户确认 `PolyQuest.Combat.PlayerMeleeMotionWarping` focused Automation 与 `/Game/Maps/Scene01` PIE 通过。该证据只覆盖用户实际运行的场景，不扩展为全量回归、独立手动 `PolyQuestEditor` 编译或 authored 资产 readback。
+- **静态与复核证据**：Gemini 报告批准文件 Rider error-level 检查、VS2022 编译和 `git diff --check` 通过；Main 本阶段执行一轮 diff-first、直接调用边界核对和 defect-first fresh review，未发现 P0/P1/P2 blocker。3.17 的旧 target 清理先发生在 `StartComboEntry()`，因此其 evaluator 自身清理断言存在非阻塞 P3 覆盖限制；不把该限制写成运行时失败。
+- **未解决债务**：旧 `MaxWarpDistance` 到新字段的 authored-field migration、相关 GA/Combo/Montage/Notify/Modifier/Root Motion/目标名的逐项 Editor readback，以及独立用户手动 `PolyQuestEditor` 编译收据仍未形成。关闭条件是用户完成指定 readback/编译，或对不适用资产给出真实 evidence-backed no-adoption；在此之前不宣称 authored adoption 或干净可复现基线。
+- **排除项与提交边界**：全部 `Content/**`、`Config/Automation/Presets/1.json`、其他 Source/Config/文档 WIP、Blueprint/Montage/AnimBP/DataAsset/地图、`PolyQuest.uproject`、`Build.cs`、Gameplay Tags、Input、旧 Test 项目和用户资产均未纳入；无资产清理、回滚、导入或 Editor 写入。下一阶段指针为 `TODO-03H5：Post-Motion-Warp Combat Health Review v1`。

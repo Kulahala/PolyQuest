@@ -69,11 +69,14 @@ protected:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Melee Skill|Motion Warping", meta = (ToolTip = "Motion Warping 目标名称，需与动画 Montage 中 AnimNotifyState_MotionWarping 的 TargetName 一致。"))
 	FName WarpTargetName = FName(TEXT("MeleeContact"));
 
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Melee Skill|Motion Warping", meta = (ClampMin = "0.0", ToolTip = "触发距离下限（cm），人与目标中心距离低于此值时不触发接触位移修正。"))
+	float MinTriggerDistance = 190.0f;
+
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Melee Skill|Motion Warping", meta = (ClampMin = "0.0", ToolTip = "攻击停距（cm），角色与目标接触点之间的水平期望间距。"))
 	float WarpStopDistance = 190.0f;
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Melee Skill|Motion Warping", meta = (ClampMin = "0.0", ToolTip = "最大位移修正距离（cm），超出此范围不执行接触位移修正。"))
-	float MaxWarpDistance = 110.0f;
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Melee Skill|Motion Warping", meta = (ClampMin = "0.0", ToolTip = "触发距离上限（cm），超出此范围不执行接触位移修正。"))
+	float MaxTriggerDistance = 300.0f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Melee Skill|Motion Warping", meta = (ClampMin = "0.0", ClampMax = "180.0", ToolTip = "最大有效修正夹角（度），超过此角度判定为偏角过大不予修正。"))
 	float MaxWarpAngleDegrees = 60.0f;
@@ -176,12 +179,13 @@ public:
 	bool HasTestMeleeMotionWarpCaptureAttempted() const { return MeleeMotionWarpSnapshot.bAttemptedCapture; }
 	FVector GetTestMeleeMotionWarpCapturedLocation() const { return MeleeMotionWarpSnapshot.CapturedTargetLocation; }
 	bool GetTestMeleeMotionWarpCapturedOnGround() const { return MeleeMotionWarpSnapshot.bCapturedTargetOnGround; }
-	void SetTestMotionWarpConfig(bool bInUseWarp, FName InTargetName, float InStopDist, float InMaxDist, float InMaxAngle)
+	void SetTestMotionWarpConfig(bool bInUseWarp, FName InTargetName, float InMinDist, float InStopDist, float InMaxDist, float InMaxAngle)
 	{
 		bUseMotionWarping = bInUseWarp;
 		WarpTargetName = InTargetName;
+		MinTriggerDistance = InMinDist;
 		WarpStopDistance = InStopDist;
-		MaxWarpDistance = InMaxDist;
+		MaxTriggerDistance = InMaxDist;
 		MaxWarpAngleDegrees = InMaxAngle;
 	}
 	void SetTestEndAbilityRequested(bool bRequested) { bEndAbilityRequested = bRequested; }

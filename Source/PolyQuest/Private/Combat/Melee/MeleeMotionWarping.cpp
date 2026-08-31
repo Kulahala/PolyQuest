@@ -10,17 +10,25 @@ bool FMeleeMotionWarpingLifecycle::IsConfigValid(const FMeleeMotionWarpConfig& C
 		return false;
 	}
 
-	if (!FMath::IsFinite(Config.WarpStopDistance)
-		|| !FMath::IsFinite(Config.MaxWarpDistance)
+	if (!FMath::IsFinite(Config.MinTriggerDistance)
+		|| !FMath::IsFinite(Config.WarpStopDistance)
+		|| !FMath::IsFinite(Config.MaxTriggerDistance)
 		|| !FMath::IsFinite(Config.MaxWarpAngleDegrees))
 	{
 		return false;
 	}
 
-	if (Config.WarpStopDistance < 0.0f
-		|| Config.MaxWarpDistance < 0.0f
+	if (Config.MinTriggerDistance < 0.0f
+		|| Config.WarpStopDistance < 0.0f
+		|| Config.MaxTriggerDistance < 0.0f
 		|| Config.MaxWarpAngleDegrees < 0.0f
 		|| Config.MaxWarpAngleDegrees > 180.0f)
+	{
+		return false;
+	}
+
+	if (Config.MinTriggerDistance > Config.WarpStopDistance
+		|| Config.WarpStopDistance > Config.MaxTriggerDistance)
 	{
 		return false;
 	}
@@ -69,8 +77,15 @@ bool FMeleeMotionWarpingLifecycle::EvaluateMeleeMotionWarpTransform(
 		return false;
 	}
 
-	// Fail-closed if target is already at or inside the desired stop distance
-	if (TargetDistance2D <= Config.WarpStopDistance)
+	// Trigger range check with small numerical tolerance for floating point boundary inclusion
+	if (TargetDistance2D < Config.MinTriggerDistance - KINDA_SMALL_NUMBER
+		|| TargetDistance2D > Config.MaxTriggerDistance + KINDA_SMALL_NUMBER)
+	{
+		return false;
+	}
+
+	// Fail-closed on exact stop distance or numerically equivalent zero correction to prevent writing identity/zero delta
+	if (FMath::IsNearlyEqual(TargetDistance2D, Config.WarpStopDistance, KINDA_SMALL_NUMBER))
 	{
 		return false;
 	}
@@ -81,7 +96,7 @@ bool FMeleeMotionWarpingLifecycle::EvaluateMeleeMotionWarpTransform(
 		return false;
 	}
 
-	// Calculate desired warp position
+	// Calculate desired warp position (naturally produces forward or reverse bounded displacement)
 	FVector WarpLocation = TargetLocation - (ToTarget2D * Config.WarpStopDistance);
 	WarpLocation.Z = PlayerLocation.Z;
 
@@ -90,14 +105,7 @@ bool FMeleeMotionWarpingLifecycle::EvaluateMeleeMotionWarpTransform(
 		return false;
 	}
 
-	// Maximum horizontal warp correction distance check (PlayerLocation -> WarpLocation)
-	const float HorizontalCorrectionDistance = FVector::Dist2D(PlayerLocation, WarpLocation);
-	if (!FMath::IsFinite(HorizontalCorrectionDistance) || HorizontalCorrectionDistance > Config.MaxWarpDistance)
-	{
-		return false;
-	}
-
-	// Angle check between player forward and direction to target
+	// Angle check between player forward and direction to target (face target regardless of forward/reverse warp)
 	FVector Forward2D = FVector(PlayerForwardVector.X, PlayerForwardVector.Y, 0.0f);
 	if (!Forward2D.Normalize() || !FMath::IsFinite(Forward2D.X) || !FMath::IsFinite(Forward2D.Y))
 	{
@@ -106,7 +114,7 @@ bool FMeleeMotionWarpingLifecycle::EvaluateMeleeMotionWarpTransform(
 
 	const float Dot2D = FMath::Clamp(FVector::DotProduct(Forward2D, ToTarget2D), -1.0f, 1.0f);
 	const float AngleDegrees = FMath::RadiansToDegrees(FMath::Acos(Dot2D));
-	if (!FMath::IsFinite(AngleDegrees) || AngleDegrees > Config.MaxWarpAngleDegrees)
+	if (!FMath::IsFinite(AngleDegrees) || AngleDegrees > Config.MaxWarpAngleDegrees + KINDA_SMALL_NUMBER)
 	{
 		return false;
 	}

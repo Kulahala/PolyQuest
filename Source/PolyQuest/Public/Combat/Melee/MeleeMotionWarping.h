@@ -12,8 +12,9 @@ struct POLYQUEST_API FMeleeMotionWarpConfig
 {
 	bool bUseMotionWarping = false;
 	FName WarpTargetName = FName(TEXT("MeleeContact"));
+	float MinTriggerDistance = 190.0f;
 	float WarpStopDistance = 190.0f;
-	float MaxWarpDistance = 110.0f;
+	float MaxTriggerDistance = 300.0f;
 	float MaxWarpAngleDegrees = 60.0f;
 };
 
