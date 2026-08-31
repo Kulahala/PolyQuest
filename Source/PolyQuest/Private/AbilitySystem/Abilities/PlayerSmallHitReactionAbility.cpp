@@ -14,6 +14,7 @@ UPlayerSmallHitReactionAbility::UPlayerSmallHitReactionAbility()
 {
 	InstancingPolicy = EGameplayAbilityInstancingPolicy::InstancedPerActor;
 	NetExecutionPolicy = EGameplayAbilityNetExecutionPolicy::ServerOnly;
+	bRetriggerInstancedAbility = true;
 
 	SmallHitReactionAbilityTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Reaction.Player.Small")), false);
 	SmallHitReactionEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Reaction.Player.Small")), false);
@@ -25,7 +26,6 @@ UPlayerSmallHitReactionAbility::UPlayerSmallHitReactionAbility()
 	ActivationOwnedTags.AddTag(SmallHitReactingStateTag);
 	ActivationBlockedTags.AddTag(DeadStateTag);
 	ActivationBlockedTags.AddTag(StunnedStateTag);
-	ActivationBlockedTags.AddTag(SmallHitReactingStateTag);
 
 	FAbilityTriggerData TriggerData;
 	TriggerData.TriggerTag = SmallHitReactionEventTag;
@@ -51,6 +51,16 @@ void UPlayerSmallHitReactionAbility::ActivateAbility(
 	const FGameplayEventData* TriggerEventData)
 {
 	bEndAbilityRequested = false;
+
+	if (MontageTask)
+	{
+		MontageTask->OnCompleted.RemoveDynamic(this, &UPlayerSmallHitReactionAbility::OnMontageCompleted);
+		MontageTask->OnInterrupted.RemoveDynamic(this, &UPlayerSmallHitReactionAbility::OnMontageInterrupted);
+		MontageTask->OnCancelled.RemoveDynamic(this, &UPlayerSmallHitReactionAbility::OnMontageCancelled);
+		MontageTask->EndTask();
+		MontageTask = nullptr;
+	}
+
 	BoundAnimInstance = nullptr;
 	ActiveMontage = nullptr;
 
@@ -88,13 +98,24 @@ void UPlayerSmallHitReactionAbility::ActivateAbility(
 		return;
 	}
 
-	MontageTask = UAbilityTask_PlayMontageAndWait::CreatePlayMontageAndWaitProxy(this, NAME_None, SelectedMontage);
-	if (!MontageTask)
+	UAbilityTask_PlayMontageAndWait* CreatedMontageTask = UAbilityTask_PlayMontageAndWait::CreatePlayMontageAndWaitProxy(
+		this,
+		NAME_None,
+		SelectedMontage,
+		1.0f,
+		NAME_None,
+		true,
+		1.0f,
+		0.0f,
+		true);
+	if (!CreatedMontageTask)
 	{
 		UE_LOG(LogPolyQuest, Warning, TEXT("Player small hit reaction activation aborted for '%s': failed to create a montage AbilityTask."), *GetNameSafe(PlayerCharacter));
 		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
 		return;
 	}
+
+	MontageTask = CreatedMontageTask;
 
 	if (!CommitAbility(Handle, ActorInfo, ActivationInfo))
 	{
@@ -103,14 +124,28 @@ void UPlayerSmallHitReactionAbility::ActivateAbility(
 		return;
 	}
 
+	if (bEndAbilityRequested || MontageTask.Get() != CreatedMontageTask || !IsValid(CreatedMontageTask) || CreatedMontageTask->IsFinished())
+	{
+		return;
+	}
+
 	BoundAnimInstance = AnimInstance;
 	ActiveMontage = SelectedMontage;
-	BoundAnimInstance->OnMontageEnded.RemoveDynamic(this, &UPlayerSmallHitReactionAbility::OnActiveMontageEnded);
-	BoundAnimInstance->OnMontageEnded.AddDynamic(this, &UPlayerSmallHitReactionAbility::OnActiveMontageEnded);
+
+	MontageTask->OnCompleted.AddDynamic(this, &UPlayerSmallHitReactionAbility::OnMontageCompleted);
+	MontageTask->OnInterrupted.AddDynamic(this, &UPlayerSmallHitReactionAbility::OnMontageInterrupted);
+	MontageTask->OnCancelled.AddDynamic(this, &UPlayerSmallHitReactionAbility::OnMontageCancelled);
+
 	MontageTask->ReadyForActivation();
 
 	if (bEndAbilityRequested)
 	{
+		return;
+	}
+
+	if (MontageTask.Get() != CreatedMontageTask || !IsValid(CreatedMontageTask) || CreatedMontageTask->IsFinished() || !CreatedMontageTask->IsActive())
+	{
+		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
 		return;
 	}
 
@@ -136,9 +171,15 @@ void UPlayerSmallHitReactionAbility::EndAbility(
 
 	bEndAbilityRequested = true;
 
+	if (MontageTask)
+	{
+		MontageTask->OnCompleted.RemoveDynamic(this, &UPlayerSmallHitReactionAbility::OnMontageCompleted);
+		MontageTask->OnInterrupted.RemoveDynamic(this, &UPlayerSmallHitReactionAbility::OnMontageInterrupted);
+		MontageTask->OnCancelled.RemoveDynamic(this, &UPlayerSmallHitReactionAbility::OnMontageCancelled);
+	}
+
 	if (BoundAnimInstance)
 	{
-		BoundAnimInstance->OnMontageEnded.RemoveDynamic(this, &UPlayerSmallHitReactionAbility::OnActiveMontageEnded);
 		if (ActiveMontage && BoundAnimInstance->Montage_IsActive(ActiveMontage.Get()))
 		{
 			BoundAnimInstance->Montage_Stop(0.0f, ActiveMontage.Get());
@@ -157,14 +198,19 @@ void UPlayerSmallHitReactionAbility::EndAbility(
 	Super::EndAbility(Handle, ActorInfo, ActivationInfo, bReplicateEndAbility, bWasCancelled);
 }
 
-void UPlayerSmallHitReactionAbility::OnActiveMontageEnded(UAnimMontage* Montage, bool bInterrupted)
+void UPlayerSmallHitReactionAbility::OnMontageCompleted()
 {
-	if (bEndAbilityRequested || Montage != ActiveMontage.Get())
-	{
-		return;
-	}
+	EndFromMontage(false);
+}
 
-	EndFromMontage(bInterrupted);
+void UPlayerSmallHitReactionAbility::OnMontageInterrupted()
+{
+	EndFromMontage(true);
+}
+
+void UPlayerSmallHitReactionAbility::OnMontageCancelled()
+{
+	EndFromMontage(true);
 }
 
 bool UPlayerSmallHitReactionAbility::ValidateActivationSetup(const FGameplayAbilityActorInfo* ActorInfo) const
@@ -194,3 +240,25 @@ void UPlayerSmallHitReactionAbility::EndFromMontage(bool bWasCancelled)
 		EndAbility(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, true, bWasCancelled);
 	}
 }
+
+#if WITH_DEV_AUTOMATION_TESTS
+void UPlayerSmallHitReactionAbility::TestBindTaskCallbacks(UAbilityTask_PlayMontageAndWait* InTask)
+{
+	if (InTask)
+	{
+		InTask->OnCompleted.AddDynamic(this, &UPlayerSmallHitReactionAbility::OnMontageCompleted);
+		InTask->OnInterrupted.AddDynamic(this, &UPlayerSmallHitReactionAbility::OnMontageInterrupted);
+		InTask->OnCancelled.AddDynamic(this, &UPlayerSmallHitReactionAbility::OnMontageCancelled);
+	}
+}
+
+void UPlayerSmallHitReactionAbility::TestUnbindTaskCallbacks(UAbilityTask_PlayMontageAndWait* InTask)
+{
+	if (InTask)
+	{
+		InTask->OnCompleted.RemoveDynamic(this, &UPlayerSmallHitReactionAbility::OnMontageCompleted);
+		InTask->OnInterrupted.RemoveDynamic(this, &UPlayerSmallHitReactionAbility::OnMontageInterrupted);
+		InTask->OnCancelled.RemoveDynamic(this, &UPlayerSmallHitReactionAbility::OnMontageCancelled);
+	}
+}
+#endif

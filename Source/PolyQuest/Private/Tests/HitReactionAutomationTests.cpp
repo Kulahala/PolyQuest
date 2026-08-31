@@ -5,6 +5,7 @@
 #include "AbilitySystemComponent.h"
 #include "Abilities/GameplayAbility.h"
 #include "Abilities/GameplayAbilityTypes.h"
+#include "Abilities/Tasks/AbilityTask_PlayMontageAndWait.h"
 #include "AbilitySystem/Abilities/EnemyHitReactionAbility.h"
 #include "AbilitySystem/Abilities/EnemyLaunchReactionAbility.h"
 #include "AbilitySystem/Abilities/EnemySmallHitReactionAbility.h"
@@ -182,6 +183,8 @@ bool FHitReactionAutomationTest::RunTest(const FString& Parameters)
 				PlayerSmallCDO->GetInstancingPolicy(), EGameplayAbilityInstancingPolicy::InstancedPerActor);
 			TestEqual(TEXT("PlayerSmall net execution is ServerOnly"),
 				PlayerSmallCDO->GetNetExecutionPolicy(), EGameplayAbilityNetExecutionPolicy::ServerOnly);
+			TestTrue(TEXT("PlayerSmall CDO enables bRetriggerInstancedAbility"),
+				PlayerSmallCDO->GetTestRetriggerInstancedAbility());
 
 			TestTrue(TEXT("PlayerSmall CDO has AbilityTags Ability.Reaction.Player.Small"),
 				PlayerSmallCDO->AbilityTags.HasTagExact(TagAbilityPlayerSmall));
@@ -194,7 +197,7 @@ bool FHitReactionAutomationTest::RunTest(const FString& Parameters)
 				PlayerSmallCDO->GetTestActivationBlockedTags().HasTagExact(TagDead));
 			TestTrue(TEXT("PlayerSmall CDO blocked by State.Status.Stunned"),
 				PlayerSmallCDO->GetTestActivationBlockedTags().HasTagExact(TagStunned));
-			TestTrue(TEXT("PlayerSmall CDO blocked by State.Action.SmallHitReacting"),
+			TestFalse(TEXT("PlayerSmall CDO does NOT block on State.Action.SmallHitReacting"),
 				PlayerSmallCDO->GetTestActivationBlockedTags().HasTagExact(TagSmallHitReacting));
 
 			TestFalse(TEXT("PlayerSmall CDO does NOT block movement"),
@@ -360,6 +363,8 @@ bool FHitReactionAutomationTest::RunTest(const FString& Parameters)
 				EnemySmallCDO->GetInstancingPolicy(), EGameplayAbilityInstancingPolicy::InstancedPerActor);
 			TestEqual(TEXT("EnemySmall net execution is ServerOnly"),
 				EnemySmallCDO->GetNetExecutionPolicy(), EGameplayAbilityNetExecutionPolicy::ServerOnly);
+			TestTrue(TEXT("EnemySmall CDO enables bRetriggerInstancedAbility"),
+				EnemySmallCDO->GetTestRetriggerInstancedAbility());
 
 			TestTrue(TEXT("EnemySmall CDO has AbilityTags Ability.Reaction.Enemy.Small"),
 				EnemySmallCDO->AbilityTags.HasTagExact(TagAbilityEnemySmall));
@@ -372,7 +377,7 @@ bool FHitReactionAutomationTest::RunTest(const FString& Parameters)
 				EnemySmallCDO->GetTestActivationBlockedTags().HasTagExact(TagDead));
 			TestTrue(TEXT("EnemySmall CDO blocked by State.Status.Stunned"),
 				EnemySmallCDO->GetTestActivationBlockedTags().HasTagExact(TagStunned));
-			TestTrue(TEXT("EnemySmall CDO blocked by State.Action.SmallHitReacting"),
+			TestFalse(TEXT("EnemySmall CDO does NOT block on State.Action.SmallHitReacting"),
 				EnemySmallCDO->GetTestActivationBlockedTags().HasTagExact(TagSmallHitReacting));
 
 			TestFalse(TEXT("EnemySmall CDO does NOT block movement"),
@@ -1903,6 +1908,279 @@ bool FHitReactionAutomationTest::RunTest(const FString& Parameters)
 			}
 
 			DeferralEnemy->Destroy();
+		}
+	}
+
+	// -------------------------------------------------------------------------
+	// SECTION 7: Small Hit Reaction Retrigger & Task Lifecycle Validation (TODO-07B5)
+	// -------------------------------------------------------------------------
+	{
+		// 7.1 Player Small Hit Reaction Synthetic Task-Owned Retrigger & Callback Isolation (Synthetic Seam)
+		// NOTE: This tests intra-ability Task delegation isolation when the ability is retriggered with the same montage pointer.
+		{
+			UPlayerSmallHitReactionAbility* PlayerAbility = NewObject<UPlayerSmallHitReactionAbility>(Player);
+			TestNotNull(TEXT("7.1: PlayerAbility created"), PlayerAbility);
+			if (PlayerAbility)
+			{
+				UAbilitySystemComponent* PlayerASC = Player->GetAbilitySystemComponent();
+				FGameplayAbilityActorInfo ActorInfo;
+				ActorInfo.InitFromActor(Player, Player, PlayerASC);
+				PlayerAbility->SetTestCurrentActorInfo(&ActorInfo);
+				FGameplayAbilitySpecHandle SpecHandle;
+				PlayerAbility->SetTestCurrentSpecHandle(SpecHandle);
+
+				UAnimMontage* DummyFront = NewObject<UAnimMontage>(GetTransientPackage());
+				UAnimMontage* DummyBack = NewObject<UAnimMontage>(GetTransientPackage());
+				UAnimMontage* DummyLeft = NewObject<UAnimMontage>(GetTransientPackage());
+				UAnimMontage* DummyRight = NewObject<UAnimMontage>(GetTransientPackage());
+				PlayerAbility->SetTestFrontSmallHitReactionMontage(DummyFront);
+				PlayerAbility->SetTestBackSmallHitReactionMontage(DummyBack);
+				PlayerAbility->SetTestLeftSmallHitReactionMontage(DummyLeft);
+				PlayerAbility->SetTestRightSmallHitReactionMontage(DummyRight);
+
+				// 7.1a: Round 1 setup with Task1 (Front montage)
+				UAbilityTask_PlayMontageAndWait* Task1 = UAbilityTask_PlayMontageAndWait::CreatePlayMontageAndWaitProxy(PlayerAbility, NAME_None, DummyFront);
+				TestNotNull(TEXT("7.1a: Task1 created"), Task1);
+				if (Task1)
+				{
+					PlayerAbility->SetTestMontageTask(Task1);
+					PlayerAbility->SetTestActiveMontage(DummyFront);
+					PlayerAbility->TestBindTaskCallbacks(Task1);
+
+					TestEqual(TEXT("7.1a: Active montage is DummyFront"), PlayerAbility->GetTestActiveMontage(), DummyFront);
+					TestEqual(TEXT("7.1a: Current task is Task1"), PlayerAbility->GetTestMontageTask(), Task1);
+					TestFalse(TEXT("7.1a: EndAbility not requested yet"), PlayerAbility->GetTestEndAbilityRequested());
+
+					// 7.1b: Retrigger to Round 2 with SAME montage pointer (DummyFront)
+					// Cleanup Task1 before assigning Task2
+					PlayerAbility->TestUnbindTaskCallbacks(Task1);
+					Task1->EndTask();
+
+					UAbilityTask_PlayMontageAndWait* Task2 = UAbilityTask_PlayMontageAndWait::CreatePlayMontageAndWaitProxy(PlayerAbility, NAME_None, DummyFront);
+					TestNotNull(TEXT("7.1b: Task2 created"), Task2);
+					if (Task2)
+					{
+						PlayerAbility->SetTestMontageTask(Task2);
+						PlayerAbility->SetTestActiveMontage(DummyFront);
+						PlayerAbility->TestBindTaskCallbacks(Task2);
+
+						TestEqual(TEXT("7.1b: Current task updated to Task2"), PlayerAbility->GetTestMontageTask(), Task2);
+
+						// 7.1c: Late broadcast on Task1 must NOT end the ability (Task1 callbacks are disconnected & ended)
+						Task1->OnCompleted.Broadcast();
+						TestFalse(TEXT("7.1c: Late Task1 completion does NOT end Round 2"), PlayerAbility->GetTestEndAbilityRequested());
+						TestEqual(TEXT("7.1c: Task2 remains active montage task"), PlayerAbility->GetTestMontageTask(), Task2);
+
+						// 7.1d: Task2 completion correctly ends the ability
+						Task2->OnCompleted.Broadcast();
+						TestTrue(TEXT("7.1d: Task2 completion ended ability"), PlayerAbility->GetTestEndAbilityRequested());
+						TestNull(TEXT("7.1d: Active montage cleared after EndAbility"), PlayerAbility->GetTestActiveMontage());
+						TestNull(TEXT("7.1d: MontageTask cleared after EndAbility"), PlayerAbility->GetTestMontageTask());
+
+						// 7.1e: Idempotent EndAbility calls
+						FGameplayAbilityActivationInfo ActivationInfo;
+						PlayerAbility->EndAbility(SpecHandle, &ActorInfo, ActivationInfo, false, false);
+						TestTrue(TEXT("7.1e: Duplicate EndAbility is safe and idempotent"), PlayerAbility->GetTestEndAbilityRequested());
+					}
+				}
+			}
+		}
+
+		// 7.2 Enemy Small Hit Reaction Synthetic Task-Owned Retrigger & Direction Change (Synthetic Seam)
+		// NOTE: This tests intra-ability Task delegation isolation when retriggered with a different direction montage.
+		{
+			UEnemySmallHitReactionAbility* EnemyAbility = NewObject<UEnemySmallHitReactionAbility>(Enemy);
+			TestNotNull(TEXT("7.2: EnemyAbility created"), EnemyAbility);
+			if (EnemyAbility)
+			{
+				UAbilitySystemComponent* EnemyASC = Enemy->GetAbilitySystemComponent();
+				FGameplayAbilityActorInfo ActorInfo;
+				ActorInfo.InitFromActor(Enemy, Enemy, EnemyASC);
+				EnemyAbility->SetTestCurrentActorInfo(&ActorInfo);
+				FGameplayAbilitySpecHandle SpecHandle;
+				EnemyAbility->SetTestCurrentSpecHandle(SpecHandle);
+
+				UAnimMontage* DummyFront = NewObject<UAnimMontage>(GetTransientPackage());
+				UAnimMontage* DummyBack = NewObject<UAnimMontage>(GetTransientPackage());
+				UAnimMontage* DummyLeft = NewObject<UAnimMontage>(GetTransientPackage());
+				UAnimMontage* DummyRight = NewObject<UAnimMontage>(GetTransientPackage());
+				EnemyAbility->SetTestFrontSmallHitReactionMontage(DummyFront);
+				EnemyAbility->SetTestBackSmallHitReactionMontage(DummyBack);
+				EnemyAbility->SetTestLeftSmallHitReactionMontage(DummyLeft);
+				EnemyAbility->SetTestRightSmallHitReactionMontage(DummyRight);
+
+				// 7.2a: Round 1 setup with Task1 (Front montage)
+				UAbilityTask_PlayMontageAndWait* Task1 = UAbilityTask_PlayMontageAndWait::CreatePlayMontageAndWaitProxy(EnemyAbility, NAME_None, DummyFront);
+				TestNotNull(TEXT("7.2a: Enemy Task1 created"), Task1);
+				if (Task1)
+				{
+					EnemyAbility->SetTestMontageTask(Task1);
+					EnemyAbility->SetTestActiveMontage(DummyFront);
+					EnemyAbility->TestBindTaskCallbacks(Task1);
+
+					// 7.2b: Retrigger to Round 2 with DIFFERENT direction montage (DummyBack)
+					EnemyAbility->TestUnbindTaskCallbacks(Task1);
+					Task1->EndTask();
+
+					UAbilityTask_PlayMontageAndWait* Task2 = UAbilityTask_PlayMontageAndWait::CreatePlayMontageAndWaitProxy(EnemyAbility, NAME_None, DummyBack);
+					TestNotNull(TEXT("7.2b: Enemy Task2 created"), Task2);
+					if (Task2)
+					{
+						EnemyAbility->SetTestMontageTask(Task2);
+						EnemyAbility->SetTestActiveMontage(DummyBack);
+						EnemyAbility->TestBindTaskCallbacks(Task2);
+
+						TestEqual(TEXT("7.2b: Enemy active montage switched to DummyBack"), EnemyAbility->GetTestActiveMontage(), DummyBack);
+
+						// 7.2c: Late interrupt on Task1 must NOT end Round 2
+						Task1->OnInterrupted.Broadcast();
+						TestFalse(TEXT("7.2c: Late Task1 interrupt does NOT end Round 2"), EnemyAbility->GetTestEndAbilityRequested());
+
+						// 7.2d: Task2 interruption ends ability
+						Task2->OnInterrupted.Broadcast();
+						TestTrue(TEXT("7.2d: Enemy Task2 interruption ended ability"), EnemyAbility->GetTestEndAbilityRequested());
+						TestNull(TEXT("7.2d: Active montage cleared"), EnemyAbility->GetTestActiveMontage());
+						TestNull(TEXT("7.2d: MontageTask cleared"), EnemyAbility->GetTestMontageTask());
+					}
+				}
+			}
+		}
+
+		// 7.3 Real ASC Spec Grant, Trigger Tag Verification & Tag Contract Matrix (Real ASC / Spec Contract)
+		// NOTE: Tests the real production ASC ability spec grant, trigger configuration, and tag containers.
+		// In headless tests, ValidateActivationSetup fail-closes on missing AnimInstance/Montages, so full CanActivateAbility
+		// evaluation is part of Debt-07B5-RealASCRetriggerE2E verified in Scene01 PIE.
+		{
+			UAbilitySystemComponent* PlayerASC = Player->GetAbilitySystemComponent();
+			UAbilitySystemComponent* EnemyASC = Enemy->GetAbilitySystemComponent();
+
+			if (PlayerASC && EnemyASC)
+			{
+				FGameplayAbilitySpec PlayerSpec(UPlayerSmallHitReactionAbility::StaticClass(), 1, INDEX_NONE, Player);
+				FGameplayAbilitySpecHandle PlayerSpecHandle = PlayerASC->GiveAbility(PlayerSpec);
+				TestTrue(TEXT("7.3: PlayerSmall ability granted on real Player ASC"), PlayerSpecHandle.IsValid());
+
+				FGameplayAbilitySpec EnemySpec(UEnemySmallHitReactionAbility::StaticClass(), 1, INDEX_NONE, Enemy);
+				FGameplayAbilitySpecHandle EnemySpecHandle = EnemyASC->GiveAbility(EnemySpec);
+				TestTrue(TEXT("7.3: EnemySmall ability granted on real Enemy ASC"), EnemySpecHandle.IsValid());
+
+				FGameplayAbilitySpec* FoundPlayerSpec = PlayerASC->FindAbilitySpecFromHandle(PlayerSpecHandle);
+				TestNotNull(TEXT("7.3: FoundPlayerSpec valid"), FoundPlayerSpec);
+				if (FoundPlayerSpec && FoundPlayerSpec->Ability)
+				{
+					const UGameplayAbility* AbilityCDO = FoundPlayerSpec->Ability;
+					const UPlayerSmallHitReactionAbility* PlayerSmallInst = Cast<UPlayerSmallHitReactionAbility>(AbilityCDO);
+					if (PlayerSmallInst)
+					{
+						TestTrue(TEXT("7.3: PlayerSmall primary instance/CDO enables retrigger"), PlayerSmallInst->GetTestRetriggerInstancedAbility());
+
+						// Verify Trigger Tag and Trigger Source configuration
+						const TArray<FAbilityTriggerData>& Triggers = PlayerSmallInst->GetTestAbilityTriggers();
+						TestEqual(TEXT("7.3: PlayerSmall has 1 trigger registered"), Triggers.Num(), 1);
+						if (Triggers.Num() > 0)
+						{
+							TestTrue(TEXT("7.3: PlayerSmall trigger tag is Event.Reaction.Player.Small"),
+								Triggers[0].TriggerTag.MatchesTagExact(TagEventPlayerSmall));
+							TestEqual(TEXT("7.3: PlayerSmall trigger source is GameplayEvent"),
+								Triggers[0].TriggerSource, EGameplayAbilityTriggerSource::GameplayEvent);
+						}
+
+						// Verify Tag containers on Player Small ability
+						const FGameplayTagContainer& BlockedTags = PlayerSmallInst->GetTestActivationBlockedTags();
+						const FGameplayTagContainer& OwnedTags = PlayerSmallInst->GetTestActivationOwnedTags();
+
+						TestTrue(TEXT("7.3: PlayerSmall blocked by Dead"), BlockedTags.HasTagExact(TagDead));
+						TestTrue(TEXT("7.3: PlayerSmall blocked by Stunned"), BlockedTags.HasTagExact(TagStunned));
+						TestFalse(TEXT("7.3: PlayerSmall self-block removed (does not block on SmallHitReacting)"), BlockedTags.HasTagExact(TagSmallHitReacting));
+						TestTrue(TEXT("7.3: PlayerSmall owns SmallHitReacting state tag"), OwnedTags.HasTagExact(TagSmallHitReacting));
+					}
+				}
+
+				FGameplayAbilitySpec* FoundEnemySpec = EnemyASC->FindAbilitySpecFromHandle(EnemySpecHandle);
+				TestNotNull(TEXT("7.3: FoundEnemySpec valid"), FoundEnemySpec);
+				if (FoundEnemySpec && FoundEnemySpec->Ability)
+				{
+					const UEnemySmallHitReactionAbility* EnemySmallInst = Cast<UEnemySmallHitReactionAbility>(FoundEnemySpec->Ability);
+					if (EnemySmallInst)
+					{
+						TestTrue(TEXT("7.3: EnemySmall enables retrigger"), EnemySmallInst->GetTestRetriggerInstancedAbility());
+
+						// Verify Trigger Tag and Trigger Source configuration
+						const TArray<FAbilityTriggerData>& EnemyTriggers = EnemySmallInst->GetTestAbilityTriggers();
+						TestEqual(TEXT("7.3: EnemySmall has 1 trigger registered"), EnemyTriggers.Num(), 1);
+						if (EnemyTriggers.Num() > 0)
+						{
+							TestTrue(TEXT("7.3: EnemySmall trigger tag is Event.Reaction.Enemy.Small"),
+								EnemyTriggers[0].TriggerTag.MatchesTagExact(TagEventEnemySmall));
+							TestEqual(TEXT("7.3: EnemySmall trigger source is GameplayEvent"),
+								EnemyTriggers[0].TriggerSource, EGameplayAbilityTriggerSource::GameplayEvent);
+						}
+
+						// Verify Tag containers on Enemy Small ability
+						const FGameplayTagContainer& EnemyBlockedTags = EnemySmallInst->GetTestActivationBlockedTags();
+						const FGameplayTagContainer& EnemyOwnedTags = EnemySmallInst->GetTestActivationOwnedTags();
+
+						TestTrue(TEXT("7.3: EnemySmall blocked by Dead"), EnemyBlockedTags.HasTagExact(TagDead));
+						TestTrue(TEXT("7.3: EnemySmall blocked by Stunned"), EnemyBlockedTags.HasTagExact(TagStunned));
+						TestFalse(TEXT("7.3: EnemySmall self-block removed (does not block on SmallHitReacting)"), EnemyBlockedTags.HasTagExact(TagSmallHitReacting));
+						TestTrue(TEXT("7.3: EnemySmall owns SmallHitReacting state tag"), EnemyOwnedTags.HasTagExact(TagSmallHitReacting));
+					}
+				}
+
+				PlayerASC->ClearAbility(PlayerSpecHandle);
+				EnemyASC->ClearAbility(EnemySpecHandle);
+			}
+		}
+
+		// 7.4 Real Direction Resolver & Latest TriggerEventData Win Validation (Real Production Resolver Pipeline)
+		// NOTE: Proves that consecutive hits calculate direction purely from the latest TriggerEventData payload.
+		{
+			UAnimMontage* DummyFront = NewObject<UAnimMontage>(GetTransientPackage());
+			UAnimMontage* DummyBack = NewObject<UAnimMontage>(GetTransientPackage());
+			UAnimMontage* DummyLeft = NewObject<UAnimMontage>(GetTransientPackage());
+			UAnimMontage* DummyRight = NewObject<UAnimMontage>(GetTransientPackage());
+
+			FHitReactionFourWayMontageSet MontageSet;
+			MontageSet.Front = DummyFront;
+			MontageSet.Back = DummyBack;
+			MontageSet.Left = DummyLeft;
+			MontageSet.Right = DummyRight;
+
+			// Target Player at (0, 0, 0) facing +X
+			Player->SetActorLocationAndRotation(FVector::ZeroVector, FRotator::ZeroRotator);
+
+			// Round 1: Attacker (Enemy) in FRONT of Player at (100, 0, 0) -> Front Montage
+			Enemy->SetActorLocation(FVector(100.0f, 0.0f, 0.0f));
+			FGameplayEventData EventDataRound1;
+			EventDataRound1.EventTag = TagEventPlayerSmall;
+			EventDataRound1.Instigator = Enemy;
+			EventDataRound1.Target = Player;
+
+			FVector ImpactDir1 = FHitReactionImpactResolver::ResolveImpactDirection(EventDataRound1, Player);
+			UAnimMontage* Selected1 = FHitReactionFourWayMontageSelector::SelectFromLocalAttackerDirection(ImpactDir1, MontageSet);
+			TestEqual(TEXT("7.4: Round 1 Front attacker selects Front montage"), Selected1, DummyFront);
+
+			// Round 2 (Retrigger with different direction): Attacker BEHIND Player at (-100, 0, 0) -> Back Montage wins
+			Enemy->SetActorLocation(FVector(-100.0f, 0.0f, 0.0f));
+			FGameplayEventData EventDataRound2;
+			EventDataRound2.EventTag = TagEventPlayerSmall;
+			EventDataRound2.Instigator = Enemy;
+			EventDataRound2.Target = Player;
+
+			FVector ImpactDir2 = FHitReactionImpactResolver::ResolveImpactDirection(EventDataRound2, Player);
+			UAnimMontage* Selected2 = FHitReactionFourWayMontageSelector::SelectFromLocalAttackerDirection(ImpactDir2, MontageSet);
+			TestEqual(TEXT("7.4: Round 2 Back attacker overwrites previous direction and selects Back montage"), Selected2, DummyBack);
+
+			// Round 3 (Retrigger with same direction): Attacker in FRONT of Player at (200, 0, 0) -> Front Montage selected
+			Enemy->SetActorLocation(FVector(200.0f, 0.0f, 0.0f));
+			FGameplayEventData EventDataRound3;
+			EventDataRound3.EventTag = TagEventPlayerSmall;
+			EventDataRound3.Instigator = Enemy;
+			EventDataRound3.Target = Player;
+
+			FVector ImpactDir3 = FHitReactionImpactResolver::ResolveImpactDirection(EventDataRound3, Player);
+			UAnimMontage* Selected3 = FHitReactionFourWayMontageSelector::SelectFromLocalAttackerDirection(ImpactDir3, MontageSet);
+			TestEqual(TEXT("7.4: Round 3 Front attacker selects Front montage again based on latest payload"), Selected3, DummyFront);
 		}
 	}
 

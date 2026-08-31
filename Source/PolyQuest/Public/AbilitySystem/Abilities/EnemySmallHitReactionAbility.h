@@ -46,6 +46,25 @@ public:
 	const FGameplayTagContainer& GetTestActivationOwnedTags() const { return ActivationOwnedTags; }
 	const FGameplayTagContainer& GetTestActivationBlockedTags() const { return ActivationBlockedTags; }
 	const TArray<FAbilityTriggerData>& GetTestAbilityTriggers() const { return AbilityTriggers; }
+	bool GetTestRetriggerInstancedAbility() const { return bRetriggerInstancedAbility; }
+	UAnimMontage* GetTestActiveMontage() const { return ActiveMontage.Get(); }
+	UAbilityTask_PlayMontageAndWait* GetTestMontageTask() const { return MontageTask.Get(); }
+	UAnimInstance* GetTestBoundAnimInstance() const { return BoundAnimInstance.Get(); }
+	bool GetTestEndAbilityRequested() const { return bEndAbilityRequested; }
+	void SetTestActiveMontage(UAnimMontage* InMontage) { ActiveMontage = InMontage; }
+	void SetTestBoundAnimInstance(UAnimInstance* InAnimInstance) { BoundAnimInstance = InAnimInstance; }
+	void SetTestMontageTask(UAbilityTask_PlayMontageAndWait* InTask) { MontageTask = InTask; }
+	void SetTestCurrentActorInfo(const FGameplayAbilityActorInfo* InActorInfo) { CurrentActorInfo = InActorInfo; }
+	void SetTestCurrentSpecHandle(const FGameplayAbilitySpecHandle InHandle) { CurrentSpecHandle = InHandle; }
+	void SetTestFrontSmallHitReactionMontage(UAnimMontage* InMontage) { FrontSmallHitReactionMontage = InMontage; }
+	void SetTestBackSmallHitReactionMontage(UAnimMontage* InMontage) { BackSmallHitReactionMontage = InMontage; }
+	void SetTestLeftSmallHitReactionMontage(UAnimMontage* InMontage) { LeftSmallHitReactionMontage = InMontage; }
+	void SetTestRightSmallHitReactionMontage(UAnimMontage* InMontage) { RightSmallHitReactionMontage = InMontage; }
+	void TestBindTaskCallbacks(UAbilityTask_PlayMontageAndWait* InTask);
+	void TestUnbindTaskCallbacks(UAbilityTask_PlayMontageAndWait* InTask);
+	void TestOnMontageCompleted() { OnMontageCompleted(); }
+	void TestOnMontageInterrupted() { OnMontageInterrupted(); }
+	void TestOnMontageCancelled() { OnMontageCancelled(); }
 #endif
 
 private:
@@ -78,7 +97,13 @@ private:
 	bool bEndAbilityRequested = false;
 
 	UFUNCTION()
-	void OnActiveMontageEnded(UAnimMontage* Montage, bool bInterrupted);
+	void OnMontageCompleted();
+
+	UFUNCTION()
+	void OnMontageInterrupted();
+
+	UFUNCTION()
+	void OnMontageCancelled();
 
 	bool ValidateActivationSetup(const FGameplayAbilityActorInfo* ActorInfo) const;
 	void EndFromMontage(bool bWasCancelled);

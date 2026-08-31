@@ -14,6 +14,7 @@ UEnemySmallHitReactionAbility::UEnemySmallHitReactionAbility()
 {
 	InstancingPolicy = EGameplayAbilityInstancingPolicy::InstancedPerActor;
 	NetExecutionPolicy = EGameplayAbilityNetExecutionPolicy::ServerOnly;
+	bRetriggerInstancedAbility = true;
 
 	SmallHitReactionAbilityTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Reaction.Enemy.Small")), false);
 	SmallHitReactionEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Reaction.Enemy.Small")), false);
@@ -25,7 +26,6 @@ UEnemySmallHitReactionAbility::UEnemySmallHitReactionAbility()
 	ActivationOwnedTags.AddTag(SmallHitReactingStateTag);
 	ActivationBlockedTags.AddTag(DeadStateTag);
 	ActivationBlockedTags.AddTag(StunnedStateTag);
-	ActivationBlockedTags.AddTag(SmallHitReactingStateTag);
 
 	FAbilityTriggerData TriggerData;
 	TriggerData.TriggerTag = SmallHitReactionEventTag;
@@ -51,6 +51,16 @@ void UEnemySmallHitReactionAbility::ActivateAbility(
 	const FGameplayEventData* TriggerEventData)
 {
 	bEndAbilityRequested = false;
+
+	if (MontageTask)
+	{
+		MontageTask->OnCompleted.RemoveDynamic(this, &UEnemySmallHitReactionAbility::OnMontageCompleted);
+		MontageTask->OnInterrupted.RemoveDynamic(this, &UEnemySmallHitReactionAbility::OnMontageInterrupted);
+		MontageTask->OnCancelled.RemoveDynamic(this, &UEnemySmallHitReactionAbility::OnMontageCancelled);
+		MontageTask->EndTask();
+		MontageTask = nullptr;
+	}
+
 	BoundAnimInstance = nullptr;
 	ActiveMontage = nullptr;
 
@@ -88,13 +98,24 @@ void UEnemySmallHitReactionAbility::ActivateAbility(
 		return;
 	}
 
-	MontageTask = UAbilityTask_PlayMontageAndWait::CreatePlayMontageAndWaitProxy(this, NAME_None, SelectedMontage);
-	if (!MontageTask)
+	UAbilityTask_PlayMontageAndWait* CreatedMontageTask = UAbilityTask_PlayMontageAndWait::CreatePlayMontageAndWaitProxy(
+		this,
+		NAME_None,
+		SelectedMontage,
+		1.0f,
+		NAME_None,
+		true,
+		1.0f,
+		0.0f,
+		true);
+	if (!CreatedMontageTask)
 	{
 		UE_LOG(LogPolyQuest, Warning, TEXT("Enemy small hit reaction activation aborted for '%s': failed to create a montage AbilityTask."), *GetNameSafe(EnemyCharacter));
 		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
 		return;
 	}
+
+	MontageTask = CreatedMontageTask;
 
 	if (!CommitAbility(Handle, ActorInfo, ActivationInfo))
 	{
@@ -103,14 +124,28 @@ void UEnemySmallHitReactionAbility::ActivateAbility(
 		return;
 	}
 
+	if (bEndAbilityRequested || MontageTask.Get() != CreatedMontageTask || !IsValid(CreatedMontageTask) || CreatedMontageTask->IsFinished())
+	{
+		return;
+	}
+
 	BoundAnimInstance = AnimInstance;
 	ActiveMontage = SelectedMontage;
-	BoundAnimInstance->OnMontageEnded.RemoveDynamic(this, &UEnemySmallHitReactionAbility::OnActiveMontageEnded);
-	BoundAnimInstance->OnMontageEnded.AddDynamic(this, &UEnemySmallHitReactionAbility::OnActiveMontageEnded);
+
+	MontageTask->OnCompleted.AddDynamic(this, &UEnemySmallHitReactionAbility::OnMontageCompleted);
+	MontageTask->OnInterrupted.AddDynamic(this, &UEnemySmallHitReactionAbility::OnMontageInterrupted);
+	MontageTask->OnCancelled.AddDynamic(this, &UEnemySmallHitReactionAbility::OnMontageCancelled);
+
 	MontageTask->ReadyForActivation();
 
 	if (bEndAbilityRequested)
 	{
+		return;
+	}
+
+	if (MontageTask.Get() != CreatedMontageTask || !IsValid(CreatedMontageTask) || CreatedMontageTask->IsFinished() || !CreatedMontageTask->IsActive())
+	{
+		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
 		return;
 	}
 
@@ -136,9 +171,15 @@ void UEnemySmallHitReactionAbility::EndAbility(
 
 	bEndAbilityRequested = true;
 
+	if (MontageTask)
+	{
+		MontageTask->OnCompleted.RemoveDynamic(this, &UEnemySmallHitReactionAbility::OnMontageCompleted);
+		MontageTask->OnInterrupted.RemoveDynamic(this, &UEnemySmallHitReactionAbility::OnMontageInterrupted);
+		MontageTask->OnCancelled.RemoveDynamic(this, &UEnemySmallHitReactionAbility::OnMontageCancelled);
+	}
+
 	if (BoundAnimInstance)
 	{
-		BoundAnimInstance->OnMontageEnded.RemoveDynamic(this, &UEnemySmallHitReactionAbility::OnActiveMontageEnded);
 		if (ActiveMontage && BoundAnimInstance->Montage_IsActive(ActiveMontage.Get()))
 		{
 			BoundAnimInstance->Montage_Stop(0.0f, ActiveMontage.Get());
@@ -157,14 +198,19 @@ void UEnemySmallHitReactionAbility::EndAbility(
 	Super::EndAbility(Handle, ActorInfo, ActivationInfo, bReplicateEndAbility, bWasCancelled);
 }
 
-void UEnemySmallHitReactionAbility::OnActiveMontageEnded(UAnimMontage* Montage, bool bInterrupted)
+void UEnemySmallHitReactionAbility::OnMontageCompleted()
 {
-	if (bEndAbilityRequested || Montage != ActiveMontage.Get())
-	{
-		return;
-	}
+	EndFromMontage(false);
+}
 
-	EndFromMontage(bInterrupted);
+void UEnemySmallHitReactionAbility::OnMontageInterrupted()
+{
+	EndFromMontage(true);
+}
+
+void UEnemySmallHitReactionAbility::OnMontageCancelled()
+{
+	EndFromMontage(true);
 }
 
 bool UEnemySmallHitReactionAbility::ValidateActivationSetup(const FGameplayAbilityActorInfo* ActorInfo) const
@@ -192,3 +238,25 @@ void UEnemySmallHitReactionAbility::EndFromMontage(bool bWasCancelled)
 		EndAbility(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, true, bWasCancelled);
 	}
 }
+
+#if WITH_DEV_AUTOMATION_TESTS
+void UEnemySmallHitReactionAbility::TestBindTaskCallbacks(UAbilityTask_PlayMontageAndWait* InTask)
+{
+	if (InTask)
+	{
+		InTask->OnCompleted.AddDynamic(this, &UEnemySmallHitReactionAbility::OnMontageCompleted);
+		InTask->OnInterrupted.AddDynamic(this, &UEnemySmallHitReactionAbility::OnMontageInterrupted);
+		InTask->OnCancelled.AddDynamic(this, &UEnemySmallHitReactionAbility::OnMontageCancelled);
+	}
+}
+
+void UEnemySmallHitReactionAbility::TestUnbindTaskCallbacks(UAbilityTask_PlayMontageAndWait* InTask)
+{
+	if (InTask)
+	{
+		InTask->OnCompleted.RemoveDynamic(this, &UEnemySmallHitReactionAbility::OnMontageCompleted);
+		InTask->OnInterrupted.RemoveDynamic(this, &UEnemySmallHitReactionAbility::OnMontageInterrupted);
+		InTask->OnCancelled.RemoveDynamic(this, &UEnemySmallHitReactionAbility::OnMontageCancelled);
+	}
+}
+#endif
