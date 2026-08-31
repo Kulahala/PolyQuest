@@ -70,6 +70,7 @@ public:
 	void SetTestBypassAudioPlayback(const bool bBypass) { bTestBypassAudioPlayback = bBypass; }
 	int32 GetTestGuardSuccessSoundDispatchCount() const { return TestGuardSuccessSoundDispatchCount; }
 	FVector GetTestLastGuardSuccessSoundLocation() const { return TestLastGuardSuccessSoundLocation; }
+	const FGameplayTagContainer& GetTestDefenseCancelableAbilityTags() const { return DefenseCancelableAbilityTags; }
 #endif
 
 private:
@@ -119,7 +120,7 @@ private:
 	FGameplayTag GuardBreakEventTag;
 	FGameplayTag DeadStateTag;
 	FGameplayTag StunnedStateTag;
-	FGameplayTagContainer CancelableMeleeAbilityTags;
+	FGameplayTagContainer DefenseCancelableAbilityTags;
 	bool bGuardActive = false;
 	bool bEndAbilityRequested = false;
 

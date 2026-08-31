@@ -218,7 +218,7 @@ bool FHitReactionAutomationTest::RunTest(const FString& Parameters)
 		TEXT("Ability.Attack.Light"),
 		TEXT("Ability.Attack.Charged"),
 		TEXT("Ability.Attack.Sprint"),
-		TEXT("Ability.Skill.Melee"),
+		TEXT("Ability.Action.CancelableBy.Reaction"),
 		TEXT("Ability.Dodge"),
 		TEXT("Ability.Movement.Sprint"),
 		TEXT("Ability.Movement.Jump"),
@@ -503,6 +503,11 @@ bool FHitReactionAutomationTest::RunTest(const FString& Parameters)
 				GuardBreakCDO->GetAbilitiesToCancel().HasTagExact(TagAbilityPlayerLaunch));
 			TestTrue(TEXT("GuardBreak cancels Guard (Ability.Defense.Guard)"),
 				GuardBreakCDO->GetAbilitiesToCancel().HasTagExact(FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Defense.Guard")), false)));
+			const FGameplayTag TagCancelByReaction = FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Action.CancelableBy.Reaction")), false);
+			const FGameplayTag TagLegacyMeleeSkill = FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Skill.Melee")), false);
+			TestFalse(TEXT("Legacy Ability.Skill.Melee tag is NOT registered/valid"), TagLegacyMeleeSkill.IsValid());
+			TestTrue(TEXT("GuardBreak cancels Ability.Action.CancelableBy.Reaction"),
+				GuardBreakCDO->GetAbilitiesToCancel().HasTagExact(TagCancelByReaction));
 			TestEqual(TEXT("GuardBreak AbilitiesToCancel has exactly 10 tags"),
 				GuardBreakCDO->GetAbilitiesToCancel().Num(), 10);
 		}

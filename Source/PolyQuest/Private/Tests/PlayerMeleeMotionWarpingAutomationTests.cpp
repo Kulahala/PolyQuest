@@ -1671,16 +1671,28 @@ bool FPlayerMeleeMotionWarpingAutomationTest::RunTest(const FString&)
 								PlayerController->UnPossess();
 								PlayerASC->InitAbilityActorInfo(Player, Player);
 
-								const FGameplayTag MeleeSkillTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Skill.Melee")), false);
+								const FGameplayTag TeardownOnUnpossessTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Action.Teardown.OnUnpossess")), false);
 								const FGameplayTag GuardTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Defense.Guard")), false);
 
-								// Configure CDO tags for the test ability classes
-								UTestMeleeTrailAbility::StaticClass()->GetDefaultObject<UGameplayAbility>()->AbilityTags.AddTag(MeleeSkillTag);
-								UTestLaunchFacingSmoothingAbility::StaticClass()->GetDefaultObject<UGameplayAbility>()->AbilityTags.AddTag(GuardTag);
+								UGameplayAbility* TrailCDO = UTestMeleeTrailAbility::StaticClass()->GetDefaultObject<UGameplayAbility>();
+								UGameplayAbility* GuardCDO = UTestLaunchFacingSmoothingAbility::StaticClass()->GetDefaultObject<UGameplayAbility>();
 
-								// 1. Grant trail ability with Melee Skill tag
+								const FGameplayTagContainer OriginalTrailCDOTags = TrailCDO ? TrailCDO->AbilityTags : FGameplayTagContainer();
+								const FGameplayTagContainer OriginalGuardCDOTags = GuardCDO ? GuardCDO->AbilityTags : FGameplayTagContainer();
+
+								// Configure CDO tags for the test ability classes
+								if (TrailCDO)
+								{
+									TrailCDO->AbilityTags.AddTag(TeardownOnUnpossessTag);
+								}
+								if (GuardCDO)
+								{
+									GuardCDO->AbilityTags.AddTag(GuardTag);
+								}
+
+								// 1. Grant trail ability with Teardown.OnUnpossess tag
 								FGameplayAbilitySpec SkillSpec(UTestMeleeTrailAbility::StaticClass(), 1, INDEX_NONE, Player);
-								SkillSpec.DynamicAbilityTags.AddTag(MeleeSkillTag);
+								SkillSpec.DynamicAbilityTags.AddTag(TeardownOnUnpossessTag);
 								const FGameplayAbilitySpecHandle SkillHandle = PlayerASC->GiveAbility(SkillSpec);
 
 								// 2. Grant smoothing ability with Guard tag
@@ -1702,7 +1714,7 @@ bool FPlayerMeleeMotionWarpingAutomationTest::RunTest(const FString&)
 								// Trigger UnPossess
 								Player->TriggerTestUnPossessed();
 
-								TestFalse(TEXT("UnPossessed cancelled Ability.Skill.Melee ability"), ActiveSkillSpec && ActiveSkillSpec->IsActive());
+								TestFalse(TEXT("UnPossessed cancelled Ability.Action.Teardown.OnUnpossess ability"), ActiveSkillSpec && ActiveSkillSpec->IsActive());
 								TestTrue(TEXT("UnPossessed did NOT cancel Ability.Defense.Guard ability"), ActiveGuardSpec && ActiveGuardSpec->IsActive());
 
 								// Cleanup test specs and CDO tags
@@ -1716,8 +1728,15 @@ bool FPlayerMeleeMotionWarpingAutomationTest::RunTest(const FString&)
 								PlayerASC->ClearAbility(SkillHandle);
 								PlayerASC->ClearAbility(GuardHandle);
 
-								UTestMeleeTrailAbility::StaticClass()->GetDefaultObject<UGameplayAbility>()->AbilityTags.Reset();
-								UTestLaunchFacingSmoothingAbility::StaticClass()->GetDefaultObject<UGameplayAbility>()->AbilityTags.Reset();
+								// Restore original CDO tags precisely (avoid Reset() pollution)
+								if (TrailCDO)
+								{
+									TrailCDO->AbilityTags = OriginalTrailCDOTags;
+								}
+								if (GuardCDO)
+								{
+									GuardCDO->AbilityTags = OriginalGuardCDOTags;
+								}
 
 								// Restore controller possession
 								PlayerController->Possess(Player);

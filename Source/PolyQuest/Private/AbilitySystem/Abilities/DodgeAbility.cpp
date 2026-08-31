@@ -31,7 +31,7 @@ UDodgeAbility::UDodgeAbility()
 	LightAttackAbilityTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Attack.Light")), false);
 	ChargedAttackAbilityTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Attack.Charged")), false);
 	SprintAttackAbilityTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Attack.Sprint")), false);
-	MeleeSkillAbilityTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Skill.Melee")), false);
+	CancelableByDodgeAbilityTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Action.CancelableBy.Dodge")), false);
 	PlayerLaunchReactionAbilityTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Reaction.Player.Launch")), false);
 	AttackingStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Action.Attacking")), false);
 	DodgingStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Action.Dodging")), false);
@@ -98,7 +98,7 @@ void UDodgeAbility::ActivateAbility(
 
 	if (!AbilitySystemComponent || !PlayerCharacter || !AnimInstance || !DodgeMontage || !CostGameplayEffectClass
 		|| !StaminaRegenDelayGameplayEffectClass || !InvulnerabilityGameplayEffectClass || !PrimaryAttackAbilityTag.IsValid()
-		|| !LightAttackAbilityTag.IsValid() || !ChargedAttackAbilityTag.IsValid() || !SprintAttackAbilityTag.IsValid() || !MeleeSkillAbilityTag.IsValid()
+		|| !LightAttackAbilityTag.IsValid() || !ChargedAttackAbilityTag.IsValid() || !SprintAttackAbilityTag.IsValid() || !CancelableByDodgeAbilityTag.IsValid()
 		|| !PlayerLaunchReactionAbilityTag.IsValid()
 		|| !AttackingStateTag.IsValid() || !DodgingStateTag.IsValid() || !HitReactingStateTag.IsValid() || !DodgeCancelableStateTag.IsValid()
 		|| !InvulnerabilityBeginEventTag.IsValid() || !InvulnerabilityEndEventTag.IsValid()
@@ -143,9 +143,9 @@ void UDodgeAbility::ActivateAbility(
 		AbilityTagsToCancel.AddTag(LightAttackAbilityTag);
 		AbilityTagsToCancel.AddTag(ChargedAttackAbilityTag);
 		AbilityTagsToCancel.AddTag(SprintAttackAbilityTag);
-		if (MeleeSkillAbilityTag.IsValid())
+		if (CancelableByDodgeAbilityTag.IsValid())
 		{
-			AbilityTagsToCancel.AddTag(MeleeSkillAbilityTag);
+			AbilityTagsToCancel.AddTag(CancelableByDodgeAbilityTag);
 		}
 		if (PlayerLaunchReactionAbilityTag.IsValid())
 		{

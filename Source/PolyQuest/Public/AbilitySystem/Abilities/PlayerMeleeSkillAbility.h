@@ -124,7 +124,10 @@ private:
 	FGameplayTag RateWindowEndEventTag;
 	FGameplayTag DodgeCancelableStateTag;
 	FGameplayTag DefenseCancelableStateTag;
-	FGameplayTag MeleeSkillAbilityTag;
+	FGameplayTag CancelableByDodgeTag;
+	FGameplayTag CancelableByDefenseTag;
+	FGameplayTag CancelableByReactionTag;
+	FGameplayTag TeardownOnUnpossessTag;
 	bool bDodgeCancelable = false;
 	bool bRuntimeActionTagsApplied = false;
 	bool bRateWindowApplied = false;
@@ -153,7 +156,7 @@ private:
 
 	void EndFromMontage(bool bWasCancelled);
 	bool IsGameplayEventFromActiveMontage(const FGameplayEventData& Payload) const;
-	void EnsureMeleeSkillCategoryTag();
+	void EnsureNativeCapabilityTags();
 	void OpenTraceWindow(const TArray<FName>& InTraceSourceNames);
 	void CloseTraceWindow();
 	void SetDodgeCancelable(bool bShouldBeCancelable);

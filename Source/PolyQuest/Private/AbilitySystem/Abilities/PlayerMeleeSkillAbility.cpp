@@ -23,10 +23,14 @@ UPlayerMeleeSkillAbility::UPlayerMeleeSkillAbility()
 	InstancingPolicy = EGameplayAbilityInstancingPolicy::InstancedPerActor;
 	NetExecutionPolicy = EGameplayAbilityNetExecutionPolicy::ServerOnly;
 
-	// The general melee-skill category tag used by melee action cancellation (Dodge/Guard/Parry/GuardBreak);
-	// concrete skill identity tags and Cooldown GE Granted tags are authored per Gameplay Ability asset.
-	MeleeSkillAbilityTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Skill.Melee")), false);
-	AbilityTags.AddTag(MeleeSkillAbilityTag);
+	// Native capability tags used by action cancellation (Dodge/Defense/Reaction) and teardown;
+	// concrete skill identity tags (e.g. Ability.Skill.Whirlwind) and Cooldown GE Granted tags are authored per Gameplay Ability asset.
+	CancelableByDodgeTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Action.CancelableBy.Dodge")), false);
+	CancelableByDefenseTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Action.CancelableBy.Defense")), false);
+	CancelableByReactionTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Action.CancelableBy.Reaction")), false);
+	TeardownOnUnpossessTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Action.Teardown.OnUnpossess")), false);
+
+	EnsureNativeCapabilityTags();
 
 	ActivationBlockedTags.AddTag(FGameplayTag::RequestGameplayTag(FName(TEXT("State.Action.Attacking")), false));
 	ActivationBlockedTags.AddTag(FGameplayTag::RequestGameplayTag(FName(TEXT("State.Action.Dodging")), false));
@@ -53,24 +57,36 @@ UPlayerMeleeSkillAbility::UPlayerMeleeSkillAbility()
 void UPlayerMeleeSkillAbility::PostLoad()
 {
 	Super::PostLoad();
-	EnsureMeleeSkillCategoryTag();
+	EnsureNativeCapabilityTags();
 }
 
 #if WITH_EDITOR
 void UPlayerMeleeSkillAbility::PostCDOCompiled(const FPostCDOCompiledContext& Context)
 {
 	Super::PostCDOCompiled(Context);
-	EnsureMeleeSkillCategoryTag();
+	EnsureNativeCapabilityTags();
 }
 #endif
 
-void UPlayerMeleeSkillAbility::EnsureMeleeSkillCategoryTag()
+void UPlayerMeleeSkillAbility::EnsureNativeCapabilityTags()
 {
-	// Blueprint defaults can replace the inherited tag container. This category
-	// tag is native lifecycle identity, while concrete skill tags stay authored.
-	if (MeleeSkillAbilityTag.IsValid())
+	// Blueprint defaults can replace the inherited tag container. These capability
+	// tags are native lifecycle identity, while concrete skill tags stay authored.
+	if (CancelableByDodgeTag.IsValid())
 	{
-		AbilityTags.AddTag(MeleeSkillAbilityTag);
+		AbilityTags.AddTag(CancelableByDodgeTag);
+	}
+	if (CancelableByDefenseTag.IsValid())
+	{
+		AbilityTags.AddTag(CancelableByDefenseTag);
+	}
+	if (CancelableByReactionTag.IsValid())
+	{
+		AbilityTags.AddTag(CancelableByReactionTag);
+	}
+	if (TeardownOnUnpossessTag.IsValid())
+	{
+		AbilityTags.AddTag(TeardownOnUnpossessTag);
 	}
 }
 
@@ -91,7 +107,7 @@ bool UPlayerMeleeSkillAbility::CanActivateAbility(
 	const UCharacterMovementComponent* MovementComponent = PlayerCharacter ? PlayerCharacter->GetCharacterMovement() : nullptr;
 	return AbilitySystemComponent && PlayerCharacter && MovementComponent && MovementComponent->IsMovingOnGround()
 		&& SkillMontage && CostGameplayEffectClass && CooldownGameplayEffectClass && DamageGameplayEffectClass && StaminaRegenDelayGameplayEffectClass
-		&& MeleeSkillAbilityTag.IsValid();
+		&& CancelableByDodgeTag.IsValid() && CancelableByDefenseTag.IsValid() && CancelableByReactionTag.IsValid() && TeardownOnUnpossessTag.IsValid();
 }
 
 void UPlayerMeleeSkillAbility::ActivateAbility(
@@ -126,7 +142,7 @@ void UPlayerMeleeSkillAbility::ActivateAbility(
 	const UCharacterMovementComponent* MovementComponent = PlayerCharacter->GetCharacterMovement();
 	if (!IsValid(AnimInstance) || !IsValid(MovementComponent) || !MovementComponent->IsMovingOnGround()
 		|| !IsValid(SkillMontage) || !CostGameplayEffectClass || !CooldownGameplayEffectClass || !DamageGameplayEffectClass || !StaminaRegenDelayGameplayEffectClass
-		|| !MeleeSkillAbilityTag.IsValid()
+		|| !CancelableByDodgeTag.IsValid() || !CancelableByDefenseTag.IsValid() || !CancelableByReactionTag.IsValid() || !TeardownOnUnpossessTag.IsValid()
 		|| !AttackingStateTag.IsValid() || !MovementInputBlockedTag.IsValid() || !JumpInputBlockedTag.IsValid() || !StaminaRegenBlockedTag.IsValid()
 		|| !TraceWindowBeginEventTag.IsValid() || !TraceWindowEndEventTag.IsValid()
 		|| !DodgeCancelWindowBeginEventTag.IsValid() || !DodgeCancelWindowEndEventTag.IsValid() || !DodgeCancelableStateTag.IsValid() || !DefenseCancelableStateTag.IsValid()

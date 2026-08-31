@@ -69,6 +69,7 @@ public:
 	int32 GetTestParrySuccessFeedbackCount() const { return TestParrySuccessFeedbackCount; }
 	int32 GetTestParrySuccessSoundDispatchCount() const { return TestParrySuccessSoundDispatchCount; }
 	FVector GetTestLastParrySuccessSoundLocation() const { return TestLastParrySuccessSoundLocation; }
+	const FGameplayTagContainer& GetTestDefenseCancelableAbilityTags() const { return DefenseCancelableAbilityTags; }
 #endif
 
 private:
@@ -116,7 +117,7 @@ private:
 	FGameplayTag DefenseCancelableStateTag;
 	FGameplayTag DeadStateTag;
 	FGameplayTag StunnedStateTag;
-	FGameplayTagContainer CancelableMeleeAbilityTags;
+	FGameplayTagContainer DefenseCancelableAbilityTags;
 	bool bParryWindowOpen = false;
 	bool bParryActiveTagApplied = false;
 	bool bMovementLockedByParry = false;

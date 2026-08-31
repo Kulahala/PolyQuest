@@ -262,12 +262,12 @@ void APlayerCharacter::UnPossessed()
 			ASC->CancelAbilities(&LightAttackTags);
 		}
 
-		const FGameplayTag MeleeSkillTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Skill.Melee")), false);
-		if (MeleeSkillTag.IsValid())
+		const FGameplayTag TeardownOnUnpossessTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Action.Teardown.OnUnpossess")), false);
+		if (TeardownOnUnpossessTag.IsValid())
 		{
-			FGameplayTagContainer MeleeSkillTags;
-			MeleeSkillTags.AddTag(MeleeSkillTag);
-			ASC->CancelAbilities(&MeleeSkillTags);
+			FGameplayTagContainer TeardownTags;
+			TeardownTags.AddTag(TeardownOnUnpossessTag);
+			ASC->CancelAbilities(&TeardownTags);
 		}
 	}
 

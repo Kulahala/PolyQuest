@@ -49,11 +49,11 @@ UPlayerParryAbility::UPlayerParryAbility()
 	ActivationBlockedTags.AddTag(StunnedStateTag);
 	ActivationBlockedTags.AddTag(FGameplayTag::RequestGameplayTag(FName(TEXT("State.Action.Dodging")), false));
 
-	CancelableMeleeAbilityTags.AddTag(FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Attack.Primary")), false));
-	CancelableMeleeAbilityTags.AddTag(FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Attack.Light")), false));
-	CancelableMeleeAbilityTags.AddTag(FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Attack.Charged")), false));
-	CancelableMeleeAbilityTags.AddTag(FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Attack.Sprint")), false));
-	CancelableMeleeAbilityTags.AddTag(FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Skill.Melee")), false));
+	DefenseCancelableAbilityTags.AddTag(FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Attack.Primary")), false));
+	DefenseCancelableAbilityTags.AddTag(FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Attack.Light")), false));
+	DefenseCancelableAbilityTags.AddTag(FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Attack.Charged")), false));
+	DefenseCancelableAbilityTags.AddTag(FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Attack.Sprint")), false));
+	DefenseCancelableAbilityTags.AddTag(FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Action.CancelableBy.Defense")), false));
 }
 
 bool UPlayerParryAbility::CanActivateAbility(
@@ -157,7 +157,7 @@ void UPlayerParryAbility::ActivateAbility(
 	PlayerCharacter->CancelActiveGuardAfterConfirmedAction(true);
 	if (DefenseCancelableStateTag.IsValid() && CharacterASC->HasMatchingGameplayTag(DefenseCancelableStateTag))
 	{
-		CharacterASC->CancelAbilities(&CancelableMeleeAbilityTags, nullptr, this);
+		CharacterASC->CancelAbilities(&DefenseCancelableAbilityTags, nullptr, this);
 	}
 }
 
@@ -399,7 +399,7 @@ bool UPlayerParryAbility::ValidateActivationSetup(const FGameplayAbilityActorInf
 		&& ParryWindowBeginEventTag.IsValid() && ParryWindowEndEventTag.IsValid() && ParryPoiseDataTag.IsValid()
 		&& AttackingStateTag.IsValid() && DefenseCancelableStateTag.IsValid()
 		&& DeadStateTag.IsValid() && StunnedStateTag.IsValid()
-		&& CancelableMeleeAbilityTags.Num() == 5;
+		&& DefenseCancelableAbilityTags.Num() == 5;
 }
 
 bool UPlayerParryAbility::IsParryWindowEventFromActiveMontage(const FGameplayEventData& Payload) const

@@ -105,7 +105,7 @@ private:
 	FGameplayTag LightAttackAbilityTag;
 	FGameplayTag ChargedAttackAbilityTag;
 	FGameplayTag SprintAttackAbilityTag;
-	FGameplayTag MeleeSkillAbilityTag;
+	FGameplayTag CancelableByDodgeAbilityTag;
 	FGameplayTag PlayerLaunchReactionAbilityTag;
 	FGameplayTag AttackingStateTag;
 	FGameplayTag DodgingStateTag;

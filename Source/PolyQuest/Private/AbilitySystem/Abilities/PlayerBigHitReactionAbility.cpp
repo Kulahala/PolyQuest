@@ -43,7 +43,7 @@ UPlayerBigHitReactionAbility::UPlayerBigHitReactionAbility()
 		TEXT("Ability.Attack.Light"),
 		TEXT("Ability.Attack.Charged"),
 		TEXT("Ability.Attack.Sprint"),
-		TEXT("Ability.Skill.Melee"),
+		TEXT("Ability.Action.CancelableBy.Reaction"),
 		TEXT("Ability.Dodge"),
 		TEXT("Ability.Movement.Sprint"),
 		TEXT("Ability.Movement.Jump"),

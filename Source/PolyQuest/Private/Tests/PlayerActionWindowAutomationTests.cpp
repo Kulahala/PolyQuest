@@ -9,6 +9,7 @@
 #include "AbilitySystem/Abilities/DodgeAbility.h"
 #include "AbilitySystem/Abilities/PlayerGuardAbility.h"
 #include "AbilitySystem/Abilities/PlayerLaunchReactionAbility.h"
+#include "AbilitySystem/Abilities/PlayerMeleeSkillAbility.h"
 #include "AbilitySystem/Abilities/PlayerParryAbility.h"
 #include "AbilitySystem/CharacterAttributeSet.h"
 #include "Animation/AnimMontage.h"
@@ -417,19 +418,61 @@ bool FPlayerActionWindowAutomationTest::RunTest(const FString& Parameters)
 	}
 
 	// -------------------------------------------------------------------------
-	// SECTION 7: Multi-Action Cancel Conformance (Guard & Parry cancel Bow)
+	// SECTION 7: Multi-Action Cancel Conformance (Guard & Parry cancel Bow & Skills)
 	// -------------------------------------------------------------------------
 	{
 		const UPlayerGuardAbility* GuardCDO = UPlayerGuardAbility::StaticClass()->GetDefaultObject<UPlayerGuardAbility>();
 		const UPlayerParryAbility* ParryCDO = UPlayerParryAbility::StaticClass()->GetDefaultObject<UPlayerParryAbility>();
+		const UPlayerMeleeSkillAbility* SkillCDO = UPlayerMeleeSkillAbility::StaticClass()->GetDefaultObject<UPlayerMeleeSkillAbility>();
 		TestNotNull(TEXT("Guard CDO exists"), GuardCDO);
 		TestNotNull(TEXT("Parry CDO exists"), ParryCDO);
+		TestNotNull(TEXT("Skill CDO exists"), SkillCDO);
 
-		// 7.1 Verify that CancelableMeleeAbilityTags in Guard and Parry CDOs include PrimaryAttackAbilityTag (Bow)
-		// This guarantees that when Bow is in a CancelWindow, Guard and Parry will cancel it.
-		// Both Guard and Parry register Ability.Attack.Primary, Light, Charged, Sprint, and Skill.Melee.
-		const FGameplayTag TagMeleeSkill = FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Skill.Melee")), false);
-		TestTrue(TEXT("Tag Ability.Skill.Melee is valid"), TagMeleeSkill.IsValid());
+		// 7.1 Verify 4 new orthogonal capability/teardown tags are registered and valid, and legacy tag is unregistered
+		const FGameplayTag TagCancelByDodge = FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Action.CancelableBy.Dodge")), false);
+		const FGameplayTag TagCancelByDefense = FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Action.CancelableBy.Defense")), false);
+		const FGameplayTag TagCancelByReaction = FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Action.CancelableBy.Reaction")), false);
+		const FGameplayTag TagTeardownOnUnpossess = FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Action.Teardown.OnUnpossess")), false);
+		const FGameplayTag TagLegacyMeleeSkill = FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Skill.Melee")), false);
+
+		TestTrue(TEXT("Tag Ability.Action.CancelableBy.Dodge is valid"), TagCancelByDodge.IsValid());
+		TestTrue(TEXT("Tag Ability.Action.CancelableBy.Defense is valid"), TagCancelByDefense.IsValid());
+		TestTrue(TEXT("Tag Ability.Action.CancelableBy.Reaction is valid"), TagCancelByReaction.IsValid());
+		TestTrue(TEXT("Tag Ability.Action.Teardown.OnUnpossess is valid"), TagTeardownOnUnpossess.IsValid());
+		TestFalse(TEXT("Legacy Ability.Skill.Melee tag is NOT registered/valid"), TagLegacyMeleeSkill.IsValid());
+
+		// 7.2 Verify UPlayerMeleeSkillAbility CDO has all 4 capability tags
+		if (SkillCDO)
+		{
+			TestTrue(TEXT("Skill CDO contains CancelableBy.Dodge"), SkillCDO->AbilityTags.HasTagExact(TagCancelByDodge));
+			TestTrue(TEXT("Skill CDO contains CancelableBy.Defense"), SkillCDO->AbilityTags.HasTagExact(TagCancelByDefense));
+			TestTrue(TEXT("Skill CDO contains CancelableBy.Reaction"), SkillCDO->AbilityTags.HasTagExact(TagCancelByReaction));
+			TestTrue(TEXT("Skill CDO contains Teardown.OnUnpossess"), SkillCDO->AbilityTags.HasTagExact(TagTeardownOnUnpossess));
+		}
+
+		// 7.3 Verify Guard CDO DefenseCancelableAbilityTags
+		if (GuardCDO)
+		{
+			const FGameplayTagContainer& GuardCancelTags = GuardCDO->GetTestDefenseCancelableAbilityTags();
+			TestEqual(TEXT("Guard CDO DefenseCancelableAbilityTags has exactly 5 tags"), GuardCancelTags.Num(), 5);
+			TestTrue(TEXT("Guard CDO cancels Ability.Attack.Primary"), GuardCancelTags.HasTagExact(FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Attack.Primary")), false)));
+			TestTrue(TEXT("Guard CDO cancels Ability.Attack.Light"), GuardCancelTags.HasTagExact(FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Attack.Light")), false)));
+			TestTrue(TEXT("Guard CDO cancels Ability.Attack.Charged"), GuardCancelTags.HasTagExact(FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Attack.Charged")), false)));
+			TestTrue(TEXT("Guard CDO cancels Ability.Attack.Sprint"), GuardCancelTags.HasTagExact(FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Attack.Sprint")), false)));
+			TestTrue(TEXT("Guard CDO cancels Ability.Action.CancelableBy.Defense"), GuardCancelTags.HasTagExact(TagCancelByDefense));
+		}
+
+		// 7.4 Verify Parry CDO DefenseCancelableAbilityTags
+		if (ParryCDO)
+		{
+			const FGameplayTagContainer& ParryCancelTags = ParryCDO->GetTestDefenseCancelableAbilityTags();
+			TestEqual(TEXT("Parry CDO DefenseCancelableAbilityTags has exactly 5 tags"), ParryCancelTags.Num(), 5);
+			TestTrue(TEXT("Parry CDO cancels Ability.Attack.Primary"), ParryCancelTags.HasTagExact(FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Attack.Primary")), false)));
+			TestTrue(TEXT("Parry CDO cancels Ability.Attack.Light"), ParryCancelTags.HasTagExact(FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Attack.Light")), false)));
+			TestTrue(TEXT("Parry CDO cancels Ability.Attack.Charged"), ParryCancelTags.HasTagExact(FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Attack.Charged")), false)));
+			TestTrue(TEXT("Parry CDO cancels Ability.Attack.Sprint"), ParryCancelTags.HasTagExact(FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Attack.Sprint")), false)));
+			TestTrue(TEXT("Parry CDO cancels Ability.Action.CancelableBy.Defense"), ParryCancelTags.HasTagExact(TagCancelByDefense));
+		}
 	}
 
 	// -------------------------------------------------------------------------
