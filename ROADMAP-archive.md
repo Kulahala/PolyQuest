@@ -1097,3 +1097,12 @@ TODO-03A3E World Pickup Interaction Prompt v1
 - **静态与复核证据**：Gemini 报告批准文件 Rider error-level 检查、VS2022 编译和 `git diff --check` 通过；Main 本阶段执行一轮 diff-first、直接调用边界核对和 defect-first fresh review，未发现 P0/P1/P2 blocker。3.17 的旧 target 清理先发生在 `StartComboEntry()`，因此其 evaluator 自身清理断言存在非阻塞 P3 覆盖限制；不把该限制写成运行时失败。
 - **未解决债务**：旧 `MaxWarpDistance` 到新字段的 authored-field migration、相关 GA/Combo/Montage/Notify/Modifier/Root Motion/目标名的逐项 Editor readback，以及独立用户手动 `PolyQuestEditor` 编译收据仍未形成。关闭条件是用户完成指定 readback/编译，或对不适用资产给出真实 evidence-backed no-adoption；在此之前不宣称 authored adoption 或干净可复现基线。
 - **排除项与提交边界**：全部 `Content/**`、`Config/Automation/Presets/1.json`、其他 Source/Config/文档 WIP、Blueprint/Montage/AnimBP/DataAsset/地图、`PolyQuest.uproject`、`Build.cs`、Gameplay Tags、Input、旧 Test 项目和用户资产均未纳入；无资产清理、回滚、导入或 Editor 写入。下一阶段指针为 `TODO-03H5：Post-Motion-Warp Combat Health Review v1`。
+
+## TODO-03H5 Post-Motion-Warp Combat Health Review Closeout (2026-08-31; HEAD `a3e0f78`, working-tree not clean)
+
+> 本节记录 TODO-03H5 的 Review-Only 收口。快照基于当前父提交 `a3e0f78a1cfd9281d5ed9a29e4e9e7e4994d4535`；工作区仍含用户的 `Config/Automation/Presets/1.json` 与大量 `Content/**` WIP，因此不是干净 checkout 快照。本节仅作历史追溯，不替代源码、Config 或实际资产作为运行时权威。
+
+- **审查范围与结论**：对 `LightAttackAbility`、`ChargedAttackAbility`、`SprintAttackAbility`、`PlayerMeleeSkillAbility`、共享 `MeleeMotionWarping` evaluator、Player/Enemy 生命周期桥、`ReadyForActivation()` 重入边界、ASC/Gameplay Tag/Input 直接契约，以及唯一 `UAbilityTask_MeleeTraceWindow -> FMeleeHitResolver -> Damage GameplayEffect` 路径完成一跳、diff-first 的健康审查。未发现 P0/P1/P2 blocker，也没有产生 Source、Config、Content 或资产修改。
+- **设计定性**：`UnPossessed()` 当前只显式取消 `Ability.Attack.Light` 与 `Ability.Skill.Melee`；静态证据未显示 Charged/Sprint 因非对称取消列表产生 Warp、快照、野指针或 active-state 泄漏，因此保留为设计差异，交由 `TODO-03I1/03I2` 统一输入与 Tag 路线审查，不在 H5 扩大范围。A7F 3.17 exact-stop 集成断言限制仍是非阻塞 P3。
+- **证据边界**：本阶段新增证据是 Gemini 的源码静态审查；A7B/C/D/F 的用户 focused Automation、Scene01 PIE 以及既有编译/静态收据仍分别归属于原阶段，不在 H5 重复运行，也不扩展为 H5 新的运行时或 authored-asset 证明。真实跨帧 GameplayTask 时序、GA/GE/Montage/Notify/Modifier/Root Motion readback 与独立手动 `PolyQuestEditor` 编译仍是验证债务。
+- **排除项与后续指针**：未修改或纳入任何用户 `Config/**`、`Content/**`、资产、Gameplay Tags、Input、`ARCHITECTURE.md` 或其他 WIP；无编译、Editor 写入、Automation/PIE、stage 或清理操作属于本阶段审查本身。下一规划阶段为 `TODO-03I1：Unified Combat Input Contract And Loadout Simplification v1`。
