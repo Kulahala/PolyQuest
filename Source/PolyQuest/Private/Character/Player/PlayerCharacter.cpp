@@ -127,7 +127,14 @@ APlayerCharacter::APlayerCharacter()
 void APlayerCharacter::BeginPlay()
 {
 	Super::BeginPlay();
-	SetActiveCombatLoadout(InitialCombatLoadout);
+	if (InitialCombatLoadout)
+	{
+		SetActiveCombatLoadout(InitialCombatLoadout);
+	}
+	else
+	{
+		ClearActiveCombatLoadout();
+	}
 	BindSprintStateEvents();
 	BindHealthEvents();
 	BindExhaustionStateEvents();
@@ -530,18 +537,24 @@ bool APlayerCharacter::SetActiveCombatLoadout(UCombatLoadoutDefinition* NewComba
 {
 	if (!NewCombatLoadout)
 	{
-		UE_LOG(LogPolyQuest, Warning, TEXT("'%s' rejected a null CombatLoadout."), *GetNameSafe(this));
+		ClearActiveCombatLoadout();
 		return false;
 	}
 
 	if (!NewCombatLoadout->IsRouteTableValid())
 	{
 		UE_LOG(LogPolyQuest, Warning, TEXT("'%s' rejected CombatLoadout '%s' because its input routes contain an invalid or duplicate input intent."), *GetNameSafe(this), *GetNameSafe(NewCombatLoadout));
+		ClearActiveCombatLoadout();
 		return false;
 	}
 
 	ActiveCombatLoadout = NewCombatLoadout;
 	return true;
+}
+
+void APlayerCharacter::ClearActiveCombatLoadout()
+{
+	ActiveCombatLoadout = nullptr;
 }
 
 bool APlayerCharacter::IsCombatInputHeld(FGameplayTag InputIntentTag) const

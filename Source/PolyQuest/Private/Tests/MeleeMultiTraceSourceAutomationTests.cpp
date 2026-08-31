@@ -3,6 +3,7 @@
 #if WITH_DEV_AUTOMATION_TESTS
 
 #include "AbilitySystemComponent.h"
+#include "AbilitySystem/Abilities/PrimaryAttackAbility.h"
 #include "AbilitySystem/CharacterAttributeSet.h"
 #include "AbilitySystem/Tasks/AbilityTask_MeleeTraceWindow.h"
 #include "Animation/Combat/AnimNotifyState_ActionWindows.h"
@@ -74,6 +75,8 @@ bool FMeleeMultiTraceSourceAutomationTest::RunTest(const FString& Parameters)
 		ValidMultiSourceDef->WeaponMesh = nullptr;
 		ValidMultiSourceDef->bUseOwnerMeshSocketForTrace = true;
 		ValidMultiSourceDef->DefaultOwnerMeshTraceSourceName = FName(TEXT("RightFist"));
+		ValidMultiSourceDef->BaseGrantedActions.Add(UPrimaryAttackAbility::StaticClass());
+		ValidMultiSourceDef->PrimaryAttackAbilityTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Attack.Primary")), false);
 
 		FOwnerMeshMeleeTraceSource RightFistSource;
 		RightFistSource.TraceSourceName = FName(TEXT("RightFist"));
@@ -176,6 +179,8 @@ bool FMeleeMultiTraceSourceAutomationTest::RunTest(const FString& Parameters)
 		MultiSourceWeapon->WeaponMesh = nullptr;
 		MultiSourceWeapon->bUseOwnerMeshSocketForTrace = true;
 		MultiSourceWeapon->DefaultOwnerMeshTraceSourceName = FName(TEXT("RightFist"));
+		MultiSourceWeapon->BaseGrantedActions.Add(UPrimaryAttackAbility::StaticClass());
+		MultiSourceWeapon->PrimaryAttackAbilityTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Attack.Primary")), false);
 
 		FOwnerMeshMeleeTraceSource RightSource;
 		RightSource.TraceSourceName = FName(TEXT("RightFist"));
@@ -265,6 +270,8 @@ bool FMeleeMultiTraceSourceAutomationTest::RunTest(const FString& Parameters)
 		NewUnarmedDef->bUseOwnerMeshSocketForTrace = true;
 		NewUnarmedDef->BladeBaseMarkerRelativeLocation = FVector(0.0f, 0.0f, 5.0f);
 		NewUnarmedDef->BladeTipMarkerRelativeLocation = FVector(0.0f, 0.0f, 20.0f);
+		NewUnarmedDef->BaseGrantedActions.Add(UPrimaryAttackAbility::StaticClass());
+		NewUnarmedDef->PrimaryAttackAbilityTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Attack.Primary")), false);
 		EquipComp->EquipWeapon(NewUnarmedDef);
 
 		TestFalse(TEXT("Case 4: Teardown clears RightFist markers"), EquipComp->TryGetBladeMarkers(FName(TEXT("RightFist")), RightBase, RightTip));
@@ -284,6 +291,8 @@ bool FMeleeMultiTraceSourceAutomationTest::RunTest(const FString& Parameters)
 		MultiSourceWeapon->TraceRadius = 100.0f;
 		MultiSourceWeapon->BladeSubdivisions = 4;
 		MultiSourceWeapon->DefaultOwnerMeshTraceSourceName = FName(TEXT("RightFist"));
+		MultiSourceWeapon->BaseGrantedActions.Add(UPrimaryAttackAbility::StaticClass());
+		MultiSourceWeapon->PrimaryAttackAbilityTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Attack.Primary")), false);
 
 		FOwnerMeshMeleeTraceSource RightSource;
 		RightSource.TraceSourceName = FName(TEXT("RightFist"));
@@ -497,6 +506,8 @@ bool FMeleeMultiTraceSourceAutomationTest::RunTest(const FString& Parameters)
 		MultiSourceWeapon->AttachSocketName = FName(TEXT("Weapon_R"));
 		MultiSourceWeapon->bUseOwnerMeshSocketForTrace = true;
 		MultiSourceWeapon->DefaultOwnerMeshTraceSourceName = FName(TEXT("RightFist"));
+		MultiSourceWeapon->BaseGrantedActions.Add(UPrimaryAttackAbility::StaticClass());
+		MultiSourceWeapon->PrimaryAttackAbilityTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Attack.Primary")), false);
 
 		FOwnerMeshMeleeTraceSource RightSource;
 		RightSource.TraceSourceName = FName(TEXT("RightFist"));

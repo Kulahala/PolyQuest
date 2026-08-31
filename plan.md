@@ -1,124 +1,235 @@
-# TODO-03H5：Post-Motion-Warp Combat Health Review v1
+# TODO-03I1：Unified Combat Input Contract And Loadout Simplification v1
 
 ## 计划状态与阶段目标
 
-- **状态**：H5 Review-Only 健康审查已完成；未发现 P0/P1/P2 blocker，未产生 Source 修复、调参、格式化或顺手优化。
-- **主要运行时问题**：确认 TODO-03A7B、TODO-03A7C、TODO-03A7D、TODO-03A7F 收口后的四个 Player Motion-Warp 消费者，在触发区间、Ability-local 快照、Montage/GameplayTask 重入、能力取消、目标失效和伤害链方面没有引入回归。
-- **阶段目标**：用源码、Config、可读资产契约和已有验证收据建立一份可追溯的健康审查结论；只有证据支持的 P0/P1/P2 blocker 才进入后续最小修复。
-- **阶段结果**：确认四个消费者、共享 evaluator、Player/Enemy 生命周期桥、ASC/Tag/Input 边界和唯一伤害链没有证据支持的 P0-P2 回归；3.17 exact-stop 保持非阻塞 P3，后续指针推进到 `TODO-03I1`。
+- **状态**：已实施并完成 Main bounded defect-first fresh review；用户已确认 focused Automation 与 Scene01 PIE，通过本次文档收口后提交。Main 保留架构合同、范围、验证解释、文档收尾和提交所有权。
+- **主要玩家问题**：Primary/Sprint 路由目前同时存在于武器的 AssociatedLoadout、Player 的 Loadout 镜像和 Equipment 解析路径，配置重复且可能留下 stale route identity；近战与 Bow 的相同物理按键又容易被误读为相同 Ability 生命周期。
+- **阶段目标**：将 Primary/Sprint 的运行时 canonical route 收拢到当前主手 UWeaponDefinition，保持近战、Bow、Guard/Parry、1-4、GAS、Projectile 和输入时序行为不变。
+- **唯一运行时问题**：共享物理输入是否可以在不合并 Ability 生命周期、payload、Montage 或取消语义的前提下，使用武器 direct fields 作为唯一 Primary/Sprint route？
 
-## 当前基线与工作区快照
+## 当前基线与工作区边界
 
-- **分支**：`main`。
-- **当前基线**：`main @ a3e0f78a1cfd9281d5ed9a29e4e9e7e4994d4535`，提交标题为 `[Feature] 统一近战 Motion-Warp 触发距离契约 (Unify Melee Motion-Warp Trigger Range Contract)`。
-- **历史基线说明**：`ROADMAP-archive.md` 中的 `7c3ddf0`、`c91fbfd`、`90ad381` 等只代表各自阶段当时的任务视角；它们不替代本阶段当前 HEAD。此前阶段最新提交尚未形成时，使用上一提交作为父基线是历史记录语义，不应回写成 H5 当前基线。
-- **工作区**：`Source/` 当前干净；`Config/Automation/Presets/1.json` 和大量 `Content/**` 含用户修改、删除及未跟踪资源，全部保留，不清理、不回滚、不纳入 H5。
-- **文档状态**：A7F 详细 closeout 已在 `ROADMAP-archive.md` 保留；本文件现保存 H5 计划与审查 closeout。H5 收口后，`ROADMAP.md` 的当前指针推进到 `TODO-03I1`。
-- **已知历史证据**：用户确认过 A7B/C/D/F 相关 focused Automation 和 Scene01 PIE；Gemini 报告过 Rider 检查、编译和 `git diff --check`。这些收据只覆盖各自明确场景，不自动成为 H5 新验证或完整 authored 资产证明。
+- **分支**：main。
+- **基线**：main @ 6cc7369；此前 H5 的 a3e0f78 只属于历史阶段视角，已由 ROADMAP-archive.md 留档，不是本阶段当前 HEAD。
+- **必须保留的 WIP**：Config/Automation/Presets/1.json，以及所有 Content/** 的修改、删除和未跟踪资源；不清理、不回滚、不纳入本阶段执行者提交。
+- **资产事实**：当前主手、Bow、Player Blueprint 和 CombatLoadout 资产仍是用户拥有的本地 WIP；Gemini 不得手工编辑或迁移任何 uasset/umap。
 
-## 路由、所有权与工具预算
+## 冻结后的输入与所有权合同
+
+| 物理意图 | canonical 解析来源 | 保持的执行边界 |
+|---|---|---|
+| Input.PrimaryAttack | 当前主手 UWeaponDefinition::PrimaryAttackAbilityTag | Player 只发布输入；UPrimaryAttackAbility 与 UBowDrawFireAbility 保留各自生命周期 |
+| Sprint Attack | 当前主手 UWeaponDefinition::SprintAttackAbilityTag | Player 继续负责 Dodge/Sprint 时序；缺失 Sprint route 时保持当前普通 Primary fallback 流程，但绝不回读旧 Loadout |
+| Input.Guard / Input.Parry | Effective DefenseProfile | OffHand 覆盖、MainHand 回退和通用默认逻辑不变 |
+| Input.AbilitySlot.1..4 | DefaultPreparedActions 生成的精确 FGameplayAbilitySpecHandle | 不改为 Tag 路由 |
+| Input.Aim | 当前 Bow 专属输入意图 | 不因共享按键而泛化为 Mage/Aim 合同 |
+| Dodge、Interact、Lock-On、Target Cycle | APlayerCharacter 的物理输入与时序仲裁 | 不并入 Loadout |
+
+相同按键只证明 UX 统一，不证明 Bow Draw/Hold/Release、近战 Primary 和未来 Mage Ability 具有相同 payload、Montage 或取消语义。
+
+## Direct Route API 与校验
+
+在 UWeaponDefinition 增加两个 authored FGameplayTag 字段：
+
+- PrimaryAttackAbilityTag
+- SprintAttackAbilityTag
+
+固定校验合同：
+
+- MainHand 的 PrimaryAttackAbilityTag 必须有效，并使用 AbilityCDO->AbilityTags.HasTagExact(PrimaryAttackAbilityTag) 在自身 BaseGrantedActions 中找到恰好一个匹配 Ability。
+- SprintAttackAbilityTag 可以为空；非空时同样必须在自身 BaseGrantedActions 中恰好匹配一个 Ability。
+- HandSlot == OffHand 时，两个攻击路由 Tag 必须均无效；误配置直接使 IsValidWeaponDefinition() 失败，并给出明确拒绝原因。
+- 缺失、非法、重复匹配或未被当前 BaseGrantedActions 授予的 direct route，在定义验证和 Equipment preflight 中 fail-closed，不产生句柄、输入激活或旧值回退。
+- 不新增硬编码的 Melee/Ranged 路由层；基础定义只验证 Tag 与 Ability grant 的关系。
+- Bow 保留现有类型约束：PrimaryAttackAbilityTag 必须为 Ability.Attack.Primary，唯一匹配的 BaseGranted Ability 必须继承 UBowDrawFireAbility。
+- Bow 完全移除 AssociatedLoadout 必填和 Input.PrimaryAttack -> Ability.Attack.Primary 旧表项校验。
+- Melee 不再依赖 AssociatedLoadout 的路由校验；direct fields 由基础定义统一校验。
+
+## Loadout 兼容壳与事务语义
+
+以下内容暂时保留，用于反序列化现有 WIP、旧调用者和迁移期诊断：
+
+- UCombatLoadoutDefinition
+- UWeaponDefinition::AssociatedLoadout
+- APlayerCharacter::InitialCombatLoadout
+- APlayerCharacter::ActiveCombatLoadout
+- SetActiveCombatLoadout() / GetActiveCombatLoadout()
+
+固定语义：
+
+- 旧 InputAbilityRoutes 和 Loadout 的 Sprint 字段不再参与 canonical 输入解析。
+- InitialCombatLoadout 只可在 BeginPlay() 中作为兼容镜像来源；调用必须先判断非空。清空后不得产生 rejected-null 虚假警告，也不得影响 direct route。
+- ActiveCombatLoadout 只表示兼容镜像，不是运行时路由真相。
+- 增加窄 C++ ClearActiveCombatLoadout()，不增加 Blueprint 输入合同。
+- TeardownEquippedWeapons()、无主手组合、切换到无旧 Loadout 的武器和失败恢复时，显式清空或重新同步镜像。
+- ApplyComposition() 的成功与否只由 direct route、定义 preflight、Ability grant、显示组件和 prepared handles 决定；AssociatedLoadout 为空、无效或同步失败都不得使装备失败或触发回滚。
+- 成功组合后，若旧 AssociatedLoadout 仍存在且有效，可以同步到兼容镜像；否则清空镜像并记录诊断。镜像同步不改变事务结果。
+- 回滚只依据旧武器定义和重新生成的 Ability handles，不保存或依赖 OldLoadout 作为成功条件。
+
+## 批准的源码与测试路径
+
+本阶段原批准路径与审查修复例外如下。Gemini 仅可修改原批准路径；审查发现的测试夹具 P2 由 Main 明确纳入一次性修复范围后，额外允许修改 `MeleeMultiTraceSourceAutomationTests.cpp`，生产源码和公共合同未因此扩展：
+
+- Source/PolyQuest/Public/Combat/Equipment/WeaponDefinition.h
+- Source/PolyQuest/Private/Combat/Equipment/MeleeWeaponDefinition.cpp
+- Source/PolyQuest/Private/Combat/Equipment/BowWeaponDefinition.cpp
+- Source/PolyQuest/Public/Combat/Equipment/WeaponEquipmentComponent.h
+- Source/PolyQuest/Private/Combat/Equipment/WeaponEquipmentComponent.cpp
+- Source/PolyQuest/Public/Character/Player/PlayerCharacter.h
+- Source/PolyQuest/Private/Character/Player/PlayerCharacter.cpp
+- Source/PolyQuest/Public/Combat/Input/CombatLoadoutDefinition.h
+- Source/PolyQuest/Private/Tests/CombatAutomationFixture.h
+- Source/PolyQuest/Private/Tests/CombatAutomationFixture.cpp
+- Source/PolyQuest/Private/Tests/WeaponEquipmentComponentAutomationTests.cpp
+- Source/PolyQuest/Private/Tests/ProjectileLifecycleAutomationTests.cpp
+- Source/PolyQuest/Private/Tests/MeleeMultiTraceSourceAutomationTests.cpp（review repair exception：补齐 I1 direct route 测试夹具）
+
+其他未列出的文件不在范围内。若后续编译或直接调用证据证明必须修改，执行者必须停止并把证据返回 Main，不得自行扩展。
+
+## 执行顺序
+
+1. 在 UWeaponDefinition 加入 direct fields、精确 CDO 匹配和 OffHand 拒绝校验。
+2. 修改 Melee/Bow definition validation，去除旧 Loadout 的运行时必填依赖。
+3. 将 UWeaponEquipmentComponent 的 Primary/Sprint resolver 切换到 direct fields，补齐 preflight 日志。
+4. 收敛装备事务的兼容镜像清理、同步和回滚，不改变 Guard/Parry、prepared handles、显示和 Trace ownership。
+5. 在 Player 中保留物理输入事件、held duration、Primary 短按/长按及 Dodge/Sprint 时序；仅调整 Initial/ActiveCombatLoadout 的兼容镜像生命周期。
+6. 更新 transient fixture 与 focused Automation；所有 fixture 创建的 MainHand 必须填 direct Primary/Sprint 字段，旧 Loadout 只用于专门的兼容冲突测试。
+7. 执行 Rider error-level 检查和 git diff --check 后交还 Main。Gemini 不得修改文档、Config、Content、资产、Gameplay Tags、Input Action 或提交 Git。
+
+## Automation 覆盖
+
+至少覆盖以下矩阵：
+
+- AssociatedLoadout == nullptr 时，Melee 和 Bow 仅凭 direct fields 完成 Equip 与 Primary/Sprint 解析。
+- direct route 正确、旧 Loadout 配置错误或冲突时，解析完全以 direct fields 为准。
+- MainHand 缺失 Primary、Primary 未匹配 CDO、Sprint 未匹配 CDO 时的定义/preflight 拒绝和零状态变更。
+- OffHand 配置攻击路由 Tag 时拒绝。
+- Sprint direct route 缺失时无 stale 旧 Sprint route，并保持现有 Primary fallback 行为。
+- Guard/Parry 的 OffHand override、MainHand fallback 和默认路径不回归。
+- 1-4 空槽、错误句柄、精确 class/handle 匹配不回归。
+- Equip、World Pickup、Apply failure、Drop failure rollback 后，武器 direct route、Ability handles 和兼容镜像均与当前组合一致。
+- 无 MainHand、Unarmed fallback 和 teardown 后无 stale route identity。
+- Player Pressed/Released/Canceled、held duration、Primary short/hold arbitration 不回归。
+- Bow Draw/Hold/Release、Projectile snapshot/释放和取消不回归。
+- UnPossessed() 对 Light/Skill 的现有取消非对称性只做审计；没有泄漏证据时不扩充 Charged/Sprint 取消列表。
+
+## 用户资产迁移与验证门槛
+
+资产迁移由用户在 Editor 中完成，Gemini 不得直接编辑 uasset：
+
+1. 在以下主手资产中把旧 Loadout 的 Primary/Sprint 值复制到 direct fields：
+   - Content/_DataAssets/Weapon/DA_Weapon_Unarmed.uasset
+   - Content/_DataAssets/Weapon/DA_Weapon_LightSword.uasset
+   - Content/_DataAssets/Weapon/DA_Weapon_HeavySword.uasset
+   - Content/_DataAssets/Weapon/DA_Weapon_Axe.uasset
+   - Content/_DataAssets/Weapon/DA_Weapon_Bow.uasset
+2. 清理 BP_Player 和 BP_test 的 InitialCombatLoadout。
+3. direct fields 读回确认后，清理产品武器上的 AssociatedLoadout 引用；保留旧 DA_Melee_CombatLoadout 文件，不盲删。
+4. 用 Reference Viewer 检查产品资产对旧 Loadout 的引用；无法覆盖的用户 WIP 单独记录为债务。
+5. 读回现有 IMC_Default、Primary/Guard/Parry/AbilitySlot InputAction，确认没有新增或改变物理输入绑定。
+
+用户必须提供：
+
+- 手动 PolyQuestEditor Development Editor 编译结果；
+- Equipment transaction、Projectile/Bow lifecycle 和 Player input focused Automation 结果；
+- Scene01 PIE 中近战 Primary 短按/长按/Sprint、Guard、Parry、1-4、Bow Draw/Hold/Release、装备切换及失败回滚结果；
+- 无重复 Ability 激活、旧 Loadout 覆盖或 stale route 的确认。
+
+静态检查、CodeGraph、Automation 和二进制字符串扫描不能替代 Editor readback 或 PIE 证据。
+
+## I2 交接审计交付物
+
+I1 收口时由 Main 在 plan.md closeout 中附一份《战斗 Tag 当前路由与意图审计表》，作为 TODO-03I2 输入。每行至少包含：
+
+- Tag 名称；
+- 分类：物理输入、Ability identity、取消能力、active cancel window、语义阶段事件或 teardown selector；
+- 当前 producer/caller 与 consumer/callee；
+- payload、Montage 和生命周期语义；
+- 是否存在实际冲突；
+- I2 的迁移候选或不变理由。
+
+I1 只审计，不执行 Tag 重命名或迁移。Ability.Skill.Melee、Bow phase events、CancelableMeleeAbilityTags 等候选项交由 I2 按证据处理。
+
+## 成功标准、债务与非目标
+
+成功标准：
+
+- Primary/Sprint 的运行时 canonical route 只有武器 direct fields。
+- Melee 与 Bow 共享物理输入意图，但保留独立 Ability 生命周期和 payload。
+- Guard/Parry 仍由 DefenseProfile 解析，1-4 仍由精确 handles 激活。
+- 旧 Loadout 冲突不会覆盖 direct fields；缺失/非法 direct route fail-closed。
+- 装备、拾取、回滚和 teardown 后无 stale route identity。
+- Trace、Resolver、Damage GameplayEffect、Projectile、Lock-On、Defense、Poise、Hit Reaction/Feedback ownership 不变。
+
+保留的非阻塞债务：
+
+- 旧 Loadout 类型、字段和资产的最终删除，等待产品资产零引用后的独立清理阶段。
+- Controller/硬件输入验证仍是独立门槛。
+- Tag taxonomy migration 属于 TODO-03I2。
+- Staff/Mage targeting/delivery 属于条件阶段 TODO-03I3。
+
+明确非目标：
+
+- 不实现 Mage/Staff、AOE、Beam、新 Projectile 或新 Input Action。
+- 不批量重命名 Gameplay Tags。
+- 不新增通用 Ability dispatcher、Melee/Ranged 框架、FSM、全局输入服务或第二 GAS 权威。
+- 不改 Motion-Warp、Trace、Resolver、Damage、Guard/Parry、Poise、Hit Reaction、Enemy AI/StateTree。
+- 不删除、移动、重命名或手工修改 Content/**、旧 Loadout 资产、Config WIP 或导入资源。
+
+依赖顺序：
 
 ~~~text
-Outer: ue-stage-workflow
-Primary: ue5-debug-validation
-Support: ue5-cpp-gameplay
-Execution route: manual/out-of-band Gemini only if Main later assigns a bounded slice
-Implementation executors during audit: 0
-Contract owner: Main
+TODO-03H5
+  -> TODO-03I1
+  -> TODO-03I2
+  -> TODO-05A
+  -> TODO-05B
+  -> TODO-07B5
+  -> TODO-07B6
+  -> TODO-03C
 ~~~
 
-- Main 负责合同解释、审查范围、发现定性、验证解释、文档、staging 和 commit；当前没有实现执行者。
-- 默认先以当前批准边界的 diff/源码和一跳直接 callers/callees 为主线。使用 CodeGraph 做定点导航；当前 `code-review-graph` 建立于旧 SHA，只作为标注为 stale 的补充影响证据，不作为覆盖或运行时证明。
-- 只有出现 P0/P1 迹象，或发现共享 API、异步生命周期、Gameplay Tag/Input、资产契约风险时，才做最小扩展；每次扩展必须记录新增证据。禁止用重复全局扫描替代结论。
+TODO-03I3 仅在具体 Staff/Mage 路线被接受后启动；TODO-03A7E 仍位于首个远程敌人之后。
 
-## 审查范围与冻结合同
+## Main 收尾职责
 
-### 直接审查路径
+- Gemini 只提供变更路径、静态检查、未运行用户门槛、严格 self-review 和剩余风险。
+- Main 在用户验证后执行一次 bounded defect-first fresh review；发现跨合同或范围问题时停止并重新定界。
+- Main 负责 plan.md closeout、ROADMAP.md 指针/债务同步、ARCHITECTURE.md 稳定合同更新、必要的 ROADMAP-archive.md 归档、staging 和 commit。
+- 本阶段未获得用户验证前，不得声称编译、Editor readback、Automation 或 PIE 已通过。
 
-- 四个 Player Ability 的现有激活、Motion-Warp helper、Montage/Task 和 `EndAbility()`：`LightAttackAbility`、`ChargedAttackAbility`、`SprintAttackAbility`、`PlayerMeleeSkillAbility`。
-- 共享 `MeleeMotionWarping` 的 `IsConfigValid()`、`EvaluateMeleeMotionWarpTransform()`，以及 Player/Enemy 的锁定、目标失效、移动模式、UnPossess、死亡和 EndPlay 桥接。
-- `UAbilityTask_MeleeTraceWindow -> FMeleeHitResolver -> Damage GameplayEffect` 的直接调用链，以及其 Guard/Parry、Poise、Hit Reaction/Feedback 边界。
-- 直接关联的 Gameplay Tags、Input、`PolyQuest.uproject` 和 `PolyQuest.Build.cs`；只用于契约核对，不借机重构 taxonomy 或输入系统。
+## 实施、复核与收口记录
 
-### 必须保持的运行时合同
+- **执行路由**：`manual/out-of-band Gemini`；Main 保留架构合同、范围判断、验证解释、fresh review、文档、staging 与 commit 所有权。Gemini 未修改文档、Config、Content、资产或 Git 状态。
+- **实际变更路径**：`WeaponDefinition.h`、`MeleeWeaponDefinition.cpp`、`BowWeaponDefinition.cpp`、`WeaponEquipmentComponent.cpp`、`PlayerCharacter.h/.cpp`、`CombatLoadoutDefinition.h`、`CombatAutomationFixture.cpp`、`WeaponEquipmentComponentAutomationTests.cpp`、`ProjectileLifecycleAutomationTests.cpp`、`MeleeMultiTraceSourceAutomationTests.cpp`，共 11 个 Source/test 文件。`CombatAutomationFixture.h` 虽在原批准列表中，但实际未修改。
+- **审查修复**：Main fresh review 发现 `MeleeMultiTraceSourceAutomationTests.cpp` 五个主手 transient fixture 未补齐 I1 direct route，属于 P2 测试夹具缺口。Gemini 仅在该测试文件补充 `UPrimaryAttackAbility` 与 `Ability.Attack.Primary`，修复后 delta review 未发现 P0/P1/P2 blocker；未改变生产代码或公共合同。
+- **用户验证证据**：用户确认 I1 修复后的 PIE 与 Automation 通过；Gemini 交接报告记录 `PolyQuest.Equipment.TransactionMatrix`、`PolyQuest.Projectile.Lifecycle` 以及相关 focused 路径通过。该证据不扩展为 Main 重新运行的全量套件、独立编译或完整资产复现证明。
+- **静态证据**：Gemini 报告 Rider error-level 检查为 `errors: []`，并报告 `git diff --check` 通过；审查修复文件另行完成相同检查。Main 未重复调用 Rider/编译/Automation/PIE。
+- **未声称门禁**：没有独立手动 `PolyQuestEditor` Development Editor 编译收据，也没有可归档的完整产品资产逐项 Editor readback（direct fields、零 Loadout 引用、输入映射）。用户报告的资产迁移与 PIE 结果保留为用户证据，不改写为可复现 clean-checkout baseline。
+- **提交边界**：本次提交只包含上述 11 个 Source/test 文件、`plan.md`、`ARCHITECTURE.md`、`README.md`、`ROADMAP.md` 与 `ROADMAP-archive.md`。`Config/Automation/Presets/1.json`、全部 `Content/**`、其他 Source/Config/文档 WIP、资产、Build.cs 与 `.uproject` 均排除。
 
-- 四个消费者继续使用 `MinTriggerDistance <= WarpStopDistance <= MaxTriggerDistance`；精确停距为 no-op，`Min < Stop` 的反向修正保持有界，`Min == Stop` 保持前向-only。
-- 快照属于 Ability 实例，首次合法调用一次性消耗捕获机会，目标位置静态复用；死亡、销毁、异 World、离地、取消和 teardown 必须 fail-closed 并清理 Warp target。
-- Player 拥有 Motion-Warp component 和窄桥，Ability 拥有激活、取消、成本、异步任务和快照生命周期；`ABaseCharacter` 继续拥有单一 ASC/AttributeSet。
-- 四个 Ability 仍只通过 `Trace Window -> Resolver -> Damage GameplayEffect` 造成近战伤害；不新增第二伤害路径，不改变 Guard/Parry、Poise、Hit Reaction/Feedback 的 ownership。
+## 《战斗 Tag 当前路由与意图审计表》
 
-## 审查矩阵与处置规则
+下表覆盖 I1 直接触及的输入路由与 I2 候选；纯反应/资源数据 Tag 不在本阶段拥有者决策范围内。
 
-### 1. 配置、区间与快照
+| Tag | 分类 | 当前 producer/caller -> consumer/callee | Payload、Montage 与生命周期 | 冲突与 I2 处理 |
+|---|---|---|---|---|
+| `Input.PrimaryAttack` | 物理输入 | `APlayerCharacter` -> `UWeaponEquipmentComponent` / `UPrimaryAttackAbility` | `Pressed/Released/Canceled` 携带输入 Tag 与 held duration；Primary Ability 再分流 Light/Charged | 无直接冲突；保留通用物理意图 |
+| `Input.Aim` | 物理输入 | `APlayerCharacter` -> 当前 Bow authored route | 当前只表达 Bow Aim/锁定辅助输入；没有通用 Mage consumer | Bow 专属；只有具体 Staff 路线证明等价后再评估 |
+| `Input.Guard`, `Input.Parry` | 物理输入 | `APlayerCharacter` -> Effective Defense Profile -> Guard/Parry Ability | Guard 持续输入；Parry 窗口由独立事件/Ability 生命周期拥有 | 无 direct-route 冲突；保留 DefenseProfile 所有权 |
+| `Input.AbilitySlot.1..4` | 物理输入 | `APlayerCharacter` -> `TryActivatePreparedSlot` | 通过装备组件保存的精确 `FGameplayAbilitySpecHandle` 激活，不依赖 Tag | 无；保留精确 handle 合同 |
+| `Ability.Attack.Primary` | Ability identity / direct route | `UWeaponDefinition` direct field -> `UPrimaryAttackAbility` 或 `UBowDrawFireAbility` CDO | 当前装备的 MainHand 只要求一个精确匹配的 granted CDO；各 Ability 保持独立 Montage/payload | 共享名称不等于共享生命周期；I2 只检查语义，不合并类 |
+| `Ability.Attack.Light` | Ability identity / cancellation selector | `ULightAttackAbility` -> Dodge/Parry/Big reaction cancellation | Light Combo 自有 Montage、Trace Window、Cost 与快照 | 无已证实冲突；保留 |
+| `Ability.Attack.Charged` | Ability identity / cancellation selector | `UChargedAttackAbility` -> Dodge/Parry/Big reaction cancellation | Hold/Release 与 Charged Montage 自有生命周期 | 与 Bow hold/release 仅输入相似；不合并 |
+| `Ability.Attack.Sprint` | Ability identity / cancellation selector | `USprintAttackAbility` -> Dodge/Parry/Big reaction cancellation | Sprint Attack 自有 Task、Montage 与 Guard/Sprint 过渡 | 无已证实冲突；保留 |
+| `Ability.Skill.Melee` | Ability identity + cancellation selector | `UPlayerMeleeSkillAbility`；也被 Dodge/Parry/Big/Launch 取消列表与 `UnPossessed()` 使用 | 当前是 Melee Skill 类别 tag，取消语义与具体技能身份共用；Whirlwind 具体身份另由 authored tag 表达 | 有过载风险；I2 评估是否拆为 weapon-independent cancellation capability，不能直接改成宽泛 `Ability.Skill` |
+| `Ability.Skill.Whirlwind` | Ability identity | Whirlwind authored Ability/GE -> 具体 Skill 路由 | 具体技能身份与冷却，不作为所有技能的取消类别 | 无直接冲突；保留具体身份 |
+| `Event.Input.Pressed/Released/Canceled` | 语义输入事件 | `APlayerCharacter::SendCombatInputEvent` -> active Abilities 的 `WaitGameplayEvent` | 事件携带 `Input.*` 与 held duration；不直接是通用 AbilityTrigger | 外层事件不能区分输入意图；新 event-trigger Ability 必须校验 payload 或使用专用外层 Tag |
+| `Event.Attack.Bow.DrawReady`, `Event.Attack.Bow.Release` | 语义阶段事件 | Bow AnimNotify -> `UBowDrawFireAbility` | Bow Draw/Hold/Release 的 Montage 身份与释放时序 | 与 Charged Hold/ReleaseHandoff 语义不同；I2 默认不合并 |
+| `Event.Attack.Charged.HoldReady`, `Event.Attack.Charged.ReleaseHandoff` | 语义阶段/交接事件 | Charged Notify、`UPrimaryAttackAbility`/`UChargedAttackAbility` -> Charged release handoff | HoldReady 标记蓄力阶段；ReleaseHandoff 传递 held duration 并触发释放 | 与 Bow 仅共享“长按-松开”表面形态；保留独立事件 |
+| `Event.Action.CancelWindow.Dodge.Begin/End` | active cancel window 事件 | Action Window NotifyState -> Light/Charged/Sprint/Skill/Bow/Launch listeners | 由 Montage 时间窗发送 Begin/End；监听者据此设置可取消状态 | 名称偏 Dodge，但现有窗口也开启 Defense cancel；I2 核对是否应改为中性命名 |
+| `State.Action.CanCancel.Dodge`, `State.Action.CanCancel.Defense` | active cancel window 状态 | 各 Ability 窗口 task 写入/清除 -> `UDodgeAbility`、Guard/Defense 路径读取 | ASC loose tag 计数表达当前动作可被哪类输入取消 | 语义已按取消能力拆分；I2 保留，除非调用矩阵证明命名/所有权缺陷 |
+| `Event.Attack.TraceWindow.Begin/End` | 语义阶段事件 | `UAnimNotifyState_AttackTraceWindow` -> `UAbilityTask_MeleeTraceWindow` | Notify 时间窗驱动接触 Trace；payload 含 Animation/Notify 身份 | 不属于输入路由；不迁移 |
+| `Ability.Defense.Guard`, `Ability.Defense.Parry` | Ability identity / Defense resolver | Effective Defense Profile -> Guard/Parry CDO | Guard/Parry 自有状态、窗口、GE 与取消清理 | Shield 子 Tag 是层级 child；I2 只在真实语义冲突时调整 |
 
-- 核对 disabled、非法配置、区间边界、精确停距、前向和反向输入在共享 evaluator 与四个消费者映射中是否一致。
-- 核对 Lock-On 清除、目标死亡/销毁交接、移动模式改变和异步结束后是否存在 stale Warp target、错误重选或快照跨 Ability 污染。
-- 不把现有数值或 authored readback 缺口当作运行时缺陷；只有源码或用户行为证据支持时才升级严重级别。
-
-### 2. `ReadyForActivation()` 同步重入（首要门禁）
-
-- 对每个 Montage/Notify Task 检查：`ReadyForActivation()` 返回后，是否先确认 Ability 仍处于有效激活状态、`bEndAbilityRequested` 未置位、Task UObject 仍有效且身份未被替换，再读取 `IsActive()`、`IsFinished()` 或 Montage 状态。
-- 覆盖 Montage 无效、立即完成、取消、同步 `EndAbility()`、`EndTask()`、Montage 替换、死亡和 EndPlay 后的路径；禁止在同步终态后继续解引用成员、恢复失效旧 Task 或写入旧状态。
-- 以 A7D 已收敛的防重入模式作为对照，但不假定 Light/Charged/Sprint 已自动具备相同保护；发现候选点时先给出具体路径和证据，不直接称为 blocker。
-
-### 3. Player/Enemy 生命周期、ASC 与 UnPossess
-
-- 核对 `ClearLockedTarget()`、目标失效窄桥、`OnMovementModeChanged()`、`UnPossessed()`、Player/Enemy `EndPlay()` 和死亡 teardown 的顺序、World/对象有效性和幂等性。
-- `UnPossessed()` 当前显式取消 `Ability.Attack.Light` 与 `Ability.Skill.Melee`，Charged/Sprint 的非对称性不自动视为缺陷。若审查确认 Warp 已清空、快照已失效且没有野指针、脏数据或 active Ability 泄漏，则定性为设计差异，交给 `TODO-03I1/03I2` 统一梳理，不在 H5 扩充取消列表。
-- 只有发现可复现的 active Ability 泄漏、stale 状态、崩溃或玩家可见硬回归，才把该非对称性升级为 H5 blocker。
-
-### 4. 伤害与相邻回归
-
-- 确认四个 Ability 仍经由唯一的 `Trace -> Resolver -> Damage GE` 路径，且 Motion-Warp 不绕过或重复触发 Guard/Parry、Poise、Reaction 或 Feedback。
-- Lock-On、Bow/Projectile、Enemy AI/StateTree/Poise/Death 只检查一跳直接受影响的边界，不进行无关系统总审查。
-
-### 5. 已知 P3 只核对、不扩大
-
-- A7F 的 3.17 exact-stop 测试限制保持为已知非阻塞 P3：`StartComboEntry()` 在 evaluator 结果观察前会先清理预存 Warp target。
-- 本阶段只确认该限制没有恶化为 P1/P2，不为改善测试形态而改变生产清理顺序。
-- authored GA/GE/Montage/Notify/Modifier/Root Motion readback、独立手动 `PolyQuestEditor` 编译和真实跨帧 Task seam 缺口同样只记录关闭触发器，不改写为运行时失败。
-
-### 严重级别与条件修复
-
-- **P0/P1/P2**：必须记录 Finding ID、严重级别、绝对路径和行号、证据类型、影响、复现或覆盖缺口以及关闭方式。
-- **P3**：只记录为 Recommendation/Validation Debt，必须写明受影响边界、当前证据、玩家/技术影响、关闭触发器和归属阶段。
-- 发现 P0-P2 后，Main 先判断是否属于已批准路径和 Main narrow-fix 例外。符合时只修现有函数内的最小生命周期、空安全、清理或数据完整性问题；不符合时停止并请求新的范围/执行授权。
-- 任何修复都不得新增公开 API、Gameplay Tag、Input、Config 字段、全局 service、消费者、资产迁移或第二伤害路径。审查阶段禁止“顺手优化”、格式化和无证据重构。
-
-## 验证、证据与停止条件
-
-### 当前审查阶段（已完成）
-
-- H5 审查全程为只读：不编译、不启动 Editor、不运行 Automation/PIE、不写入资产、不修改 Config WIP、不 stage/commit。
-- 已有 A7B/C/D/F Automation、Scene01 PIE、编译和静态检查收据只按其实际覆盖范围引用；本阶段没有把它们包装成新的运行时或视觉证明。
-
-### 若发生批准的修复
-
-1. 修改文件执行 Rider error-level 检查和 `git diff --check`。
-2. 只运行受影响的 focused Automation；不以测试数量替代行为覆盖说明。
-3. 用户负责手动 `PolyQuestEditor` Development Editor 编译、相关 authored 资产 Editor readback 和 Scene01 PIE。
-4. Main 对最终 diff 做一次 bounded defect-first fresh review，再决定文档收口和提交。
-
-### H5 成功标准与实际结果
-
-- 四个消费者、共享 evaluator、Player/Enemy 生命周期桥、ASC/Tag/Input 边界和唯一伤害链均有可追溯结论。
-- 没有未处理的 P0-P2 blocker；本阶段无需进入代码修复或用户重新验证门禁。
-- ReadyForActivation 同步重入风险已逐 Ability 给出结论；3.17 exact-stop P3 未被误升级；UnPossess 非对称性已按证据定性为设计差异并留给 `TODO-03I1/03I2`。
-- 交付物为零源码变更的审计 closeout；没有产生任何“顺手修复”。
-
-## 文档收口、依赖与非目标
-
-- Main 在审查/验证结束后维护本文件的 H5 closeout；`ROADMAP.md` 只在阶段状态、债务触发器或当前/下一阶段指针变化时更新。
-- `ARCHITECTURE.md` 只有在发现并验证稳定架构合同变化时才更新；`README.md` 只记录已证实的公开状态；历史细节进入 `ROADMAP-archive.md`。
-- 若 Review-Only 收口无 blocker，`ROADMAP.md` 当前指针推进至 `TODO-03I1：Unified Combat Input Contract And Loadout Simplification v1`，并保留未关闭的 authored-validation debt。
-- 后续依赖顺序：`TODO-03H5 -> TODO-03I1 -> TODO-03I2 -> TODO-05A -> TODO-05B -> TODO-07B5 -> TODO-07B6 -> TODO-03C`；`TODO-03I3` 仍是具体 Staff/Mage 路线出现后的条件阶段，`TODO-03A7E` 仍位于首个远程敌人之后。
-- **非目标**：重新实现或调参 Motion-Warp、新增消费者、资产迁移/清理、Config WIP、Tag/Input 重命名、Mage/Bow 新功能、Enemy Motion-Warp、通用 dispatcher/service、第二伤害路径、Punish、网络/回滚，以及未经证据支持的 Player/Enemy 行为扩展。
-
-## 计划与审查收据（2026-08-31）
-
-- **审查基线**：`main @ a3e0f78a1cfd9281d5ed9a29e4e9e7e4994d4535`；Gemini 只读检查了四个 Player Ability、共享 evaluator、Player/Enemy 生命周期桥、Trace Window、`FMeleeHitResolver`、直接测试和相关契约。
-- **审查结论**：四个消费者统一遵守显式距离区间和 Ability-local 静态快照；`ReadyForActivation()` 返回后的终态/Task 身份/Active 检查没有发现未防护的 P0-P2 路径；唯一 `Trace -> Resolver -> Damage GE` 路径、Guard/Parry、Poise、Reaction/Feedback 和 ASC 所有权没有变化。
-- **UnPossess 定性**：当前只显式取消 `Ability.Attack.Light` 与 `Ability.Skill.Melee`。审查未发现 Charged/Sprint 因未列入取消列表而留下 Warp、快照、野指针或 active-state 泄漏，因此保持为设计差异，不在 H5 扩充。
-- **P3 与债务**：A7F 3.17 exact-stop 集成断言仍受入口预清理时序限制；只确认其未恶化为 P1/P2。GA/GE/Montage/Notify/Modifier/Root Motion readback、独立手动 `PolyQuestEditor` 编译和真实跨帧 Task 时序仍是非阻塞验证债务，关闭条件是用户完成相应门禁或提供 evidence-backed no-adoption。
-- **证据分类**：本阶段新增的是 Gemini 的源码静态审查报告；A7B/C/D/F 的用户 Automation/Scene01 PIE 和既有编译/静态报告属于历史收据，没有在 H5 重复运行或扩大其覆盖范围。
-- **范围与工作区**：本阶段没有修改 Source、Config、Content、资产或其他项目文件；`Config/Automation/Presets/1.json` 与全部 `Content/**` WIP 继续保留。
+I1 的结论是：物理输入可以统一，Ability identity、阶段事件、取消能力和 active state 不能仅凭按键相同而合并。I2 的第一输入是本表及其直接调用者，而不是一次性全量 Tag 改名。

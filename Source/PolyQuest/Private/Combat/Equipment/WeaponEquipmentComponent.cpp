@@ -198,15 +198,13 @@ bool UWeaponEquipmentComponent::EquipWeapon(UWeaponDefinition* Definition)
 	// Snapshot before any mutation; the restore path rebuilds these identities.
 	UWeaponDefinition* OldMainHand = CurrentMainHandWeapon;
 	UWeaponDefinition* OldOffHand = CurrentOffHandWeapon;
-	UCombatLoadoutDefinition* OldLoadout = PlayerCharacter ? PlayerCharacter->GetActiveCombatLoadout() : nullptr;
 	TArray<TSubclassOf<UGameplayAbility>> OldPreparedClasses = PreparedSlotClasses;
 
 	TeardownEquippedWeapons();
 
 	if (!ApplyComposition(PlayerCharacter, CharacterASC, NewMainHand, NewOffHand, ComputedPreparedClasses))
 	{
-		if (ApplyComposition(PlayerCharacter, CharacterASC, OldMainHand, OldOffHand, OldPreparedClasses)
-			&& (!OldLoadout || PlayerCharacter->SetActiveCombatLoadout(OldLoadout)))
+		if (ApplyComposition(PlayerCharacter, CharacterASC, OldMainHand, OldOffHand, OldPreparedClasses))
 		{
 			UE_LOG(LogPolyQuest, Warning, TEXT("Weapon equipment on '%s' failed mid-apply and restored the previous composition."), *GetNameSafe(GetOwner()));
 			return false;
@@ -276,7 +274,6 @@ bool UWeaponEquipmentComponent::TryEquipWorldPickup(AWorldWeaponPickup* SourcePi
 
 	UWeaponDefinition* OldMainHand = CurrentMainHandWeapon;
 	UWeaponDefinition* OldOffHand = CurrentOffHandWeapon;
-	UCombatLoadoutDefinition* OldLoadout = PlayerCharacter->GetActiveCombatLoadout();
 	TArray<TSubclassOf<UGameplayAbility>> OldPreparedClasses = PreparedSlotClasses;
 
 	TArray<UWeaponDefinition*> DisplacedDefinitions;
@@ -297,8 +294,7 @@ bool UWeaponEquipmentComponent::TryEquipWorldPickup(AWorldWeaponPickup* SourcePi
 	if (!bApplySucceeded)
 	{
 		TeardownEquippedWeapons();
-		const bool bRestoreSucceeded = ApplyComposition(PlayerCharacter, CharacterASC, OldMainHand, OldOffHand, OldPreparedClasses)
-			&& (!OldLoadout || PlayerCharacter->SetActiveCombatLoadout(OldLoadout));
+		const bool bRestoreSucceeded = ApplyComposition(PlayerCharacter, CharacterASC, OldMainHand, OldOffHand, OldPreparedClasses);
 		SourcePickup->EndInteraction();
 
 		if (bRestoreSucceeded)
@@ -335,8 +331,7 @@ bool UWeaponEquipmentComponent::TryEquipWorldPickup(AWorldWeaponPickup* SourcePi
 		ProvisionalDrops.Reset();
 
 		TeardownEquippedWeapons();
-		const bool bRestoreSucceeded = ApplyComposition(PlayerCharacter, CharacterASC, OldMainHand, OldOffHand, OldPreparedClasses)
-			&& (!OldLoadout || PlayerCharacter->SetActiveCombatLoadout(OldLoadout));
+		const bool bRestoreSucceeded = ApplyComposition(PlayerCharacter, CharacterASC, OldMainHand, OldOffHand, OldPreparedClasses);
 		SourcePickup->EndInteraction();
 
 		if (bRestoreSucceeded)
@@ -531,8 +526,12 @@ bool UWeaponEquipmentComponent::TryResolveInputIntent(const FGameplayTag& InputI
 
 	if (InputIntentTag == PrimaryAttackInputTag)
 	{
-		const UCombatLoadoutDefinition* BaseInputProfile = CurrentMainHandWeapon ? CurrentMainHandWeapon->AssociatedLoadout : nullptr;
-		return BaseInputProfile && BaseInputProfile->TryGetAbilityTagForInputIntent(InputIntentTag, OutAbilityTag);
+		if (CurrentMainHandWeapon && CurrentMainHandWeapon->PrimaryAttackAbilityTag.IsValid())
+		{
+			OutAbilityTag = CurrentMainHandWeapon->PrimaryAttackAbilityTag;
+			return true;
+		}
+		return false;
 	}
 
 	return false;
@@ -541,8 +540,12 @@ bool UWeaponEquipmentComponent::TryResolveInputIntent(const FGameplayTag& InputI
 bool UWeaponEquipmentComponent::TryGetSprintAttackAbilityTag(FGameplayTag& OutAbilityTag) const
 {
 	OutAbilityTag = FGameplayTag();
-	const UCombatLoadoutDefinition* BaseInputProfile = CurrentMainHandWeapon ? CurrentMainHandWeapon->AssociatedLoadout : nullptr;
-	return BaseInputProfile && BaseInputProfile->TryGetSprintAttackAbilityTag(OutAbilityTag);
+	if (CurrentMainHandWeapon && CurrentMainHandWeapon->SprintAttackAbilityTag.IsValid())
+	{
+		OutAbilityTag = CurrentMainHandWeapon->SprintAttackAbilityTag;
+		return true;
+	}
+	return false;
 }
 
 bool UWeaponEquipmentComponent::TryActivatePreparedSlot(int32 SlotIndex)
@@ -910,6 +913,11 @@ void UWeaponEquipmentComponent::TeardownEquippedWeapons()
 
 	CurrentMainHandWeapon = nullptr;
 	CurrentOffHandWeapon = nullptr;
+
+	if (APlayerCharacter* PlayerCharacter = Cast<APlayerCharacter>(GetOwner()))
+	{
+		PlayerCharacter->ClearActiveCombatLoadout();
+	}
 }
 
 bool UWeaponEquipmentComponent::ApplyComposition(APlayerCharacter* PlayerCharacter, UAbilitySystemComponent* CharacterASC, UWeaponDefinition* MainHandDefinition, UWeaponDefinition* OffHandDefinition, const TArray<TSubclassOf<UGameplayAbility>>& PreparedClasses)
@@ -1095,11 +1103,17 @@ bool UWeaponEquipmentComponent::ApplyComposition(APlayerCharacter* PlayerCharact
 		PreparedSlotHandles = MoveTemp(NewPreparedHandles);
 		GrantedAbilitySpecHandles = MoveTemp(NewGrantedHandles);
 
-		if (MainHandDefinition && MainHandDefinition->AssociatedLoadout && !PlayerCharacter->SetActiveCombatLoadout(MainHandDefinition->AssociatedLoadout))
+		if (MainHandDefinition && MainHandDefinition->AssociatedLoadout)
 		{
-			UE_LOG(LogPolyQuest, Warning, TEXT("Weapon equipment on '%s' could not activate the main hand's Base Input Profile."), *GetNameSafe(GetOwner()));
-			TeardownEquippedWeapons();
-			return false;
+			if (!PlayerCharacter->SetActiveCombatLoadout(MainHandDefinition->AssociatedLoadout))
+			{
+				UE_LOG(LogPolyQuest, Verbose, TEXT("Weapon equipment on '%s': AssociatedLoadout on '%s' failed validation; cleared combat loadout mirror."), *GetNameSafe(GetOwner()), *GetNameSafe(MainHandDefinition));
+				PlayerCharacter->ClearActiveCombatLoadout();
+			}
+		}
+		else
+		{
+			PlayerCharacter->ClearActiveCombatLoadout();
 		}
 	}
 	else

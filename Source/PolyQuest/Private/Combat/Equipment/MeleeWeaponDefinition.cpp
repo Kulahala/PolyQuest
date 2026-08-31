@@ -239,12 +239,6 @@ bool UMeleeWeaponDefinition::IsValidWeaponDefinition(FString& OutReason) const
 		return false;
 	}
 
-	if (AssociatedLoadout && !AssociatedLoadout->IsRouteTableValid())
-	{
-		OutReason = TEXT("AssociatedLoadout has an invalid route table.");
-		return false;
-	}
-
 	return true;
 }
 

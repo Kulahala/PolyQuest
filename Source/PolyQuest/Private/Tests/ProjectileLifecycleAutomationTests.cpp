@@ -187,6 +187,7 @@ bool FProjectileLifecycleAutomationTest::RunTest(const FString& Parameters)
 		BowDef->WeaponMesh = TransientBowMesh;
 		BowDef->LaunchSocketName = SocketNameBowLaunch;
 		BowDef->DefaultProjectileDefinition = ValidProjDef;
+		BowDef->PrimaryAttackAbilityTag = TagAbilityPrimaryAttack;
 		BowDef->AssociatedLoadout = BowLoadout;
 		BowDef->BaseGrantedActions.Add(UBowDrawFireAbility::StaticClass());
 
@@ -213,10 +214,19 @@ bool FProjectileLifecycleAutomationTest::RunTest(const FString& Parameters)
 		TestFalse(TEXT("BowWeaponDefinition rejects null DefaultProjectileDefinition"), BowDef->IsValidWeaponDefinition(Reason));
 		BowDef->DefaultProjectileDefinition = ValidProjDef;
 
-		// 2.5 Loadout not mapping PrimaryAttack to Ability.Attack.Primary
-		UCombatLoadoutDefinition* BadLoadout = NewObject<UCombatLoadoutDefinition>(GetTransientPackage(), TEXT("Test_BadBowLoadout"));
-		BowDef->AssociatedLoadout = BadLoadout;
-		TestFalse(TEXT("BowWeaponDefinition rejects Loadout missing PrimaryAttack mapping"), BowDef->IsValidWeaponDefinition(Reason));
+		// 2.5 Direct PrimaryAttackAbilityTag validation & AssociatedLoadout decoupling
+		// 2.5.1 Missing PrimaryAttackAbilityTag
+		BowDef->PrimaryAttackAbilityTag = FGameplayTag();
+		TestFalse(TEXT("BowWeaponDefinition rejects missing PrimaryAttackAbilityTag"), BowDef->IsValidWeaponDefinition(Reason));
+
+		// 2.5.2 Non-PrimaryAttackAbilityTag
+		BowDef->PrimaryAttackAbilityTag = FGameplayTag::RequestGameplayTag(TEXT("Ability.Defense.Guard"));
+		TestFalse(TEXT("BowWeaponDefinition rejects non-Ability.Attack.Primary tag"), BowDef->IsValidWeaponDefinition(Reason));
+		BowDef->PrimaryAttackAbilityTag = TagAbilityPrimaryAttack;
+
+		// 2.5.3 Null AssociatedLoadout passes validation (decoupled from Loadout)
+		BowDef->AssociatedLoadout = nullptr;
+		TestTrue(TEXT("BowWeaponDefinition passes validation with null AssociatedLoadout"), BowDef->IsValidWeaponDefinition(Reason));
 		BowDef->AssociatedLoadout = BowLoadout;
 
 		// 2.6 BaseGrantedActions granting melee UPrimaryAttackAbility
@@ -820,6 +830,7 @@ bool FProjectileLifecycleAutomationTest::RunTest(const FString& Parameters)
 			BowDefinition->WeaponMesh = BowMesh;
 			BowDefinition->LaunchSocketName = BowLaunchSocketName;
 			BowDefinition->DefaultProjectileDefinition = ProjectileDefinition;
+			BowDefinition->PrimaryAttackAbilityTag = TagAbilityPrimaryAttack;
 			BowDefinition->AssociatedLoadout = BowLoadout;
 			BowDefinition->BaseGrantedActions.Add(UBowDrawFireAbility::StaticClass());
 

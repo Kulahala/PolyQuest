@@ -24,7 +24,9 @@ PolyQuest has completed its native first-enemy combat loop and weapon/AI combat 
 
 `TODO-03A7F` completes the source-level trigger-range contract for the four current Player Motion-Warp consumers. `MinTriggerDistance <= WarpStopDistance <= MaxTriggerDistance` makes the lower and upper bounds explicit: `Min < Stop` permits bounded reverse correction, `Min == Stop` preserves forward-only behavior, and exact stop distance is a no-op. The user confirmed the focused Motion-Warp Automation suite and Scene01 PIE; authored field migration, Montage/Notify/Root Motion readback, and an independent manual `PolyQuestEditor` compile receipt remain open, so this is not a clean-checkout authored-fixture claim.
 
-`TODO-03H5` completes a Review-Only health audit of the four current Player Motion-Warp consumers and their direct lifecycle, ASC, input, and melee damage boundaries. No P0-P2 blocker or Source change was found; the A7F exact-stop test limitation and authored readback/manual-compile/cross-frame Task evidence remain non-blocking validation debt. The next planning slice is `TODO-03I1`.
+`TODO-03H5` completes a Review-Only health audit of the four current Player Motion-Warp consumers and their direct lifecycle, ASC, input, and melee damage boundaries. No P0-P2 blocker or Source change was found; the A7F exact-stop test limitation and authored readback/manual-compile/cross-frame Task evidence remain non-blocking validation debt.
+
+`TODO-03I1` completes the source-level direct input route for the equipped MainHand: `PrimaryAttackAbilityTag` and optional `SprintAttackAbilityTag` are canonical, Guard/Parry still use the Effective Defense Profile, and prepared 1-4 slots still use exact handles. `AssociatedLoadout`/`ActiveCombatLoadout` remain migration compatibility mirrors and cannot override routing or fail an equipment transaction. The user confirmed focused Automation and Scene01 PIE; no independent manual `PolyQuestEditor` compile receipt or complete authored zero-reference readback is recorded. The next planning slice is `TODO-03I2`.
 
 `TODO-03B-4` completes mobile Player Bow Draw/Hold/Release/Recovery: the Bow Ability keeps its existing aim, lock-preference, projectile, Dodge-window, and Jump-block contracts, but no longer blocks ordinary movement input. A configured authored MoveSpeed GameplayEffect owns one exact active handle across the full Bow lifecycle and cancels only an active Sprint; the handle is removed precisely through `EndAbility()` without touching other speed sources. The user confirmed focused PIE and the fourteen-suite Editor Automation matrix. The authored pace is mutable local Content tuning, while native Automation covers handle lifetime and CharacterMovement synchronization with an isolated fixture value.
 
@@ -154,7 +156,9 @@ PolyQuest 是一个以 UE 5.8、C++ 与 GAS 为核心的单机低多边形动作
 
 `TODO-03A7F` 已完成四个 Player Motion-Warp 消费者的显式触发距离合同：`MinTriggerDistance <= WarpStopDistance <= MaxTriggerDistance`。`Min < Stop` 时允许有界反向修正，`Min == Stop` 保持前向-only，精确停距不写入目标。用户已确认聚焦 Motion-Warp Automation 与 Scene01 PIE；字段迁移、Montage/Notify/Root Motion readback 及独立手动 `PolyQuestEditor` 编译收据仍未形成，因此不宣称干净作者化基线。
 
-`TODO-03H5` 已完成对四个 Player Motion-Warp 消费者及其直接生命周期、ASC、输入和近战伤害边界的 Review-Only 健康审查。未发现 P0-P2 blocker，也没有 Source 改动；A7F exact-stop 测试限制以及作者化 readback、独立手动编译和跨帧 Task 时序证据仍是非阻塞验证债务。下一规划阶段为 `TODO-03I1`。
+`TODO-03H5` 已完成对四个 Player Motion-Warp 消费者及其直接生命周期、ASC、输入和近战伤害边界的 Review-Only 健康审查。未发现 P0-P2 blocker，也没有 Source 改动；A7F exact-stop 测试限制以及作者化 readback、独立手动编译和跨帧 Task 时序证据仍是非阻塞验证债务。
+
+`TODO-03I1` 已完成装备主手的 direct input route 收口：`PrimaryAttackAbilityTag` 与可选 `SprintAttackAbilityTag` 是 Primary/Sprint 规范来源，Guard/Parry 仍由 Effective Defense Profile 解析，1-4 仍按精确 Handle 激活。`AssociatedLoadout`/`ActiveCombatLoadout` 仅作迁移兼容镜像，不能覆盖 direct route 或使装备事务失败。用户已确认聚焦 Automation 与 Scene01 PIE；没有独立手动 `PolyQuestEditor` 编译收据或完整作者化零引用 readback。下一规划阶段为 `TODO-03I2`。
 
 `TODO-01C4` 已完成玩家专属的起身翻滚路线。现有 `ActionDodgeCancelWindow` 只会在匹配且仍活跃的 Player Launch `LandingRecovery` Montage 中授权普通的接地 Dodge；该阶段对 `State.Action.CanCancel.Dodge` 的 scoped loose-tag 贡献会在窗口结束和所有 Launch 清理路径中移除。Dodge 仍会先提交其正常 Cost，随后才取消 Launch，因此保留“当前 Stamina 大于 0 即可开始、Cost 后钳制到 0”的软透支规则；连续输入在 Dodge 自身恢复窗口到来前不会覆盖新起手。用户已确认 Automation 与聚焦 PIE，Montage/GA/GE 作者化资产继续保留为本地 WIP。
 

@@ -67,27 +67,17 @@ bool UBowWeaponDefinition::IsValidWeaponDefinition(FString& OutReason) const
 		return false;
 	}
 
-	if (!AssociatedLoadout)
+	const FGameplayTag ExpectedPrimaryAttackAbilityTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Attack.Primary")), false);
+	if (!ExpectedPrimaryAttackAbilityTag.IsValid())
 	{
-		OutReason = TEXT("AssociatedLoadout is required for bow weapon definition.");
+		OutReason = TEXT("Required Ability.Attack.Primary gameplay tag is not registered.");
 		return false;
 	}
 
-	const FGameplayTag PrimaryAttackInputTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Input.PrimaryAttack")), false);
-	const FGameplayTag PrimaryAttackAbilityTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Attack.Primary")), false);
-
-	if (!PrimaryAttackInputTag.IsValid() || !PrimaryAttackAbilityTag.IsValid())
+	if (PrimaryAttackAbilityTag != ExpectedPrimaryAttackAbilityTag)
 	{
-		OutReason = TEXT("Required Input.PrimaryAttack or Ability.Attack.Primary gameplay tags are not registered.");
-		return false;
-	}
-
-	FGameplayTag ResolvedAbilityTag;
-	if (!AssociatedLoadout->TryGetAbilityTagForInputIntent(PrimaryAttackInputTag, ResolvedAbilityTag)
-		|| ResolvedAbilityTag != PrimaryAttackAbilityTag)
-	{
-		OutReason = FString::Printf(TEXT("AssociatedLoadout must map '%s' to '%s'."),
-			*PrimaryAttackInputTag.ToString(), *PrimaryAttackAbilityTag.ToString());
+		OutReason = FString::Printf(TEXT("Bow weapon definition PrimaryAttackAbilityTag must be '%s' (found '%s')."),
+			*ExpectedPrimaryAttackAbilityTag.ToString(), *PrimaryAttackAbilityTag.ToString());
 		return false;
 	}
 

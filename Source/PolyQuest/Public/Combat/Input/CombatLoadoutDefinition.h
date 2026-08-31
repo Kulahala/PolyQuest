@@ -21,7 +21,8 @@ struct POLYQUEST_API FCombatInputAbilityRoute
 };
 
 /**
- * Immutable authored routes for one active combat loadout.
+ * Authored routes for one combat loadout (retained as a migration compatibility mirror in TODO-03I1).
+ * Canonical runtime attack routes are directly owned by UWeaponDefinition.
  * Runtime input state and active abilities remain owned by the player and ASC.
  */
 UCLASS(BlueprintType)

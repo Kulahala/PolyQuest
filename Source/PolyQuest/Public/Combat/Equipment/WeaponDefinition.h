@@ -100,8 +100,16 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Defense", meta = (ToolTip = "可选防御配置资产；主手作为防御回退源，副手作为防御覆盖源。"))
 	TObjectPtr<UDefenseProfileDefinition> DefenseProfile;
 
+	/** Direct canonical ability tag routed by Input.PrimaryAttack while this weapon is equipped in the main hand. Must match exactly one BaseGrantedAction CDO. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Combat Actions", meta = (ToolTip = "主手装备时通过普通攻击输入（Input.PrimaryAttack）路由的规范 Ability Tag；必须精确匹配 BaseGrantedActions 中的恰好一个 Ability。"))
+	FGameplayTag PrimaryAttackAbilityTag;
+
+	/** Direct optional ability tag routed by Sprint Attack while this weapon is equipped in the main hand. If valid, must match exactly one BaseGrantedAction CDO. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Combat Actions", meta = (ToolTip = "主手装备时通过冲刺攻击路由的可选 Ability Tag；若配置，必须精确匹配 BaseGrantedActions 中的恰好一个 Ability。留空则回退到普通攻击路由。"))
+	FGameplayTag SprintAttackAbilityTag;
+
 	/** The Base Input Profile consumed by the main hand (TODO-03A field name retained for asset compatibility). */
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Loadout", meta = (ToolTip = "主手装备所使用的基础输入路由配置资产（Combat Loadout）。"))
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Loadout", meta = (ToolTip = "主手装备所使用的基础输入路由配置资产（Combat Loadout；兼容镜像，不作为运行时规范路由）。"))
 	TObjectPtr<UCombatLoadoutDefinition> AssociatedLoadout;
 };
 
@@ -240,6 +248,76 @@ inline bool UWeaponDefinition::IsValidWeaponDefinition(FString& OutReason) const
 		}
 
 		SeenPreparedClasses.Add(PreparedClass);
+	}
+
+	if (HandSlot == EWeaponHandSlot::OffHand)
+	{
+		if (PrimaryAttackAbilityTag.IsValid())
+		{
+			OutReason = TEXT("OffHand weapons must not configure PrimaryAttackAbilityTag.");
+			return false;
+		}
+
+		if (SprintAttackAbilityTag.IsValid())
+		{
+			OutReason = TEXT("OffHand weapons must not configure SprintAttackAbilityTag.");
+			return false;
+		}
+	}
+	else
+	{
+		if (!PrimaryAttackAbilityTag.IsValid())
+		{
+			OutReason = TEXT("MainHand weapons must configure a valid PrimaryAttackAbilityTag.");
+			return false;
+		}
+
+		int32 PrimaryMatchCount = 0;
+		for (const TSubclassOf<UGameplayAbility>& ActionClass : BaseGrantedActions)
+		{
+			if (!ActionClass)
+			{
+				continue;
+			}
+
+			const UGameplayAbility* AbilityCDO = ActionClass.GetDefaultObject();
+			if (AbilityCDO && AbilityCDO->AbilityTags.HasTagExact(PrimaryAttackAbilityTag))
+			{
+				PrimaryMatchCount++;
+			}
+		}
+
+		if (PrimaryMatchCount != 1)
+		{
+			OutReason = FString::Printf(TEXT("MainHand weapon must have exactly one BaseGrantedAction matching PrimaryAttackAbilityTag '%s' (found %d)."),
+				*PrimaryAttackAbilityTag.ToString(), PrimaryMatchCount);
+			return false;
+		}
+
+		if (SprintAttackAbilityTag.IsValid())
+		{
+			int32 SprintMatchCount = 0;
+			for (const TSubclassOf<UGameplayAbility>& ActionClass : BaseGrantedActions)
+			{
+				if (!ActionClass)
+				{
+					continue;
+				}
+
+				const UGameplayAbility* AbilityCDO = ActionClass.GetDefaultObject();
+				if (AbilityCDO && AbilityCDO->AbilityTags.HasTagExact(SprintAttackAbilityTag))
+				{
+					SprintMatchCount++;
+				}
+			}
+
+			if (SprintMatchCount != 1)
+			{
+				OutReason = FString::Printf(TEXT("SprintAttackAbilityTag '%s' must match exactly one BaseGrantedAction (found %d)."),
+					*SprintAttackAbilityTag.ToString(), SprintMatchCount);
+				return false;
+			}
+		}
 	}
 
 	if (DefenseProfile && !DefenseProfile->IsProfileValid())

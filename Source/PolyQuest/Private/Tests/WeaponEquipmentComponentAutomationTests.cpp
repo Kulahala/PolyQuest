@@ -9,6 +9,7 @@
 #include "AbilitySystem/Abilities/PlayerGuardAbility.h"
 #include "AbilitySystem/Abilities/PlayerGuardBreakAbility.h"
 #include "AbilitySystem/Abilities/PlayerParryAbility.h"
+#include "AbilitySystem/Abilities/SprintAttackAbility.h"
 #include "Character/Player/PlayerCharacter.h"
 #include "Combat/Input/CombatLoadoutDefinition.h"
 #include "Combat/Equipment/BowWeaponDefinition.h"
@@ -84,6 +85,7 @@ bool FWeaponEquipmentComponentTransactionMatrixTest::RunTest(const FString& Para
 	// Create test loadouts
 	const FGameplayTag TagInputPrimaryAttack = FGameplayTag::RequestGameplayTag(TEXT("Input.PrimaryAttack"));
 	const FGameplayTag TagAbilityPrimaryAttack = FGameplayTag::RequestGameplayTag(TEXT("Ability.Attack.Primary"));
+	const FGameplayTag TagAbilitySprintAttack = FGameplayTag::RequestGameplayTag(TEXT("Ability.Attack.Sprint"));
 	const FGameplayTag TagBowDrawReady = FGameplayTag::RequestGameplayTag(TEXT("Event.Attack.Bow.DrawReady"), false);
 	const FGameplayTag TagBowRelease = FGameplayTag::RequestGameplayTag(TEXT("Event.Attack.Bow.Release"), false);
 	TestTrue(TEXT("Bow DrawReady event tag is registered"), TagBowDrawReady.IsValid());
@@ -103,6 +105,7 @@ bool FWeaponEquipmentComponentTransactionMatrixTest::RunTest(const FString& Para
 	SwordDef->WeaponMesh = SwordMesh;
 	SwordDef->BladeBaseSocketName = SocketNameTraceBase;
 	SwordDef->BladeTipSocketName = SocketNameTraceTip;
+	SwordDef->PrimaryAttackAbilityTag = TagAbilityPrimaryAttack;
 	SwordDef->AssociatedLoadout = SwordLoadout;
 	SwordDef->BaseGrantedActions.Add(UPrimaryAttackAbility::StaticClass());
 	SwordDef->ExclusiveCombatActions.Add(UPlayerGuardAbility::StaticClass());
@@ -122,6 +125,7 @@ bool FWeaponEquipmentComponentTransactionMatrixTest::RunTest(const FString& Para
 	TwoHandedDef->WeaponMesh = SwordMesh;
 	TwoHandedDef->BladeBaseSocketName = SocketNameTraceBase;
 	TwoHandedDef->BladeTipSocketName = SocketNameTraceTip;
+	TwoHandedDef->PrimaryAttackAbilityTag = TagAbilityPrimaryAttack;
 	TwoHandedDef->AssociatedLoadout = TwoHandedLoadout;
 	TwoHandedDef->BaseGrantedActions.Add(UPrimaryAttackAbility::StaticClass());
 	TwoHandedDef->ExclusiveCombatActions.Add(UPlayerGuardBreakAbility::StaticClass());
@@ -144,6 +148,8 @@ bool FWeaponEquipmentComponentTransactionMatrixTest::RunTest(const FString& Para
 	UnarmedDef->TraceRadius = 8.0f;
 	UnarmedDef->BladeSubdivisions = 2;
 	UnarmedDef->DisplayScale = FVector(1.5f, 0.5f, 1.25f);
+	UnarmedDef->BaseGrantedActions.Add(UPrimaryAttackAbility::StaticClass());
+	UnarmedDef->PrimaryAttackAbilityTag = TagAbilityPrimaryAttack;
 
 	UOffHandWeaponDefinition* ShieldDef = NewObject<UOffHandWeaponDefinition>(GetTransientPackage(), TEXT("Test_Shield"));
 	ShieldDef->HandSlot = EWeaponHandSlot::OffHand;
@@ -378,6 +384,7 @@ bool FWeaponEquipmentComponentTransactionMatrixTest::RunTest(const FString& Para
 		IncompleteSocketDef->WeaponMesh = SwordMesh;
 		IncompleteSocketDef->BladeBaseSocketName = SocketNameTraceBase;
 		IncompleteSocketDef->BladeTipSocketName = NAME_None;
+		IncompleteSocketDef->PrimaryAttackAbilityTag = TagAbilityPrimaryAttack;
 		IncompleteSocketDef->AssociatedLoadout = SwordLoadout;
 		IncompleteSocketDef->BaseGrantedActions.Add(UPrimaryAttackAbility::StaticClass());
 		IncompleteSocketDef->ExclusiveCombatActions.Add(UPlayerGuardAbility::StaticClass());
@@ -393,6 +400,7 @@ bool FWeaponEquipmentComponentTransactionMatrixTest::RunTest(const FString& Para
 		MissingSocketDef->WeaponMesh = SwordMesh;
 		MissingSocketDef->BladeBaseSocketName = SocketNameTraceBase;
 		MissingSocketDef->BladeTipSocketName = FName(TEXT("NonExistent_Tip_Socket"));
+		MissingSocketDef->PrimaryAttackAbilityTag = TagAbilityPrimaryAttack;
 		MissingSocketDef->AssociatedLoadout = SwordLoadout;
 		MissingSocketDef->BaseGrantedActions.Add(UPrimaryAttackAbility::StaticClass());
 		MissingSocketDef->ExclusiveCombatActions.Add(UPlayerGuardAbility::StaticClass());
@@ -421,6 +429,7 @@ bool FWeaponEquipmentComponentTransactionMatrixTest::RunTest(const FString& Para
 		CoincidentSocketDef->WeaponMesh = SwordMesh;
 		CoincidentSocketDef->BladeBaseSocketName = SocketCoincidentBase;
 		CoincidentSocketDef->BladeTipSocketName = SocketCoincidentTip;
+		CoincidentSocketDef->PrimaryAttackAbilityTag = TagAbilityPrimaryAttack;
 		CoincidentSocketDef->AssociatedLoadout = SwordLoadout;
 		CoincidentSocketDef->BaseGrantedActions.Add(UPrimaryAttackAbility::StaticClass());
 		CoincidentSocketDef->ExclusiveCombatActions.Add(UPlayerGuardAbility::StaticClass());
@@ -447,6 +456,7 @@ bool FWeaponEquipmentComponentTransactionMatrixTest::RunTest(const FString& Para
 		NaNTransformDef->WeaponMesh = SwordMesh;
 		NaNTransformDef->BladeBaseSocketName = SocketNameTraceBase;
 		NaNTransformDef->BladeTipSocketName = SocketNameTraceTip;
+		NaNTransformDef->PrimaryAttackAbilityTag = TagAbilityPrimaryAttack;
 		NaNTransformDef->AssociatedLoadout = SwordLoadout;
 		NaNTransformDef->BaseGrantedActions.Add(UPrimaryAttackAbility::StaticClass());
 		NaNTransformDef->ExclusiveCombatActions.Add(UPlayerGuardAbility::StaticClass());
@@ -466,6 +476,7 @@ bool FWeaponEquipmentComponentTransactionMatrixTest::RunTest(const FString& Para
 		InvalidDisplayScaleDef->WeaponMesh = SwordMesh;
 		InvalidDisplayScaleDef->BladeBaseSocketName = SocketNameTraceBase;
 		InvalidDisplayScaleDef->BladeTipSocketName = SocketNameTraceTip;
+		InvalidDisplayScaleDef->PrimaryAttackAbilityTag = TagAbilityPrimaryAttack;
 		InvalidDisplayScaleDef->AssociatedLoadout = SwordLoadout;
 		InvalidDisplayScaleDef->BaseGrantedActions.Add(UPrimaryAttackAbility::StaticClass());
 		InvalidDisplayScaleDef->ExclusiveCombatActions.Add(UPlayerGuardAbility::StaticClass());
@@ -793,6 +804,7 @@ bool FWeaponEquipmentComponentTransactionMatrixTest::RunTest(const FString& Para
 		SwordForShieldDef->WeaponMesh = SwordMesh;
 		SwordForShieldDef->BladeBaseSocketName = SocketNameTraceBase;
 		SwordForShieldDef->BladeTipSocketName = SocketNameTraceTip;
+		SwordForShieldDef->PrimaryAttackAbilityTag = TagAbilityPrimaryAttack;
 		SwordForShieldDef->AssociatedLoadout = SwordLoadout;
 		SwordForShieldDef->BaseGrantedActions.Add(UPrimaryAttackAbility::StaticClass());
 		SwordForShieldDef->ExclusiveCombatActions.Add(UPlayerGuardBreakAbility::StaticClass());
@@ -964,6 +976,7 @@ bool FWeaponEquipmentComponentTransactionMatrixTest::RunTest(const FString& Para
 			BadBaseDef->WeaponMesh = SwordMesh;
 			BadBaseDef->BladeBaseSocketName = SocketNameTraceBase;
 			BadBaseDef->BladeTipSocketName = SocketNameTraceTip;
+			BadBaseDef->PrimaryAttackAbilityTag = TagAbilityPrimaryAttack;
 			BadBaseDef->AssociatedLoadout = SwordLoadout;
 			BadBaseDef->BaseGrantedActions.Add(UPrimaryAttackAbility::StaticClass());
 			BadBaseDef->LocomotionMode = static_cast<EWeaponLocomotionMode>(3);
@@ -1036,6 +1049,7 @@ bool FWeaponEquipmentComponentTransactionMatrixTest::RunTest(const FString& Para
 		BowDef->WeaponMesh = TransientBowMesh;
 		BowDef->LaunchSocketName = SocketNameBowLaunch;
 		BowDef->DefaultProjectileDefinition = TransBowProjDef;
+		BowDef->PrimaryAttackAbilityTag = TagAbilityPrimaryAttack;
 		BowDef->AssociatedLoadout = BowLoadout;
 		BowDef->BaseGrantedActions.Add(UBowDrawFireAbility::StaticClass());
 		BowDef->DisplayScale = FVector(1.6f, 0.7f, 1.3f);
@@ -1292,6 +1306,141 @@ bool FWeaponEquipmentComponentTransactionMatrixTest::RunTest(const FString& Para
 		{
 			Drop->Destroy();
 		}
+	}
+
+	// -------------------------------------------------------------------------
+	// 14. Test Direct Combat Route Contract, Conflict Isolation & Fail-Closed Validation (TODO-03I1)
+	// -------------------------------------------------------------------------
+	{
+		// 14.1 Pure Direct Route Equip & Resolution without AssociatedLoadout
+		UMeleeWeaponDefinition* DirectSwordDef = NewObject<UMeleeWeaponDefinition>(GetTransientPackage(), TEXT("Test_DirectSword"));
+		DirectSwordDef->HandSlot = EWeaponHandSlot::MainHandOneHanded;
+		DirectSwordDef->LocomotionMode = EWeaponLocomotionMode::LightSword;
+		DirectSwordDef->AttachSocketName = TEXT("Weapon_R");
+		DirectSwordDef->WeaponMesh = SwordMesh;
+		DirectSwordDef->BladeBaseSocketName = SocketNameTraceBase;
+		DirectSwordDef->BladeTipSocketName = SocketNameTraceTip;
+		DirectSwordDef->PrimaryAttackAbilityTag = TagAbilityPrimaryAttack;
+		DirectSwordDef->SprintAttackAbilityTag = TagAbilitySprintAttack;
+		DirectSwordDef->AssociatedLoadout = nullptr;
+		DirectSwordDef->BaseGrantedActions.Add(UPrimaryAttackAbility::StaticClass());
+		DirectSwordDef->BaseGrantedActions.Add(USprintAttackAbility::StaticClass());
+		DirectSwordDef->bUseOwnerMeshSocketForTrace = false;
+		DirectSwordDef->BladeBaseMarkerRelativeLocation = FVector(0, 0, 10);
+		DirectSwordDef->BladeTipMarkerRelativeLocation = FVector(0, 0, 100);
+		DirectSwordDef->TraceRadius = 10.0f;
+		DirectSwordDef->BladeSubdivisions = 4;
+
+		FString DirectSwordReason;
+		TestTrue(TEXT("14.1 DirectSwordDef with null AssociatedLoadout passes IsValidWeaponDefinition"), DirectSwordDef->IsValidWeaponDefinition(DirectSwordReason));
+		TestTrue(TEXT("14.1 DirectSwordDef equips successfully"), EquipmentComp->EquipWeapon(DirectSwordDef));
+
+		FGameplayTag ResolvedPrimaryTag;
+		TestTrue(TEXT("14.1 TryResolveInputIntent resolves PrimaryAttack from direct field"), EquipmentComp->TryResolveInputIntent(TagInputPrimaryAttack, ResolvedPrimaryTag));
+		TestEqual(TEXT("14.1 Resolved Primary tag matches direct PrimaryAttackAbilityTag"), ResolvedPrimaryTag, TagAbilityPrimaryAttack);
+
+		FGameplayTag ResolvedSprintTag;
+		TestTrue(TEXT("14.1 TryGetSprintAttackAbilityTag resolves Sprint Attack from direct field"), EquipmentComp->TryGetSprintAttackAbilityTag(ResolvedSprintTag));
+		TestEqual(TEXT("14.1 Resolved Sprint tag matches direct SprintAttackAbilityTag"), ResolvedSprintTag, TagAbilitySprintAttack);
+
+		TestNull(TEXT("14.1 ActiveCombatLoadout mirror is cleared when equipping weapon with null AssociatedLoadout"), Player->GetActiveCombatLoadout());
+
+		// 14.2 Direct Route Priority & Loadout Conflict Isolation
+		UCombatLoadoutDefinition* ConflictingLoadout = NewObject<UCombatLoadoutDefinition>(GetTransientPackage(), TEXT("Test_ConflictingLoadout"));
+		const FGameplayTag TagConflictingAbility = FGameplayTag::RequestGameplayTag(TEXT("Ability.Defense.Guard"));
+		ConflictingLoadout->AddTestInputAbilityRoute(TagInputPrimaryAttack, TagConflictingAbility);
+
+		UMeleeWeaponDefinition* ConflictSwordDef = NewObject<UMeleeWeaponDefinition>(GetTransientPackage(), TEXT("Test_ConflictSword"));
+		ConflictSwordDef->HandSlot = EWeaponHandSlot::MainHandOneHanded;
+		ConflictSwordDef->LocomotionMode = EWeaponLocomotionMode::LightSword;
+		ConflictSwordDef->AttachSocketName = TEXT("Weapon_R");
+		ConflictSwordDef->WeaponMesh = SwordMesh;
+		ConflictSwordDef->BladeBaseSocketName = SocketNameTraceBase;
+		ConflictSwordDef->BladeTipSocketName = SocketNameTraceTip;
+		ConflictSwordDef->PrimaryAttackAbilityTag = TagAbilityPrimaryAttack;
+		ConflictSwordDef->AssociatedLoadout = ConflictingLoadout;
+		ConflictSwordDef->BaseGrantedActions.Add(UPrimaryAttackAbility::StaticClass());
+		ConflictSwordDef->bUseOwnerMeshSocketForTrace = false;
+		ConflictSwordDef->BladeBaseMarkerRelativeLocation = FVector(0, 0, 10);
+		ConflictSwordDef->BladeTipMarkerRelativeLocation = FVector(0, 0, 100);
+		ConflictSwordDef->TraceRadius = 10.0f;
+		ConflictSwordDef->BladeSubdivisions = 4;
+
+		TestTrue(TEXT("14.2 ConflictSwordDef equips successfully"), EquipmentComp->EquipWeapon(ConflictSwordDef));
+		FGameplayTag ConflictResolvedTag;
+		TestTrue(TEXT("14.2 TryResolveInputIntent succeeds despite conflicting AssociatedLoadout"), EquipmentComp->TryResolveInputIntent(TagInputPrimaryAttack, ConflictResolvedTag));
+		TestEqual(TEXT("14.2 Direct route wins over conflicting AssociatedLoadout"), ConflictResolvedTag, TagAbilityPrimaryAttack);
+
+		// 14.3 Missing / Unmatched Direct Route Fail-Closed Validation
+		// 14.3.1 Missing PrimaryAttackAbilityTag
+		UMeleeWeaponDefinition* MissingPrimaryDef = NewObject<UMeleeWeaponDefinition>(GetTransientPackage(), TEXT("Test_MissingPrimaryDef"));
+		MissingPrimaryDef->HandSlot = EWeaponHandSlot::MainHandOneHanded;
+		MissingPrimaryDef->AttachSocketName = TEXT("Weapon_R");
+		MissingPrimaryDef->WeaponMesh = SwordMesh;
+		MissingPrimaryDef->BladeBaseSocketName = SocketNameTraceBase;
+		MissingPrimaryDef->BladeTipSocketName = SocketNameTraceTip;
+		MissingPrimaryDef->BaseGrantedActions.Add(UPrimaryAttackAbility::StaticClass());
+		// PrimaryAttackAbilityTag left invalid (empty)
+		FString MissingPrimaryReason;
+		TestFalse(TEXT("14.3.1 IsValidWeaponDefinition rejects MainHand with missing PrimaryAttackAbilityTag"), MissingPrimaryDef->IsValidWeaponDefinition(MissingPrimaryReason));
+		TestFalse(TEXT("14.3.1 Preflight rejects MainHand with missing PrimaryAttackAbilityTag"), EquipmentComp->TestDirectPreflight(MissingPrimaryDef, nullptr, MissingPrimaryReason));
+
+		// 14.3.2 Unmatched PrimaryAttackAbilityTag
+		UMeleeWeaponDefinition* UnmatchedPrimaryDef = NewObject<UMeleeWeaponDefinition>(GetTransientPackage(), TEXT("Test_UnmatchedPrimaryDef"));
+		UnmatchedPrimaryDef->HandSlot = EWeaponHandSlot::MainHandOneHanded;
+		UnmatchedPrimaryDef->AttachSocketName = TEXT("Weapon_R");
+		UnmatchedPrimaryDef->WeaponMesh = SwordMesh;
+		UnmatchedPrimaryDef->BladeBaseSocketName = SocketNameTraceBase;
+		UnmatchedPrimaryDef->BladeTipSocketName = SocketNameTraceTip;
+		UnmatchedPrimaryDef->PrimaryAttackAbilityTag = FGameplayTag::RequestGameplayTag(TEXT("Ability.Defense.Guard"));
+		UnmatchedPrimaryDef->BaseGrantedActions.Add(UPrimaryAttackAbility::StaticClass());
+		FString UnmatchedPrimaryReason;
+		TestFalse(TEXT("14.3.2 IsValidWeaponDefinition rejects PrimaryAttackAbilityTag not matching any BaseGrantedAction CDO"), UnmatchedPrimaryDef->IsValidWeaponDefinition(UnmatchedPrimaryReason));
+
+		// 14.3.3 Unmatched SprintAttackAbilityTag
+		UMeleeWeaponDefinition* UnmatchedSprintDef = NewObject<UMeleeWeaponDefinition>(GetTransientPackage(), TEXT("Test_UnmatchedSprintDef"));
+		UnmatchedSprintDef->HandSlot = EWeaponHandSlot::MainHandOneHanded;
+		UnmatchedSprintDef->AttachSocketName = TEXT("Weapon_R");
+		UnmatchedSprintDef->WeaponMesh = SwordMesh;
+		UnmatchedSprintDef->BladeBaseSocketName = SocketNameTraceBase;
+		UnmatchedSprintDef->BladeTipSocketName = SocketNameTraceTip;
+		UnmatchedSprintDef->PrimaryAttackAbilityTag = TagAbilityPrimaryAttack;
+		UnmatchedSprintDef->SprintAttackAbilityTag = TagAbilitySprintAttack;
+		UnmatchedSprintDef->BaseGrantedActions.Add(UPrimaryAttackAbility::StaticClass());
+		// BaseGrantedActions lacks USprintAttackAbility
+		FString UnmatchedSprintReason;
+		TestFalse(TEXT("14.3.3 IsValidWeaponDefinition rejects SprintAttackAbilityTag not matching any BaseGrantedAction CDO"), UnmatchedSprintDef->IsValidWeaponDefinition(UnmatchedSprintReason));
+
+		// 14.4 OffHand Attack Tag Misconfiguration Rejection
+		UOffHandWeaponDefinition* IllegalOffHandDef = NewObject<UOffHandWeaponDefinition>(GetTransientPackage(), TEXT("Test_IllegalOffHandDef"));
+		IllegalOffHandDef->HandSlot = EWeaponHandSlot::OffHand;
+		IllegalOffHandDef->LocomotionMode = EWeaponLocomotionMode::Default;
+		IllegalOffHandDef->AttachSocketName = TEXT("Weapon_L");
+		IllegalOffHandDef->WeaponMesh = ShieldMesh;
+		IllegalOffHandDef->PrimaryAttackAbilityTag = TagAbilityPrimaryAttack;
+		FString IllegalOffHandReason;
+		TestFalse(TEXT("14.4 IsValidWeaponDefinition rejects OffHand with configured PrimaryAttackAbilityTag"), IllegalOffHandDef->IsValidWeaponDefinition(IllegalOffHandReason));
+
+		// 14.5 Missing Sprint direct route returns false without stale route
+		UMeleeWeaponDefinition* NoSprintDef = NewObject<UMeleeWeaponDefinition>(GetTransientPackage(), TEXT("Test_NoSprintDef"));
+		NoSprintDef->HandSlot = EWeaponHandSlot::MainHandOneHanded;
+		NoSprintDef->LocomotionMode = EWeaponLocomotionMode::LightSword;
+		NoSprintDef->AttachSocketName = TEXT("Weapon_R");
+		NoSprintDef->WeaponMesh = SwordMesh;
+		NoSprintDef->BladeBaseSocketName = SocketNameTraceBase;
+		NoSprintDef->BladeTipSocketName = SocketNameTraceTip;
+		NoSprintDef->PrimaryAttackAbilityTag = TagAbilityPrimaryAttack;
+		NoSprintDef->BaseGrantedActions.Add(UPrimaryAttackAbility::StaticClass());
+		NoSprintDef->bUseOwnerMeshSocketForTrace = false;
+		NoSprintDef->BladeBaseMarkerRelativeLocation = FVector(0, 0, 10);
+		NoSprintDef->BladeTipMarkerRelativeLocation = FVector(0, 0, 100);
+		NoSprintDef->TraceRadius = 10.0f;
+		NoSprintDef->BladeSubdivisions = 4;
+
+		TestTrue(TEXT("14.5 NoSprintDef equips successfully"), EquipmentComp->EquipWeapon(NoSprintDef));
+		FGameplayTag EmptySprintTag;
+		TestFalse(TEXT("14.5 TryGetSprintAttackAbilityTag returns false when sprint direct route is empty"), EquipmentComp->TryGetSprintAttackAbilityTag(EmptySprintTag));
+		TestFalse(TEXT("14.5 EmptySprintTag remains invalid"), EmptySprintTag.IsValid());
 	}
 
 	Player->Destroy();

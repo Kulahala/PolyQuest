@@ -209,9 +209,12 @@ public:
 	UFUNCTION(BlueprintCallable, Category="Input")
 	virtual void DoJumpEnd();
 
-	/** Sets the authored routes used by future combat input starts without interrupting active abilities. */
+	/** Sets the authored routes used by future combat input starts without interrupting active abilities. (Compatibility mirror) */
 	UFUNCTION(BlueprintCallable, Category = "Combat|Loadout")
 	bool SetActiveCombatLoadout(UCombatLoadoutDefinition* NewCombatLoadout);
+
+	/** Clears the compatibility combat loadout mirror without affecting active abilities or direct routes. */
+	void ClearActiveCombatLoadout();
 
 	/** Returns the loadout currently routing combat input; C++-only narrow read for the equipment snapshot. */
 	UCombatLoadoutDefinition* GetActiveCombatLoadout() const { return ActiveCombatLoadout; }

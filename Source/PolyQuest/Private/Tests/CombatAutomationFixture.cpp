@@ -8,10 +8,12 @@
 #include "InputAction.h"
 #include "Materials/Material.h"
 #include "Materials/MaterialInstanceDynamic.h"
+#include "AbilitySystem/Abilities/PrimaryAttackAbility.h"
 #include "Character/Enemy/EnemyCharacter.h"
 #include "Character/Player/PlayerCharacter.h"
 #include "Combat/Equipment/MeleeWeaponDefinition.h"
 #include "Combat/Input/CombatLoadoutDefinition.h"
+#include "GameplayTagContainer.h"
 #include "Tests/TestExhaustionMoveSpeedGE.h"
 #include "Tests/TestPoiseRecoveryGE.h"
 #include "Tests/TestStaminaRegenGE.h"
@@ -77,6 +79,8 @@ APlayerCharacter* FCombatAutomationFixture::SpawnPlayer(
 	WeaponDefinition->bUseOwnerMeshSocketForTrace = true;
 	WeaponDefinition->BladeBaseMarkerRelativeLocation = FVector::ZeroVector;
 	WeaponDefinition->BladeTipMarkerRelativeLocation = FVector(20.0f, 0.0f, 0.0f);
+	WeaponDefinition->BaseGrantedActions.Add(UPrimaryAttackAbility::StaticClass());
+	WeaponDefinition->PrimaryAttackAbilityTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Attack.Primary")), false);
 	WeaponDefinition->AssociatedLoadout = Loadout;
 	Player->ConfigureTestStartupFixture(
 		Loadout,
