@@ -1175,3 +1175,14 @@ TODO-03A3E World Pickup Interaction Prompt v1
 - **用户资产与验证证据**：用户确认已完成 Player/Enemy typed profile 的 Editor 迁移与角色 assignment，在 Reference Viewer 确认旧 Base-type assets 为零引用后删除并修复 redirector。用户明确确认最终 `PolyQuestEditor` 编译成功，随后通过 focused feedback Automation 与 `/Game/Maps/Scene01` PIE；最终复验的 `PolyQuest.Combat.HitFeedback` 也为 Success。日志中的 wrong-profile、null-profile 与无效 reaction-tag 提示均对应 fail-closed 测试矩阵或既有 fixture 诊断，不是运行时失败。
 - **Fresh Review 与修复**：Main 的常规 diff-first Fresh Review 发现 `CombatHitFeedbackAutomationTests.cpp` Section 24 在 fixture 创建失败时会因裸条件分支静默跳过。Main 仅在该批准测试路径增加 `TestNotNull` 前置、失败清理与 `return false`；用户重跑受影响 Automation 成功，最终窄复核未发现 P0/P1/P2。
 - **债务、范围与后续**：`Debt-07B6-ProfileNullCoverage` 已由正确/错误/空 profile 和空可选资源的测试矩阵关闭；07B7 没有新接受的债务。所有 `Content/**`、`Config/Automation/Presets/1.json`、其他用户 WIP、Blueprint、Map、输入、动画、Niagara、声音与产品 `.uasset` 均不纳入提交。下一开放实施阶段是 `TODO-05A: Stagger Front Execution v1`。
+
+## TODO-05A Stagger Front Execution Closeout (2026-09-02; parent HEAD `83d1d17`, working-tree not clean)
+
+> 本节记录 TODO-05A 的完整阶段收口。父提交为 `83d1d17`；归档时工作区仍含用户 `Content/**` WIP、`Config/Automation/Presets/1.json` 及本阶段未提交 Source/Config/文档改动，因此不是干净 checkout 快照。本节仅作历史追溯，不替代源码、Config 或实际 Editor 资产作为运行时权威。
+
+- **范围与实际结果**：新增玩家正面处决 Ability 与命中 AnimNotify，复用当前 Lock-On 一次性目标 reservation、正面几何、可选 Motion Warping、`UAbilityTask_PlayMontageAndWait`、`UAbilityTask_WaitGameplayEvent` 和 `FMeleeHitResolver`。输入保持 Sprint 优先、Bow 隔离、普通 Primary fallback；未新增 Stunned/霸体/第二伤害路径，也未触碰 Backstab。
+- **实际路径**：`Config/Tags/PolyQuestGameplayTags.ini`；`PlayerFrontExecutionAbility.h/.cpp`；`AnimNotify_PlayerFrontExecutionHit.h/.cpp`；`PlayerCharacter.h/.cpp`；`FrontExecutionAutomationTests.cpp`。所有 `Content/**`、`Config/Automation/Presets/1.json` 与其他用户 WIP 排除。
+- **复核收敛**：Gemini 在批准路径内完成 Task/同步重入、错误 Target、Exactly-Once、finite 几何、玩家状态和 resolver 失败清理的修复；Main 最终窄修复在 `PlayerFrontExecutionAbility.cpp` 为 `FHitResult::Normal` 增加有限法线写入与 fail-closed 门禁。Main 的 diff-first、一跳 defect-first Fresh Review 未发现 P0/P1/P2 blocker，未执行 adversarial 第二轮。
+- **验证证据**：用户确认 `PolyQuest.Combat.FrontExecution` Automation 为 `Success`，并确认当前阶段的手动 `PolyQuestEditor` 编译、`GA_PlayerFrontExecution` 的 `Max Execution Distance = 250 cm` Editor readback，以及修复后 `/Game/Maps/Scene01` PIE 通过。Test Run 3 的 resolver 失败与 Poise 恢复日志来自负路径覆盖。Gemini 报告 Rider error-level 检查无错误、`git diff --check` 通过；Main 的 diff-first、一跳 defect-first Fresh Review 未发现 P0/P1/P2 blocker，未执行 adversarial 第二轮。
+- **债务与范围**：`TODO-05A` 无未关闭的阶段 blocker。处决锁定/致死后摇、敌人 RateWindow、距离字段统一、执行基类和执行专属打击反馈均为后续条件建议，不属于 05A v1。所有 `Content/**`、`Config/Automation/Presets/1.json` 和其他用户 WIP 均排除在阶段提交之外。
+- **后续指针**：下一开放玩家战斗实现阶段为 `TODO-05B：Backstab v1`。在 05B 设计门中审计距离语义并按实际重复度决定是否抽取共同生命周期；若后续 PIE 或产品验收确实需要双向锁定，再启动条件 `TODO-05A1`。Enemy RateWindow 与执行反馈分别作为 `TODO-07B8`/`TODO-07B9` 候选阶段。

@@ -1001,6 +1001,29 @@ void APlayerCharacter::RequestAbilityForInputIntent(const FGameplayTag& InputInt
 		}
 	}
 
+	// Front execution attempt: only on non-sprint PrimaryAttack with an equipped melee main hand.
+	if (InputIntentTag == PrimaryAttackInputTag && !ShouldRequestSprintAttack() && WeaponEquipment)
+	{
+		const UMeleeWeaponDefinition* MeleeWeapon = Cast<UMeleeWeaponDefinition>(WeaponEquipment->GetCurrentMainHandWeapon());
+		if (MeleeWeapon)
+		{
+			if (UAbilitySystemComponent* CharacterASC = GetAbilitySystemComponent())
+			{
+				const FGameplayTag FrontExecutionTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Action.Execution.Front")), false);
+				if (FrontExecutionTag.IsValid())
+				{
+					FGameplayTagContainer ExecutionTags;
+					ExecutionTags.AddTag(FrontExecutionTag);
+					if (CharacterASC->TryActivateAbilitiesByTag(ExecutionTags))
+					{
+						UE_LOG(LogPolyQuest, Verbose, TEXT("CombatInput: owner='%s', intent='%s', ability='%s', activationRequested=true."), *GetNameSafe(this), *InputIntentTag.ToString(), *FrontExecutionTag.ToString());
+						return;
+					}
+				}
+			}
+		}
+	}
+
 	// The equipment component is the single resolver for Primary and the Effective Defense Profile.
 	FGameplayTag AbilityTag;
 	if (!WeaponEquipment || !WeaponEquipment->TryResolveInputIntent(InputIntentTag, AbilityTag) || !AbilityTag.IsValid())

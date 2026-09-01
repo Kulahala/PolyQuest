@@ -523,6 +523,7 @@ public:
 	TOptional<FVector2D> TestLockOnCursorPosition;
 	bool bTestBypassLockOnValidation = false;
 	void TestClearLockedTarget() { ClearLockedTarget(); }
+	void TriggerTestRequestAbilityForInputIntent(const FGameplayTag& InputIntentTag) { RequestAbilityForInputIntent(InputIntentTag); }
 	void TestUnPossessed() { UnPossessed(); }
 #endif
 };
