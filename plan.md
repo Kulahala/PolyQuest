@@ -393,3 +393,82 @@ Automation 必须覆盖：
 - **推荐顺序**：`TODO-03I4 → TODO-07B7 → TODO-05A → TODO-05B`。I4 先完成已满足零引用前置条件的 C++/测试 Loadout 兼容层清理；07B7 随后完成反馈 Profile 类型与产品资产迁移，再进入处决阶段。
 - **冻结方向**：保留 `ABaseCharacter` 的共同反馈 owner；共同基类只保存真正共享的 Overlay 等字段；Player/Enemy 派生 Profile 分别保存各自消费的音效、震屏、Defense、Impact/Blood/Hit-Stop 字段；类型不匹配、空 Profile 和空资源继续 fail-closed。不得引入全局 dispatcher、GameplayCue、第二条 Damage 路径、按敌人数量自动派生或无证据的模块拆分。
 - **迁移门槛**：07B7 必须由独立计划冻结公共反射 API、资产迁移/Reference Viewer readback、transient Automation fixture、编译与 Scene01 PIE 门禁；`.uasset`/`.umap` 仍由用户在 Editor 中维护，旧统一 Profile 只能在零引用证据后删除。
+
+# TODO-03I4：Legacy Combat Loadout Compatibility Removal v1
+
+## 阶段状态与执行路由
+
+- **状态**：已完成实现、用户确认受影响 Automation 与 Scene01 PIE 通过，并完成 Main Fresh Review；已由提交 `25f39d1` 收口。
+- **基线**：main @ 211ff5e（TODO-07B6 反馈数据资产收口提交）。
+- **工作区边界**：保留现有 Config/Content WIP、资产删除差异和未跟踪资源；不清理、不回滚、不顺手纳入本阶段。
+- **Outer**：ue-stage-workflow。
+- **Primary**：ue5-cpp-gameplay。
+- **Execution route**：manual/out-of-band Gemini。
+- **Ownership**：Main 负责合同、计划、范围、验证解释、Fresh Review、文档、staging 和 commit；Gemini 只实现下列冻结 Source/test 路径；用户负责手动编译、Editor readback、PIE 和最终提交批准。
+- **Contract owner**：Main；implementation writer：Gemini。
+
+## 目标与前置证据
+
+用户已先通过 Editor Reference Viewer 确认产品 Loadout 引用为零，随后清空产品引用并删除旧 DA_Melee_CombatLoadout 资产。本阶段清除剩余的 C++/测试兼容层，不保留 deprecated shim；不重新处理 Content 资产。
+
+`UCombatLoadoutDefinition`、`AssociatedLoadout`、`InitialCombatLoadout`、`ActiveCombatLoadout` 及其 accessor 已从 Source/test 移除。唯一规范来源仍是 I1 direct route。
+
+## 批准修改路径
+
+Gemini 仅可修改以下 11 个路径：
+
+    Source/PolyQuest/Public/Combat/Input/CombatLoadoutDefinition.h
+    Source/PolyQuest/Public/Combat/Equipment/WeaponDefinition.h
+    Source/PolyQuest/Public/Combat/Equipment/MeleeWeaponDefinition.h
+    Source/PolyQuest/Private/Combat/Equipment/MeleeWeaponDefinition.cpp
+    Source/PolyQuest/Private/Combat/Equipment/BowWeaponDefinition.cpp
+    Source/PolyQuest/Public/Character/Player/PlayerCharacter.h
+    Source/PolyQuest/Private/Character/Player/PlayerCharacter.cpp
+    Source/PolyQuest/Private/Combat/Equipment/WeaponEquipmentComponent.cpp
+    Source/PolyQuest/Private/Tests/CombatAutomationFixture.cpp
+    Source/PolyQuest/Private/Tests/ProjectileLifecycleAutomationTests.cpp
+    Source/PolyQuest/Private/Tests/WeaponEquipmentComponentAutomationTests.cpp
+
+WeaponEquipmentComponent.h 当前不持有 Loadout 成员，不纳入修改。
+
+## 执行顺序与冻结合同
+
+1. 删除 CombatLoadoutDefinition.h，清理所有旧 include、forward declaration、兼容注释和仅供该类使用的代码。
+2. 从 UWeaponDefinition 删除 AssociatedLoadout；从 APlayerCharacter 删除 InitialCombatLoadout、ActiveCombatLoadout、SetActiveCombatLoadout、ClearActiveCombatLoadout、GetActiveCombatLoadout，并移除 BeginPlay 镜像初始化。
+3. 将 ConfigureTestStartupFixture 收敛为四个参数：UMeleeWeaponDefinition、两项 TSubclassOf<UGameplayEffect> 和 UInputAction；同步唯一调用点。
+4. 在实际存在的 TeardownEquippedWeapons 中移除 ClearActiveCombatLoadout；在 ApplyComposition 中移除整个 AssociatedLoadout 镜像同步、校验和日志分支。保留 PreparedSlotClasses、PreparedSlotHandles、GrantedAbilitySpecHandles 的赋值、清理、Apply 和回滚顺序。
+5. 移除 Melee/Bow/Player/Equipment 及测试中的 stale Loadout include。
+
+必须保持：
+
+- PrimaryAttackAbilityTag 和可选 SprintAttackAbilityTag 是 MainHand Primary/Sprint 的唯一运行时来源；
+- Effective Defense Profile、Prepared Slots 精确 Handle、ASC grant/clear、装备原子事务、两手/副手冲突和 Trace -> Resolver -> Damage GE 路径不变；
+- 不新增输入路由、Gameplay Tag、Ability dispatcher、fallback Loadout、第二条状态或伤害路径。
+
+## 测试迁移与验证
+
+- CombatAutomationFixture：删除 transient Loadout 创建、赋值和传参，继续使用 direct Primary route。
+- ProjectileLifecycleAutomationTests：删除 BowLoadout 及其赋值；保留 2.5.1/2.5.2 的 direct Primary Tag 必填与类型校验，删除失去靶标的 2.5.3 null AssociatedLoadout 用例。
+- WeaponEquipmentComponentAutomationTests：删除所有 Loadout 对象、字段赋值和镜像断言；保留装备冲突、Apply/Drop 回滚、prepared-slot、Primary/Sprint direct route 和 fail-closed 覆盖。原 14.2 Loadout 冲突隔离改为第二个 direct-tag 主手的解析更新与无 Sprint tag 时的 stale route 清理验证。
+- Gemini 交还前执行 Source 范围的旧符号零引用搜索、Rider error-level 检查和 git diff --check；不得编译、修改文档、修改资产、暂存或提交。
+- 用户门禁：手动编译 PolyQuestEditor；运行 PolyQuest.Equipment.TransactionMatrix、PolyQuest.Projectile.Lifecycle 及受 fixture 影响的相关套件；Editor readback 确认 BP_Player 和产品武器无悬挂 Loadout 属性/引用；Scene01 PIE 回归 Primary/Sprint、Guard/Parry、拾取切换、两手/副手冲突和无 Loadout 启动。
+
+## 非目标、停止条件与收口
+
+- 不修改 Build.cs、Config、Input、GameplayAbility/GameplayEffect、Blueprint、Montage、AnimBP、地图或任何 .uasset/.umap；历史文档可保留 Loadout 追溯记录。
+- 若需要未列路径、资产/Config、公共输入合同或运行时行为变更，立即停止并交回 Main；Editor 若要求写入资产或修复重定向器，先返回证据。
+- Main 在用户编译、Automation、Editor readback、PIE 和 Fresh Review 完成后，更新 plan.md、ROADMAP.md、ARCHITECTURE.md、ROADMAP-archive.md；最终提交只包含批准 Source/test 与文档路径，排除全部用户 WIP。
+- I4 之后的路线保持为 TODO-07B7 -> TODO-05A -> TODO-05B。
+
+## 明确假设
+
+- 不保留任何 deprecated Loadout shim；旧资产删除不回滚。
+- 删除兼容断言不得降低原有装备事务、direct route、回滚和 fail-closed 行为覆盖。
+
+## 实施、验证与复核收口
+
+- **实际实现**：完成批准的 11 个 Source/test 路径清理，删除 `CombatLoadoutDefinition.h`，移除 Weapon/Player/Equipment 的 mirror 字段、镜像同步、fixture 参数和测试断言；`PrimaryAttackAbilityTag`、可选 `SprintAttackAbilityTag`、Effective Defense Profile、Prepared Slot 精确 Handle 与装备事务仍是唯一运行时合同。Section 14 的标题同步为纯 direct-route 描述。
+- **用户验证**：用户确认受影响 Automation 与 Scene01 PIE 通过。该证据覆盖实际运行的装备/输入回归场景，不扩展为全量 Automation、独立手动 `PolyQuestEditor` 编译或干净作者化资产基线证明。
+- **Main Fresh Review**：以 `211ff5e` 为基线完成批准路径 diff-first 审查，核对 `ConfigureTestStartupFixture()` 唯一调用点、`TeardownEquippedWeapons()`/`ApplyComposition()` 的 grant、prepared-slot、组件清理与回滚顺序，以及旧符号 Source 零引用；未发现 P0/P1/P2 blocker。
+- **剩余验证债务**：本阶段没有单独记录的手动 `PolyQuestEditor` 编译收据。关闭条件是后续在需要形成独立编译证据时提供该收据；这不阻塞已确认的 Automation/PIE 或下一阶段 `TODO-07B7`。
+- **提交边界**：仅纳入上述 11 个 Source/test 路径与 `plan.md`、`ROADMAP.md`、`ARCHITECTURE.md`、`README.md`、`ROADMAP-archive.md`；全部 `Content/**`、`Config/Automation/Presets/1.json` 及其他用户 WIP 明确排除。

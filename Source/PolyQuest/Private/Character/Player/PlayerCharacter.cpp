@@ -36,7 +36,6 @@
 #include "Combat/Equipment/WeaponEquipmentComponent.h"
 #include "Combat/Equipment/WorldWeaponPickup.h"
 #include "Combat/Feedback/CombatFeedbackDataAsset.h"
-#include "Combat/Input/CombatLoadoutDefinition.h"
 #include "Combat/Melee/CombatTeamAgent.h"
 #include "Combat/Reaction/HitReactionClassifier.h"
 #include "Framework/PolyQuestPlayerController.h"
@@ -128,14 +127,6 @@ APlayerCharacter::APlayerCharacter()
 void APlayerCharacter::BeginPlay()
 {
 	Super::BeginPlay();
-	if (InitialCombatLoadout)
-	{
-		SetActiveCombatLoadout(InitialCombatLoadout);
-	}
-	else
-	{
-		ClearActiveCombatLoadout();
-	}
 	BindSprintStateEvents();
 	BindHealthEvents();
 	BindExhaustionStateEvents();
@@ -189,13 +180,11 @@ void APlayerCharacter::BeginPlay()
 
 #if WITH_DEV_AUTOMATION_TESTS
 void APlayerCharacter::ConfigureTestStartupFixture(
-	UCombatLoadoutDefinition* InInitialCombatLoadout,
 	UMeleeWeaponDefinition* InDefaultEquippedWeapon,
 	TSubclassOf<UGameplayEffect> InStaminaRegenGameplayEffectClass,
 	TSubclassOf<UGameplayEffect> InExhaustionMoveSpeedGameplayEffectClass,
 	UInputAction* InTestInputAction)
 {
-	InitialCombatLoadout = InInitialCombatLoadout;
 	DefaultEquippedWeapon = InDefaultEquippedWeapon;
 	StaminaRegenGameplayEffectClass = InStaminaRegenGameplayEffectClass;
 	ExhaustionMoveSpeedGameplayEffectClass = InExhaustionMoveSpeedGameplayEffectClass;
@@ -512,30 +501,6 @@ void APlayerCharacter::DoJumpStart()
 void APlayerCharacter::DoJumpEnd()
 {
 	StopJumping();
-}
-
-bool APlayerCharacter::SetActiveCombatLoadout(UCombatLoadoutDefinition* NewCombatLoadout)
-{
-	if (!NewCombatLoadout)
-	{
-		ClearActiveCombatLoadout();
-		return false;
-	}
-
-	if (!NewCombatLoadout->IsRouteTableValid())
-	{
-		UE_LOG(LogPolyQuest, Warning, TEXT("'%s' rejected CombatLoadout '%s' because its input routes contain an invalid or duplicate input intent."), *GetNameSafe(this), *GetNameSafe(NewCombatLoadout));
-		ClearActiveCombatLoadout();
-		return false;
-	}
-
-	ActiveCombatLoadout = NewCombatLoadout;
-	return true;
-}
-
-void APlayerCharacter::ClearActiveCombatLoadout()
-{
-	ActiveCombatLoadout = nullptr;
 }
 
 bool APlayerCharacter::IsCombatInputHeld(FGameplayTag InputIntentTag) const

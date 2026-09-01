@@ -16,7 +16,6 @@
 #include "Combat/Equipment/BowWeaponDefinition.h"
 #include "Combat/Equipment/ProjectileDefinition.h"
 #include "Combat/Equipment/WeaponEquipmentComponent.h"
-#include "Combat/Input/CombatLoadoutDefinition.h"
 #include "Combat/Projectile/CombatProjectile.h"
 #include "Combat/Projectile/CombatProjectileHitResolver.h"
 #include "Components/SkeletalMeshComponent.h"
@@ -177,9 +176,6 @@ bool FProjectileLifecycleAutomationTest::RunTest(const FString& Parameters)
 		ValidProjDef->CollisionRadius = 12.0f;
 		ValidProjDef->DamageGameplayEffectClass = UTestProjectileDamageGE::StaticClass();
 
-		UCombatLoadoutDefinition* BowLoadout = NewObject<UCombatLoadoutDefinition>(GetTransientPackage(), TEXT("Test_BowLoadout"));
-		BowLoadout->AddTestInputAbilityRoute(TagInputPrimaryAttack, TagAbilityPrimaryAttack);
-
 		UBowWeaponDefinition* BowDef = NewObject<UBowWeaponDefinition>(GetTransientPackage(), TEXT("Test_BowDef"));
 		TestEqual(TEXT("BowDef default AttachSocketName is Bow_L"), BowDef->AttachSocketName, FName(TEXT("Bow_L")));
 		BowDef->HandSlot = EWeaponHandSlot::MainHandTwoHanded;
@@ -188,7 +184,6 @@ bool FProjectileLifecycleAutomationTest::RunTest(const FString& Parameters)
 		BowDef->LaunchSocketName = SocketNameBowLaunch;
 		BowDef->DefaultProjectileDefinition = ValidProjDef;
 		BowDef->PrimaryAttackAbilityTag = TagAbilityPrimaryAttack;
-		BowDef->AssociatedLoadout = BowLoadout;
 		BowDef->BaseGrantedActions.Add(UBowDrawFireAbility::StaticClass());
 
 		FString Reason;
@@ -214,7 +209,7 @@ bool FProjectileLifecycleAutomationTest::RunTest(const FString& Parameters)
 		TestFalse(TEXT("BowWeaponDefinition rejects null DefaultProjectileDefinition"), BowDef->IsValidWeaponDefinition(Reason));
 		BowDef->DefaultProjectileDefinition = ValidProjDef;
 
-		// 2.5 Direct PrimaryAttackAbilityTag validation & AssociatedLoadout decoupling
+		// 2.5 Direct PrimaryAttackAbilityTag validation
 		// 2.5.1 Missing PrimaryAttackAbilityTag
 		BowDef->PrimaryAttackAbilityTag = FGameplayTag();
 		TestFalse(TEXT("BowWeaponDefinition rejects missing PrimaryAttackAbilityTag"), BowDef->IsValidWeaponDefinition(Reason));
@@ -223,11 +218,6 @@ bool FProjectileLifecycleAutomationTest::RunTest(const FString& Parameters)
 		BowDef->PrimaryAttackAbilityTag = FGameplayTag::RequestGameplayTag(TEXT("Ability.Defense.Guard"));
 		TestFalse(TEXT("BowWeaponDefinition rejects non-Ability.Attack.Primary tag"), BowDef->IsValidWeaponDefinition(Reason));
 		BowDef->PrimaryAttackAbilityTag = TagAbilityPrimaryAttack;
-
-		// 2.5.3 Null AssociatedLoadout passes validation (decoupled from Loadout)
-		BowDef->AssociatedLoadout = nullptr;
-		TestTrue(TEXT("BowWeaponDefinition passes validation with null AssociatedLoadout"), BowDef->IsValidWeaponDefinition(Reason));
-		BowDef->AssociatedLoadout = BowLoadout;
 
 		// 2.6 BaseGrantedActions granting melee UPrimaryAttackAbility
 		BowDef->BaseGrantedActions.Reset();
@@ -819,9 +809,6 @@ bool FProjectileLifecycleAutomationTest::RunTest(const FString& Parameters)
 			ProjectileDefinition->HomingTurnRateDegreesPerSecond = 180.0f;
 			ProjectileDefinition->HomingMaxTotalTurnDegrees = 180.0f;
 
-			UCombatLoadoutDefinition* BowLoadout = NewObject<UCombatLoadoutDefinition>(GetTransientPackage(), TEXT("Test_B3BowLoadout"));
-			BowLoadout->AddTestInputAbilityRoute(TagInputPrimaryAttack, TagAbilityPrimaryAttack);
-
 			UBowWeaponDefinition* BowDefinition = NewObject<UBowWeaponDefinition>(GetTransientPackage(), TEXT("Test_B3BowDefinition"));
 			BowDefinition->HandSlot = EWeaponHandSlot::MainHandTwoHanded;
 			// The transient definition targets the known socket on the real test Hero mesh.
@@ -831,7 +818,6 @@ bool FProjectileLifecycleAutomationTest::RunTest(const FString& Parameters)
 			BowDefinition->LaunchSocketName = BowLaunchSocketName;
 			BowDefinition->DefaultProjectileDefinition = ProjectileDefinition;
 			BowDefinition->PrimaryAttackAbilityTag = TagAbilityPrimaryAttack;
-			BowDefinition->AssociatedLoadout = BowLoadout;
 			BowDefinition->BaseGrantedActions.Add(UBowDrawFireAbility::StaticClass());
 
 			FString BowDefinitionReason;

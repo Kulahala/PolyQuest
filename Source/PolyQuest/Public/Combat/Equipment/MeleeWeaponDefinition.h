@@ -4,8 +4,6 @@
 #include "Combat/Equipment/WeaponDefinition.h"
 #include "MeleeWeaponDefinition.generated.h"
 
-class UCombatLoadoutDefinition;
-
 USTRUCT(BlueprintType)
 struct POLYQUEST_API FOwnerMeshMeleeTraceSource
 {
@@ -28,7 +26,7 @@ struct POLYQUEST_API FOwnerMeshMeleeTraceSource
  * The compatible melee subclass of UWeaponDefinition: blade trace markers in
  * weapon-mesh or owner-socket local space, sweep shape, and the BaseGrantedActions
  * source the current LMB/Sprint base chain relies on. Display, slot, action, Defense
- * Profile, and Base Input Profile fields are owned by the base class; the promoted
+ * Profile, and direct attack route fields are owned by the base class; the promoted
  * field names keep the serialized values of the existing DataAssets.
  */
 UCLASS(BlueprintType)
@@ -41,7 +39,7 @@ public:
 
 	/**
 	 * Validates this definition purely as a Static Mesh trace geometry provider (for static enemy display binding).
-	 * Ignores player-specific fields (BaseGrantedActions, DefenseProfile, AssociatedLoadout, AttachSocketName, etc.).
+	 * Ignores player-specific fields (BaseGrantedActions, DefenseProfile, PrimaryAttackAbilityTag, AttachSocketName, etc.).
 	 */
 	bool IsValidStaticMeshTraceGeometry(FString& OutReason) const;
 

@@ -13,7 +13,6 @@
 #include "Character/Player/PlayerCharacter.h"
 #include "Combat/Equipment/MeleeWeaponDefinition.h"
 #include "Combat/Feedback/CombatFeedbackDataAsset.h"
-#include "Combat/Input/CombatLoadoutDefinition.h"
 #include "GameplayTagContainer.h"
 #include "Tests/TestExhaustionMoveSpeedGE.h"
 #include "Tests/TestPoiseRecoveryGE.h"
@@ -61,12 +60,11 @@ APlayerCharacter* FCombatAutomationFixture::SpawnPlayer(
 		return nullptr;
 	}
 
-	UCombatLoadoutDefinition* Loadout = NewObject<UCombatLoadoutDefinition>(Player, NAME_None, RF_Transient);
 	UMeleeWeaponDefinition* WeaponDefinition = NewObject<UMeleeWeaponDefinition>(Player, NAME_None, RF_Transient);
 	UInputAction* TestInputAction = NewObject<UInputAction>(Player, TEXT("TestStartupInputAction"), RF_Transient);
 	USkeletalMesh* HeroMesh = LoadObject<USkeletalMesh>(nullptr, HeroMeshPath);
 	USkeletalMeshComponent* PlayerMesh = Player->GetMesh();
-	if (!Loadout || !WeaponDefinition || !TestInputAction || !HeroMesh || !HeroMesh->FindSocket(WeaponSocketName) || !PlayerMesh)
+	if (!WeaponDefinition || !TestInputAction || !HeroMesh || !HeroMesh->FindSocket(WeaponSocketName) || !PlayerMesh)
 	{
 		Player->Destroy();
 		return nullptr;
@@ -82,9 +80,7 @@ APlayerCharacter* FCombatAutomationFixture::SpawnPlayer(
 	WeaponDefinition->BladeTipMarkerRelativeLocation = FVector(20.0f, 0.0f, 0.0f);
 	WeaponDefinition->BaseGrantedActions.Add(UPrimaryAttackAbility::StaticClass());
 	WeaponDefinition->PrimaryAttackAbilityTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Attack.Primary")), false);
-	WeaponDefinition->AssociatedLoadout = Loadout;
 	Player->ConfigureTestStartupFixture(
-		Loadout,
 		WeaponDefinition,
 		UTestStaminaRegenGE::StaticClass(),
 		UTestExhaustionMoveSpeedGE::StaticClass(),

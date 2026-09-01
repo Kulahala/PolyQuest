@@ -1155,3 +1155,13 @@ TODO-03A3E World Pickup Interaction Prompt v1
 - **Loadout 前置证据**：用户确认已先在 Editor Reference Viewer 核实 I1 产品武器与 Player 的旧 Loadout 引用为 0，再清空产品引用并删除旧 `DA_Melee_CombatLoadout` 资产。`UCombatLoadoutDefinition`、`AssociatedLoadout`、`InitialCombatLoadout`、`ActiveCombatLoadout` 的 C++/测试兼容镜像仍存在，故不能把资产删除描述为源码清退；下一阶段 `TODO-03I4：Legacy Combat Loadout Compatibility Removal v1` 专门处理该窄范围清理，并保留 I1 direct route 回归门禁。
 - **派生 DataAsset 决策**：本阶段不拆 Base/Player/Enemy 派生类。只有当第二个敌人形成真正不同的反馈字段/profile，或重复空字段与误配已经成为可观察的 authoring 成本时，才安排独立 profile-taxonomy/authoring 阶段；若新敌人可复用现有 profile，则继续复用。
 - **后续指针**：下一开放玩家战斗阶段为 `TODO-03I4`，随后才进入 `TODO-05A`；`README.md` 不承担阶段指针。
+
+## TODO-03I4 Legacy Combat Loadout Compatibility Removal Closeout (2026-09-01; parent HEAD `211ff5e`, working-tree not clean)
+
+> 本节记录 TODO-03I4 的旧 Combat Loadout C++/测试兼容层清退。快照基于父提交 `211ff5e3abd2a31812c023b3a807add2698c900d`；工作区同时含用户的 `Config/Automation/Presets/1.json`、大量 `Content/**` WIP、资产删除差异与未跟踪资源，因此不是干净 checkout 快照。本节仅作历史追溯，不替代源码、Config 或实际资产作为运行时权威。
+
+- **前置与范围**：用户先在 Editor Reference Viewer 确认产品旧 Loadout 引用为零，再清空引用并删除 `DA_Melee_CombatLoadout`。本阶段删除 `UCombatLoadoutDefinition`、Weapon `AssociatedLoadout`、Player Initial/Active mirror 与 accessor、Equipment mirror sync，以及对应的 fixture、测试对象和断言；不对 `Content/**` 资产差异做任何写入或纳入。
+- **保持的运行时合同**：MainHand `PrimaryAttackAbilityTag`、可选 `SprintAttackAbilityTag`、Effective Defense Profile、Prepared Slot 精确 Handle、ASC grant/clear 与装备 Apply/Drop 回滚事务保持不变；不存在 fallback Loadout、第二条输入路由或额外状态/伤害路径。
+- **验证与复核证据**：用户确认受影响 Automation 和 `/Game/Maps/Scene01` PIE 通过。Main 以 `211ff5e` 为基线完成批准路径的 diff-first、一跳 Fresh Review，并进行旧符号 Source 零引用核对；未发现 P0/P1/P2 blocker。唯一过期的 direct-route 测试注释已在批准路径内同步清理。
+- **剩余验证债务**：未单独记录 Main 手动 `PolyQuestEditor` 编译收据。关闭条件是在需要形成独立编译证据时提供该收据；这不阻塞已确认的 Automation/PIE 或下一阶段 `TODO-07B7`。
+- **提交边界与后续指针**：提交仅含 11 个批准 Source/test 路径及 `plan.md`、`ROADMAP.md`、`ARCHITECTURE.md`、`README.md`、本归档文件；明确排除 `Content/**`、`Config/Automation/Presets/1.json`、资产删除/修改与其他用户 WIP。后续路线为 `TODO-07B7 → TODO-05A → TODO-05B`。

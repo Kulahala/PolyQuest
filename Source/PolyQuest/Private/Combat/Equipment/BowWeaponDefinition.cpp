@@ -3,7 +3,6 @@
 #include "AbilitySystem/Abilities/BowDrawFireAbility.h"
 #include "AbilitySystem/Abilities/PrimaryAttackAbility.h"
 #include "Combat/Equipment/ProjectileDefinition.h"
-#include "Combat/Input/CombatLoadoutDefinition.h"
 #include "Engine/StaticMesh.h"
 #include "Engine/StaticMeshSocket.h"
 #include "GameplayTagContainer.h"

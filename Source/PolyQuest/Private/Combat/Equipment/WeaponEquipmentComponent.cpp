@@ -7,7 +7,6 @@
 #include "Combat/Equipment/OffHandWeaponDefinition.h"
 #include "Combat/Equipment/WeaponDefinition.h"
 #include "Combat/Equipment/WorldWeaponPickup.h"
-#include "Combat/Input/CombatLoadoutDefinition.h"
 #include "Components/SceneComponent.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "Components/StaticMeshComponent.h"
@@ -913,11 +912,6 @@ void UWeaponEquipmentComponent::TeardownEquippedWeapons()
 
 	CurrentMainHandWeapon = nullptr;
 	CurrentOffHandWeapon = nullptr;
-
-	if (APlayerCharacter* PlayerCharacter = Cast<APlayerCharacter>(GetOwner()))
-	{
-		PlayerCharacter->ClearActiveCombatLoadout();
-	}
 }
 
 bool UWeaponEquipmentComponent::ApplyComposition(APlayerCharacter* PlayerCharacter, UAbilitySystemComponent* CharacterASC, UWeaponDefinition* MainHandDefinition, UWeaponDefinition* OffHandDefinition, const TArray<TSubclassOf<UGameplayAbility>>& PreparedClasses)
@@ -1102,19 +1096,6 @@ bool UWeaponEquipmentComponent::ApplyComposition(APlayerCharacter* PlayerCharact
 		PreparedSlotClasses = MoveTemp(NewPreparedClasses);
 		PreparedSlotHandles = MoveTemp(NewPreparedHandles);
 		GrantedAbilitySpecHandles = MoveTemp(NewGrantedHandles);
-
-		if (MainHandDefinition && MainHandDefinition->AssociatedLoadout)
-		{
-			if (!PlayerCharacter->SetActiveCombatLoadout(MainHandDefinition->AssociatedLoadout))
-			{
-				UE_LOG(LogPolyQuest, Verbose, TEXT("Weapon equipment on '%s': AssociatedLoadout on '%s' failed validation; cleared combat loadout mirror."), *GetNameSafe(GetOwner()), *GetNameSafe(MainHandDefinition));
-				PlayerCharacter->ClearActiveCombatLoadout();
-			}
-		}
-		else
-		{
-			PlayerCharacter->ClearActiveCombatLoadout();
-		}
 	}
 	else
 	{

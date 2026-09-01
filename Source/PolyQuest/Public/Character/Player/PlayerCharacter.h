@@ -12,7 +12,6 @@
 
 class UCameraComponent;
 class UCameraShakeBase;
-class UCombatLoadoutDefinition;
 class UGameplayEffect;
 class UInputAction;
 class UInputComponent;
@@ -78,7 +77,7 @@ protected:
 	UPROPERTY(EditAnywhere, Category="Input")
 	UInputAction* MouseLookAction;
 
-	/** Shared physical input that routes to this loadout's primary combat ability. */
+	/** Shared physical input that routes to the equipped weapon's primary combat ability. */
 	UPROPERTY(EditAnywhere, Category="Input")
 	UInputAction* PrimaryAttackAction;
 
@@ -86,11 +85,11 @@ protected:
 	UPROPERTY(EditAnywhere, Category="Input")
 	UInputAction* AimAction;
 
-	/** Shared physical input that expresses held Guard intent through the active Combat Loadout. */
+	/** Shared physical input that expresses held Guard intent through the active Defense Profile. */
 	UPROPERTY(EditAnywhere, Category="Input")
 	UInputAction* GuardAction;
 
-	/** Shared physical input that expresses Parry intent through the active Combat Loadout. */
+	/** Shared physical input that expresses Parry intent through the active Defense Profile. */
 	UPROPERTY(EditAnywhere, Category="Input")
 	UInputAction* ParryAction;
 
@@ -125,10 +124,6 @@ protected:
 	/** Infinite move-speed effect retained while the Player is recovering from Stamina exhaustion. */
 	UPROPERTY(EditDefaultsOnly, Category="GAS|Stamina", meta=(ToolTip="玩家体力耗尽力竭期间施加的移速限制 GameplayEffect 类。"))
 	TSubclassOf<UGameplayEffect> ExhaustionMoveSpeedGameplayEffectClass;
-
-	/** The authored combat routes applied to this player at BeginPlay. */
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Loadout", meta = (AllowPrivateAccess = "true", ToolTip = "玩家初始生效的战斗输入路由资产（CombatLoadoutDefinition）。"))
-	TObjectPtr<UCombatLoadoutDefinition> InitialCombatLoadout;
 
 	/** Required default weapon equipped once at BeginPlay; missing is a fail-visible configuration error. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Equipment", meta = (AllowPrivateAccess = "true", ToolTip = "玩家 BeginPlay 时默认装备的武器定义资产（MeleeWeaponDefinition）。"))
@@ -180,16 +175,6 @@ public:
 	/** Handles a jump-end input from controls or UI interfaces. */
 	UFUNCTION(BlueprintCallable, Category="Input")
 	virtual void DoJumpEnd();
-
-	/** Sets the authored routes used by future combat input starts without interrupting active abilities. (Compatibility mirror) */
-	UFUNCTION(BlueprintCallable, Category = "Combat|Loadout")
-	bool SetActiveCombatLoadout(UCombatLoadoutDefinition* NewCombatLoadout);
-
-	/** Clears the compatibility combat loadout mirror without affecting active abilities or direct routes. */
-	void ClearActiveCombatLoadout();
-
-	/** Returns the loadout currently routing combat input; C++-only narrow read for the equipment snapshot. */
-	UCombatLoadoutDefinition* GetActiveCombatLoadout() const { return ActiveCombatLoadout; }
 
 	/** True when the ability class is granted by this character's StartupAbilities; C++-only equipment preflight query. */
 	bool IsStartupAbilityClass(TSubclassOf<UGameplayAbility> AbilityClass) const;
@@ -329,7 +314,6 @@ public:
 #if WITH_DEV_AUTOMATION_TESTS
 	/** Configures all authored startup inputs as one pre-BeginPlay native fixture operation. */
 	void ConfigureTestStartupFixture(
-		UCombatLoadoutDefinition* InInitialCombatLoadout,
 		UMeleeWeaponDefinition* InDefaultEquippedWeapon,
 		TSubclassOf<UGameplayEffect> InStaminaRegenGameplayEffectClass,
 		TSubclassOf<UGameplayEffect> InExhaustionMoveSpeedGameplayEffectClass,
@@ -423,9 +407,6 @@ private:
 	void ClearLockedTarget();
 
 	bool IsMovementInputBlocked() const;
-
-	UPROPERTY(Transient)
-	TObjectPtr<UCombatLoadoutDefinition> ActiveCombatLoadout;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Combat|Equipment", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<UWeaponEquipmentComponent> WeaponEquipment;

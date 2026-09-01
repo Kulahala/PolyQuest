@@ -7,7 +7,6 @@
 #include "Combat/Equipment/DefenseProfileDefinition.h"
 #include "WeaponDefinition.generated.h"
 
-class UCombatLoadoutDefinition;
 class UStaticMesh;
 
 /** Which hand slot one authored weapon definition occupies. */
@@ -39,7 +38,7 @@ enum class EWeaponLocomotionMode : uint8
 /**
  * The authored base of every player equipment item: hand-slot occupancy,
  * display attachment, combat-action candidate ability classes, the default
- * prepared layout, the optional Defense Profile, and the Base Input Profile.
+ * prepared layout, the optional Defense Profile, and direct attack routes.
  * Subclasses add combat geometry; this base owns no runtime state.
  */
 UCLASS(Abstract)
@@ -107,10 +106,6 @@ public:
 	/** Direct optional ability tag routed by Sprint Attack while this weapon is equipped in the main hand. If valid, must match exactly one BaseGrantedAction CDO. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Combat Actions", meta = (ToolTip = "主手装备时通过冲刺攻击路由的可选 Ability Tag；若配置，必须精确匹配 BaseGrantedActions 中的恰好一个 Ability。留空则回退到普通攻击路由。"))
 	FGameplayTag SprintAttackAbilityTag;
-
-	/** The Base Input Profile consumed by the main hand (TODO-03A field name retained for asset compatibility). */
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Loadout", meta = (ToolTip = "主手装备所使用的基础输入路由配置资产（Combat Loadout；兼容镜像，不作为运行时规范路由）。"))
-	TObjectPtr<UCombatLoadoutDefinition> AssociatedLoadout;
 };
 
 inline bool UWeaponDefinition::IsValidWeaponDefinition(FString& OutReason) const
