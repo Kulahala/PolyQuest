@@ -14,6 +14,7 @@ class UWidgetComponent;
 class UEnemyHealthBarWidget;
 class USoundBase;
 class UNiagaraSystem;
+class UEnemyCombatFeedbackDataAsset;
 enum class EHitReactionTier : uint8;
 struct FGameplayEffectSpec;
 struct FOnAttributeChangeData;
@@ -37,6 +38,9 @@ public:
 	/** Static authored AI profile for combat spacing, repositioning, and leash parameters. */
 	UFUNCTION(BlueprintPure, Category = "AI|Enemy")
 	UEnemyAIProfile* GetAIProfile() const { return AIProfile; }
+
+	/** Returns the configured enemy combat feedback data asset, or nullptr if unset or invalid type. */
+	UEnemyCombatFeedbackDataAsset* GetEnemyCombatFeedbackData() const;
 
 	/** C++-only presentation bridge for the local Player lock-on highlight. */
 	void SetPlayerLockOnHighlighted(bool bHighlighted);

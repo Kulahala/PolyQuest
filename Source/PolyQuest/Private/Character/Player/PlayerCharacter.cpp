@@ -2335,6 +2335,32 @@ void APlayerCharacter::OnHealthAttributeChanged(const FOnAttributeChangeData& Ch
 	// None is a legal no-op for Player.
 }
 
+UPlayerCombatFeedbackDataAsset* APlayerCharacter::GetPlayerCombatFeedbackData() const
+{
+	if (!CombatFeedbackData)
+	{
+		if (!bHasLoggedMissingCombatFeedbackData)
+		{
+			UE_LOG(LogPolyQuest, Warning, TEXT("Player '%s' is missing a CombatFeedbackData profile."), *GetNameSafe(this));
+			const_cast<APlayerCharacter*>(this)->bHasLoggedMissingCombatFeedbackData = true;
+		}
+		return nullptr;
+	}
+
+	UPlayerCombatFeedbackDataAsset* PlayerProfile = Cast<UPlayerCombatFeedbackDataAsset>(CombatFeedbackData.Get());
+	if (!PlayerProfile)
+	{
+		if (!bHasLoggedMissingCombatFeedbackData)
+		{
+			UE_LOG(LogPolyQuest, Warning, TEXT("Player '%s' has an invalid CombatFeedbackData profile (expected UPlayerCombatFeedbackDataAsset, got '%s')."), *GetNameSafe(this), *GetNameSafe(CombatFeedbackData.Get()));
+			const_cast<APlayerCharacter*>(this)->bHasLoggedMissingCombatFeedbackData = true;
+		}
+		return nullptr;
+	}
+
+	return PlayerProfile;
+}
+
 TSubclassOf<UCameraShakeBase> APlayerCharacter::ResolveHitFeedbackCameraShakeClass(const EHitReactionTier ReactionTier)
 {
 	if (ReactionTier == EHitReactionTier::None || ReactionTier == EHitReactionTier::Invalid)
@@ -2342,18 +2368,13 @@ TSubclassOf<UCameraShakeBase> APlayerCharacter::ResolveHitFeedbackCameraShakeCla
 		return nullptr;
 	}
 
-	const UCombatFeedbackDataAsset* FeedbackData = GetCombatFeedbackData();
+	const UPlayerCombatFeedbackDataAsset* FeedbackData = GetPlayerCombatFeedbackData();
 	if (!FeedbackData)
 	{
-		if (!bHasLoggedMissingCombatFeedbackData)
-		{
-			UE_LOG(LogPolyQuest, Warning, TEXT("'%s' is missing CombatFeedbackData for hit feedback camera shake."), *GetNameSafe(this));
-			bHasLoggedMissingCombatFeedbackData = true;
-		}
 		return nullptr;
 	}
 
-	const FCombatFeedbackTierSettings* TierSettings = FeedbackData->GetTierSettings(ReactionTier);
+	const FPlayerCombatFeedbackTierSettings* TierSettings = FeedbackData->GetTierSettings(ReactionTier);
 	return TierSettings ? TierSettings->ReceivedHitCameraShakeClass : nullptr;
 }
 
@@ -2364,18 +2385,13 @@ TSubclassOf<UCameraShakeBase> APlayerCharacter::ResolveAttackerImpactCameraShake
 		return nullptr;
 	}
 
-	const UCombatFeedbackDataAsset* FeedbackData = GetCombatFeedbackData();
+	const UPlayerCombatFeedbackDataAsset* FeedbackData = GetPlayerCombatFeedbackData();
 	if (!FeedbackData)
 	{
-		if (!bHasLoggedMissingCombatFeedbackData)
-		{
-			UE_LOG(LogPolyQuest, Warning, TEXT("'%s' is missing CombatFeedbackData for attacker impact camera shake."), *GetNameSafe(this));
-			bHasLoggedMissingCombatFeedbackData = true;
-		}
 		return nullptr;
 	}
 
-	const FCombatFeedbackTierSettings* TierSettings = FeedbackData->GetTierSettings(ReactionTier);
+	const FPlayerCombatFeedbackTierSettings* TierSettings = FeedbackData->GetTierSettings(ReactionTier);
 	return TierSettings ? TierSettings->AttackerImpactCameraShakeClass : nullptr;
 }
 
@@ -2444,7 +2460,7 @@ void APlayerCharacter::ClearActiveHitFeedbackCameraShake()
 
 void APlayerCharacter::TriggerReceivedHitSound(const FGameplayEffectSpec& EffectSpec)
 {
-	const UCombatFeedbackDataAsset* FeedbackData = GetCombatFeedbackData();
+	const UPlayerCombatFeedbackDataAsset* FeedbackData = GetPlayerCombatFeedbackData();
 	USoundBase* SoundToPlay = FeedbackData ? FeedbackData->ReceivedHitSound.Get() : nullptr;
 	if (!SoundToPlay)
 	{

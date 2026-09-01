@@ -649,6 +649,121 @@ bool FCombatHitFeedbackAutomationTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("Global time dilation preserves external 0.0505 value after Controller Destroy"), FMath::IsNearlyEqual(UGameplayStatics::GetGlobalTimeDilation(World), 0.0505f, KINDA_SMALL_NUMBER));
 	UGameplayStatics::SetGlobalTimeDilation(World, 1.0f);
 
+	// =========================================================================
+	// 24. SECTION: Taxonomy Profile Mismatch, Null Profile, and Optional Resources
+	// =========================================================================
+	APlayerCharacter* MismatchPlayer = FCombatAutomationFixture::SpawnPlayer(World, FTransform(FRotator::ZeroRotator, FVector(1000.0f, 0.0f, 0.0f)));
+	AEnemyCharacter* MismatchEnemy = FCombatAutomationFixture::SpawnPassiveEnemy(World, FTransform(FRotator::ZeroRotator, FVector(1250.0f, 0.0f, 0.0f)));
+	UAbilitySystemComponent* MismatchPlayerASC = MismatchPlayer ? MismatchPlayer->GetAbilitySystemComponent() : nullptr;
+	UAbilitySystemComponent* MismatchEnemyASC = MismatchEnemy ? MismatchEnemy->GetAbilitySystemComponent() : nullptr;
+
+	const bool bMismatchPlayerCreated = TestNotNull(TEXT("Taxonomy mismatch Player fixture created"), MismatchPlayer);
+	const bool bMismatchEnemyCreated = TestNotNull(TEXT("Taxonomy mismatch Enemy fixture created"), MismatchEnemy);
+	const bool bMismatchPlayerASCValid = TestNotNull(TEXT("Taxonomy mismatch Player ASC available"), MismatchPlayerASC);
+	const bool bMismatchEnemyASCValid = TestNotNull(TEXT("Taxonomy mismatch Enemy ASC available"), MismatchEnemyASC);
+	if (!bMismatchPlayerCreated || !bMismatchEnemyCreated || !bMismatchPlayerASCValid || !bMismatchEnemyASCValid)
+	{
+		if (MismatchPlayer)
+		{
+			MismatchPlayer->Destroy();
+		}
+		if (MismatchEnemy)
+		{
+			MismatchEnemy->Destroy();
+		}
+		return false;
+	}
+
+	{
+		MismatchPlayerASC->SetNumericAttributeBase(UCharacterAttributeSet::GetMaxHealthAttribute(), 1000.0f);
+		MismatchPlayerASC->SetNumericAttributeBase(UCharacterAttributeSet::GetHealthAttribute(), 1000.0f);
+		MismatchEnemyASC->SetNumericAttributeBase(UCharacterAttributeSet::GetMaxHealthAttribute(), 1000.0f);
+		MismatchEnemyASC->SetNumericAttributeBase(UCharacterAttributeSet::GetHealthAttribute(), 1000.0f);
+
+		FHitResult MismatchValidHit;
+		MismatchValidHit.HitObjectHandle = FActorInstanceHandle(MismatchEnemy);
+		MismatchValidHit.ImpactPoint = FVector(1250.0f, 10.0f, 85.0f);
+		MismatchValidHit.ImpactNormal = FVector(0.0f, 0.0f, 1.0f);
+
+		// 24.1 Player assigned Enemy profile (Mismatched Profile)
+		// Overlay continues to function from Base class, but Player-specific shake does not trigger.
+		UEnemyCombatFeedbackDataAsset* MismatchedEnemyProfileForPlayer = NewObject<UEnemyCombatFeedbackDataAsset>(MismatchPlayer, NAME_None, RF_Transient);
+		MismatchedEnemyProfileForPlayer->HitFeedbackOverlayMaterial = UMaterialInstanceDynamic::Create(UMaterial::GetDefaultMaterial(MD_Surface), MismatchPlayer);
+		MismatchedEnemyProfileForPlayer->HitFeedbackOverlayDurationSeconds = 0.10f;
+		MismatchPlayer->SetTestCombatFeedbackData(MismatchedEnemyProfileForPlayer);
+
+		const int32 ShakeCountBeforeMismatch = MismatchPlayer->GetTestHitFeedbackCameraShakeStartCount();
+		TestTrue(TEXT("Damage applies to Player with mismatched Enemy profile"), ApplyDamage(MismatchEnemyASC, MismatchPlayerASC, &BigTags));
+		TestTrue(TEXT("Common Overlay still flashes for Player with mismatched profile"), MismatchPlayer->IsTestHitFeedbackOverlayActive());
+		TestEqual(TEXT("Player shake does not trigger with mismatched Enemy profile"), MismatchPlayer->GetTestHitFeedbackCameraShakeStartCount(), ShakeCountBeforeMismatch);
+		AdvanceHitFeedbackTimer(World, 0.25f);
+
+		// 24.2 Enemy assigned Player profile (Mismatched Profile)
+		// Overlay continues to function, but Enemy-specific hit-stop, sound, and blood do not trigger.
+		UPlayerCombatFeedbackDataAsset* MismatchedPlayerProfileForEnemy = NewObject<UPlayerCombatFeedbackDataAsset>(MismatchEnemy, NAME_None, RF_Transient);
+		MismatchedPlayerProfileForEnemy->HitFeedbackOverlayMaterial = UMaterialInstanceDynamic::Create(UMaterial::GetDefaultMaterial(MD_Surface), MismatchEnemy);
+		MismatchedPlayerProfileForEnemy->HitFeedbackOverlayDurationSeconds = 0.10f;
+		MismatchEnemy->SetTestCombatFeedbackData(MismatchedPlayerProfileForEnemy);
+
+		const int32 HitStopBeforeEnemyMismatch = MismatchEnemy->GetTestCombatImpactHitStopRequestCount();
+		const int32 SoundBeforeEnemyMismatch = MismatchEnemy->GetTestImpactSoundDispatchCount();
+		const int32 BloodBeforeEnemyMismatch = MismatchEnemy->GetTestImpactBloodDispatchCount();
+		TestTrue(TEXT("Damage applies to Enemy with mismatched Player profile"), ApplyDamage(MismatchPlayerASC, MismatchEnemyASC, &SmallTags, &MismatchValidHit));
+		TestTrue(TEXT("Common Overlay still flashes for Enemy with mismatched profile"), MismatchEnemy->IsTestHitFeedbackOverlayActive());
+		TestEqual(TEXT("Enemy hit-stop does not trigger with mismatched Player profile"), MismatchEnemy->GetTestCombatImpactHitStopRequestCount(), HitStopBeforeEnemyMismatch);
+		TestEqual(TEXT("Enemy sound does not trigger with mismatched Player profile"), MismatchEnemy->GetTestImpactSoundDispatchCount(), SoundBeforeEnemyMismatch);
+		TestEqual(TEXT("Enemy blood does not trigger with mismatched Player profile"), MismatchEnemy->GetTestImpactBloodDispatchCount(), BloodBeforeEnemyMismatch);
+		AdvanceHitFeedbackTimer(World, 0.25f);
+
+		// 24.3 Null Profile on Player: fail-closed, damage applies, no crash, no overlay, no shake
+		MismatchPlayer->SetTestCombatFeedbackData(nullptr);
+		MismatchPlayerASC->SetNumericAttributeBase(UCharacterAttributeSet::GetHealthAttribute(), 1000.0f);
+		TestTrue(TEXT("Damage applies to Player with null profile"), ApplyDamage(MismatchEnemyASC, MismatchPlayerASC, &BigTags));
+		TestFalse(TEXT("No Overlay on null profile Player"), MismatchPlayer->IsTestHitFeedbackOverlayActive());
+		TestEqual(TEXT("No shake on null profile Player"), MismatchPlayer->GetTestHitFeedbackCameraShakeStartCount(), ShakeCountBeforeMismatch);
+
+		// 24.4 Null Profile on Enemy: fail-closed, damage applies, no crash, no overlay, no hit-stop/sound/blood
+		MismatchEnemy->SetTestCombatFeedbackData(nullptr);
+		MismatchEnemyASC->SetNumericAttributeBase(UCharacterAttributeSet::GetHealthAttribute(), 1000.0f);
+		TestTrue(TEXT("Damage applies to Enemy with null profile"), ApplyDamage(MismatchPlayerASC, MismatchEnemyASC, &BigTags, &MismatchValidHit));
+		TestFalse(TEXT("No Overlay on null profile Enemy"), MismatchEnemy->IsTestHitFeedbackOverlayActive());
+		TestEqual(TEXT("No hit-stop on null profile Enemy"), MismatchEnemy->GetTestCombatImpactHitStopRequestCount(), HitStopBeforeEnemyMismatch);
+		TestEqual(TEXT("No sound on null profile Enemy"), MismatchEnemy->GetTestImpactSoundDispatchCount(), SoundBeforeEnemyMismatch);
+		TestEqual(TEXT("No blood on null profile Enemy"), MismatchEnemy->GetTestImpactBloodDispatchCount(), BloodBeforeEnemyMismatch);
+
+		// 24.5 Empty Optional Resources on Enemy: valid profile but null Sound/Blood and 0 duration hit-stop
+		UEnemyCombatFeedbackDataAsset* EmptyOptionalEnemyProfile = NewObject<UEnemyCombatFeedbackDataAsset>(MismatchEnemy, NAME_None, RF_Transient);
+		EmptyOptionalEnemyProfile->ImpactSound = nullptr;
+		EmptyOptionalEnemyProfile->ImpactBloodSystem = nullptr;
+		EmptyOptionalEnemyProfile->SmallTier.ImpactHitStopDurationSeconds = 0.0f;
+		MismatchEnemy->SetTestCombatFeedbackData(EmptyOptionalEnemyProfile);
+		MismatchEnemyASC->SetNumericAttributeBase(UCharacterAttributeSet::GetHealthAttribute(), 1000.0f);
+
+		const int32 HitStopBeforeEmpty = MismatchEnemy->GetTestCombatImpactHitStopRequestCount();
+		TestTrue(TEXT("Damage applies to Enemy with empty optional resources"), ApplyDamage(MismatchPlayerASC, MismatchEnemyASC, &SmallTags, &MismatchValidHit));
+		TestEqual(TEXT("No hit-stop requested when Duration is 0"), MismatchEnemy->GetTestCombatImpactHitStopRequestCount(), HitStopBeforeEmpty);
+
+		MismatchPlayer->Destroy();
+		MismatchEnemy->Destroy();
+	}
+
+	// 24.6 Phase B Type Contract: Base is Abstract and derived profiles are constructible
+	const UClass* BaseClass = UCombatFeedbackDataAsset::StaticClass();
+	TestNotNull(TEXT("Base UCombatFeedbackDataAsset class is valid"), BaseClass);
+	TestTrue(TEXT("UCombatFeedbackDataAsset is Abstract"), BaseClass && BaseClass->HasAnyClassFlags(CLASS_Abstract));
+
+	const UClass* PlayerProfileClass = UPlayerCombatFeedbackDataAsset::StaticClass();
+	TestNotNull(TEXT("UPlayerCombatFeedbackDataAsset class is valid"), PlayerProfileClass);
+	TestFalse(TEXT("UPlayerCombatFeedbackDataAsset is not Abstract"), PlayerProfileClass && PlayerProfileClass->HasAnyClassFlags(CLASS_Abstract));
+	UPlayerCombatFeedbackDataAsset* DirectPlayerProfile = NewObject<UPlayerCombatFeedbackDataAsset>(GetTransientPackage(), NAME_None, RF_Transient);
+	TestNotNull(TEXT("UPlayerCombatFeedbackDataAsset is constructible via NewObject"), DirectPlayerProfile);
+
+	const UClass* EnemyProfileClass = UEnemyCombatFeedbackDataAsset::StaticClass();
+	TestNotNull(TEXT("UEnemyCombatFeedbackDataAsset class is valid"), EnemyProfileClass);
+	TestFalse(TEXT("UEnemyCombatFeedbackDataAsset is not Abstract"), EnemyProfileClass && EnemyProfileClass->HasAnyClassFlags(CLASS_Abstract));
+	UEnemyCombatFeedbackDataAsset* DirectEnemyProfile = NewObject<UEnemyCombatFeedbackDataAsset>(GetTransientPackage(), NAME_None, RF_Transient);
+	TestNotNull(TEXT("UEnemyCombatFeedbackDataAsset is constructible via NewObject"), DirectEnemyProfile);
+
 	Enemy->Destroy();
 	return true;
 }
@@ -722,7 +837,7 @@ bool FCombatAttackerImpactCameraShakeAutomationTest::RunTest(const FString& Para
 	TestNull(TEXT("Active shake remains null when attacker shake classes are unconfigured"), Player->GetTestActiveHitFeedbackCameraShake());
 
 	// Configure strictly attacker-only Shake classes (clear received-hit classes to verify attacker path does not depend on them)
-	UCombatFeedbackDataAsset* PlayerFeedback = Player->GetTestCombatFeedbackData();
+	UPlayerCombatFeedbackDataAsset* PlayerFeedback = Cast<UPlayerCombatFeedbackDataAsset>(Player->GetTestCombatFeedbackData());
 	if (PlayerFeedback)
 	{
 		PlayerFeedback->SmallTier.ReceivedHitCameraShakeClass = nullptr;

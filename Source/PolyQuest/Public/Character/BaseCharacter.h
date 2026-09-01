@@ -44,7 +44,6 @@ public:
 	void SetTestCombatTeamTag(const FGameplayTag& InTag) { CombatTeamTag = InTag; }
 	void SetTestCombatFeedbackData(UCombatFeedbackDataAsset* InData) { CombatFeedbackData = InData; }
 	UCombatFeedbackDataAsset* GetTestCombatFeedbackData() const { return CombatFeedbackData.Get(); }
-	void ConfigureTestHitFeedbackOverlay(UMaterialInterface* InOverlayMaterial, float InDurationSeconds);
 	bool IsTestHitFeedbackOverlayActive() const { return bHitFeedbackOverlayActive; }
 	bool HasTestHitFeedbackOverlayTimer() const { return HitFeedbackOverlayTimerHandle.IsValid(); }
 	UMaterialInterface* GetTestActiveHitFeedbackOverlayMaterial() const { return ActiveHitFeedbackOverlayMaterial.Get(); }

@@ -290,7 +290,7 @@ void UPlayerParryAbility::TriggerParrySuccessFeedback(const FHitResult& HitResul
 		return;
 	}
 
-	const UCombatFeedbackDataAsset* FeedbackData = PlayerCharacter->GetCombatFeedbackData();
+	const UPlayerCombatFeedbackDataAsset* FeedbackData = PlayerCharacter->GetPlayerCombatFeedbackData();
 
 	// 1. Request Hit-Stop via PlayerController
 	if (FeedbackData)

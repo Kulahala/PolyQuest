@@ -117,19 +117,6 @@ UMeleeTraceSourceComponent* ABaseCharacter::GetMeleeTraceSource() const
 	return MeleeTraceSource.Get();
 }
 
-#if WITH_DEV_AUTOMATION_TESTS
-void ABaseCharacter::ConfigureTestHitFeedbackOverlay(UMaterialInterface* InOverlayMaterial, const float InDurationSeconds)
-{
-	if (!CombatFeedbackData)
-	{
-		CombatFeedbackData = NewObject<UCombatFeedbackDataAsset>(this, NAME_None, RF_Transient);
-	}
-	CombatFeedbackData->HitFeedbackOverlayMaterial = InOverlayMaterial;
-	CombatFeedbackData->HitFeedbackOverlayDurationSeconds = InDurationSeconds;
-	bHasLoggedInvalidHitFeedbackOverlayConfiguration = false;
-}
-#endif
-
 void ABaseCharacter::TriggerHitFeedbackOverlay()
 {
 	USkeletalMeshComponent* MeshComponent = GetMesh();

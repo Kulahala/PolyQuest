@@ -187,7 +187,7 @@ bool FPlayerDefenseAudioAutomationTest::RunTest(const FString& Parameters)
 	USoundWave* TestGuardSound = NewObject<USoundWave>(Player);
 	USoundWave* TestReceivedHitSound = NewObject<USoundWave>(Player);
 
-	UCombatFeedbackDataAsset* PlayerFeedback = Player->GetTestCombatFeedbackData();
+	UPlayerCombatFeedbackDataAsset* PlayerFeedback = Cast<UPlayerCombatFeedbackDataAsset>(Player->GetTestCombatFeedbackData());
 	if (PlayerFeedback)
 	{
 		PlayerFeedback->Defense.GuardSuccessSound = TestGuardSound;
@@ -541,7 +541,56 @@ bool FPlayerDefenseAudioAutomationTest::RunTest(const FString& Parameters)
 	}
 
 	// =========================================================================
-	// SECTION 5: Lifecycle & Safety Verification
+	// SECTION 5: Taxonomy Mismatched and Null Profile Safety
+	// =========================================================================
+	{
+		// 5.1 Mismatched Enemy profile on Player during Guard
+		UEnemyCombatFeedbackDataAsset* MismatchedEnemyFeedback = NewObject<UEnemyCombatFeedbackDataAsset>(Player, NAME_None, RF_Transient);
+		Player->SetTestCombatFeedbackData(MismatchedEnemyFeedback);
+		PlayerASC->SetNumericAttributeBase(UCharacterAttributeSet::GetStaminaAttribute(), 100.0f);
+
+		const int32 SoundCountBeforeMismatch = TestGuardAbility->GetTestGuardSuccessSoundDispatchCount();
+		const FVector NonZeroImpactPoint(100.0f, 0.0f, 50.0f);
+		FHitResult ValidHitResult;
+		ValidHitResult.HitObjectHandle = FActorInstanceHandle(Player);
+		ValidHitResult.ImpactPoint = NonZeroImpactPoint;
+
+		FMeleeHitRequest MeleeRequest;
+		MeleeRequest.SourceActor = Enemy;
+		MeleeRequest.SourceAbilitySystemComponent = EnemyASC;
+		MeleeRequest.HitResult = ValidHitResult;
+		MeleeRequest.DamageGameplayEffectClass = UTestProjectileDamageGE::StaticClass();
+		MeleeRequest.GuardStaminaDamage = 20.0f;
+		MeleeRequest.AbilityLevel = 1.0f;
+
+		const bool bGuardedWithMismatch = FMeleeHitResolver::TryResolveHit(MeleeRequest);
+		TestTrue(TEXT("Guard still successfully absorbs hit with mismatched profile"), bGuardedWithMismatch);
+		TestEqual(TEXT("Guard sound NOT dispatched with mismatched profile"), TestGuardAbility->GetTestGuardSuccessSoundDispatchCount(), SoundCountBeforeMismatch);
+		TestEqual(TEXT("Player stamina reduced as expected with mismatched profile"), PlayerASC->GetNumericAttribute(UCharacterAttributeSet::GetStaminaAttribute()), 80.0f);
+
+		// 5.2 Null profile on Player during Guard
+		Player->SetTestCombatFeedbackData(nullptr);
+		PlayerASC->SetNumericAttributeBase(UCharacterAttributeSet::GetStaminaAttribute(), 80.0f);
+
+		const bool bGuardedWithNull = FMeleeHitResolver::TryResolveHit(MeleeRequest);
+		TestTrue(TEXT("Guard still successfully absorbs hit with null profile"), bGuardedWithNull);
+		TestEqual(TEXT("Guard sound NOT dispatched with null profile"), TestGuardAbility->GetTestGuardSuccessSoundDispatchCount(), SoundCountBeforeMismatch);
+		TestEqual(TEXT("Player stamina reduced as expected with null profile"), PlayerASC->GetNumericAttribute(UCharacterAttributeSet::GetStaminaAttribute()), 60.0f);
+
+		// 5.3 Empty Optional Guard Sound (valid Player profile with null GuardSuccessSound)
+		UPlayerCombatFeedbackDataAsset* EmptyAudioPlayerFeedback = NewObject<UPlayerCombatFeedbackDataAsset>(Player, NAME_None, RF_Transient);
+		EmptyAudioPlayerFeedback->Defense.GuardSuccessSound = nullptr;
+		Player->SetTestCombatFeedbackData(EmptyAudioPlayerFeedback);
+		PlayerASC->SetNumericAttributeBase(UCharacterAttributeSet::GetStaminaAttribute(), 60.0f);
+
+		const bool bGuardedWithEmptyAudio = FMeleeHitResolver::TryResolveHit(MeleeRequest);
+		TestTrue(TEXT("Guard still successfully absorbs hit with null GuardSuccessSound"), bGuardedWithEmptyAudio);
+		TestEqual(TEXT("Guard sound NOT dispatched with null GuardSuccessSound"), TestGuardAbility->GetTestGuardSuccessSoundDispatchCount(), SoundCountBeforeMismatch);
+		TestEqual(TEXT("Player stamina reduced as expected with null GuardSuccessSound"), PlayerASC->GetNumericAttribute(UCharacterAttributeSet::GetStaminaAttribute()), 40.0f);
+	}
+
+	// =========================================================================
+	// SECTION 6: Lifecycle & Safety Verification
 	// =========================================================================
 	{
 		// EndPlay & unpossess safety

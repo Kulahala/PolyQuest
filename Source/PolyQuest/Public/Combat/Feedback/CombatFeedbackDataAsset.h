@@ -13,20 +13,29 @@ class UNiagaraSystem;
 class USoundBase;
 
 /**
- * Per-tier camera shake and hit-stop settings for hit reactions.
+ * Per-tier camera shake settings for Player hit reactions (received hit and attacker impact).
  */
 USTRUCT(BlueprintType)
-struct POLYQUEST_API FCombatFeedbackTierSettings
+struct POLYQUEST_API FPlayerCombatFeedbackTierSettings
 {
 	GENERATED_BODY()
 
-	/** Local camera shake played on the receiving character. */
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "CameraShake", meta = (ToolTip = "受击方受击时触发的摄像机震屏效果类。"))
+	/** Local camera shake played on the receiving player character. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "CameraShake", meta = (ToolTip = "玩家受击时触发的摄像机震屏效果类。"))
 	TSubclassOf<UCameraShakeBase> ReceivedHitCameraShakeClass;
 
 	/** Local camera shake played on the attacking player when inflicting this tier on an enemy. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "CameraShake", meta = (ToolTip = "玩家作为攻击方命中敌人时触发的摄像机震屏效果类。"))
 	TSubclassOf<UCameraShakeBase> AttackerImpactCameraShakeClass;
+};
+
+/**
+ * Per-tier hit-stop settings for Enemy hit reactions.
+ */
+USTRUCT(BlueprintType)
+struct POLYQUEST_API FEnemyCombatFeedbackTierSettings
+{
+	GENERATED_BODY()
 
 	/** Global hit-stop duration in seconds for this tier. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "HitStop", meta = (ClampMin = "0.0", Units = "Seconds", ToolTip = "命中顿帧持续时间（秒）。"))
@@ -38,10 +47,10 @@ struct POLYQUEST_API FCombatFeedbackTierSettings
 };
 
 /**
- * Defense feedback settings (guard and parry sounds/hit-stop).
+ * Defense feedback settings (guard and parry sounds/hit-stop) owned by Player.
  */
 USTRUCT(BlueprintType)
-struct POLYQUEST_API FCombatFeedbackDefenseSettings
+struct POLYQUEST_API FPlayerCombatFeedbackDefenseSettings
 {
 	GENERATED_BODY()
 
@@ -63,9 +72,10 @@ struct POLYQUEST_API FCombatFeedbackDefenseSettings
 };
 
 /**
- * Authored profile consolidating feedback assets and parameters (overlay, audio, VFX, shake, hit-stop).
+ * Common base profile consolidating shared hit-feedback assets and parameters (overlay flash).
+ * Abstract root data asset for typed Player and Enemy feedback profiles.
  */
-UCLASS(BlueprintType)
+UCLASS(Abstract, BlueprintType)
 class POLYQUEST_API UCombatFeedbackDataAsset : public UPrimaryDataAsset
 {
 	GENERATED_BODY()
@@ -80,35 +90,74 @@ public:
 	/** Duration for the hit-feedback Overlay before the prior Overlay is restored. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Overlay", meta = (ClampMin = "0.0", Units = "Seconds", ToolTip = "受击材质高亮闪烁持续时间（秒）。"))
 	float HitFeedbackOverlayDurationSeconds = 0.10f;
+};
 
-	/** Sound played when receiving non-lethal health damage. */
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Audio", meta = (ToolTip = "角色受到非致命实际伤害时触发的受击音效。"))
+/**
+ * Authored profile consolidating player-specific combat feedback (shake, received hit sound, defense audio/hit-stop).
+ */
+UCLASS(BlueprintType)
+class POLYQUEST_API UPlayerCombatFeedbackDataAsset : public UCombatFeedbackDataAsset
+{
+	GENERATED_BODY()
+
+public:
+	UPlayerCombatFeedbackDataAsset();
+
+	/** Sound played when player receives non-lethal health damage from an enemy. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Audio", meta = (ToolTip = "玩家受到非致命实际伤害时触发的受击音效。"))
 	TObjectPtr<USoundBase> ReceivedHitSound;
 
-	/** Shared flesh impact sound played on the target location. */
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Impact", meta = (ToolTip = "被击中时播放的共享肉体打击音效资产。"))
+	/** Feedback settings for Small reaction tier. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Tiers", meta = (ToolTip = "轻度受击（Small Tier）震屏配置。"))
+	FPlayerCombatFeedbackTierSettings SmallTier;
+
+	/** Feedback settings for Big reaction tier. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Tiers", meta = (ToolTip = "重度受击（Big Tier）震屏配置。"))
+	FPlayerCombatFeedbackTierSettings BigTier;
+
+	/** Feedback settings for Launch reaction tier. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Tiers", meta = (ToolTip = "击飞受击（Launch Tier）震屏配置。"))
+	FPlayerCombatFeedbackTierSettings LaunchTier;
+
+	/** Feedback settings for player defense (guard & parry). */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Defense", meta = (ToolTip = "玩家格挡与弹反防御反馈配置。"))
+	FPlayerCombatFeedbackDefenseSettings Defense;
+
+	/** Returns a pointer to the player tier settings for the specified reaction tier, or nullptr if None/Invalid. */
+	const FPlayerCombatFeedbackTierSettings* GetTierSettings(EHitReactionTier Tier) const;
+};
+
+/**
+ * Authored profile consolidating enemy-specific combat feedback (impact sound, blood VFX, impact hit-stop).
+ */
+UCLASS(BlueprintType)
+class POLYQUEST_API UEnemyCombatFeedbackDataAsset : public UCombatFeedbackDataAsset
+{
+	GENERATED_BODY()
+
+public:
+	UEnemyCombatFeedbackDataAsset();
+
+	/** Shared flesh impact sound played on the enemy target location. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Impact", meta = (ToolTip = "敌人被击中时播放的肉体打击音效资产。"))
 	TObjectPtr<USoundBase> ImpactSound;
 
-	/** Shared blood splatter Niagara system spawned at the hit location. */
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Impact", meta = (ToolTip = "被击中时在受击点生成的血液飞溅粒子系统。"))
+	/** Shared blood splatter Niagara system spawned at the enemy hit location. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Impact", meta = (ToolTip = "敌人被击中时在受击点生成的血液飞溅粒子系统。"))
 	TObjectPtr<UNiagaraSystem> ImpactBloodSystem;
 
 	/** Feedback settings for Small reaction tier. */
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Tiers", meta = (ToolTip = "轻度受击（Small Tier）反馈配置。"))
-	FCombatFeedbackTierSettings SmallTier;
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Tiers", meta = (ToolTip = "轻度受击（Small Tier）命中顿帧配置。"))
+	FEnemyCombatFeedbackTierSettings SmallTier;
 
 	/** Feedback settings for Big reaction tier. */
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Tiers", meta = (ToolTip = "重度受击（Big Tier）反馈配置。"))
-	FCombatFeedbackTierSettings BigTier;
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Tiers", meta = (ToolTip = "重度受击（Big Tier）命中顿帧配置。"))
+	FEnemyCombatFeedbackTierSettings BigTier;
 
 	/** Feedback settings for Launch reaction tier. */
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Tiers", meta = (ToolTip = "击飞受击（Launch Tier）反馈配置。"))
-	FCombatFeedbackTierSettings LaunchTier;
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Tiers", meta = (ToolTip = "击飞受击（Launch Tier）命中顿帧配置。"))
+	FEnemyCombatFeedbackTierSettings LaunchTier;
 
-	/** Feedback settings for defense (guard & parry). */
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Defense", meta = (ToolTip = "格挡与弹反防御反馈配置。"))
-	FCombatFeedbackDefenseSettings Defense;
-
-	/** Returns a pointer to the tier settings for the specified reaction tier, or nullptr if None/Invalid. */
-	const FCombatFeedbackTierSettings* GetTierSettings(EHitReactionTier Tier) const;
+	/** Returns a pointer to the enemy tier settings for the specified reaction tier, or nullptr if None/Invalid. */
+	const FEnemyCombatFeedbackTierSettings* GetTierSettings(EHitReactionTier Tier) const;
 };

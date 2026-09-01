@@ -150,7 +150,7 @@ bool FParrySuccessImpactFeedbackAutomationTest::RunTest(const FString& Parameter
 	PlayerASC->AddLooseGameplayTag(ParryingStateTag);
 
 	USoundWave* TestSound = NewObject<USoundWave>(Player);
-	UCombatFeedbackDataAsset* PlayerFeedback = Player->GetTestCombatFeedbackData();
+	UPlayerCombatFeedbackDataAsset* PlayerFeedback = Cast<UPlayerCombatFeedbackDataAsset>(Player->GetTestCombatFeedbackData());
 	if (PlayerFeedback)
 	{
 		PlayerFeedback->Defense.ParrySuccessSound = TestSound;
@@ -337,6 +337,53 @@ bool FParrySuccessImpactFeedbackAutomationTest::RunTest(const FString& Parameter
 	const bool bControllerDestroyed = DestroyTestController->Destroy();
 	TestTrue(TEXT("Controller Destroy succeeded"), bControllerDestroyed);
 	TestTrue(TEXT("Global time dilation restored to 1.0 on Controller Destroy"), FMath::IsNearlyEqual(UGameplayStatics::GetGlobalTimeDilation(World), 1.0f, KINDA_SMALL_NUMBER));
+
+	// -------------------------------------------------------------------------
+	// 6. SECTION: Taxonomy Mismatched and Null Profile Safety
+	// -------------------------------------------------------------------------
+	// 6.1 Mismatched Enemy profile on Player during Parry
+	UEnemyCombatFeedbackDataAsset* MismatchedEnemyFeedback = NewObject<UEnemyCombatFeedbackDataAsset>(Player, NAME_None, RF_Transient);
+	Player->SetTestCombatFeedbackData(MismatchedEnemyFeedback);
+	EnemyASC->SetNumericAttributeBase(UCharacterAttributeSet::GetPoiseAttribute(), 100.0f);
+	TestParryAbility->TestSetParryWindowOpen(true);
+
+	const int32 FeedbackCountBeforeMismatch = TestParryAbility->GetTestParrySuccessFeedbackCount();
+	const int32 ShakeCountBeforeMismatch = Player->GetTestHitFeedbackCameraShakeStartCount();
+
+	const bool bParryWithMismatch = TestParryAbility->TryParryMeleeHit(Enemy, ValidHitResult);
+	TestTrue(TEXT("Parry succeeds with mismatched profile (counter applied, attack deflected)"), bParryWithMismatch);
+	TestEqual(TEXT("Enemy poise still reduced by counter GE with mismatched profile"), EnemyASC->GetNumericAttribute(UCharacterAttributeSet::GetPoiseAttribute()), 0.0f);
+	TestEqual(TEXT("Parry feedback count incremented"), TestParryAbility->GetTestParrySuccessFeedbackCount(), FeedbackCountBeforeMismatch + 1);
+	TestFalse(TEXT("Hit-stop NOT requested with mismatched profile"), Controller->IsTestHitStopActive());
+	TestEqual(TEXT("Camera shake count unchanged with mismatched profile"), Player->GetTestHitFeedbackCameraShakeStartCount(), ShakeCountBeforeMismatch);
+
+	// 6.2 Null profile on Player during Parry
+	Player->SetTestCombatFeedbackData(nullptr);
+	EnemyASC->SetNumericAttributeBase(UCharacterAttributeSet::GetPoiseAttribute(), 100.0f);
+	TestParryAbility->TestSetParryWindowOpen(true);
+
+	const int32 FeedbackCountBeforeNull = TestParryAbility->GetTestParrySuccessFeedbackCount();
+	const bool bParryWithNull = TestParryAbility->TryParryMeleeHit(Enemy, ValidHitResult);
+	TestTrue(TEXT("Parry succeeds with null profile"), bParryWithNull);
+	TestEqual(TEXT("Enemy poise still reduced by counter GE with null profile"), EnemyASC->GetNumericAttribute(UCharacterAttributeSet::GetPoiseAttribute()), 0.0f);
+	TestEqual(TEXT("Parry feedback count incremented with null profile"), TestParryAbility->GetTestParrySuccessFeedbackCount(), FeedbackCountBeforeNull + 1);
+	TestFalse(TEXT("Hit-stop NOT requested with null profile"), Controller->IsTestHitStopActive());
+	TestEqual(TEXT("Camera shake count unchanged with null profile"), Player->GetTestHitFeedbackCameraShakeStartCount(), ShakeCountBeforeMismatch);
+
+	// 6.3 Empty Optional Parry Settings (valid Player profile with null Sound and 0 Hit-Stop duration)
+	UPlayerCombatFeedbackDataAsset* EmptyAudioPlayerFeedback = NewObject<UPlayerCombatFeedbackDataAsset>(Player, NAME_None, RF_Transient);
+	EmptyAudioPlayerFeedback->Defense.ParrySuccessSound = nullptr;
+	EmptyAudioPlayerFeedback->Defense.ParrySuccessHitStopDurationSeconds = 0.0f;
+	Player->SetTestCombatFeedbackData(EmptyAudioPlayerFeedback);
+	EnemyASC->SetNumericAttributeBase(UCharacterAttributeSet::GetPoiseAttribute(), 100.0f);
+	TestParryAbility->TestSetParryWindowOpen(true);
+
+	const int32 FeedbackCountBeforeEmpty = TestParryAbility->GetTestParrySuccessFeedbackCount();
+	const bool bParryWithEmpty = TestParryAbility->TryParryMeleeHit(Enemy, ValidHitResult);
+	TestTrue(TEXT("Parry succeeds with empty optional feedback settings"), bParryWithEmpty);
+	TestEqual(TEXT("Enemy poise reduced by counter GE"), EnemyASC->GetNumericAttribute(UCharacterAttributeSet::GetPoiseAttribute()), 0.0f);
+	TestEqual(TEXT("Parry feedback count incremented"), TestParryAbility->GetTestParrySuccessFeedbackCount(), FeedbackCountBeforeEmpty + 1);
+	TestFalse(TEXT("Hit-stop NOT requested when duration is 0"), Controller->IsTestHitStopActive());
 
 	Player->Destroy();
 	Enemy->Destroy();

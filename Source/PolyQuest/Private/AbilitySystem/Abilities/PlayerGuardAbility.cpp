@@ -431,7 +431,7 @@ void UPlayerGuardAbility::TriggerGuardSuccessFeedback(const FHitResult& HitResul
 		return;
 	}
 
-	const UCombatFeedbackDataAsset* FeedbackData = PlayerCharacter->GetCombatFeedbackData();
+	const UPlayerCombatFeedbackDataAsset* FeedbackData = PlayerCharacter->GetPlayerCombatFeedbackData();
 	USoundBase* SoundToPlay = FeedbackData ? FeedbackData->Defense.GuardSuccessSound.Get() : nullptr;
 	if (SoundToPlay)
 	{

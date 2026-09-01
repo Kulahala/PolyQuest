@@ -367,6 +367,32 @@ void AEnemyCharacter::OnHealthAttributeChanged(const FOnAttributeChangeData& Cha
 	CharacterASC->HandleGameplayEvent(TargetEventTag, &ReactionEventData);
 }
 
+UEnemyCombatFeedbackDataAsset* AEnemyCharacter::GetEnemyCombatFeedbackData() const
+{
+	if (!CombatFeedbackData)
+	{
+		if (!bHasLoggedMissingCombatFeedbackData)
+		{
+			UE_LOG(LogPolyQuest, Warning, TEXT("Enemy '%s' is missing a CombatFeedbackData profile for impact feedback."), *GetNameSafe(this));
+			const_cast<AEnemyCharacter*>(this)->bHasLoggedMissingCombatFeedbackData = true;
+		}
+		return nullptr;
+	}
+
+	UEnemyCombatFeedbackDataAsset* EnemyProfile = Cast<UEnemyCombatFeedbackDataAsset>(CombatFeedbackData.Get());
+	if (!EnemyProfile)
+	{
+		if (!bHasLoggedMissingCombatFeedbackData)
+		{
+			UE_LOG(LogPolyQuest, Warning, TEXT("Enemy '%s' has an invalid CombatFeedbackData profile for impact feedback (expected UEnemyCombatFeedbackDataAsset, got '%s')."), *GetNameSafe(this), *GetNameSafe(CombatFeedbackData.Get()));
+			const_cast<AEnemyCharacter*>(this)->bHasLoggedMissingCombatFeedbackData = true;
+		}
+		return nullptr;
+	}
+
+	return EnemyProfile;
+}
+
 void AEnemyCharacter::HandleCombatImpactFeedback(const FGameplayEffectSpec& EffectSpec, EHitReactionTier ReactionTier)
 {
 	const FGameplayEffectContextHandle ContextHandle = EffectSpec.GetContext();
@@ -393,18 +419,13 @@ void AEnemyCharacter::HandleCombatImpactFeedback(const FGameplayEffectSpec& Effe
 		PlayerCharacter->TriggerAttackerImpactCameraShake(ReactionTier);
 	}
 
-	const UCombatFeedbackDataAsset* FeedbackData = GetCombatFeedbackData();
+	const UEnemyCombatFeedbackDataAsset* FeedbackData = GetEnemyCombatFeedbackData();
 	if (!FeedbackData)
 	{
-		if (!bHasLoggedMissingCombatFeedbackData)
-		{
-			UE_LOG(LogPolyQuest, Warning, TEXT("Enemy '%s' is missing CombatFeedbackData for impact feedback."), *GetNameSafe(this));
-			bHasLoggedMissingCombatFeedbackData = true;
-		}
 		return;
 	}
 
-	const FCombatFeedbackTierSettings* TierSettings = FeedbackData->GetTierSettings(ReactionTier);
+	const FEnemyCombatFeedbackTierSettings* TierSettings = FeedbackData->GetTierSettings(ReactionTier);
 	if (!TierSettings)
 	{
 		// None/Invalid tier defaults to SmallTier as per existing contract

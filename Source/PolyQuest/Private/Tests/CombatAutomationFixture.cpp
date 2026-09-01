@@ -85,7 +85,7 @@ APlayerCharacter* FCombatAutomationFixture::SpawnPlayer(
 		UTestStaminaRegenGE::StaticClass(),
 		UTestExhaustionMoveSpeedGE::StaticClass(),
 		TestInputAction);
-	UCombatFeedbackDataAsset* PlayerFeedback = NewObject<UCombatFeedbackDataAsset>(Player, NAME_None, RF_Transient);
+	UPlayerCombatFeedbackDataAsset* PlayerFeedback = NewObject<UPlayerCombatFeedbackDataAsset>(Player, NAME_None, RF_Transient);
 	PlayerFeedback->HitFeedbackOverlayMaterial = CreateTestOverlay(Player);
 	PlayerFeedback->HitFeedbackOverlayDurationSeconds = 0.10f;
 	PlayerFeedback->SmallTier.ReceivedHitCameraShakeClass = UTestSmallHitFeedbackCameraShake::StaticClass();
@@ -125,7 +125,7 @@ AEnemyCharacter* FCombatAutomationFixture::SpawnPassiveEnemy(
 	}
 
 	Enemy->ConfigureTestPassiveStartupFixture(UTestPoiseRecoveryGE::StaticClass());
-	UCombatFeedbackDataAsset* EnemyFeedback = NewObject<UCombatFeedbackDataAsset>(Enemy, NAME_None, RF_Transient);
+	UEnemyCombatFeedbackDataAsset* EnemyFeedback = NewObject<UEnemyCombatFeedbackDataAsset>(Enemy, NAME_None, RF_Transient);
 	EnemyFeedback->HitFeedbackOverlayMaterial = CreateTestOverlay(Enemy);
 	EnemyFeedback->HitFeedbackOverlayDurationSeconds = 0.10f;
 	EnemyFeedback->SmallTier.ImpactHitStopDurationSeconds = 0.03f;

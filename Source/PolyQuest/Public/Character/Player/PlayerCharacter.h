@@ -30,6 +30,7 @@ class AEnemyCharacter;
 class APlayerCameraManager;
 class APlayerController;
 class USoundBase;
+class UPlayerCombatFeedbackDataAsset;
 enum class EHitReactionTier : uint8;
 struct FGameplayEffectSpec;
 struct FInputActionValue;
@@ -199,6 +200,9 @@ public:
 		float GuardStaminaDamage,
 		const FHitResult& HitResult,
 		bool bAllowParry);
+
+	/** Returns the configured player combat feedback data asset, or nullptr if unset or invalid type. */
+	UPlayerCombatFeedbackDataAsset* GetPlayerCombatFeedbackData() const;
 
 	/** Triggers the configured Big hit camera shake on successful melee Parry. */
 	void TriggerParrySuccessCameraShake();

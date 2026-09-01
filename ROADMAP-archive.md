@@ -1165,3 +1165,13 @@ TODO-03A3E World Pickup Interaction Prompt v1
 - **验证与复核证据**：用户确认受影响 Automation 和 `/Game/Maps/Scene01` PIE 通过。Main 以 `211ff5e` 为基线完成批准路径的 diff-first、一跳 Fresh Review，并进行旧符号 Source 零引用核对；未发现 P0/P1/P2 blocker。唯一过期的 direct-route 测试注释已在批准路径内同步清理。
 - **剩余验证债务**：未单独记录 Main 手动 `PolyQuestEditor` 编译收据。关闭条件是在需要形成独立编译证据时提供该收据；这不阻塞已确认的 Automation/PIE 或下一阶段 `TODO-07B7`。
 - **提交边界与后续指针**：提交仅含 11 个批准 Source/test 路径及 `plan.md`、`ROADMAP.md`、`ARCHITECTURE.md`、`README.md`、本归档文件；明确排除 `Content/**`、`Config/Automation/Presets/1.json`、资产删除/修改与其他用户 WIP。后续路线为 `TODO-07B7 → TODO-05A → TODO-05B`。
+
+## TODO-07B7 Combat Feedback Profile Taxonomy Split Closeout (2026-09-01; parent HEAD `17fd9b6`, working-tree not clean)
+
+> 本节记录 TODO-07B7 的 Combat Feedback Profile 分类收口。快照基于父提交 `17fd9b6`；工作区同时包含用户的 `Config/Automation/Presets/1.json`、大量 `Content/**` 修改、删除与未跟踪资产，因此不是干净 HEAD 快照。本节只作历史追溯，不替代 Source、Config 或实际 Editor 资产作为运行时权威。
+
+- **范围与稳定合同**：`UCombatFeedbackDataAsset` 变为只包含共同 Overlay 的 abstract root；`UPlayerCombatFeedbackDataAsset` 承载 Player received/attacker Camera Shake、received-hit sound 与 Guard/Parry 数据，`UEnemyCombatFeedbackDataAsset` 承载 Enemy impact sound/blood 与 Small/Big/Launch Impact Hit-Stop。`ABaseCharacter` 保持单一 Base profile 指针和 Overlay 生命周期；Player/Enemy 用对称 typed accessor 消费专属字段。错误类型或空 profile 只记录每 Actor 一次诊断并 fail-close 专属通道，Base Overlay 保持可用；空可选资源保持静默 no-op。没有改动 Damage、Poise、GAS、Gameplay Tag/Input、Hit-Stop owner 或新增 GameplayCue、dispatcher、第二伤害路径、per-enemy hierarchy、兼容 fallback。
+- **实际 Source/test 路径（14 个）**：`CombatFeedbackDataAsset.h/.cpp`；`BaseCharacter.h/.cpp`；`PlayerCharacter.h/.cpp`；`EnemyCharacter.h/.cpp`；`PlayerGuardAbility.cpp`；`PlayerParryAbility.cpp`；`CombatAutomationFixture.cpp`；`CombatHitFeedbackAutomationTests.cpp`；`PlayerDefenseAudioAutomationTests.cpp`；`ParrySuccessImpactFeedbackAutomationTests.cpp`。除这些路径与 Main 文档外没有纳入 Source、Config、Build.cs、`.uproject` 或资产。
+- **用户资产与验证证据**：用户确认已完成 Player/Enemy typed profile 的 Editor 迁移与角色 assignment，在 Reference Viewer 确认旧 Base-type assets 为零引用后删除并修复 redirector。用户明确确认最终 `PolyQuestEditor` 编译成功，随后通过 focused feedback Automation 与 `/Game/Maps/Scene01` PIE；最终复验的 `PolyQuest.Combat.HitFeedback` 也为 Success。日志中的 wrong-profile、null-profile 与无效 reaction-tag 提示均对应 fail-closed 测试矩阵或既有 fixture 诊断，不是运行时失败。
+- **Fresh Review 与修复**：Main 的常规 diff-first Fresh Review 发现 `CombatHitFeedbackAutomationTests.cpp` Section 24 在 fixture 创建失败时会因裸条件分支静默跳过。Main 仅在该批准测试路径增加 `TestNotNull` 前置、失败清理与 `return false`；用户重跑受影响 Automation 成功，最终窄复核未发现 P0/P1/P2。
+- **债务、范围与后续**：`Debt-07B6-ProfileNullCoverage` 已由正确/错误/空 profile 和空可选资源的测试矩阵关闭；07B7 没有新接受的债务。所有 `Content/**`、`Config/Automation/Presets/1.json`、其他用户 WIP、Blueprint、Map、输入、动画、Niagara、声音与产品 `.uasset` 均不纳入提交。下一开放实施阶段是 `TODO-05A: Stagger Front Execution v1`。
