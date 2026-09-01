@@ -7,6 +7,7 @@
 #include "Camera/CameraShakeBase.h"
 #include "Character/Enemy/EnemyCharacter.h"
 #include "Character/Player/PlayerCharacter.h"
+#include "Combat/Feedback/CombatFeedbackDataAsset.h"
 #include "Engine/Engine.h"
 #include "EngineGlobals.h"
 #include "Engine/World.h"
@@ -721,11 +722,16 @@ bool FCombatAttackerImpactCameraShakeAutomationTest::RunTest(const FString& Para
 	TestNull(TEXT("Active shake remains null when attacker shake classes are unconfigured"), Player->GetTestActiveHitFeedbackCameraShake());
 
 	// Configure strictly attacker-only Shake classes (clear received-hit classes to verify attacker path does not depend on them)
-	Player->ConfigureTestHitFeedbackCameraShakes(nullptr, nullptr, nullptr);
-	Player->ConfigureTestAttackerImpactCameraShakes(
-		UTestSmallHitFeedbackCameraShake::StaticClass(),
-		UTestBigHitFeedbackCameraShake::StaticClass(),
-		UTestLaunchHitFeedbackCameraShake::StaticClass());
+	UCombatFeedbackDataAsset* PlayerFeedback = Player->GetTestCombatFeedbackData();
+	if (PlayerFeedback)
+	{
+		PlayerFeedback->SmallTier.ReceivedHitCameraShakeClass = nullptr;
+		PlayerFeedback->BigTier.ReceivedHitCameraShakeClass = nullptr;
+		PlayerFeedback->LaunchTier.ReceivedHitCameraShakeClass = nullptr;
+		PlayerFeedback->SmallTier.AttackerImpactCameraShakeClass = UTestSmallHitFeedbackCameraShake::StaticClass();
+		PlayerFeedback->BigTier.AttackerImpactCameraShakeClass = UTestBigHitFeedbackCameraShake::StaticClass();
+		PlayerFeedback->LaunchTier.AttackerImpactCameraShakeClass = UTestLaunchHitFeedbackCameraShake::StaticClass();
+	}
 
 	// 2. Small tier attack selects Small test shake and triggers co-existing hit-stop
 	TestTrue(TEXT("Player attacks Enemy with Small reaction tier"), ApplyDamage(SourceASC, EnemyASC, &SmallTags));
@@ -780,11 +786,15 @@ bool FCombatAttackerImpactCameraShakeAutomationTest::RunTest(const FString& Para
 	TestFalse(TEXT("Launch hit-stop expires"), Controller->IsTestHitStopActive());
 
 	// 6. Decoupling: Player received hit path still uses received hit classes independently of attacker classes
-	Player->ConfigureTestAttackerImpactCameraShakes(nullptr, nullptr, nullptr);
-	Player->ConfigureTestHitFeedbackCameraShakes(
-		UTestSmallHitFeedbackCameraShake::StaticClass(),
-		UTestBigHitFeedbackCameraShake::StaticClass(),
-		UTestLaunchHitFeedbackCameraShake::StaticClass());
+	if (PlayerFeedback)
+	{
+		PlayerFeedback->SmallTier.AttackerImpactCameraShakeClass = nullptr;
+		PlayerFeedback->BigTier.AttackerImpactCameraShakeClass = nullptr;
+		PlayerFeedback->LaunchTier.AttackerImpactCameraShakeClass = nullptr;
+		PlayerFeedback->SmallTier.ReceivedHitCameraShakeClass = UTestSmallHitFeedbackCameraShake::StaticClass();
+		PlayerFeedback->BigTier.ReceivedHitCameraShakeClass = UTestBigHitFeedbackCameraShake::StaticClass();
+		PlayerFeedback->LaunchTier.ReceivedHitCameraShakeClass = UTestLaunchHitFeedbackCameraShake::StaticClass();
+	}
 	const int32 ShakeCountBeforeReceivedHit = Player->GetTestHitFeedbackCameraShakeStartCount();
 	TestTrue(TEXT("Player received Small tier hit damage"), ApplyDamage(SourceASC, PlayerASC, &SmallTags));
 	TestEqual(TEXT("Player received hit uses received hit classes even when attacker classes are null"), Player->GetTestHitFeedbackCameraShakeStartCount(), ShakeCountBeforeReceivedHit + 1);
@@ -794,10 +804,12 @@ bool FCombatAttackerImpactCameraShakeAutomationTest::RunTest(const FString& Para
 	AdvanceHitFeedbackTimer(World, 0.25f);
 
 	// Restore attacker classes for remaining attacker tests
-	Player->ConfigureTestAttackerImpactCameraShakes(
-		UTestSmallHitFeedbackCameraShake::StaticClass(),
-		UTestBigHitFeedbackCameraShake::StaticClass(),
-		UTestLaunchHitFeedbackCameraShake::StaticClass());
+	if (PlayerFeedback)
+	{
+		PlayerFeedback->SmallTier.AttackerImpactCameraShakeClass = UTestSmallHitFeedbackCameraShake::StaticClass();
+		PlayerFeedback->BigTier.AttackerImpactCameraShakeClass = UTestBigHitFeedbackCameraShake::StaticClass();
+		PlayerFeedback->LaunchTier.AttackerImpactCameraShakeClass = UTestLaunchHitFeedbackCameraShake::StaticClass();
+	}
 
 	// Re-establish Launch shake on attacker path
 	TestTrue(TEXT("Launch tier attack re-establishes active Launch shake"), ApplyDamage(SourceASC, EnemyASC, &LaunchTags));

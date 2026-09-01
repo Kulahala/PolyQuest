@@ -130,3 +130,266 @@ Source/PolyQuest/Private/Tests/HitReactionAutomationTests.cpp
 - **验证证据**：用户确认 `PolyQuest.Combat.HitReaction` Automation 通过并完成 Scene01 PIE；Gemini 报告五个批准文件 Rider error-level 检查无错误且 `git diff --check` 通过；Main 对最终差异完成 defect-first Fresh Review，P0/P1/P2 均为 0。上述证据不扩展为全量套件、独立手动编译或 Editor readback。
 - **验证债务**：`Debt-07B5-RealASCRetriggerE2E` 仍开放。无头 Automation 的 7.1/7.2 是 synthetic Task seam，7.3/7.4 是真实 ASC Spec/Tag 与方向解析验证，尚未证明完整的 `HandleGameplayEvent → GAS retrigger → 最新 TriggerEventData → 跨帧 Montage Task` 链路。关闭条件是有效 AnimInstance/Montage 集成 fixture 或专用 PIE/Automation 场景；当前用户 PIE 覆盖运行时表现，但不替代该债务的独立记录。
 - **范围与提交边界**：未修改或纳入 `Content/**`、`Config/Automation/Presets/1.json`、其他 Source/Config WIP、Build.cs、`.uproject`、Input、Gameplay Tag 或资产；不声称独立手动 `PolyQuestEditor` 编译或 Editor readback。下一开放阶段为 `TODO-07B6：Combat Feedback DataAsset Consolidation v1`。
+
+# TODO-07B6：Combat Feedback DataAsset Consolidation v1
+
+## 阶段状态与执行路由
+
+- **状态**：实现、用户 Editor 配置、Automation/PIE 验证与 Main Fresh Review 已完成；本节现记录阶段 closeout、验证债务、Loadout 清理前置证据与提交边界。
+- **基线**：`E:\GameDevelop\PolyQuest`，实施前父提交 `HEAD 8fc3d71`（`TODO-07B5` closeout）。
+- **工作区边界**：当前工作区包含用户拥有的 `Content/**` WIP、删除项、未跟踪资源和 `Config/Automation/Presets/1.json`；全部保留，不清理、不回滚、不顺手纳入本阶段。
+- **Outer**：`ue-stage-workflow`
+- **Primary**：`ue5-cpp-gameplay`
+- **Support**：`ue5-debug-validation`
+- **Editor 迁移支持**：用户按 `ue5-blueprint-workflow` 完成资产创建、属性迁移和 readback；Gemini 不写入 `.uasset`、`.umap` 或 live Editor 状态。
+- **Route reason**：这是一个跨 BaseCharacter、Player、Enemy、Guard/Parry Ability 的 Native C++/GAS authored-feedback 数据收拢阶段，包含 DataAsset 公共合同和现有 Automation 夹具迁移，但不引入新的战斗权威或网络模型。
+- **Execution route**：`manual/out-of-band Gemini`。
+- **Ownership**：Main 是合同 owner，负责计划、范围、验证解释、Fresh Review、文档、staging 和 commit；Gemini 只实现下列冻结 Source/test 路径；用户负责手动编译、Editor readback、Scene01 PIE 和最终提交批准。
+
+## 目标与冻结决策
+
+将当前分散在 `ABaseCharacter`、`APlayerCharacter`、`AEnemyCharacter`、`UPlayerGuardAbility` 和 `UPlayerParryAbility` 中的反馈引用与调参收拢到统一的 `UCombatFeedbackDataAsset` 类型，同时保留每个运行时 owner 的生命周期和 GAS/Damage 合同。
+
+“一个 Combat Feedback DataAsset”解释为一个统一的 DataAsset 类型与数据合同；Player 与 Enemy 各挂一个角色级 profile，而不是共用全局 singleton。这样可以集中字段，同时允许不同角色拥有不同的声音、血液、Overlay 和镜头反馈。
+
+迁移策略已冻结为一次性直接迁移：
+
+- 删除旧的反馈 UPROPERTY 和旧读取路径；
+- 不保留 legacy fallback，也不同时维护两套真相；
+- 缺失 profile、单个资源或非法数值只关闭对应反馈通道，不阻断 Damage、Poise、Guard、Parry、死亡或 Ability 生命周期；
+- 旧/新等价性通过固定基线 transient fixture 与行为断言验证，不在运行时保留旧字段作对照。
+
+## DataAsset 公共合同
+
+新增：
+
+- `Source/PolyQuest/Public/Combat/Feedback/CombatFeedbackDataAsset.h`
+- `Source/PolyQuest/Private/Combat/Feedback/CombatFeedbackDataAsset.cpp`
+
+头文件合同：
+
+- `FCombatFeedbackTierSettings` 与 `FCombatFeedbackDefenseSettings` 必须是 `USTRUCT(BlueprintType)`；
+- 直接 include `Combat/Reaction/HitReactionClassifier.h`，以使用非反射 `EHitReactionTier`；
+- `UCameraShakeBase`、`USoundBase`、`UNiagaraSystem`、`UMaterialInterface` 使用前置声明；
+- `*.generated.h` 保持最后一个 include。
+
+`FCombatFeedbackTierSettings` 字段固定为：
+
+- `ReceivedHitCameraShakeClass`；
+- `AttackerImpactCameraShakeClass`；
+- `ImpactHitStopDurationSeconds`；
+- `ImpactHitStopTimeDilation`。
+
+`FCombatFeedbackDefenseSettings` 字段固定为：
+
+- `GuardSuccessSound`；
+- `ParrySuccessSound`；
+- `ParrySuccessHitStopDurationSeconds`；
+- `ParrySuccessHitStopTimeDilation`。
+
+`UCombatFeedbackDataAsset` 字段固定为：
+
+- `HitFeedbackOverlayMaterial`；
+- `HitFeedbackOverlayDurationSeconds`；
+- `ReceivedHitSound`；
+- `ImpactSound`；
+- `ImpactBloodSystem`；
+- `SmallTier`、`BigTier`、`LaunchTier`；
+- `Defense`。
+
+提供只读 `GetTierSettings(EHitReactionTier Tier)`；`None` 和 `Invalid` 返回空结果。DataAsset 只保存 authored data，不保存 Timer、活动 Shake、World、ASC、GameplayEffect、句柄或其他运行时状态。
+
+默认数值保持当前已验证合同：
+
+- Overlay：`0.10s`；
+- Small Hit-Stop：`0.03s / 0.1`；
+- Big Hit-Stop：`0.05s / 0.03`；
+- Launch Hit-Stop：`0.05s / 0.05`；
+- Parry：`0.05s / 0.03`。
+
+数值元数据固定为：Duration `ClampMin = "0.0"`、`Units = "Seconds"`；Time Dilation `ClampMin = "0.001"`、`ClampMax = "1.0"`；Overlay Duration `ClampMin = "0.0"`、`Units = "Seconds"`。
+
+## 运行时接入与所有权不变式
+
+### `ABaseCharacter`
+
+- 增加角色级 `CombatFeedbackData` `UPROPERTY(EditDefaultsOnly, BlueprintReadOnly)` 和只读 `GetCombatFeedbackData()`；
+- `TriggerHitFeedbackOverlay()` 改为读取 profile；Overlay 缓存、Timer、外部 Overlay 保留和 `EndPlay()` 恢复顺序全部保持；
+- 在 `WITH_DEV_AUTOMATION_TESTS` 下提供 `SetTestCombatFeedbackData(UCombatFeedbackDataAsset*)` 与 `GetTestCombatFeedbackData()`；
+- 用统一 profile 注入替代旧的 Overlay 配置 seam。
+
+### `APlayerCharacter`
+
+删除旧的六个 Camera Shake 字段和 `ReceivedHitSound` 字段，改为从 profile 读取：
+
+- received-hit Small/Big/Launch Shake；
+- attacker-impact Small/Big/Launch Shake；
+- received-hit sound。
+
+保留 PlayerCameraManager 本地 Shake owner、活动 Manager/Shake/Class 弱引用、同类重启、tier 切换停止旧实例、`UnPossessed()`/`EndPlay()` 清理、`None/Invalid` no-op、Health/Team 过滤和 GE Spec 去重。
+
+移除依赖旧配置字段的测试 setter；测试直接修改 transient profile。播放次数、位置和音频 bypass 仅作为 `WITH_DEV_AUTOMATION_TESTS` 观察 seam 保留，不新增生产 bypass。
+
+### `AEnemyCharacter`
+
+删除旧 Impact Sound、Blood 和六个 Hit-Stop 字段，改为从 profile 读取：
+
+- `ImpactSound`；
+- `ImpactBloodSystem`；
+- Small/Big/Launch Hit-Stop 参数。
+
+保留 Enemy 的 Team.Player 边界、Health modifier 去重、ImpactPoint/ActorLocation fallback、ImpactNormal 校验、血液旋转和目标侧 sound/blood owner；`APolyQuestPlayerController` 仍是全局 Hit-Stop 唯一 owner。
+
+保持既有 tier 行为：Enemy 的 `None/Invalid` 仍使用 Small Hit-Stop；Player 的 `None/Invalid` Shake 仍 no-op。
+
+### Guard / Parry
+
+- `UPlayerGuardAbility` 删除 `GuardSuccessSound`，从 Player profile 的 `Defense.GuardSuccessSound` 读取；
+- `UPlayerParryAbility` 删除 Parry sound 与两项 Hit-Stop 字段，从 `Defense` 读取；
+- Parry 成功镜头继续调用 Player 的 Big received-hit Shake，不新增独立 Parry Camera Shake 字段；
+- 删除旧反馈配置 setter，但保留 Guard/Parry 其他 GAS、窗口、消耗、取消和测试观察 seam。
+
+### 缺失数据和诊断规则
+
+- `CombatFeedbackData == nullptr`：对应 owner 首次触发反馈时记录一次 Warning，之后静默 fail-closed；
+- profile 内单个 Sound、Niagara、Material 或 Camera Shake 为空：视为可选 no-op，不输出持续 Warning；
+- Duration 非有限或不大于零，或 Dilation 非有限/不在 `(0, 1]`：仅跳过该次 Hit-Stop；
+- 无效 World、位置或 HitResult：沿用当前 fallback/跳过规则；
+- 任何反馈缺失不得改变 Damage、Poise、死亡、Guard/Parry 消费、GE 去重或 Ability 结束结果。
+
+## 批准修改路径与执行顺序
+
+Gemini 只能修改以下路径：
+
+```text
+Source/PolyQuest/Public/Combat/Feedback/CombatFeedbackDataAsset.h
+Source/PolyQuest/Private/Combat/Feedback/CombatFeedbackDataAsset.cpp
+Source/PolyQuest/Public/Character/BaseCharacter.h
+Source/PolyQuest/Private/Character/BaseCharacter.cpp
+Source/PolyQuest/Public/Character/Player/PlayerCharacter.h
+Source/PolyQuest/Private/Character/Player/PlayerCharacter.cpp
+Source/PolyQuest/Public/Character/Enemy/EnemyCharacter.h
+Source/PolyQuest/Private/Character/Enemy/EnemyCharacter.cpp
+Source/PolyQuest/Public/AbilitySystem/Abilities/PlayerGuardAbility.h
+Source/PolyQuest/Private/AbilitySystem/Abilities/PlayerGuardAbility.cpp
+Source/PolyQuest/Public/AbilitySystem/Abilities/PlayerParryAbility.h
+Source/PolyQuest/Private/AbilitySystem/Abilities/PlayerParryAbility.cpp
+Source/PolyQuest/Private/Tests/CombatAutomationFixture.cpp
+Source/PolyQuest/Private/Tests/CombatHitFeedbackAutomationTests.cpp
+Source/PolyQuest/Private/Tests/PlayerDefenseAudioAutomationTests.cpp
+Source/PolyQuest/Private/Tests/ParrySuccessImpactFeedbackAutomationTests.cpp
+```
+
+执行顺序：
+
+1. 新增 DataAsset、两个反射结构、默认值和只读 `GetTierSettings()`。
+2. 接入 `ABaseCharacter` profile 与 Overlay。
+3. 迁移 Player/Enemy runtime reads，保持各自生命周期 owner。
+4. 迁移 Guard/Parry 防御反馈，移除旧反馈配置字段和 setter。
+5. 在 `CombatAutomationFixture.cpp` 的 `SpawnPlayer()` 与 `SpawnPassiveEnemy()` 中创建 transient DataAsset，并注入与当前行为等价的默认数据。
+6. 更新三组反馈测试，直接通过 `SetTestCombatFeedbackData()`/`GetTestCombatFeedbackData()` 修改 transient profile。
+7. 执行 Rider error-level 检查和 `git diff --check`，然后交还 Main；不得自行编译、修改文档、暂存或提交。
+
+不预期修改 `Build.cs`；现有 Engine/Niagara 依赖应已足够。若发现未列出的消费者、公共 API、Build.cs、Config、Gameplay Tag、Input、资产或生命周期合同需求，立即停止并返回证据，不得自行扩展。
+
+### 共享合同文件的精确函数边界
+
+Gemini 只可在下列函数、构造/字段声明及其直接 include 范围内完成迁移；不得借机改动同文件中的输入、装备、锁定、移动、Damage、Poise、死亡或 Ability 仲裁逻辑：
+
+- `CombatFeedbackDataAsset.h/.cpp`：`UCombatFeedbackDataAsset` 构造函数（如需要）、`GetTierSettings()`，以及本阶段新增的两个 `USTRUCT`/DataAsset 字段声明。
+- `BaseCharacter.h/.cpp`：`ABaseCharacter` 的反馈 profile 声明、构造函数、`ConfigureTestHitFeedbackOverlay()`（改为 profile 注入兼容 seam 或移除旧 seam）、`TriggerHitFeedbackOverlay()`、`ClearHitFeedbackOverlay()`、`EndPlay()` 及对应 `WITH_DEV_AUTOMATION_TESTS` getter/setter。
+- `PlayerCharacter.h/.cpp`：反馈字段声明、构造函数、`BeginPlay()`/`EndPlay()` 中与反馈 profile 初始化或清理直接相关的语句，`TriggerParrySuccessCameraShake()`、`TriggerAttackerImpactCameraShake()`、`TriggerHitFeedbackCameraShake()`、`TriggerReceivedHitSound()`、`ResolveHitFeedbackCameraShakeClass()`、`ResolveAttackerImpactCameraShakeClass()`、`StartHitFeedbackCameraShakeInstance()`、`ClearActiveHitFeedbackCameraShake()`，以及现有反馈观察 seam 的迁移；不得改动输入、锁定、装备、移动或耐力逻辑。
+- `EnemyCharacter.h/.cpp`：反馈字段声明、构造函数、`EndPlay()` 中的反馈清理（如现有路径需要）和 `HandleCombatImpactFeedback()`，以及现有反馈观察 seam；不得改动敌人生命、削韧、死亡、AI 或击飞时序。
+- `PlayerGuardAbility.h/.cpp`：反馈字段/旧 setter 声明移除或迁移、构造函数，以及 `TriggerGuardSuccessFeedback()`；`CanActivateAbility()`、窗口、消耗、取消和 Montage 生命周期只允许因读取 profile 而作必要的局部改动。
+- `PlayerParryAbility.h/.cpp`：反馈字段/旧 setter 声明移除或迁移、构造函数，以及 `TriggerParrySuccessFeedback()`；`CanActivateAbility()`、窗口、消耗、取消和 Montage 生命周期只允许因读取 profile 而作必要的局部改动。
+- `CombatAutomationFixture.cpp`：仅 `SpawnPlayer()` 与 `SpawnPassiveEnemy()` 的 transient `UCombatFeedbackDataAsset` 创建、默认值填充和注入。
+- 三个反馈测试 `.cpp`：仅各自 `RunTest()` 中与 profile 创建/注入、反馈断言和旧 setter 替换直接相关的段落；不得删减原有行为覆盖或把 synthetic seam 说成 PIE/E2E 证据。
+
+Contract owner: Main；implementation writer: manual/out-of-band Gemini。上述函数边界是冻结合同，不是建议列表。
+
+## Automation 矩阵与用户门槛
+
+Automation 必须覆盖：
+
+- 两个 USTRUCT、tier/Defense 映射和默认值；
+- Player received-hit / attacker-impact 三档 Shake 与 received sound；
+- Enemy 三档 Hit-Stop、Impact sound、Blood 以及 `None/Invalid -> Small` 回归；
+- Overlay Timer、重复刷新、外部 Overlay 保留和 EndPlay 清理；
+- Guard/Parry 成功反馈及 ImpactPoint/ActorLocation fallback；
+- profile 为空、单项为空、非法数值时 fail-closed；
+- 缺失反馈不阻断 Damage、Poise、Guard、Parry、Dead 或 GE 去重；
+- UnPossessed、Destroyed、Controller teardown 无残留；
+- 不引入 GameplayCue、第二条 Damage 路径或新的反馈 dispatcher。
+
+目标入口：
+
+- `PolyQuest.Combat.HitFeedback`
+- `PolyQuest.Combat.AttackerImpactCameraShake`
+- `PolyQuest.Combat.DefenseAudio`
+- `PolyQuest.Combat.ParrySuccessFeedback`
+
+用户门槛：
+
+1. 用户手动编译 `PolyQuestEditor`（Development Editor）。
+2. 用户在 Editor 创建并配置两个产品 profile：
+   - `Content/_DataAssets/Player/FeedBack/DA_CombatFeedback_Player.uasset`
+   - `Content/_DataAssets/Enemy/FeedBack/DA_CombatFeedback_Enemy.uasset`
+3. 分别挂到当前实际使用的 `BP_Player` 与 Enemy Blueprint，并从旧字段迁移 Camera Shake、Sound、Blood、Overlay、Hit-Stop、Guard/Parry 数值；这些 `.uasset` 由用户维护，Gemini 不得写入。
+4. 使用 Details/Reference Viewer 核对当前实际授予的 Guard/Parry GA 不再承担反馈配置；候选资产包括：
+   - `Content/_Abilities/Player/Parry/GA_PlayerParry.uasset`
+   - `Content/_Abilities/Player/Parry/GA_PlayerShieldParry.uasset`
+   - `Content/_Abilities/Weapon/Shield/GA_PlayerShieldGuard.uasset`
+   - `Content/_Abilities/Weapon/LightSword/Guard/GA_Guard_Sowrd.uasset`
+5. Scene01 PIE 验证 Player 受击、Player 攻击 Enemy、Guard、Parry、Guard Break、缺失资源、死亡、UnPossess、销毁和 teardown。
+
+## 非目标、债务与停止条件
+
+非目标：
+
+- 不引入 GameplayCue、全局 Feedback Dispatcher、通用反馈框架、网络模型或第二条 Damage 路径；
+- 不改变 ASC、Health/Poise、Damage、Guard/Parry、CameraManager、Controller、Enemy、BaseCharacter 的所有权和顺序；
+- 不迁移武器、输入、Motion Warping、Montage、AnimBP 或无关 Content；
+- 不修改 `.uasset`、`.umap`、Config、Build.cs 或 `.uproject`；
+- 不为测试增加生产绕过开关。
+
+在用户手动编译、Editor readback 和 PIE 完成前，分别记录 `TODO-07B6` 验证债务及具体关闭条件。旧阶段债务不在本阶段重新打开，除非本次变更产生直接回归证据。
+
+若实现需要修改批准路径之外的文件、改变 DataAsset 合同、增加每武器覆盖、引入旧字段回退、改变反馈 owner 或触碰第二条 Damage 路径，必须停止并交回 Main 做范围决策。
+
+## Main 收尾
+
+用户编译、Editor readback、Automation/PIE 和 Main defect-first Fresh Review 均有证据后，Main 才：
+
+- 更新本文件 closeout；
+- 将稳定的 DataAsset 字段与 owner 合同同步到 `ARCHITECTURE.md`；
+- 将 `ROADMAP.md` 的当前指针推进到 `TODO-03I4`，并登记后续已接受的 `TODO-07B7` 与未完成验证债务；
+- 追加 `ROADMAP-archive.md` 历史记录；
+- 仅暂存批准的 Source/test 与文档路径，排除全部 Content WIP、`Config/Automation/Presets/1.json` 和其他未批准变更。
+
+## Main Fresh Review（2026-09-01）
+
+- **审查范围**：以 07B6 的 16 个批准 Source/test 路径为主，沿 `UCombatFeedbackDataAsset`、Overlay、Player Camera Shake/Received Sound、Enemy Impact/Hit-Stop、Guard/Parry 反馈入口检查一跳调用边界、空安全、World/Actor 生命周期和 GAS/Damage 所有权；未扩大到无关输入、装备、Motion-Warp 或资产内容。
+- **结论**：未发现 P0、P1 或 P2 缺陷；不需要在本阶段追加源码修复。用户确认相关 Automation 与 Scene01 PIE 通过；Gemini 报告批准文件 Rider error-level 检查无错误、`git diff --check` 通过。没有独立的 Main 手动 `PolyQuestEditor` 编译收据，故不把报告中的静态/编译描述替代为 Main 编译证据。
+- **P3 / 验证债务**：
+  - `CombatFeedbackData == nullptr` 的主流程 Automation 没有对每个 owner 分别形成显式断言；运行时仍 fail-closed，不影响 Damage、Poise、Guard、Parry、死亡或 Ability 生命周期。
+  - 缺失 profile 的一次性 Warning 合同在 Received Sound、Guard/Parry 音效路径上不完全对称；资源单项为空仍按可选 no-op 处理。
+  - `AEnemyCharacter::HandleCombatImpactFeedback()` 的音效/Niagara 调用点未新增独立 `GetWorld()` 门禁；当前 Health 回调入口未提供已复现崩溃证据，保留为低风险生命周期观察。
+- **Loadout 前置证据**：用户明确确认已先通过 Editor Reference Viewer 核实旧 Loadout 在项目中为 0 引用，再置空产品引用并删除旧 Loadout 资产。当前 C++ 的 `UCombatLoadoutDefinition`、`InitialCombatLoadout`、`ActiveCombatLoadout` 与 `AssociatedLoadout` 仍是 I1 兼容镜像残留，不能把“资产零引用”误写成“源码已清退”；下一阶段单独处理源码/测试清理。
+- **派生 DataAsset 决策（07B6 Fresh Review 当时）**：不在 07B6 增加 Base/Player/Enemy 派生类；当时将其保留为条件性建议。随后用户确认现有 Player/Enemy 面板已经产生明确的职责混杂与误配风险，新的接受决策见文末 `TODO-07B7` 记录。
+
+## 阶段 Closeout（2026-09-01）
+
+- **实现结果**：新增统一 `UCombatFeedbackDataAsset`、tier/Defense 结构和只读 tier 映射；Overlay、Player 本地 Camera Shake/受击音效、Enemy Impact Sound/Blood/Hit-Stop、Guard/Parry 防御反馈均改为读取 profile，同时保留原有运行时 owner、GAS/Damage 顺序、去重和清理语义。没有引入 GameplayCue、全局 dispatcher、第二条伤害路径或新的运行时状态持有者。
+- **用户证据**：用户完成两个产品 profile 的 Editor 配置并确认 Automation 与 Scene01 PIE 通过。实际 profile 路径为 `Content/_DataAssets/Player/FeedBack/DA_CombatFeedback_Player.uasset` 与 `Content/_DataAssets/Enemy/FeedBack/DA_CombatFeedback_Enemy.uasset`；这些用户-owned `.uasset` 保留在工作区，不纳入本阶段源码/文档提交。
+- **实际 Source/test 变更**：共 16 个批准路径（14 个已跟踪 Source/test 文件与新增 `CombatFeedbackDataAsset.h/.cpp`），未修改其他 Source、Config、Content、Build.cs 或 `.uproject`。本阶段工作树仍包含用户 WIP，不能作为干净 authored baseline。
+- **验证边界**：用户 Automation/PIE 证据覆盖已运行的反馈入口和 Scene01 表现；profile-null 各 owner 的完整矩阵、独立手动 `PolyQuestEditor` 编译收据和更深的异步/销毁覆盖仍是非阻塞债务，按上面的 closure trigger 处理。
+- **后续路线**：下一阶段安排为 `TODO-03I4：Legacy Combat Loadout Compatibility Removal v1`，随后执行已接受的 `TODO-07B7：Combat Feedback Profile Taxonomy Split v1`，再进入 `TODO-05A`；I4 只清除已无产品资产引用的 C++ 兼容镜像与测试/类残留，不改变 I1 direct route。07B7 不属于 I4 范围。
+- **提交边界**：本次已获用户明确提交授权；仅暂存本阶段 16 个批准 Source/test 路径与 `plan.md`、`ARCHITECTURE.md`、`ROADMAP.md`、`ROADMAP-archive.md`，排除全部 `Content/**`（含两个用户 profile）、`Config/Automation/Presets/1.json`、旧 Loadout 资产删除差异及其他未批准 WIP。
+
+## Post-closeout Decision：TODO-07B7 Accepted（2026-09-01）
+
+- **触发依据**：用户确认当前统一 `UCombatFeedbackDataAsset` 的编辑器面板已将 Player 专属与 Enemy 专属字段混在一起，造成明确的配置冗余、职责辨识成本和误配风险。该 authoring 证据足以启动拆分，不再要求等待第二个敌人。
+- **阶段决策**：将原先的条件性派生建议提升为正式后续阶段 `TODO-07B7：Combat Feedback Profile Taxonomy Split v1`。不回写或扩大已完成的 07B6 实现；07B6 closeout 中“当时条件性保留”的记录仍是历史事实。
+- **推荐顺序**：`TODO-03I4 → TODO-07B7 → TODO-05A → TODO-05B`。I4 先完成已满足零引用前置条件的 C++/测试 Loadout 兼容层清理；07B7 随后完成反馈 Profile 类型与产品资产迁移，再进入处决阶段。
+- **冻结方向**：保留 `ABaseCharacter` 的共同反馈 owner；共同基类只保存真正共享的 Overlay 等字段；Player/Enemy 派生 Profile 分别保存各自消费的音效、震屏、Defense、Impact/Blood/Hit-Stop 字段；类型不匹配、空 Profile 和空资源继续 fail-closed。不得引入全局 dispatcher、GameplayCue、第二条 Damage 路径、按敌人数量自动派生或无证据的模块拆分。
+- **迁移门槛**：07B7 必须由独立计划冻结公共反射 API、资产迁移/Reference Viewer readback、transient Automation fixture、编译与 Scene01 PIE 门禁；`.uasset`/`.umap` 仍由用户在 Editor 中维护，旧统一 Profile 只能在零引用证据后删除。

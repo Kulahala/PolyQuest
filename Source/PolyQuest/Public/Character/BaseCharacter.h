@@ -17,6 +17,7 @@ class UGameplayAbility;
 class UMeleeTraceSourceComponent;
 class UMaterialInterface;
 class UMeleeWeaponTrailComponent;
+class UCombatFeedbackDataAsset;
 struct FOnAttributeChangeData;
 
 UCLASS(Abstract)
@@ -36,8 +37,13 @@ public:
 	/** Returns the single fixed-weapon sample provider used by active melee abilities. */
 	UMeleeTraceSourceComponent* GetMeleeTraceSource() const;
 
+	/** Returns the configured combat feedback data asset. */
+	UCombatFeedbackDataAsset* GetCombatFeedbackData() const { return CombatFeedbackData.Get(); }
+
 #if WITH_DEV_AUTOMATION_TESTS
 	void SetTestCombatTeamTag(const FGameplayTag& InTag) { CombatTeamTag = InTag; }
+	void SetTestCombatFeedbackData(UCombatFeedbackDataAsset* InData) { CombatFeedbackData = InData; }
+	UCombatFeedbackDataAsset* GetTestCombatFeedbackData() const { return CombatFeedbackData.Get(); }
 	void ConfigureTestHitFeedbackOverlay(UMaterialInterface* InOverlayMaterial, float InDurationSeconds);
 	bool IsTestHitFeedbackOverlayActive() const { return bHitFeedbackOverlayActive; }
 	bool HasTestHitFeedbackOverlayTimer() const { return HitFeedbackOverlayTimerHandle.IsValid(); }
@@ -62,13 +68,9 @@ protected:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Team", meta = (AllowPrivateAccess = "true", ToolTip = "角色所属战斗阵营 Gameplay Tag（如 Team.Player 或 Team.Enemy）。"))
 	FGameplayTag CombatTeamTag;
 
-	/** Translucent global Overlay applied for one short nonlethal hit-feedback flash. */
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Feedback", meta = (AllowPrivateAccess = "true", ToolTip = "角色受击时使网格体短暂高亮闪烁的全局材质覆层（Overlay Material）。"))
-	TObjectPtr<UMaterialInterface> HitFeedbackOverlayMaterial;
-
-	/** Duration for the hit-feedback Overlay before the prior Overlay is restored. */
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Feedback", meta = (AllowPrivateAccess = "true", ClampMin = "0.0", Units = "Seconds", ToolTip = "受击材质高亮闪烁持续时间（秒）。"))
-	float HitFeedbackOverlayDurationSeconds = 0.10f;
+	/** Authored feedback assets and parameters (overlay, audio, VFX, shake, hit-stop). */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Feedback", meta = (AllowPrivateAccess = "true", ToolTip = "角色战斗受击与打击反馈配置资产（CombatFeedbackDataAsset）。"))
+	TObjectPtr<UCombatFeedbackDataAsset> CombatFeedbackData;
 
 private:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "GAS", meta = (AllowPrivateAccess = "true"))

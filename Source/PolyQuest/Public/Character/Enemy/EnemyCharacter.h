@@ -138,30 +138,6 @@ private:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "AI|Enemy", meta = (AllowPrivateAccess = "true", ToolTip = "敌人空间走位、重定位与警戒距离配置资产（EnemyAIProfile）。"))
 	TObjectPtr<UEnemyAIProfile> AIProfile;
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Enemy|ImpactFeedback", meta = (AllowPrivateAccess = "true", ToolTip = "玩家击中敌人时播放的共享受击肉体打击音效资产（USoundBase）。"))
-	TObjectPtr<USoundBase> ImpactSound;
-
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Enemy|ImpactFeedback", meta = (AllowPrivateAccess = "true", ToolTip = "玩家击中敌人时在受击点生成的共享世界空间血液飞溅粒子系统（UNiagaraSystem）。"))
-	TObjectPtr<UNiagaraSystem> ImpactBloodSystem;
-
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Enemy|ImpactFeedback", meta = (AllowPrivateAccess = "true", ClampMin = "0.0", Units = "Seconds", ToolTip = "轻度受击（Small）造成的全局命中顿帧持续时间（秒）。"))
-	float SmallImpactHitStopDurationSeconds = 0.03f;
-
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Enemy|ImpactFeedback", meta = (AllowPrivateAccess = "true", ClampMin = "0.001", ClampMax = "1.0", ToolTip = "轻度受击（Small）期间的全局时间膨胀比例（(0.0, 1.0]）。"))
-	float SmallImpactHitStopTimeDilation = 0.1f;
-
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Enemy|ImpactFeedback", meta = (AllowPrivateAccess = "true", ClampMin = "0.0", Units = "Seconds", ToolTip = "重度受击（Big）造成的全局命中顿帧持续时间（秒）。"))
-	float BigImpactHitStopDurationSeconds = 0.05f;
-
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Enemy|ImpactFeedback", meta = (AllowPrivateAccess = "true", ClampMin = "0.001", ClampMax = "1.0", ToolTip = "重度受击（Big）期间的全局时间膨胀比例（(0.0, 1.0]）。"))
-	float BigImpactHitStopTimeDilation = 0.03f;
-
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Enemy|ImpactFeedback", meta = (AllowPrivateAccess = "true", ClampMin = "0.0", Units = "Seconds", ToolTip = "击飞受击（Launch）造成的全局命中顿帧持续时间（秒）。"))
-	float LaunchImpactHitStopDurationSeconds = 0.05f;
-
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Enemy|ImpactFeedback", meta = (AllowPrivateAccess = "true", ClampMin = "0.001", ClampMax = "1.0", ToolTip = "击飞受击（Launch）期间的全局时间膨胀比例（(0.0, 1.0]）。"))
-	float LaunchImpactHitStopTimeDilation = 0.05f;
-
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Enemy|Death", meta = (AllowPrivateAccess = "true", ToolTip = "死亡时是否尝试开启物理布娃娃模拟；需要角色网格体与有效 Physics Asset，缺失时跳过布娃娃并记录 Warning。"))
 	bool bUseRagdollOnDeath = true;
 
@@ -213,6 +189,7 @@ private:
 	bool bHasLoggedInvalidPoiseRecoveryConfiguration = false;
 	bool bHasLoggedInvalidUIWidgetClass = false;
 	bool bPlayerLockOnHighlighted = false;
+	bool bHasLoggedMissingCombatFeedbackData = false;
 	TWeakObjectPtr<const UGameplayEffect> ActivePoiseBreakingEffectDefinition;
 	FGameplayEffectContextHandle ActivePoiseBreakingEffectContext;
 

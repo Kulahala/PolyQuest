@@ -3,6 +3,7 @@
 #include "AbilitySystem/CharacterAttributeSet.h"
 #include "AbilitySystemComponent.h"
 #include "Abilities/GameplayAbility.h"
+#include "Combat/Feedback/CombatFeedbackDataAsset.h"
 #include "Combat/Melee/MeleeTraceSourceComponent.h"
 #include "Combat/Melee/MeleeWeaponTrailComponent.h"
 #include "Components/CapsuleComponent.h"
@@ -119,8 +120,12 @@ UMeleeTraceSourceComponent* ABaseCharacter::GetMeleeTraceSource() const
 #if WITH_DEV_AUTOMATION_TESTS
 void ABaseCharacter::ConfigureTestHitFeedbackOverlay(UMaterialInterface* InOverlayMaterial, const float InDurationSeconds)
 {
-	HitFeedbackOverlayMaterial = InOverlayMaterial;
-	HitFeedbackOverlayDurationSeconds = InDurationSeconds;
+	if (!CombatFeedbackData)
+	{
+		CombatFeedbackData = NewObject<UCombatFeedbackDataAsset>(this, NAME_None, RF_Transient);
+	}
+	CombatFeedbackData->HitFeedbackOverlayMaterial = InOverlayMaterial;
+	CombatFeedbackData->HitFeedbackOverlayDurationSeconds = InDurationSeconds;
 	bHasLoggedInvalidHitFeedbackOverlayConfiguration = false;
 }
 #endif
@@ -128,13 +133,26 @@ void ABaseCharacter::ConfigureTestHitFeedbackOverlay(UMaterialInterface* InOverl
 void ABaseCharacter::TriggerHitFeedbackOverlay()
 {
 	USkeletalMeshComponent* MeshComponent = GetMesh();
-	if (!MeshComponent || !HitFeedbackOverlayMaterial || HitFeedbackOverlayDurationSeconds <= 0.0f)
+	if (!MeshComponent)
+	{
+		return;
+	}
+
+	if (!CombatFeedbackData)
 	{
 		if (!bHasLoggedInvalidHitFeedbackOverlayConfiguration)
 		{
-			UE_LOG(LogPolyQuest, Warning, TEXT("'%s' cannot apply hit feedback Overlay without a mesh, configured Overlay material, and positive duration."), *GetNameSafe(this));
+			UE_LOG(LogPolyQuest, Warning, TEXT("'%s' cannot apply hit feedback Overlay without CombatFeedbackData configured."), *GetNameSafe(this));
 			bHasLoggedInvalidHitFeedbackOverlayConfiguration = true;
 		}
+		return;
+	}
+
+	UMaterialInterface* OverlayMaterial = CombatFeedbackData->HitFeedbackOverlayMaterial.Get();
+	const float DurationSeconds = CombatFeedbackData->HitFeedbackOverlayDurationSeconds;
+
+	if (!OverlayMaterial || !FMath::IsFinite(DurationSeconds) || DurationSeconds <= 0.0f)
+	{
 		return;
 	}
 
@@ -156,13 +174,13 @@ void ABaseCharacter::TriggerHitFeedbackOverlay()
 		PreviousHitFeedbackOverlayMaterial = CurrentOverlayMaterial;
 	}
 
-	ActiveHitFeedbackOverlayMaterial = HitFeedbackOverlayMaterial;
+	ActiveHitFeedbackOverlayMaterial = OverlayMaterial;
 	MeshComponent->SetOverlayMaterial(ActiveHitFeedbackOverlayMaterial.Get());
 	World->GetTimerManager().SetTimer(
 		HitFeedbackOverlayTimerHandle,
 		this,
 		&ABaseCharacter::ClearHitFeedbackOverlay,
-		HitFeedbackOverlayDurationSeconds,
+		DurationSeconds,
 		false);
 }
 

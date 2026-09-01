@@ -35,6 +35,7 @@
 #include "Combat/Equipment/MeleeWeaponDefinition.h"
 #include "Combat/Equipment/WeaponEquipmentComponent.h"
 #include "Combat/Equipment/WorldWeaponPickup.h"
+#include "Combat/Feedback/CombatFeedbackDataAsset.h"
 #include "Combat/Input/CombatLoadoutDefinition.h"
 #include "Combat/Melee/CombatTeamAgent.h"
 #include "Combat/Reaction/HitReactionClassifier.h"
@@ -209,26 +210,6 @@ void APlayerCharacter::ConfigureTestStartupFixture(
 	InteractAction = InTestInputAction;
 	LockOnAction = InTestInputAction;
 	TargetCycleAction = InTestInputAction;
-}
-
-void APlayerCharacter::ConfigureTestHitFeedbackCameraShakes(
-	TSubclassOf<UCameraShakeBase> InSmallClass,
-	TSubclassOf<UCameraShakeBase> InBigClass,
-	TSubclassOf<UCameraShakeBase> InLaunchClass)
-{
-	SmallHitFeedbackCameraShakeClass = InSmallClass;
-	BigHitFeedbackCameraShakeClass = InBigClass;
-	LaunchHitFeedbackCameraShakeClass = InLaunchClass;
-}
-
-void APlayerCharacter::ConfigureTestAttackerImpactCameraShakes(
-	TSubclassOf<UCameraShakeBase> InSmallClass,
-	TSubclassOf<UCameraShakeBase> InBigClass,
-	TSubclassOf<UCameraShakeBase> InLaunchClass)
-{
-	SmallAttackerImpactCameraShakeClass = InSmallClass;
-	BigAttackerImpactCameraShakeClass = InBigClass;
-	LaunchAttackerImpactCameraShakeClass = InLaunchClass;
 }
 
 void APlayerCharacter::TriggerTestHandleInteractStarted()
@@ -2391,96 +2372,46 @@ void APlayerCharacter::OnHealthAttributeChanged(const FOnAttributeChangeData& Ch
 
 TSubclassOf<UCameraShakeBase> APlayerCharacter::ResolveHitFeedbackCameraShakeClass(const EHitReactionTier ReactionTier)
 {
-	switch (ReactionTier)
+	if (ReactionTier == EHitReactionTier::None || ReactionTier == EHitReactionTier::Invalid)
 	{
-	case EHitReactionTier::Small:
-		if (SmallHitFeedbackCameraShakeClass)
-		{
-			return SmallHitFeedbackCameraShakeClass;
-		}
-		if (!bHasLoggedMissingSmallHitFeedbackCameraShakeClass)
-		{
-			UE_LOG(LogPolyQuest, Warning, TEXT("'%s' is missing SmallHitFeedbackCameraShakeClass."), *GetNameSafe(this));
-			bHasLoggedMissingSmallHitFeedbackCameraShakeClass = true;
-		}
-		return nullptr;
-
-	case EHitReactionTier::Big:
-		if (BigHitFeedbackCameraShakeClass)
-		{
-			return BigHitFeedbackCameraShakeClass;
-		}
-		if (!bHasLoggedMissingBigHitFeedbackCameraShakeClass)
-		{
-			UE_LOG(LogPolyQuest, Warning, TEXT("'%s' is missing BigHitFeedbackCameraShakeClass."), *GetNameSafe(this));
-			bHasLoggedMissingBigHitFeedbackCameraShakeClass = true;
-		}
-		return nullptr;
-
-	case EHitReactionTier::Launch:
-		if (LaunchHitFeedbackCameraShakeClass)
-		{
-			return LaunchHitFeedbackCameraShakeClass;
-		}
-		if (!bHasLoggedMissingLaunchHitFeedbackCameraShakeClass)
-		{
-			UE_LOG(LogPolyQuest, Warning, TEXT("'%s' is missing LaunchHitFeedbackCameraShakeClass."), *GetNameSafe(this));
-			bHasLoggedMissingLaunchHitFeedbackCameraShakeClass = true;
-		}
-		return nullptr;
-
-	case EHitReactionTier::None:
-	case EHitReactionTier::Invalid:
-	default:
 		return nullptr;
 	}
+
+	const UCombatFeedbackDataAsset* FeedbackData = GetCombatFeedbackData();
+	if (!FeedbackData)
+	{
+		if (!bHasLoggedMissingCombatFeedbackData)
+		{
+			UE_LOG(LogPolyQuest, Warning, TEXT("'%s' is missing CombatFeedbackData for hit feedback camera shake."), *GetNameSafe(this));
+			bHasLoggedMissingCombatFeedbackData = true;
+		}
+		return nullptr;
+	}
+
+	const FCombatFeedbackTierSettings* TierSettings = FeedbackData->GetTierSettings(ReactionTier);
+	return TierSettings ? TierSettings->ReceivedHitCameraShakeClass : nullptr;
 }
 
 TSubclassOf<UCameraShakeBase> APlayerCharacter::ResolveAttackerImpactCameraShakeClass(const EHitReactionTier ReactionTier)
 {
-	switch (ReactionTier)
+	if (ReactionTier == EHitReactionTier::None || ReactionTier == EHitReactionTier::Invalid)
 	{
-	case EHitReactionTier::Small:
-		if (SmallAttackerImpactCameraShakeClass)
-		{
-			return SmallAttackerImpactCameraShakeClass;
-		}
-		if (!bHasLoggedMissingSmallAttackerImpactCameraShakeClass)
-		{
-			UE_LOG(LogPolyQuest, Warning, TEXT("'%s' is missing SmallAttackerImpactCameraShakeClass."), *GetNameSafe(this));
-			bHasLoggedMissingSmallAttackerImpactCameraShakeClass = true;
-		}
-		return nullptr;
-
-	case EHitReactionTier::Big:
-		if (BigAttackerImpactCameraShakeClass)
-		{
-			return BigAttackerImpactCameraShakeClass;
-		}
-		if (!bHasLoggedMissingBigAttackerImpactCameraShakeClass)
-		{
-			UE_LOG(LogPolyQuest, Warning, TEXT("'%s' is missing BigAttackerImpactCameraShakeClass."), *GetNameSafe(this));
-			bHasLoggedMissingBigAttackerImpactCameraShakeClass = true;
-		}
-		return nullptr;
-
-	case EHitReactionTier::Launch:
-		if (LaunchAttackerImpactCameraShakeClass)
-		{
-			return LaunchAttackerImpactCameraShakeClass;
-		}
-		if (!bHasLoggedMissingLaunchAttackerImpactCameraShakeClass)
-		{
-			UE_LOG(LogPolyQuest, Warning, TEXT("'%s' is missing LaunchAttackerImpactCameraShakeClass."), *GetNameSafe(this));
-			bHasLoggedMissingLaunchAttackerImpactCameraShakeClass = true;
-		}
-		return nullptr;
-
-	case EHitReactionTier::None:
-	case EHitReactionTier::Invalid:
-	default:
 		return nullptr;
 	}
+
+	const UCombatFeedbackDataAsset* FeedbackData = GetCombatFeedbackData();
+	if (!FeedbackData)
+	{
+		if (!bHasLoggedMissingCombatFeedbackData)
+		{
+			UE_LOG(LogPolyQuest, Warning, TEXT("'%s' is missing CombatFeedbackData for attacker impact camera shake."), *GetNameSafe(this));
+			bHasLoggedMissingCombatFeedbackData = true;
+		}
+		return nullptr;
+	}
+
+	const FCombatFeedbackTierSettings* TierSettings = FeedbackData->GetTierSettings(ReactionTier);
+	return TierSettings ? TierSettings->AttackerImpactCameraShakeClass : nullptr;
 }
 
 void APlayerCharacter::StartHitFeedbackCameraShakeInstance(const TSubclassOf<UCameraShakeBase> ResolvedClass)
@@ -2548,7 +2479,9 @@ void APlayerCharacter::ClearActiveHitFeedbackCameraShake()
 
 void APlayerCharacter::TriggerReceivedHitSound(const FGameplayEffectSpec& EffectSpec)
 {
-	if (!ReceivedHitSound)
+	const UCombatFeedbackDataAsset* FeedbackData = GetCombatFeedbackData();
+	USoundBase* SoundToPlay = FeedbackData ? FeedbackData->ReceivedHitSound.Get() : nullptr;
+	if (!SoundToPlay)
 	{
 		return;
 	}
@@ -2599,7 +2532,7 @@ void APlayerCharacter::TriggerReceivedHitSound(const FGameplayEffectSpec& Effect
 	}
 #endif
 
-	UGameplayStatics::PlaySoundAtLocation(World, ReceivedHitSound, SoundLocation);
+	UGameplayStatics::PlaySoundAtLocation(World, SoundToPlay, SoundLocation);
 }
 
 void APlayerCharacter::OnSprintRelevantTagChanged(const FGameplayTag Tag, int32 NewCount)

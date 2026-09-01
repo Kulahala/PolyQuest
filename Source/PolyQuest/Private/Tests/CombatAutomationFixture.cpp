@@ -12,6 +12,7 @@
 #include "Character/Enemy/EnemyCharacter.h"
 #include "Character/Player/PlayerCharacter.h"
 #include "Combat/Equipment/MeleeWeaponDefinition.h"
+#include "Combat/Feedback/CombatFeedbackDataAsset.h"
 #include "Combat/Input/CombatLoadoutDefinition.h"
 #include "GameplayTagContainer.h"
 #include "Tests/TestExhaustionMoveSpeedGE.h"
@@ -88,11 +89,13 @@ APlayerCharacter* FCombatAutomationFixture::SpawnPlayer(
 		UTestStaminaRegenGE::StaticClass(),
 		UTestExhaustionMoveSpeedGE::StaticClass(),
 		TestInputAction);
-	Player->ConfigureTestHitFeedbackOverlay(CreateTestOverlay(Player), 0.10f);
-	Player->ConfigureTestHitFeedbackCameraShakes(
-		UTestSmallHitFeedbackCameraShake::StaticClass(),
-		UTestBigHitFeedbackCameraShake::StaticClass(),
-		UTestLaunchHitFeedbackCameraShake::StaticClass());
+	UCombatFeedbackDataAsset* PlayerFeedback = NewObject<UCombatFeedbackDataAsset>(Player, NAME_None, RF_Transient);
+	PlayerFeedback->HitFeedbackOverlayMaterial = CreateTestOverlay(Player);
+	PlayerFeedback->HitFeedbackOverlayDurationSeconds = 0.10f;
+	PlayerFeedback->SmallTier.ReceivedHitCameraShakeClass = UTestSmallHitFeedbackCameraShake::StaticClass();
+	PlayerFeedback->BigTier.ReceivedHitCameraShakeClass = UTestBigHitFeedbackCameraShake::StaticClass();
+	PlayerFeedback->LaunchTier.ReceivedHitCameraShakeClass = UTestLaunchHitFeedbackCameraShake::StaticClass();
+	Player->SetTestCombatFeedbackData(PlayerFeedback);
 
 	if (PreBeginPlaySetup)
 	{
@@ -126,7 +129,16 @@ AEnemyCharacter* FCombatAutomationFixture::SpawnPassiveEnemy(
 	}
 
 	Enemy->ConfigureTestPassiveStartupFixture(UTestPoiseRecoveryGE::StaticClass());
-	Enemy->ConfigureTestHitFeedbackOverlay(CreateTestOverlay(Enemy), 0.10f);
+	UCombatFeedbackDataAsset* EnemyFeedback = NewObject<UCombatFeedbackDataAsset>(Enemy, NAME_None, RF_Transient);
+	EnemyFeedback->HitFeedbackOverlayMaterial = CreateTestOverlay(Enemy);
+	EnemyFeedback->HitFeedbackOverlayDurationSeconds = 0.10f;
+	EnemyFeedback->SmallTier.ImpactHitStopDurationSeconds = 0.03f;
+	EnemyFeedback->SmallTier.ImpactHitStopTimeDilation = 0.1f;
+	EnemyFeedback->BigTier.ImpactHitStopDurationSeconds = 0.05f;
+	EnemyFeedback->BigTier.ImpactHitStopTimeDilation = 0.03f;
+	EnemyFeedback->LaunchTier.ImpactHitStopDurationSeconds = 0.05f;
+	EnemyFeedback->LaunchTier.ImpactHitStopTimeDilation = 0.05f;
+	Enemy->SetTestCombatFeedbackData(EnemyFeedback);
 	if (PreBeginPlaySetup)
 	{
 		PreBeginPlaySetup(*Enemy);

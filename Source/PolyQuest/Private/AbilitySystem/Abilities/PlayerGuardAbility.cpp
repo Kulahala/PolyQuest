@@ -7,6 +7,7 @@
 #include "Animation/AnimInstance.h"
 #include "Animation/AnimMontage.h"
 #include "Character/Player/PlayerCharacter.h"
+#include "Combat/Feedback/CombatFeedbackDataAsset.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "GameplayEffect.h"
@@ -430,7 +431,9 @@ void UPlayerGuardAbility::TriggerGuardSuccessFeedback(const FHitResult& HitResul
 		return;
 	}
 
-	if (GuardSuccessSound)
+	const UCombatFeedbackDataAsset* FeedbackData = PlayerCharacter->GetCombatFeedbackData();
+	USoundBase* SoundToPlay = FeedbackData ? FeedbackData->Defense.GuardSuccessSound.Get() : nullptr;
+	if (SoundToPlay)
 	{
 		FVector SoundLocation = PlayerCharacter->GetActorLocation();
 		if (HitResult.GetActor() == PlayerCharacter
@@ -462,6 +465,6 @@ void UPlayerGuardAbility::TriggerGuardSuccessFeedback(const FHitResult& HitResul
 		}
 #endif
 
-		UGameplayStatics::PlaySoundAtLocation(World, GuardSuccessSound, SoundLocation);
+		UGameplayStatics::PlaySoundAtLocation(World, SoundToPlay, SoundLocation);
 	}
 }

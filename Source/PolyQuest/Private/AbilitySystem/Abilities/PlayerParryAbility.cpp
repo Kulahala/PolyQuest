@@ -16,6 +16,7 @@
 #include "Sound/SoundBase.h"
 
 #include "Character/Player/PlayerCharacter.h"
+#include "Combat/Feedback/CombatFeedbackDataAsset.h"
 #include "Framework/PolyQuestPlayerController.h"
 #include "PolyQuest.h"
 
@@ -289,13 +290,21 @@ void UPlayerParryAbility::TriggerParrySuccessFeedback(const FHitResult& HitResul
 		return;
 	}
 
+	const UCombatFeedbackDataAsset* FeedbackData = PlayerCharacter->GetCombatFeedbackData();
+
 	// 1. Request Hit-Stop via PlayerController
-	if (APolyQuestPlayerController* PlayerController = Cast<APolyQuestPlayerController>(PlayerCharacter->GetController()))
+	if (FeedbackData)
 	{
-		if (FMath::IsFinite(ParrySuccessHitStopDurationSeconds) && ParrySuccessHitStopDurationSeconds > 0.0f
-			&& FMath::IsFinite(ParrySuccessHitStopTimeDilation) && ParrySuccessHitStopTimeDilation > 0.0f && ParrySuccessHitStopTimeDilation <= 1.0f)
+		const float HitStopDuration = FeedbackData->Defense.ParrySuccessHitStopDurationSeconds;
+		const float HitStopTimeDilation = FeedbackData->Defense.ParrySuccessHitStopTimeDilation;
+
+		if (APolyQuestPlayerController* PlayerController = Cast<APolyQuestPlayerController>(PlayerCharacter->GetController()))
 		{
-			PlayerController->RequestCombatImpactHitStop(ParrySuccessHitStopDurationSeconds, ParrySuccessHitStopTimeDilation);
+			if (FMath::IsFinite(HitStopDuration) && HitStopDuration > 0.0f
+				&& FMath::IsFinite(HitStopTimeDilation) && HitStopTimeDilation > 0.0f && HitStopTimeDilation <= 1.0f)
+			{
+				PlayerController->RequestCombatImpactHitStop(HitStopDuration, HitStopTimeDilation);
+			}
 		}
 	}
 
@@ -303,32 +312,35 @@ void UPlayerParryAbility::TriggerParrySuccessFeedback(const FHitResult& HitResul
 	PlayerCharacter->TriggerParrySuccessCameraShake();
 
 	// 3. Play optional sound
-	if (ParrySuccessSound)
+	if (FeedbackData)
 	{
-		FVector SoundLocation = PlayerCharacter->GetActorLocation();
-		if (HitResult.GetActor() == PlayerCharacter
-			&& !HitResult.ImpactPoint.ContainsNaN()
-			&& FMath::IsFinite(HitResult.ImpactPoint.X) && FMath::IsFinite(HitResult.ImpactPoint.Y) && FMath::IsFinite(HitResult.ImpactPoint.Z)
-			&& !HitResult.ImpactPoint.IsNearlyZero())
+		if (USoundBase* ParrySuccessSound = FeedbackData->Defense.ParrySuccessSound.Get())
 		{
-			SoundLocation = HitResult.ImpactPoint;
-		}
+			FVector SoundLocation = PlayerCharacter->GetActorLocation();
+			if (HitResult.GetActor() == PlayerCharacter
+				&& !HitResult.ImpactPoint.ContainsNaN()
+				&& FMath::IsFinite(HitResult.ImpactPoint.X) && FMath::IsFinite(HitResult.ImpactPoint.Y) && FMath::IsFinite(HitResult.ImpactPoint.Z)
+				&& !HitResult.ImpactPoint.IsNearlyZero())
+			{
+				SoundLocation = HitResult.ImpactPoint;
+			}
 
 #if WITH_DEV_AUTOMATION_TESTS
-		++TestParrySuccessSoundDispatchCount;
-		TestLastParrySuccessSoundLocation = SoundLocation;
-		if (bTestBypassAudioPlayback)
-		{
-			return;
-		}
+			++TestParrySuccessSoundDispatchCount;
+			TestLastParrySuccessSoundLocation = SoundLocation;
+			if (bTestBypassAudioPlayback)
+			{
+				return;
+			}
 #endif
 
-		if (!SoundLocation.ContainsNaN()
-			&& FMath::IsFinite(SoundLocation.X) && FMath::IsFinite(SoundLocation.Y) && FMath::IsFinite(SoundLocation.Z))
-		{
-			if (UWorld* World = PlayerCharacter->GetWorld())
+			if (!SoundLocation.ContainsNaN()
+				&& FMath::IsFinite(SoundLocation.X) && FMath::IsFinite(SoundLocation.Y) && FMath::IsFinite(SoundLocation.Z))
 			{
-				UGameplayStatics::PlaySoundAtLocation(World, ParrySuccessSound, SoundLocation);
+				if (UWorld* World = PlayerCharacter->GetWorld())
+				{
+					UGameplayStatics::PlaySoundAtLocation(World, ParrySuccessSound, SoundLocation);
+				}
 			}
 		}
 	}

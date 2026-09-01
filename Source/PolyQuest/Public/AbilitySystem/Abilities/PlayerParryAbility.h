@@ -62,9 +62,6 @@ public:
 	void TestSetParryWindowOpen(bool bOpen) { bParryWindowOpen = bOpen; }
 	void SetTestParryCounterPoiseGameplayEffectClass(TSubclassOf<UGameplayEffect> InClass) { ParryCounterPoiseGameplayEffectClass = InClass; }
 	void SetTestParryPoiseDamage(float InPoiseDamage) { ParryPoiseDamage = InPoiseDamage; }
-	void SetTestParrySuccessSound(USoundBase* InSound) { ParrySuccessSound = InSound; }
-	void SetTestParrySuccessHitStopDuration(float InDuration) { ParrySuccessHitStopDurationSeconds = InDuration; }
-	void SetTestParrySuccessHitStopTimeDilation(float InDilation) { ParrySuccessHitStopTimeDilation = InDilation; }
 	void SetTestBypassAudioPlayback(const bool bBypass) { bTestBypassAudioPlayback = bBypass; }
 	int32 GetTestParrySuccessFeedbackCount() const { return TestParrySuccessFeedbackCount; }
 	int32 GetTestParrySuccessSoundDispatchCount() const { return TestParrySuccessSoundDispatchCount; }
@@ -82,15 +79,6 @@ private:
 	/** Poise removed from the attacker by one successful Parry; applied as negative Data.Poise.Parry. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Player|Parry", meta = (AllowPrivateAccess = "true", ClampMin = "0.01", ToolTip = "弹反成功直接扣除攻击方的削韧数值。"))
 	float ParryPoiseDamage = 100.0f;
-
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Player|Parry|Feedback", meta = (AllowPrivateAccess = "true", ClampMin = "0.0", Units = "Seconds"))
-	float ParrySuccessHitStopDurationSeconds = 0.05f;
-
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Player|Parry|Feedback", meta = (AllowPrivateAccess = "true", ClampMin = "0.001", ClampMax = "1.0"))
-	float ParrySuccessHitStopTimeDilation = 0.03f;
-
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Player|Parry|Feedback", meta = (AllowPrivateAccess = "true"))
-	TObjectPtr<USoundBase> ParrySuccessSound;
 
 	UPROPERTY(Transient)
 	TObjectPtr<UAbilityTask_PlayMontageAndWait> MontageTask;

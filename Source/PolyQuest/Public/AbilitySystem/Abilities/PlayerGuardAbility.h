@@ -66,7 +66,6 @@ public:
 		}
 	}
 	void SetTestGuardStaminaCostGameplayEffectClass(TSubclassOf<UGameplayEffect> InClass) { GuardStaminaCostGameplayEffectClass = InClass; }
-	void SetTestGuardSuccessSound(USoundBase* InSound) { GuardSuccessSound = InSound; }
 	void SetTestBypassAudioPlayback(const bool bBypass) { bTestBypassAudioPlayback = bBypass; }
 	int32 GetTestGuardSuccessSoundDispatchCount() const { return TestGuardSuccessSoundDispatchCount; }
 	FVector GetTestLastGuardSuccessSoundLocation() const { return TestLastGuardSuccessSoundLocation; }
@@ -88,9 +87,6 @@ private:
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Player|Guard", meta = (AllowPrivateAccess = "true", ToolTip = "格挡消耗体力后重置体力自然恢复延迟的 GameplayEffect 类。"))
 	TSubclassOf<UGameplayEffect> StaminaRegenDelayGameplayEffectClass;
-
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Player|Guard|Feedback", meta = (AllowPrivateAccess = "true", ToolTip = "格挡成功时播放的音效。"))
-	TObjectPtr<USoundBase> GuardSuccessSound;
 
 	UPROPERTY(Transient)
 	TObjectPtr<UAbilityTask_PlayMontageAndWait> MontageTask;

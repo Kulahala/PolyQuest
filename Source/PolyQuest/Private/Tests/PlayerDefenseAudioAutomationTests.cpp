@@ -8,6 +8,7 @@
 #include "Camera/CameraShakeBase.h"
 #include "Character/Enemy/EnemyCharacter.h"
 #include "Character/Player/PlayerCharacter.h"
+#include "Combat/Feedback/CombatFeedbackDataAsset.h"
 #include "Combat/Melee/MeleeHitResolver.h"
 #include "Combat/Projectile/CombatProjectileHitResolver.h"
 #include "Engine/Engine.h"
@@ -161,12 +162,6 @@ bool FPlayerDefenseAudioAutomationTest::RunTest(const FString& Parameters)
 	EnemyASC->SetNumericAttributeBase(UCharacterAttributeSet::GetMaxPoiseAttribute(), 100.0f);
 	EnemyASC->SetNumericAttributeBase(UCharacterAttributeSet::GetPoiseAttribute(), 100.0f);
 
-	// Setup Camera Shake for Player
-	Player->ConfigureTestHitFeedbackCameraShakes(
-		UTestSmallHitFeedbackCameraShake::StaticClass(),
-		UTestBigHitFeedbackCameraShake::StaticClass(),
-		UTestLaunchHitFeedbackCameraShake::StaticClass());
-
 	// Setup transient Guard ability on Player
 	const FGameplayTag GuardAbilityTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Defense.Guard")), false);
 	const FGameplayTag GuardingStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Action.Guarding")), false);
@@ -190,11 +185,15 @@ bool FPlayerDefenseAudioAutomationTest::RunTest(const FString& Parameters)
 	PlayerASC->AddLooseGameplayTag(GuardingStateTag);
 
 	USoundWave* TestGuardSound = NewObject<USoundWave>(Player);
-	TestGuardAbility->SetTestGuardSuccessSound(TestGuardSound);
-	TestGuardAbility->SetTestBypassAudioPlayback(true);
-
 	USoundWave* TestReceivedHitSound = NewObject<USoundWave>(Player);
-	Player->SetTestReceivedHitSound(TestReceivedHitSound);
+
+	UCombatFeedbackDataAsset* PlayerFeedback = Player->GetTestCombatFeedbackData();
+	if (PlayerFeedback)
+	{
+		PlayerFeedback->Defense.GuardSuccessSound = TestGuardSound;
+		PlayerFeedback->ReceivedHitSound = TestReceivedHitSound;
+	}
+	TestGuardAbility->SetTestBypassAudioPlayback(true);
 	Player->SetTestBypassReceivedHitAudioPlayback(true);
 
 	// =========================================================================
@@ -298,11 +297,17 @@ bool FPlayerDefenseAudioAutomationTest::RunTest(const FString& Parameters)
 		TestGuardAbility->SetTestGuardStaminaCostGameplayEffectClass(UTestGuardStaminaCostGE::StaticClass());
 
 		// 2.4 Null sound asset (graceful silence, guard still succeeds)
-		TestGuardAbility->SetTestGuardSuccessSound(nullptr);
+		if (PlayerFeedback)
+		{
+			PlayerFeedback->Defense.GuardSuccessSound = nullptr;
+		}
 		const bool bNullSoundGuard = TestGuardAbility->TryGuardMeleeHit(Enemy, 10.0f, ValidHit);
 		TestTrue(TEXT("Guard succeeds with null sound asset"), bNullSoundGuard);
 		TestEqual(TEXT("Guard sound count unchanged when sound is null"), TestGuardAbility->GetTestGuardSuccessSoundDispatchCount(), BaseGuardSoundCount);
-		TestGuardAbility->SetTestGuardSuccessSound(TestGuardSound);
+		if (PlayerFeedback)
+		{
+			PlayerFeedback->Defense.GuardSuccessSound = TestGuardSound;
+		}
 
 		// 2.5 HitResult Location Fallbacks (Wrong Actor, Zero, NaN, Inf)
 		// A: Wrong Actor in HitResult -> falls back to Player ActorLocation
@@ -471,14 +476,20 @@ bool FPlayerDefenseAudioAutomationTest::RunTest(const FString& Parameters)
 		AdvancePlayerDefenseAudioTestWorld(World, 0.25f);
 		FGameplayTagContainer LaunchTags;
 		LaunchTags.AddTag(FGameplayTag::RequestGameplayTag(FName(TEXT("Data.Reaction.Launch")), false));
-		Player->SetTestReceivedHitSound(nullptr);
+		if (PlayerFeedback)
+		{
+			PlayerFeedback->ReceivedHitSound = nullptr;
+		}
 		const int32 ShakeCountBeforeNull = Player->GetTestHitFeedbackCameraShakeStartCount();
 		const bool bAppliedNullSound = ApplyDamageSpec(EnemyASC, PlayerASC, Enemy, &LaunchTags, nullptr);
 		TestTrue(TEXT("Damage with null sound asset applied"), bAppliedNullSound);
 		TestEqual(TEXT("ReceivedHitSound count unchanged with null sound"), Player->GetTestReceivedHitSoundDispatchCount(), SoundCountBeforeFriendly);
 		TestTrue(TEXT("Overlay flash still triggered with null sound"), Player->IsTestHitFeedbackOverlayActive());
 		TestEqual(TEXT("Camera shake still triggered with null sound"), Player->GetTestHitFeedbackCameraShakeStartCount(), ShakeCountBeforeNull + 1);
-		Player->SetTestReceivedHitSound(TestReceivedHitSound);
+		if (PlayerFeedback)
+		{
+			PlayerFeedback->ReceivedHitSound = TestReceivedHitSound;
+		}
 		AdvancePlayerDefenseAudioTestWorld(World, 0.25f);
 	}
 

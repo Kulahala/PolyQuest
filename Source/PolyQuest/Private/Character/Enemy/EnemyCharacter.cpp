@@ -6,6 +6,7 @@
 #include "AbilitySystem/CharacterAttributeSet.h"
 #include "AbilitySystemComponent.h"
 #include "Character/Player/PlayerCharacter.h"
+#include "Combat/Feedback/CombatFeedbackDataAsset.h"
 #include "Combat/Melee/CombatTeamAgent.h"
 #include "Combat/Reaction/HitReactionClassifier.h"
 #include "Combat/Reaction/HitReactionImpactResolver.h"
@@ -392,30 +393,44 @@ void AEnemyCharacter::HandleCombatImpactFeedback(const FGameplayEffectSpec& Effe
 		PlayerCharacter->TriggerAttackerImpactCameraShake(ReactionTier);
 	}
 
-	float HitStopDuration = SmallImpactHitStopDurationSeconds;
-	float HitStopTimeDilation = SmallImpactHitStopTimeDilation;
-
-	if (ReactionTier == EHitReactionTier::Big)
+	const UCombatFeedbackDataAsset* FeedbackData = GetCombatFeedbackData();
+	if (!FeedbackData)
 	{
-		HitStopDuration = BigImpactHitStopDurationSeconds;
-		HitStopTimeDilation = BigImpactHitStopTimeDilation;
-	}
-	else if (ReactionTier == EHitReactionTier::Launch)
-	{
-		HitStopDuration = LaunchImpactHitStopDurationSeconds;
-		HitStopTimeDilation = LaunchImpactHitStopTimeDilation;
-	}
-
-	if (UWorld* World = GetWorld())
-	{
-		if (APolyQuestPlayerController* PC = Cast<APolyQuestPlayerController>(World->GetFirstPlayerController()))
+		if (!bHasLoggedMissingCombatFeedbackData)
 		{
-			PC->RequestCombatImpactHitStop(HitStopDuration, HitStopTimeDilation);
+			UE_LOG(LogPolyQuest, Warning, TEXT("Enemy '%s' is missing CombatFeedbackData for impact feedback."), *GetNameSafe(this));
+			bHasLoggedMissingCombatFeedbackData = true;
+		}
+		return;
+	}
+
+	const FCombatFeedbackTierSettings* TierSettings = FeedbackData->GetTierSettings(ReactionTier);
+	if (!TierSettings)
+	{
+		// None/Invalid tier defaults to SmallTier as per existing contract
+		TierSettings = FeedbackData->GetTierSettings(EHitReactionTier::Small);
+	}
+
+	if (TierSettings)
+	{
+		const float HitStopDuration = TierSettings->ImpactHitStopDurationSeconds;
+		const float HitStopTimeDilation = TierSettings->ImpactHitStopTimeDilation;
+
+		if (FMath::IsFinite(HitStopDuration) && HitStopDuration > 0.0f
+			&& FMath::IsFinite(HitStopTimeDilation) && HitStopTimeDilation > 0.0f && HitStopTimeDilation <= 1.0f)
+		{
+			if (UWorld* World = GetWorld())
+			{
+				if (APolyQuestPlayerController* PC = Cast<APolyQuestPlayerController>(World->GetFirstPlayerController()))
+				{
+					PC->RequestCombatImpactHitStop(HitStopDuration, HitStopTimeDilation);
 #if WITH_DEV_AUTOMATION_TESTS
-			TestCombatImpactHitStopRequestCount++;
-			TestLastImpactHitStopDuration = HitStopDuration;
-			TestLastImpactHitStopTimeDilation = HitStopTimeDilation;
+					TestCombatImpactHitStopRequestCount++;
+					TestLastImpactHitStopDuration = HitStopDuration;
+					TestLastImpactHitStopTimeDilation = HitStopTimeDilation;
 #endif
+				}
+			}
 		}
 	}
 
@@ -434,7 +449,7 @@ void AEnemyCharacter::HandleCombatImpactFeedback(const FGameplayEffectSpec& Effe
 	TestLastImpactSoundLocation = SoundLocation;
 #endif
 
-	if (ImpactSound)
+	if (USoundBase* ImpactSound = FeedbackData->ImpactSound.Get())
 	{
 		UGameplayStatics::PlaySoundAtLocation(GetWorld(), ImpactSound, SoundLocation);
 	}
@@ -461,7 +476,7 @@ void AEnemyCharacter::HandleCombatImpactFeedback(const FGameplayEffectSpec& Effe
 			TestLastImpactBloodRotation = BloodRotation;
 #endif
 
-			if (ImpactBloodSystem)
+			if (UNiagaraSystem* ImpactBloodSystem = FeedbackData->ImpactBloodSystem.Get())
 			{
 				UNiagaraFunctionLibrary::SpawnSystemAtLocation(
 					GetWorld(),

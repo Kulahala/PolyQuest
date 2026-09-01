@@ -126,34 +126,6 @@ protected:
 	UPROPERTY(EditDefaultsOnly, Category="GAS|Stamina", meta=(ToolTip="玩家体力耗尽力竭期间施加的移速限制 GameplayEffect 类。"))
 	TSubclassOf<UGameplayEffect> ExhaustionMoveSpeedGameplayEffectClass;
 
-	/** Local camera shake played when this Player receives Small tier hit reaction damage. */
-	UPROPERTY(EditDefaultsOnly, Category="Combat|Feedback", meta=(ToolTip="玩家受到轻击受击（Small Tier）时触发的摄像机震屏效果类。"))
-	TSubclassOf<UCameraShakeBase> SmallHitFeedbackCameraShakeClass;
-
-	/** Local camera shake played when this Player receives Big tier hit reaction damage. */
-	UPROPERTY(EditDefaultsOnly, Category="Combat|Feedback", meta=(ToolTip="玩家受到重击受击（Big Tier）时触发的摄像机震屏效果类。"))
-	TSubclassOf<UCameraShakeBase> BigHitFeedbackCameraShakeClass;
-
-	/** Local camera shake played when this Player receives Launch tier hit reaction damage. */
-	UPROPERTY(EditDefaultsOnly, Category="Combat|Feedback", meta=(ToolTip="玩家受到击飞受击（Launch Tier）时触发的摄像机震屏效果类。"))
-	TSubclassOf<UCameraShakeBase> LaunchHitFeedbackCameraShakeClass;
-
-	/** Local camera shake played when this Player inflicts Small tier hit reaction damage on an enemy. */
-	UPROPERTY(EditDefaultsOnly, Category="Combat|Feedback|AttackerImpact", meta=(ToolTip="玩家造成轻击命中（Small Tier）时触发的摄像机震屏效果类。"))
-	TSubclassOf<UCameraShakeBase> SmallAttackerImpactCameraShakeClass;
-
-	/** Local camera shake played when this Player inflicts Big tier hit reaction damage on an enemy. */
-	UPROPERTY(EditDefaultsOnly, Category="Combat|Feedback|AttackerImpact", meta=(ToolTip="玩家造成重击命中（Big Tier）时触发的摄像机震屏效果类。"))
-	TSubclassOf<UCameraShakeBase> BigAttackerImpactCameraShakeClass;
-
-	/** Local camera shake played when this Player inflicts Launch tier hit reaction damage on an enemy. */
-	UPROPERTY(EditDefaultsOnly, Category="Combat|Feedback|AttackerImpact", meta=(ToolTip="玩家造成击飞命中（Launch Tier）时触发的摄像机震屏效果类。"))
-	TSubclassOf<UCameraShakeBase> LaunchAttackerImpactCameraShakeClass;
-
-	/** Sound played when this Player receives non-lethal health damage from an enemy. */
-	UPROPERTY(EditDefaultsOnly, Category="Combat|Feedback", meta=(ToolTip="玩家受到非致命实际伤害时触发的受击音效。"))
-	TObjectPtr<USoundBase> ReceivedHitSound;
-
 	/** The authored combat routes applied to this player at BeginPlay. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Loadout", meta = (AllowPrivateAccess = "true", ToolTip = "玩家初始生效的战斗输入路由资产（CombatLoadoutDefinition）。"))
 	TObjectPtr<UCombatLoadoutDefinition> InitialCombatLoadout;
@@ -370,14 +342,6 @@ public:
 	bool HasTestFormerOwnerInteractionTimer() const { return FormerOwnerInteractionRefreshTimerHandle.IsValid(); }
 	void TriggerTestSeedWorldPickupCandidates() { SeedWorldPickupCandidates(); }
 	void TriggerTestHandleInteractStarted();
-	void ConfigureTestHitFeedbackCameraShakes(
-		TSubclassOf<UCameraShakeBase> InSmallClass,
-		TSubclassOf<UCameraShakeBase> InBigClass,
-		TSubclassOf<UCameraShakeBase> InLaunchClass);
-	void ConfigureTestAttackerImpactCameraShakes(
-		TSubclassOf<UCameraShakeBase> InSmallClass,
-		TSubclassOf<UCameraShakeBase> InBigClass,
-		TSubclassOf<UCameraShakeBase> InLaunchClass);
 	int32 GetTestHitFeedbackCameraShakeStartCount() const { return TestHitFeedbackCameraShakeStartCount; }
 	UCameraShakeBase* GetTestLastHitFeedbackCameraShake() const { return TestLastHitFeedbackCameraShake.Get(); }
 	UCameraShakeBase* GetTestActiveHitFeedbackCameraShake() const { return ActiveHitFeedbackCameraShake.Get(); }
@@ -390,7 +354,6 @@ public:
 	void SetTestLockOnProjectionHook(TFunction<bool(const FVector&, FVector2D&, FVector2D&)> InHook) { TestLockOnProjectionHook = MoveTemp(InHook); }
 	void SetTestLockOnCursorPosition(const FVector2D& InPosition) { TestLockOnCursorPosition = InPosition; }
 	void SetTestBypassLockOnValidation(const bool bBypass) { bTestBypassLockOnValidation = bBypass; }
-	void SetTestReceivedHitSound(USoundBase* InSound) { ReceivedHitSound = InSound; }
 	void SetTestBypassReceivedHitAudioPlayback(const bool bBypass) { bTestBypassReceivedHitAudioPlayback = bBypass; }
 	int32 GetTestReceivedHitSoundDispatchCount() const { return TestReceivedHitSoundDispatchCount; }
 	FVector GetTestLastReceivedHitSoundLocation() const { return TestLastReceivedHitSoundLocation; }
@@ -523,12 +486,7 @@ private:
 	bool bStaminaRegenEffectApplied = false;
 	bool bExhaustionActive = false;
 	bool bExhaustionMinimumDurationElapsed = false;
-	bool bHasLoggedMissingSmallHitFeedbackCameraShakeClass = false;
-	bool bHasLoggedMissingBigHitFeedbackCameraShakeClass = false;
-	bool bHasLoggedMissingLaunchHitFeedbackCameraShakeClass = false;
-	bool bHasLoggedMissingSmallAttackerImpactCameraShakeClass = false;
-	bool bHasLoggedMissingBigAttackerImpactCameraShakeClass = false;
-	bool bHasLoggedMissingLaunchAttackerImpactCameraShakeClass = false;
+	bool bHasLoggedMissingCombatFeedbackData = false;
 	TWeakObjectPtr<APlayerCameraManager> ActiveHitFeedbackCameraManager;
 	TWeakObjectPtr<UCameraShakeBase> ActiveHitFeedbackCameraShake;
 	TSubclassOf<UCameraShakeBase> ActiveHitFeedbackCameraShakeClass;

@@ -9,6 +9,7 @@
 #include "Camera/CameraShakeBase.h"
 #include "Character/Enemy/EnemyCharacter.h"
 #include "Character/Player/PlayerCharacter.h"
+#include "Combat/Feedback/CombatFeedbackDataAsset.h"
 #include "Combat/Melee/MeleeHitResolver.h"
 #include "Combat/Projectile/CombatProjectileHitResolver.h"
 #include "Engine/Engine.h"
@@ -125,12 +126,6 @@ bool FParrySuccessImpactFeedbackAutomationTest::RunTest(const FString& Parameter
 	EnemyASC->SetNumericAttributeBase(UCharacterAttributeSet::GetMaxPoiseAttribute(), 100.0f);
 	EnemyASC->SetNumericAttributeBase(UCharacterAttributeSet::GetPoiseAttribute(), 100.0f);
 
-	// Configure Camera Shake for player
-	Player->ConfigureTestHitFeedbackCameraShakes(
-		UTestSmallHitFeedbackCameraShake::StaticClass(),
-		UTestBigHitFeedbackCameraShake::StaticClass(),
-		UTestLaunchHitFeedbackCameraShake::StaticClass());
-
 	// Setup transient Parry ability on Player
 	const FGameplayTag ParryAbilityTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Defense.Parry")), false);
 	const FGameplayTag ParryingStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Action.Parrying")), false);
@@ -155,7 +150,13 @@ bool FParrySuccessImpactFeedbackAutomationTest::RunTest(const FString& Parameter
 	PlayerASC->AddLooseGameplayTag(ParryingStateTag);
 
 	USoundWave* TestSound = NewObject<USoundWave>(Player);
-	TestParryAbility->SetTestParrySuccessSound(TestSound);
+	UCombatFeedbackDataAsset* PlayerFeedback = Player->GetTestCombatFeedbackData();
+	if (PlayerFeedback)
+	{
+		PlayerFeedback->Defense.ParrySuccessSound = TestSound;
+		PlayerFeedback->Defense.ParrySuccessHitStopDurationSeconds = 0.05f;
+		PlayerFeedback->Defense.ParrySuccessHitStopTimeDilation = 0.03f;
+	}
 	TestParryAbility->SetTestBypassAudioPlayback(true);
 
 	// -------------------------------------------------------------------------
@@ -224,7 +225,10 @@ bool FParrySuccessImpactFeedbackAutomationTest::RunTest(const FString& Parameter
 	AdvanceTestTimer(World, 0.08f);
 
 	// B: Null sound asset does not block hit-stop or camera shake
-	TestParryAbility->SetTestParrySuccessSound(nullptr);
+	if (PlayerFeedback)
+	{
+		PlayerFeedback->Defense.ParrySuccessSound = nullptr;
+	}
 	const int32 ShakeCountBeforeNullSound = Player->GetTestHitFeedbackCameraShakeStartCount();
 	const int32 SoundCountBeforeNullSound = TestParryAbility->GetTestParrySuccessSoundDispatchCount();
 
@@ -235,18 +239,27 @@ bool FParrySuccessImpactFeedbackAutomationTest::RunTest(const FString& Parameter
 	AdvanceTestTimer(World, 0.08f);
 
 	// Restore sound asset for subsequent tests
-	TestParryAbility->SetTestParrySuccessSound(TestSound);
+	if (PlayerFeedback)
+	{
+		PlayerFeedback->Defense.ParrySuccessSound = TestSound;
+	}
 
 	// C: Invalid hit-stop duration/dilation fail-closed without breaking Parry
-	TestParryAbility->SetTestParrySuccessHitStopDuration(-1.0f);
-	TestParryAbility->SetTestParrySuccessHitStopTimeDilation(0.0f);
+	if (PlayerFeedback)
+	{
+		PlayerFeedback->Defense.ParrySuccessHitStopDurationSeconds = -1.0f;
+		PlayerFeedback->Defense.ParrySuccessHitStopTimeDilation = 0.0f;
+	}
 	EnemyASC->SetNumericAttributeBase(UCharacterAttributeSet::GetPoiseAttribute(), 100.0f);
 	TestTrue(TEXT("Parry with invalid hit-stop parameters succeeds"), TestParryAbility->TryParryMeleeHit(Enemy, ValidHitResult));
 	TestFalse(TEXT("Invalid hit-stop parameters did not activate hit-stop"), Controller->IsTestHitStopActive());
 
 	// Restore valid hit-stop parameters
-	TestParryAbility->SetTestParrySuccessHitStopDuration(0.05f);
-	TestParryAbility->SetTestParrySuccessHitStopTimeDilation(0.05f);
+	if (PlayerFeedback)
+	{
+		PlayerFeedback->Defense.ParrySuccessHitStopDurationSeconds = 0.05f;
+		PlayerFeedback->Defense.ParrySuccessHitStopTimeDilation = 0.05f;
+	}
 
 	// -------------------------------------------------------------------------
 	// 3. SECTION: Existing Parry Gates (Rejections & Fail-closed)
