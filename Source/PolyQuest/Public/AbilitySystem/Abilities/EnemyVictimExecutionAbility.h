@@ -29,6 +29,21 @@ public:
 		const FGameplayTagContainer* TargetTags = nullptr,
 		OUT FGameplayTagContainer* OptionalRelevantTags = nullptr) const override;
 
+	/** Begins authorized hit scope tracking. */
+	bool BeginAuthorizedHitScope();
+
+	/** Ends authorized hit scope tracking. */
+	void EndAuthorizedHitScope();
+
+	/** Returns true if currently within an authorized hit scope. */
+	bool IsInAuthorizedHitScope() const { return bInAuthorizedHitScope; }
+
+	/** Called synchronously by AEnemyCharacter when lethal health drop occurs during hit scope. */
+	void NotifyLethalDamageReceived();
+
+	/** True if victim has received lethal execution damage and is awaiting Release to finalize death. */
+	bool IsDeathPending() const { return bDeathPending; }
+
 #if WITH_DEV_AUTOMATION_TESTS
 	const FGameplayTagContainer& GetTestActivationOwnedTags() const { return ActivationOwnedTags; }
 	const FGameplayTagContainer& GetTestActivationBlockedTags() const { return ActivationBlockedTags; }
@@ -37,6 +52,9 @@ public:
 	UExecutionLockContext* GetTestExecutionContext() const { return ActiveExecutionContext.Get(); }
 	bool IsTestAIExecutionLocked() const { return bLockedAI; }
 	bool HasTestHandoffFromStanceBreak() const { return bHandoffFromStanceBreak; }
+	bool IsTestDeathPending() const { return bDeathPending; }
+	bool IsTestInAuthorizedHitScope() const { return bInAuthorizedHitScope; }
+	void TestNotifyLethalDamage() { NotifyLethalDamageReceived(); }
 	void TestEndAbility(bool bWasCancelled = false) { EndAbility(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, true, bWasCancelled); }
 	void TestTriggerReleaseEvent(const FGameplayEventData& Payload) { OnReleaseReceived(Payload); }
 	void SetTestInvalidateWaitReleaseTaskAfterReady(bool bInvalidate) { bTestInvalidateWaitReleaseTaskAfterReady = bInvalidate; }
@@ -80,6 +98,7 @@ private:
 	FGameplayTag StanceBreakAbilityTag;
 	FGameplayTag StunnedStateTag;
 	FGameplayTag InvulnerableStateTag;
+	FGameplayTag DeathPendingStateTag;
 	FGameplayTag BlockMovementTag;
 	FGameplayTag BlockJumpTag;
 	FGameplayTag TeardownOnUnpossessTag;
@@ -89,5 +108,8 @@ private:
 	bool bMovementLockedByVictim = false;
 	bool bHandoffFromStanceBreak = false;
 	bool bLockedAI = false;
+	bool bInAuthorizedHitScope = false;
+	bool bDeathPending = false;
+	bool bAddedDeathPendingTag = false;
 	bool bEndAbilityInProgress = false;
 };

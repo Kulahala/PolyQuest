@@ -3,6 +3,7 @@
 #include "Abilities/Tasks/AbilityTask_PlayMontageAndWait.h"
 #include "Abilities/Tasks/AbilityTask_WaitGameplayEvent.h"
 #include "AbilitySystemComponent.h"
+#include "AbilitySystem/CharacterAttributeSet.h"
 #include "Animation/AnimInstance.h"
 #include "Animation/AnimMontage.h"
 #include "Character/Enemy/EnemyCharacter.h"
@@ -189,13 +190,25 @@ bool UPlayerBackstabExecutionAbility::ValidateTargetPrerequisites(
 		return false;
 	}
 
-	if (TargetActor->IsDead())
+	if (TargetActor->IsDead() || TargetActor->IsDeathPending())
 	{
 		return false;
 	}
 
 	const UAbilitySystemComponent* TargetASC = TargetActor->GetAbilitySystemComponent();
 	if (!TargetASC)
+	{
+		return false;
+	}
+
+	const float TargetHealth = TargetASC->GetNumericAttribute(UCharacterAttributeSet::GetHealthAttribute());
+	if (TargetHealth <= 0.0f)
+	{
+		return false;
+	}
+
+	const FGameplayTag DeathPendingTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Status.DeathPending")), false);
+	if (DeathPendingTag.IsValid() && TargetASC->HasMatchingGameplayTag(DeathPendingTag))
 	{
 		return false;
 	}
@@ -758,7 +771,7 @@ void UPlayerBackstabExecutionAbility::EndAbility(
 	const FGameplayTag ReleaseEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Action.Execution.Release")), false);
 	if (ActiveExecutionContext && TargetASC && !ActiveExecutionContext->IsReleaseSent())
 	{
-		ActiveExecutionContext->MarkReleaseSent();
+		ActiveExecutionContext->MarkReleaseSent(bWasCancelled);
 		FGameplayEventData ReleasePayload;
 		ReleasePayload.EventTag = ReleaseEventTag;
 		ReleasePayload.Instigator = PlayerCharacter;

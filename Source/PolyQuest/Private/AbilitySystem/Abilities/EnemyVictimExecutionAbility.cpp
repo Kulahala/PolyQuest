@@ -23,6 +23,7 @@ UEnemyVictimExecutionAbility::UEnemyVictimExecutionAbility()
 	VictimLockedStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Action.Execution.VictimLocked")), false);
 	InvulnerableStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Status.Invulnerable")), false);
 	StunnedStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Status.Stunned")), false);
+	DeathPendingStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Status.DeathPending")), false);
 	BlockMovementTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Input.Block.Movement")), false);
 	BlockJumpTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Input.Block.Jump")), false);
 	DeadStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Status.Dead")), false);
@@ -40,6 +41,7 @@ UEnemyVictimExecutionAbility::UEnemyVictimExecutionAbility()
 
 	ActivationBlockedTags.AddTag(DeadStateTag);
 	ActivationBlockedTags.AddTag(VictimLockedStateTag);
+	ActivationBlockedTags.AddTag(DeathPendingStateTag);
 
 	FAbilityTriggerData FrontTrigger;
 	FrontTrigger.TriggerTag = FrontRequestEventTag;
@@ -70,10 +72,30 @@ bool UEnemyVictimExecutionAbility::CanActivateAbility(
 		return false;
 	}
 
-	const AEnemyCharacter* EnemyCharacter = Cast<AEnemyCharacter>(ActorInfo ? ActorInfo->AvatarActor.Get() : nullptr);
-	if (!EnemyCharacter || EnemyCharacter->IsDead() || EnemyCharacter->IsActorBeingDestroyed())
+	const FGameplayTag ActualDeathPendingTag = DeathPendingStateTag.IsValid()
+		? DeathPendingStateTag
+		: FGameplayTag::RequestGameplayTag(FName(TEXT("State.Status.DeathPending")), false);
+	if (!ActualDeathPendingTag.IsValid())
 	{
 		return false;
+	}
+
+	const AEnemyCharacter* EnemyCharacter = Cast<AEnemyCharacter>(ActorInfo ? ActorInfo->AvatarActor.Get() : nullptr);
+	if (!EnemyCharacter || EnemyCharacter->IsDead() || EnemyCharacter->IsDeathPending() || EnemyCharacter->IsActorBeingDestroyed())
+	{
+		return false;
+	}
+
+	if (const UAbilitySystemComponent* ASC = ActorInfo ? ActorInfo->AbilitySystemComponent.Get() : nullptr)
+	{
+		if (ASC->GetNumericAttribute(UCharacterAttributeSet::GetHealthAttribute()) <= 0.0f)
+		{
+			return false;
+		}
+		if (ASC->HasMatchingGameplayTag(ActualDeathPendingTag))
+		{
+			return false;
+		}
 	}
 
 	return true;
@@ -83,7 +105,26 @@ bool UEnemyVictimExecutionAbility::ValidateExecutionRequest(
 	const FGameplayEventData* TriggerEventData,
 	AEnemyCharacter* EnemyCharacter) const
 {
-	if (!TriggerEventData || !EnemyCharacter || EnemyCharacter->IsDead() || EnemyCharacter->IsActorBeingDestroyed())
+	if (!TriggerEventData || !EnemyCharacter || EnemyCharacter->IsDead() || EnemyCharacter->IsDeathPending() || EnemyCharacter->IsActorBeingDestroyed())
+	{
+		return false;
+	}
+
+	const UAbilitySystemComponent* CharacterASC = EnemyCharacter->GetAbilitySystemComponent();
+	if (!CharacterASC)
+	{
+		return false;
+	}
+
+	if (CharacterASC->GetNumericAttribute(UCharacterAttributeSet::GetHealthAttribute()) <= 0.0f)
+	{
+		return false;
+	}
+
+	const FGameplayTag ActualDeathPendingTag = DeathPendingStateTag.IsValid()
+		? DeathPendingStateTag
+		: FGameplayTag::RequestGameplayTag(FName(TEXT("State.Status.DeathPending")), false);
+	if (ActualDeathPendingTag.IsValid() && CharacterASC->HasMatchingGameplayTag(ActualDeathPendingTag))
 	{
 		return false;
 	}
@@ -114,12 +155,6 @@ bool UEnemyVictimExecutionAbility::ValidateExecutionRequest(
 	const UAbilitySystemComponent* SourceASC = Context->GetSourceASC();
 	const UGameplayAbility* SourceAbility = Context->GetSourceAbility();
 	if (!SourceASC || (DeadTag.IsValid() && SourceASC->HasMatchingGameplayTag(DeadTag)) || !SourceAbility || !SourceAbility->IsActive() || Context->GetRequestTag() != TriggerEventData->EventTag)
-	{
-		return false;
-	}
-
-	const UAbilitySystemComponent* CharacterASC = EnemyCharacter->GetAbilitySystemComponent();
-	if (!CharacterASC)
 	{
 		return false;
 	}
@@ -194,15 +229,25 @@ void UEnemyVictimExecutionAbility::ActivateAbility(
 	const FGameplayEventData* TriggerEventData)
 {
 	bEndAbilityInProgress = false;
+	bInAuthorizedHitScope = false;
 
 	AEnemyCharacter* EnemyCharacter = Cast<AEnemyCharacter>(ActorInfo ? ActorInfo->AvatarActor.Get() : nullptr);
 	UAbilitySystemComponent* CharacterASC = GetAbilitySystemComponentFromActorInfo();
+
+	const bool bPreviousPending = bDeathPending || (EnemyCharacter && EnemyCharacter->IsDeathPending());
+	if (!bPreviousPending)
+	{
+		bDeathPending = false;
+		bAddedDeathPendingTag = false;
+	}
 
 	if (!ValidateExecutionRequest(TriggerEventData, EnemyCharacter) || !CharacterASC)
 	{
 		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
 		return;
 	}
+
+	EnemyCharacter->SetExecutionVictimAbility(this);
 
 	ActiveExecutionContext = Cast<UExecutionLockContext>(const_cast<UObject*>(TriggerEventData->OptionalObject.Get()));
 	if (!ActiveExecutionContext)
@@ -278,17 +323,91 @@ void UEnemyVictimExecutionAbility::ActivateAbility(
 	}
 }
 
+bool UEnemyVictimExecutionAbility::BeginAuthorizedHitScope()
+{
+	if (!IsActive() || bEndAbilityInProgress || bDeathPending)
+	{
+		return false;
+	}
+
+	bInAuthorizedHitScope = true;
+	return true;
+}
+
+void UEnemyVictimExecutionAbility::EndAuthorizedHitScope()
+{
+	bInAuthorizedHitScope = false;
+}
+
+void UEnemyVictimExecutionAbility::NotifyLethalDamageReceived()
+{
+	bDeathPending = true;
+	const FGameplayTag ActualDeathPendingTag = DeathPendingStateTag.IsValid()
+		? DeathPendingStateTag
+		: FGameplayTag::RequestGameplayTag(FName(TEXT("State.Status.DeathPending")), false);
+
+	if (!bAddedDeathPendingTag && ActualDeathPendingTag.IsValid())
+	{
+		if (UAbilitySystemComponent* CharacterASC = GetAbilitySystemComponentFromActorInfo())
+		{
+			CharacterASC->AddLooseGameplayTag(ActualDeathPendingTag);
+			bAddedDeathPendingTag = true;
+		}
+	}
+}
+
 void UEnemyVictimExecutionAbility::OnReleaseReceived(FGameplayEventData Payload)
 {
-	if (!IsActive())
+	if (!IsActive() || bEndAbilityInProgress)
 	{
 		return;
 	}
 
-	if (Payload.OptionalObject.Get() == ActiveExecutionContext.Get())
+	const FGameplayTag ExpectedReleaseTag = ReleaseEventTag.IsValid()
+		? ReleaseEventTag
+		: FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Action.Execution.Release")), false);
+	if (!ExpectedReleaseTag.IsValid() || Payload.EventTag != ExpectedReleaseTag)
 	{
-		EndAbility(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, true, false);
+		return;
 	}
+
+	UExecutionLockContext* Context = ActiveExecutionContext.Get();
+	if (!Context || !Context->IsActive())
+	{
+		return;
+	}
+
+	if (Payload.OptionalObject.Get() != Context)
+	{
+		return;
+	}
+
+	if (!Context->IsReleaseSent())
+	{
+		return;
+	}
+
+	AActor* AvatarActor = GetAvatarActorFromActorInfo();
+	AActor* ContextSourceActor = Context->GetSourceActor();
+	AActor* PayloadInstigator = const_cast<AActor*>(Payload.Instigator.Get());
+	AActor* PayloadTarget = const_cast<AActor*>(Payload.Target.Get());
+
+	if (!IsValid(AvatarActor) || !IsValid(ContextSourceActor) || !IsValid(PayloadInstigator) || !IsValid(PayloadTarget))
+	{
+		return;
+	}
+
+	if (Context->GetTargetActor() != AvatarActor || Context->GetVictimAbility() != this)
+	{
+		return;
+	}
+
+	if (PayloadInstigator != ContextSourceActor || PayloadTarget != AvatarActor)
+	{
+		return;
+	}
+
+	EndAbility(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, true, Context->WasReleaseCancelled());
 }
 
 void UEnemyVictimExecutionAbility::EndAbility(
@@ -304,12 +423,100 @@ void UEnemyVictimExecutionAbility::EndAbility(
 	}
 
 	bEndAbilityInProgress = true;
+	bInAuthorizedHitScope = false;
 
-	if (ActiveExecutionContext)
+	AEnemyCharacter* EnemyCharacter = Cast<AEnemyCharacter>(ActorInfo ? ActorInfo->AvatarActor.Get() : nullptr);
+	UAbilitySystemComponent* CharacterASC = GetAbilitySystemComponentFromActorInfo();
+
+	const bool bCommitDeath = bDeathPending || (EnemyCharacter && EnemyCharacter->IsDeathPending());
+	bool bDeathCommittedSuccessfully = false;
+
+	if (bCommitDeath && EnemyCharacter && CharacterASC)
 	{
-		ActiveExecutionContext->InvalidateSession();
-		ActiveExecutionContext = nullptr;
+		const bool bCanFinalize = ActiveExecutionContext && ActiveExecutionContext->BeginFinalization(this);
+		if (bCanFinalize)
+		{
+			bDeathCommittedSuccessfully = EnemyCharacter->CommitExecutionDeath(ActiveExecutionContext.Get());
+			if (bDeathCommittedSuccessfully)
+			{
+				ActiveExecutionContext->CompleteFinalization(this);
+			}
+			else
+			{
+				ActiveExecutionContext->AbortFinalization(this);
+			}
+		}
+
+		// Fallback: If execution commit failed or context was invalid, verify if Health is <= 0.
+		// Never leave an enemy with Health <= 0 without Dead or DeathPending.
+		const float CurrentHealth = CharacterASC->GetNumericAttribute(UCharacterAttributeSet::GetHealthAttribute());
+		if (!bDeathCommittedSuccessfully && CurrentHealth <= 0.0f)
+		{
+			EnemyCharacter->SetDeadState();
+			bDeathCommittedSuccessfully = EnemyCharacter->IsDead();
+		}
 	}
+	else
+	{
+		if (bLockedAI)
+		{
+			if (EnemyCharacter)
+			{
+				if (AEnemyAIController* AIController = Cast<AEnemyAIController>(EnemyCharacter->GetController()))
+				{
+					AIController->EndExecutionLock();
+				}
+			}
+			bLockedAI = false;
+		}
+
+		const bool bCanRestoreEnemy = EnemyCharacter && !EnemyCharacter->IsDead() && !EnemyCharacter->IsActorBeingDestroyed();
+		if (bCanRestoreEnemy)
+		{
+			if (bMovementLockedByVictim)
+			{
+				if (UCharacterMovementComponent* MovementComponent = EnemyCharacter->GetCharacterMovement())
+				{
+					MovementComponent->SetMovementMode(MOVE_Walking);
+				}
+			}
+
+			if (bHandoffFromStanceBreak)
+			{
+				if (!EnemyCharacter->RestorePoiseToMax())
+				{
+					UE_LOG(LogPolyQuest, Warning, TEXT("Victim execution ended for '%s' but Poise could not be restored."), *GetNameSafe(EnemyCharacter));
+				}
+			}
+		}
+	}
+
+	// Only clean up DeathPending tag if Dead is confirmed written, or if non-lethal (not bCommitDeath).
+	// If commit failed and enemy is still not dead despite Health <= 0, retain DeathPending tag.
+	const FGameplayTag ActualDeathPendingTag = DeathPendingStateTag.IsValid()
+		? DeathPendingStateTag
+		: FGameplayTag::RequestGameplayTag(FName(TEXT("State.Status.DeathPending")), false);
+
+	const bool bIsDeadConfirmed = EnemyCharacter ? EnemyCharacter->IsDead() : false;
+	const bool bSafeToClearPendingTag = bIsDeadConfirmed || !bCommitDeath;
+
+	if (bAddedDeathPendingTag && ActualDeathPendingTag.IsValid() && bSafeToClearPendingTag)
+	{
+		if (CharacterASC)
+		{
+			CharacterASC->RemoveLooseGameplayTag(ActualDeathPendingTag);
+		}
+		bAddedDeathPendingTag = false;
+	}
+
+	if (EnemyCharacter)
+	{
+		EnemyCharacter->ClearExecutionVictimAbility(this);
+	}
+
+	bMovementLockedByVictim = false;
+	bHandoffFromStanceBreak = false;
+	bLockedAI = false;
 
 	if (WaitReleaseTask)
 	{
@@ -317,42 +524,11 @@ void UEnemyVictimExecutionAbility::EndAbility(
 		WaitReleaseTask = nullptr;
 	}
 
-	AEnemyCharacter* EnemyCharacter = Cast<AEnemyCharacter>(ActorInfo ? ActorInfo->AvatarActor.Get() : nullptr);
-
-	if (bLockedAI)
+	if (ActiveExecutionContext)
 	{
-		if (EnemyCharacter)
-		{
-			if (AEnemyAIController* AIController = Cast<AEnemyAIController>(EnemyCharacter->GetController()))
-			{
-				AIController->EndExecutionLock();
-			}
-		}
-		bLockedAI = false;
+		ActiveExecutionContext->InvalidateSession();
+		ActiveExecutionContext = nullptr;
 	}
-
-	const bool bCanRestoreEnemy = EnemyCharacter && !EnemyCharacter->IsDead() && !EnemyCharacter->IsActorBeingDestroyed();
-	if (bCanRestoreEnemy)
-	{
-		if (bMovementLockedByVictim)
-		{
-			if (UCharacterMovementComponent* MovementComponent = EnemyCharacter->GetCharacterMovement())
-			{
-				MovementComponent->SetMovementMode(MOVE_Walking);
-			}
-		}
-
-		if (bHandoffFromStanceBreak)
-		{
-			if (!EnemyCharacter->RestorePoiseToMax())
-			{
-				UE_LOG(LogPolyQuest, Warning, TEXT("Victim execution ended for '%s' but Poise could not be restored."), *GetNameSafe(EnemyCharacter));
-			}
-		}
-	}
-
-	bMovementLockedByVictim = false;
-	bHandoffFromStanceBreak = false;
 
 	Super::EndAbility(Handle, ActorInfo, ActivationInfo, bReplicateEndAbility, bWasCancelled);
 	bEndAbilityInProgress = false;

@@ -8,6 +8,8 @@
 #include "GameplayEffectTypes.h"
 #include "GameplayTagContainer.h"
 
+#include "AbilitySystem/CharacterAttributeSet.h"
+#include "Character/Enemy/EnemyCharacter.h"
 #include "Character/Player/PlayerCharacter.h"
 #include "Combat/Execution/ExecutionLockContext.h"
 #include "Combat/Melee/CombatTeamAgent.h"
@@ -58,17 +60,24 @@ bool FMeleeHitResolver::TryResolveHit(const FMeleeHitRequest& Request)
 		return false;
 	}
 
-	if (TargetAbilitySystemComponent->HasMatchingGameplayTag(InvulnerableTag))
+	if (Request.ExecutionContext)
 	{
-		const bool bIsAuthorizedExecutionHit = Request.ExecutionContext != nullptr
-			&& Request.ExecutionContext->IsHitAuthorized(
-				Request.SourceObject,
-				Request.SourceActor,
-				Request.SourceAbilitySystemComponent,
-				TargetActor,
-				TargetAbilitySystemComponent);
+		const bool bIsAuthorizedExecutionHit = Request.ExecutionContext->IsHitAuthorized(
+			Request.SourceObject,
+			Request.SourceActor,
+			Request.SourceAbilitySystemComponent,
+			TargetActor,
+			TargetAbilitySystemComponent);
 
 		if (!bIsAuthorizedExecutionHit)
+		{
+			return false;
+		}
+	}
+
+	if (TargetAbilitySystemComponent->HasMatchingGameplayTag(InvulnerableTag))
+	{
+		if (!Request.ExecutionContext)
 		{
 			return false;
 		}
@@ -110,5 +119,49 @@ bool FMeleeHitResolver::TryResolveHit(const FMeleeHitRequest& Request)
 		}
 	}
 
-	return TargetAbilitySystemComponent->ApplyGameplayEffectSpecToSelf(*DamageSpecHandle.Data.Get()).WasSuccessfullyApplied();
+	UExecutionLockContext* ExecContext = const_cast<UExecutionLockContext*>(Request.ExecutionContext);
+	TOptional<FExecutionHitScopeGuard> HitScopeGuard;
+	if (ExecContext)
+	{
+		HitScopeGuard.Emplace(
+			ExecContext,
+			Request.SourceObject,
+			Request.SourceActor,
+			Request.SourceAbilitySystemComponent,
+			TargetActor,
+			TargetAbilitySystemComponent);
+		if (!HitScopeGuard->IsScopeValid())
+		{
+			return false;
+		}
+	}
+
+	const FActiveGameplayEffectHandle AppliedHandle = TargetAbilitySystemComponent->ApplyGameplayEffectSpecToSelf(*DamageSpecHandle.Data.Get());
+	const bool bAppliedSuccessfully = AppliedHandle.WasSuccessfullyApplied();
+
+	if (HitScopeGuard.IsSet())
+	{
+		HitScopeGuard->SetGESuccess(bAppliedSuccessfully);
+		if (bAppliedSuccessfully)
+		{
+			const float RemainingHealth = TargetAbilitySystemComponent->GetNumericAttribute(UCharacterAttributeSet::GetHealthAttribute());
+			const bool bLethal = (RemainingHealth <= 0.0f);
+			AEnemyCharacter* TargetEnemy = Cast<AEnemyCharacter>(TargetActor);
+			const bool bPendingConfirmed = (TargetEnemy && TargetEnemy->IsDeathPending()) || (ExecContext && ExecContext->IsDeathPending());
+			HitScopeGuard->SetLethal(bLethal);
+			HitScopeGuard->SetPendingConfirmed(bPendingConfirmed);
+
+			if (bLethal && !bPendingConfirmed)
+			{
+				if (TargetEnemy && !TargetEnemy->IsDead())
+				{
+					TargetEnemy->SetDeadState();
+				}
+				HitScopeGuard->SetGESuccess(false);
+				return false;
+			}
+		}
+	}
+
+	return bAppliedSuccessfully;
 }

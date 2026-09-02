@@ -1477,6 +1477,7 @@ bool APlayerCharacter::CanRetainExecutionLockedTarget(const AEnemyCharacter* Cur
 		return false;
 	}
 
+	// Target can be retained through lethal execution while in DeathPending, but not once truly Dead.
 	if (IsActorBeingDestroyed() || SourceASC->HasMatchingGameplayTag(DeadTag)
 		|| CurrentTarget->IsDead() || TargetASC->HasMatchingGameplayTag(DeadTag))
 	{
@@ -1495,7 +1496,7 @@ bool APlayerCharacter::CanRetainExecutionLockedTarget(const AEnemyCharacter* Cur
 		return false;
 	}
 
-	// The retention branch may compensate only for the target's active Invulnerable gate.
+	// The retention branch compensates for the target's active paired execution lock (including DeathPending prior to true Dead).
 	if (!TargetASC->HasMatchingGameplayTag(InvulnerableTag))
 	{
 		return false;

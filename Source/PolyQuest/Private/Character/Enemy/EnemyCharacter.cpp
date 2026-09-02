@@ -23,12 +23,15 @@
 #include "Kismet/GameplayStatics.h"
 #include "NiagaraFunctionLibrary.h"
 #include "PolyQuest.h"
+#include "AbilitySystem/Abilities/EnemyVictimExecutionAbility.h"
+#include "Combat/Execution/ExecutionLockContext.h"
 #include "Sound/SoundBase.h"
 #include "TimerManager.h"
 #include "UI/EnemyHealthBarWidget.h"
 
 AEnemyCharacter::AEnemyCharacter()
 {
+	DeathPendingTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Status.DeathPending")), false);
 	CombatTeamTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Team.Enemy")), false);
 	DeadStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Status.Dead")), false);
 	HitReactionEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Reaction.Enemy.Big")), false);
@@ -68,6 +71,10 @@ void AEnemyCharacter::BeginPlay()
 	{
 		DeadStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Status.Dead")), false);
 	}
+	if (!DeathPendingTag.IsValid())
+	{
+		DeathPendingTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Status.DeathPending")), false);
+	}
 
 	Super::BeginPlay();
 	bHasLoggedInvalidDeathRagdollBone = false;
@@ -84,6 +91,7 @@ void AEnemyCharacter::BeginPlay()
 void AEnemyCharacter::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
 	bDeathTeardownStarted = true;
+	ActiveVictimExecutionAbility = nullptr;
 	if (UWorld* World = GetWorld())
 	{
 		if (APlayerCharacter* Player = Cast<APlayerCharacter>(UGameplayStatics::GetPlayerCharacter(World, 0)))
@@ -118,6 +126,11 @@ void AEnemyCharacter::EndPlay(const EEndPlayReason::Type EndPlayReason)
 
 void AEnemyCharacter::UnPossessed()
 {
+	if (IsDeathPending() && HasAuthority() && !IsDead() && !bDeathTeardownStarted)
+	{
+		SetDeadState();
+	}
+
 	if (UAbilitySystemComponent* ASC = GetAbilitySystemComponent())
 	{
 		const FGameplayTag TeardownOnUnpossessTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Action.Teardown.OnUnpossess")), false);
@@ -137,6 +150,77 @@ bool AEnemyCharacter::IsDead() const
 	const UAbilitySystemComponent* CharacterASC = GetAbilitySystemComponent();
 	return CharacterASC && DeadStateTag.IsValid()
 		&& CharacterASC->HasMatchingGameplayTag(DeadStateTag);
+}
+
+bool AEnemyCharacter::IsDeathPending() const
+{
+	if (IsDead())
+	{
+		return false;
+	}
+
+	const UAbilitySystemComponent* CharacterASC = GetAbilitySystemComponent();
+	const FGameplayTag ActualDeathPendingTag = DeathPendingTag.IsValid()
+		? DeathPendingTag
+		: FGameplayTag::RequestGameplayTag(FName(TEXT("State.Status.DeathPending")), false);
+
+	return CharacterASC && ActualDeathPendingTag.IsValid()
+		&& CharacterASC->HasMatchingGameplayTag(ActualDeathPendingTag);
+}
+
+void AEnemyCharacter::SetExecutionVictimAbility(UEnemyVictimExecutionAbility* InAbility)
+{
+	ActiveVictimExecutionAbility = InAbility;
+}
+
+void AEnemyCharacter::ClearExecutionVictimAbility(UEnemyVictimExecutionAbility* InAbility)
+{
+	if (ActiveVictimExecutionAbility.Get() == InAbility)
+	{
+		ActiveVictimExecutionAbility = nullptr;
+	}
+}
+
+bool AEnemyCharacter::CommitExecutionDeath(UExecutionLockContext* Context)
+{
+	if (!HasAuthority() || bDeathTeardownStarted || IsDead() || IsActorBeingDestroyed())
+	{
+		return false;
+	}
+
+	UAbilitySystemComponent* CharacterASC = GetAbilitySystemComponent();
+	if (!CharacterASC)
+	{
+		return false;
+	}
+
+	const float CurrentHealth = CharacterASC->GetNumericAttribute(UCharacterAttributeSet::GetHealthAttribute());
+	if (CurrentHealth > 0.0f)
+	{
+		return false;
+	}
+
+	// Must match current target, current victim ability, and current execution context
+	if (!Context || !Context->IsActive() || Context->GetTargetActor() != this || Context->GetVictimASC() != CharacterASC)
+	{
+		return false;
+	}
+
+	if (!ActiveVictimExecutionAbility.IsValid() || Context->GetVictimAbility() != ActiveVictimExecutionAbility.Get())
+	{
+		return false;
+	}
+
+	if (!Context->IsDeathPending() && !Context->IsFinalizing())
+	{
+		return false;
+	}
+
+	SetDeadState();
+
+	// Verify Dead Tag actually exists; do not assume calling SetDeadState equals success
+	const bool bDeadConfirmed = IsDead();
+	return bDeadConfirmed;
 }
 
 bool AEnemyCharacter::IsPoiseBroken() const
@@ -225,6 +309,19 @@ void AEnemyCharacter::OnHealthAttributeChanged(const FOnAttributeChangeData& Cha
 		return;
 	}
 
+	if (IsDeathPending())
+	{
+		if (ChangeData.NewValue > 0.0f)
+		{
+			// Abnormal healing during DeathPending is reset to 0
+			if (UAbilitySystemComponent* CharacterASC = GetAbilitySystemComponent())
+			{
+				CharacterASC->SetNumericAttributeBase(UCharacterAttributeSet::GetHealthAttribute(), 0.0f);
+			}
+		}
+		return;
+	}
+
 	if (ChangeData.NewValue <= 0.0f)
 	{
 		if (!IsDead())
@@ -278,6 +375,13 @@ void AEnemyCharacter::OnHealthAttributeChanged(const FOnAttributeChangeData& Cha
 					const EHitReactionTier ReactionTier = FHitReactionClassifier::ClassifyReactionTier(AssetTags);
 					HandleCombatImpactFeedback(EffectSpec, ReactionTier);
 				}
+			}
+
+			// If inside an active execution hit scope, defer SetDeadState() and notify victim ability
+			if (ActiveVictimExecutionAbility.IsValid() && ActiveVictimExecutionAbility->IsInAuthorizedHitScope())
+			{
+				ActiveVictimExecutionAbility->NotifyLethalDamageReceived();
+				return;
 			}
 
 			SetDeadState();

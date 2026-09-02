@@ -15,6 +15,8 @@ class UEnemyHealthBarWidget;
 class USoundBase;
 class UNiagaraSystem;
 class UEnemyCombatFeedbackDataAsset;
+class UEnemyVictimExecutionAbility;
+class UExecutionLockContext;
 enum class EHitReactionTier : uint8;
 struct FGameplayEffectSpec;
 struct FOnAttributeChangeData;
@@ -94,6 +96,20 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Combat|Enemy")
 	bool IsDead() const;
 
+	/** True if the enemy is in lethal execution pending state (Health <= 0 but not yet dead). */
+	UFUNCTION(BlueprintPure, Category = "Combat|Enemy")
+	bool IsDeathPending() const;
+
+	/** Execution victim ability registration for hit-scope and death-commit coordination. */
+	void SetExecutionVictimAbility(UEnemyVictimExecutionAbility* InAbility);
+	void ClearExecutionVictimAbility(UEnemyVictimExecutionAbility* InAbility);
+
+	/** Commits execution death, finalizing from DeathPending to Dead through the canonical HandleDeath path. */
+	bool CommitExecutionDeath(UExecutionLockContext* Context);
+
+	/** Sets the Dead state tag directly, initiating canonical death handling. */
+	void SetDeadState();
+
 	UFUNCTION(BlueprintPure, Category = "Combat|Enemy|Poise")
 	bool IsPoiseBroken() const;
 
@@ -114,7 +130,6 @@ private:
 	void OnHealthAttributeChanged(const FOnAttributeChangeData& ChangeData);
 	void OnPoiseAttributeChanged(const FOnAttributeChangeData& ChangeData);
 	void OnDeadStateTagChanged(const FGameplayTag Tag, int32 NewCount);
-	void SetDeadState();
 	void HandleDeath();
 	void StartDeathRagdoll();
 	void DispatchPendingStanceBreak();
@@ -198,6 +213,11 @@ private:
 	bool bHasLoggedMissingCombatFeedbackData = false;
 	TWeakObjectPtr<const UGameplayEffect> ActivePoiseBreakingEffectDefinition;
 	FGameplayEffectContextHandle ActivePoiseBreakingEffectContext;
+
+	UPROPERTY(Transient)
+	TWeakObjectPtr<UEnemyVictimExecutionAbility> ActiveVictimExecutionAbility;
+
+	FGameplayTag DeathPendingTag;
 
 	FVector PendingDeathRagdollVelocityChange = FVector::ZeroVector;
 	bool bHasLoggedInvalidDeathRagdollBone = false;
