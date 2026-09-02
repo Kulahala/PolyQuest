@@ -63,6 +63,7 @@ public:
 	void TriggerTestBindUIHealthEvents() { BindUIHealthEvents(); }
 	void TriggerTestUnbindUIHealthEvents() { UnbindUIHealthEvents(); }
 	void TriggerTestRefreshEnemyHealthBar() { RefreshEnemyHealthBar(); }
+	void TriggerTestUnPossessed() { UnPossessed(); }
 
 	void ConfigureTestDeathRagdollImpact(
 		FName InImpulseBoneName,
@@ -105,6 +106,7 @@ public:
 protected:
 	virtual void BeginPlay() override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
+	virtual void UnPossessed() override;
 
 private:
 	void BindDeathEvents();

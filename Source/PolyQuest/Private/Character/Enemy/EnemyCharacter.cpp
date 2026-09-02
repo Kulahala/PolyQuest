@@ -116,6 +116,22 @@ void AEnemyCharacter::EndPlay(const EEndPlayReason::Type EndPlayReason)
 	Super::EndPlay(EndPlayReason);
 }
 
+void AEnemyCharacter::UnPossessed()
+{
+	if (UAbilitySystemComponent* ASC = GetAbilitySystemComponent())
+	{
+		const FGameplayTag TeardownOnUnpossessTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Action.Teardown.OnUnpossess")), false);
+		if (TeardownOnUnpossessTag.IsValid())
+		{
+			FGameplayTagContainer TeardownTags;
+			TeardownTags.AddTag(TeardownOnUnpossessTag);
+			ASC->CancelAbilities(&TeardownTags);
+		}
+	}
+
+	Super::UnPossessed();
+}
+
 bool AEnemyCharacter::IsDead() const
 {
 	const UAbilitySystemComponent* CharacterASC = GetAbilitySystemComponent();
