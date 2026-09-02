@@ -35,10 +35,10 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 
 namespace
 {
-	struct FTestWorldScope
+	struct FEnemyStanceBreakRateWindowTestWorldScope
 	{
 		UWorld* World = nullptr;
-		~FTestWorldScope()
+		~FEnemyStanceBreakRateWindowTestWorldScope()
 		{
 			if (World)
 			{
@@ -175,7 +175,7 @@ bool FEnemyStanceBreakRateWindowAutomationTest::RunTest(const FString& Parameter
 	FWorldContext& WorldContext = GEngine->CreateNewWorldContext(EWorldType::Game);
 	UWorld* World = UWorld::CreateWorld(EWorldType::Game, false, TEXT("EnemyStanceBreakRateWindowTestWorld"));
 	WorldContext.SetCurrentWorld(World);
-	FTestWorldScope ScopeCleanup{ World };
+	FEnemyStanceBreakRateWindowTestWorldScope ScopeCleanup{ World };
 
 	if (!TestNotNull(TEXT("Test World created"), World))
 	{

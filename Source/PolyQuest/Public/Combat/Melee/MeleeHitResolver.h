@@ -6,6 +6,7 @@
 
 class AActor;
 class UAbilitySystemComponent;
+class UExecutionLockContext;
 class UGameplayEffect;
 class UObject;
 
@@ -21,6 +22,7 @@ struct POLYQUEST_API FMeleeHitRequest
 	TMap<FGameplayTag, float> SetByCallerMagnitudes;
 	float GuardStaminaDamage = 0.0f;
 	const UObject* SourceObject = nullptr;
+	const UExecutionLockContext* ExecutionContext = nullptr;
 	FHitResult HitResult;
 };
 

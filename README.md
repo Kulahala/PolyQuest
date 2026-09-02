@@ -122,6 +122,8 @@ PolyQuest 是一个以 UE 5.8、C++ 与 GAS 为核心的单机低多边形动作
 
 `TODO-07B8-A` 已完成 Enemy Stance Break 的局部 Montage RateWindow 接入：敌人 Ability 只对当前 Montage/源 Sequence 响应 Begin/End，保存实际播放速率并以 LIFO 规则恢复，取消、中断、销毁和 UnPossess 均经同一清理路径。用户已确认专项 Automation 与 `Scene01` PIE；本阶段没有单独归档的 Development Editor 编译或 Enemy Stance Break 资产 readback 收据，作者化数据仍按本地 WIP 处理。
 
+`TODO-05A1-A` 已完成 Front/Backstab 的成对处决接触锁定：Player Ability 通过同步 Request/Release Gameplay Event 与目标侧 `UEnemyVictimExecutionAbility` 共享 transient execution context；双方的 GAS 锁定/无敌、目标移动与 StateTree AI 暂停、外部伤害阻断和唯一 `FMeleeHitResolver` 授权均在各自所有者内闭环，已有 Lock-On 目标在执行期间保留而初次候选搜索仍严格排除无敌目标。用户已确认相关 Automation、编译与 `Scene01` PIE；DeathPending、延迟死亡和非致死 Launch/Knockback 不属于本阶段，仍需后续独立验证。
+
 `TODO-07B2` 已完成由精确 Trace Window 生命周期驱动的 Player/Enemy Niagara 近战武器拖尾，既有 Sweep/Resolver 伤害路径不变。用户已确认聚焦 `Scene01` PIE 视觉验收，以及包含 `PolyQuest.Melee.WeaponTrail` 的十三套 Unreal Editor Automation 全部通过；Niagara 资产和 Blueprint 绑定仍是本地 `Content/**` WIP，不作为干净检出的复现证据。
 
 `TODO-07B4` 已实现玩家攻击者命中镜头冲击反馈：Enemy 的权威 Health/Team 边界把 `Data.Reaction.Small/Big/Launch` 单次转发到 Player；Player 以独立的 attacker 字段解析三档 Shake，允许复用同一组 Camera Shake 资产但禁止字段回退，且与受击路径共用单一 CameraManager/清理生命周期。用户已确认 focused Automation 与 Scene01 PIE；本次收口没有独立手动编译日志或六字段 Editor 读回，因此作者化字段基线仍是本地 WIP。

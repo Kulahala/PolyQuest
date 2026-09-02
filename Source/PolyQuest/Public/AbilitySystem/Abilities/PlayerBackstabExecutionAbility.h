@@ -2,7 +2,6 @@
 
 #include "CoreMinimal.h"
 #include "Abilities/GameplayAbility.h"
-#include "Abilities/GameplayAbilityTypes.h"
 #include "GameplayTagContainer.h"
 #include "UObject/WeakObjectPtr.h"
 #include "PlayerBackstabExecutionAbility.generated.h"
@@ -12,6 +11,7 @@ class APlayerCharacter;
 class UAbilityTask_PlayMontageAndWait;
 class UAbilityTask_WaitGameplayEvent;
 class UAnimMontage;
+class UExecutionLockContext;
 class UGameplayEffect;
 class UPlayerBackstabExecutionAbility;
 
@@ -51,7 +51,7 @@ public:
 /**
  * Server-authoritative backstab execution ability for the player.
  * Triggered on PrimaryAttack input when behind a non-stunned, living enemy.
- * Reuses FMeleeHitResolver and standard Damage GameplayEffect delivery.
+ * Reuses FMeleeHitResolver and standard Damage GameplayEffect delivery under paired execution lock.
  */
 UCLASS()
 class POLYQUEST_API UPlayerBackstabExecutionAbility : public UGameplayAbility
@@ -80,9 +80,9 @@ public:
 	{
 		bUseMotionWarping = bEnabled;
 		WarpTargetName = InTargetName;
-		MinTriggerDistance = InMin;
+		MinExecutionDistance = InMin;
 		WarpStopDistance = InStop;
-		MaxTriggerDistance = InMax;
+		MaxExecutionDistance = InMax;
 		MaxWarpAngleDegrees = InAngle;
 	}
 	bool TestEvaluateBackstabGeometry(const APlayerCharacter* Player, const AEnemyCharacter* Target, float& OutDist2D, float& OutAngleDegrees) const;
@@ -99,14 +99,17 @@ public:
 	void TestEndAbility(bool bWasCancelled = false) { EndAbility(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, true, bWasCancelled); }
 	void SetTestSkipMontageTaskActivation(bool bSkip) { bTestSkipMontageTaskActivation = bSkip; }
 	void SetTestInvalidateWaitHitEventTaskAfterReady(bool bInvalidate) { bTestInvalidateWaitHitEventTaskAfterReady = bInvalidate; }
+	void SetTestEndAbilityDuringTaskReady(bool bEnable) { bTestEndAbilityDuringTaskReady = bEnable; }
 	AEnemyCharacter* GetTestReservedTarget() const { return ReservedTarget.Get(); }
 	bool IsTestDamageEventConsumed() const { return bDamageEventConsumed; }
 	uint32 GetTestActivationToken() const { return CurrentActivationToken; }
 	UPlayerBackstabExecutionContext* GetTestActiveContext() const { return ActiveContext; }
+	UExecutionLockContext* GetTestExecutionContext() const { return ActiveExecutionContext.Get(); }
 
 private:
 	bool bTestSkipMontageTaskActivation = false;
 	bool bTestInvalidateWaitHitEventTaskAfterReady = false;
+	bool bTestEndAbilityDuringTaskReady = false;
 public:
 #endif
 
@@ -142,8 +145,8 @@ protected:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Execution", meta = (ClampMin = "0.0", Units = "Centimeters", ToolTip = "允许触发背刺处决的最小水平距离（cm）。"))
 	float MinExecutionDistance = 0.0f;
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Execution", meta = (ClampMin = "0.0", Units = "Centimeters", ToolTip = "允许触发背刺处决的最大水平距离（cm）。默认0保持fail-closed。"))
-	float MaxExecutionDistance = 0.0f;
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Execution", meta = (ClampMin = "0.0", Units = "Centimeters", ToolTip = "允许触发背刺处决的最大水平距离（cm）。默认250cm。"))
+	float MaxExecutionDistance = 250.0f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Execution", meta = (ClampMin = "0.0", ClampMax = "90.0", Units = "Degrees", ToolTip = "允许触发背刺处决的目标正后方最大夹角（度）。"))
 	float MaxBackAngleDegrees = 60.0f;
@@ -154,14 +157,8 @@ protected:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|MotionWarp", meta = (EditCondition = "bUseMotionWarping", ToolTip = "处决 Motion Warp 目标标识名称。"))
 	FName WarpTargetName = FName(TEXT("MeleeContact"));
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|MotionWarp", meta = (EditCondition = "bUseMotionWarping", ClampMin = "0.0", Units = "Centimeters", ToolTip = "处决 Motion Warp 最小触发距离。"))
-	float MinTriggerDistance = 190.0f;
-
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|MotionWarp", meta = (EditCondition = "bUseMotionWarping", ClampMin = "0.0", Units = "Centimeters", ToolTip = "处决 Motion Warp 期望停止距离。"))
 	float WarpStopDistance = 190.0f;
-
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|MotionWarp", meta = (EditCondition = "bUseMotionWarping", ClampMin = "0.0", Units = "Centimeters", ToolTip = "处决 Motion Warp 最大触发距离。"))
-	float MaxTriggerDistance = 300.0f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|MotionWarp", meta = (EditCondition = "bUseMotionWarping", ClampMin = "0.0", ClampMax = "180.0", Units = "Degrees", ToolTip = "处决 Motion Warp 最大允许角度偏转。"))
 	float MaxWarpAngleDegrees = 60.0f;
@@ -171,6 +168,9 @@ private:
 	bool CheckBackstabGeometry(const APlayerCharacter* PlayerCharacter, const AEnemyCharacter* TargetActor, float& OutDist2D, float& OutAngleDegrees) const;
 	void BindTargetDelegates(AEnemyCharacter* TargetActor, uint32 InToken);
 	void UnbindTargetDelegates();
+
+	UPROPERTY(Transient)
+	TObjectPtr<UExecutionLockContext> ActiveExecutionContext;
 
 	UPROPERTY(Transient)
 	TObjectPtr<UPlayerBackstabExecutionContext> ActiveContext;
@@ -188,6 +188,7 @@ private:
 
 	FDelegateHandle TargetStunnedTagDelegateHandle;
 	FDelegateHandle TargetDeadTagDelegateHandle;
+	FDelegateHandle TargetVictimLockedTagDelegateHandle;
 	TWeakObjectPtr<UAbilitySystemComponent> BoundTargetASC;
 
 	bool bEndAbilityInProgress = false;

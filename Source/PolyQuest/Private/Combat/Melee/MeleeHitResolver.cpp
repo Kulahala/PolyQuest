@@ -9,6 +9,7 @@
 #include "GameplayTagContainer.h"
 
 #include "Character/Player/PlayerCharacter.h"
+#include "Combat/Execution/ExecutionLockContext.h"
 #include "Combat/Melee/CombatTeamAgent.h"
 
 namespace
@@ -52,10 +53,25 @@ bool FMeleeHitResolver::TryResolveHit(const FMeleeHitRequest& Request)
 	const FGameplayTag& InvulnerableTag = GetInvulnerableTag();
 	if (!TargetAbilitySystemComponent || !DeadTag.IsValid() || !InvulnerableTag.IsValid()
 		|| Request.SourceAbilitySystemComponent->HasMatchingGameplayTag(DeadTag)
-		|| TargetAbilitySystemComponent->HasMatchingGameplayTag(DeadTag)
-		|| TargetAbilitySystemComponent->HasMatchingGameplayTag(InvulnerableTag))
+		|| TargetAbilitySystemComponent->HasMatchingGameplayTag(DeadTag))
 	{
 		return false;
+	}
+
+	if (TargetAbilitySystemComponent->HasMatchingGameplayTag(InvulnerableTag))
+	{
+		const bool bIsAuthorizedExecutionHit = Request.ExecutionContext != nullptr
+			&& Request.ExecutionContext->IsHitAuthorized(
+				Request.SourceObject,
+				Request.SourceActor,
+				Request.SourceAbilitySystemComponent,
+				TargetActor,
+				TargetAbilitySystemComponent);
+
+		if (!bIsAuthorizedExecutionHit)
+		{
+			return false;
+		}
 	}
 
 	if (APlayerCharacter* PlayerCharacter = Cast<APlayerCharacter>(TargetActor))

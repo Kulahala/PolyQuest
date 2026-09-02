@@ -162,6 +162,16 @@ public:
 	/** Instant StateTree Alert action: stop stale movement while retaining the current target focus. */
 	void BeginAlert();
 
+	/** Freezes AI execution, stops StateTree, movement, focus, and pending attack profiles during execution session. */
+	void BeginExecutionLock();
+
+	/** Restores AI execution if the same pawn is alive and StateTree was active prior to locking. */
+	void EndExecutionLock();
+
+	/** True while the controller is locked by an active execution session. */
+	UFUNCTION(BlueprintPure, Category = "AI|Combat")
+	bool IsExecutionLocked() const { return bIsExecutionLocked; }
+
 	/** Requests the single configured enemy melee ability only when the controller target remains in range. */
 	bool TryRequestMeleeAttack();
 
@@ -309,4 +319,9 @@ private:
 	bool bHasOverriddenRepositionSpeed = false;
 	float OriginalRepositionMaxWalkSpeed = 0.0f;
 	bool bIsTargetRetainedWithoutSight = false;
+	bool bIsExecutionLocked = false;
+	bool bStateTreeWasRunningBeforeLock = false;
+
+	UPROPERTY(Transient)
+	TWeakObjectPtr<APawn> LockedPawn = nullptr;
 };

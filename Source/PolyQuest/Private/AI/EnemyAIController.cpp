@@ -200,6 +200,13 @@ void AEnemyAIController::OnPossess(APawn* InPawn)
 
 void AEnemyAIController::OnUnPossess()
 {
+	if (bIsExecutionLocked)
+	{
+		bIsExecutionLocked = false;
+		bStateTreeWasRunningBeforeLock = false;
+		LockedPawn = nullptr;
+	}
+
 	if (StateTreeComponent)
 	{
 		StateTreeComponent->StopLogic(TEXT("Enemy controller unpossessed."));
@@ -221,6 +228,12 @@ void AEnemyAIController::OnUnPossess()
 
 void AEnemyAIController::Tick(float DeltaSeconds)
 {
+	if (bIsExecutionLocked)
+	{
+		Super::Tick(DeltaSeconds);
+		return;
+	}
+
 	RevalidateRetainedCombatTarget();
 	Super::Tick(DeltaSeconds);
 }
@@ -295,6 +308,7 @@ bool AEnemyAIController::CanRequestCooldownReposition() const
 	}
 
 	return !IsControlledEnemyDead()
+		&& !bIsExecutionLocked
 		&& !IsEnemyStunned()
 		&& !IsEnemyHitReactionActive()
 		&& !IsEnemyMeleeAttackActive()
@@ -514,7 +528,7 @@ bool AEnemyAIController::IsPendingAttackInRange() const
 
 bool AEnemyAIController::PreparePendingAttackProfile()
 {
-	if (IsControlledEnemyDead() || IsEnemyStunned() || IsEnemyHitReactionActive() || IsEnemyMeleeAttackActive() || IsMeleeAttackOnCooldown()
+	if (IsControlledEnemyDead() || bIsExecutionLocked || IsEnemyStunned() || IsEnemyHitReactionActive() || IsEnemyMeleeAttackActive() || IsMeleeAttackOnCooldown()
 		|| !HasValidAttackSet() || !HasValidCombatTarget() || !IsCombatTargetInMeleeRange() || IsExceedingLeash())
 	{
 		ClearPendingAttackProfile();
@@ -562,6 +576,7 @@ void AEnemyAIController::ClearPendingAttackProfile()
 bool AEnemyAIController::CanRequestApproach() const
 {
 	return !IsControlledEnemyDead()
+		&& !bIsExecutionLocked
 		&& !IsEnemyStunned()
 		&& !IsEnemyHitReactionActive()
 		&& !IsEnemyMeleeAttackActive()
@@ -670,6 +685,11 @@ void AEnemyAIController::OnMoveCompleted(FAIRequestID RequestID, const FPathFoll
 {
 	Super::OnMoveCompleted(RequestID, Result);
 
+	if (bIsExecutionLocked)
+	{
+		return;
+	}
+
 	if (CurrentRepositionRequestID.IsValid() && RequestID == CurrentRepositionRequestID)
 	{
 		RestoreRepositionPaceOverride();
@@ -731,7 +751,7 @@ bool AEnemyAIController::IsCombatTargetInMeleeRange() const
 
 void AEnemyAIController::BeginAlert()
 {
-	if (IsControlledEnemyDead())
+	if (IsControlledEnemyDead() || bIsExecutionLocked)
 	{
 		return;
 	}
@@ -745,11 +765,60 @@ void AEnemyAIController::BeginAlert()
 	}
 }
 
+void AEnemyAIController::BeginExecutionLock()
+{
+	if (bIsExecutionLocked)
+	{
+		return;
+	}
+
+	bIsExecutionLocked = true;
+	LockedPawn = GetPawn();
+	bStateTreeWasRunningBeforeLock = (StateTreeComponent && StateTreeComponent->IsRunning());
+
+	if (StateTreeComponent && bStateTreeWasRunningBeforeLock)
+	{
+		StateTreeComponent->StopLogic(TEXT("Enemy AI execution locked."));
+	}
+
+	StopMovement();
+	StopCooldownReposition(true);
+	ClearPendingAttackProfile();
+	ClearTargetFocus();
+	ResetRootMotionFacingHandoff();
+}
+
+void AEnemyAIController::EndExecutionLock()
+{
+	if (!bIsExecutionLocked)
+	{
+		return;
+	}
+
+	bIsExecutionLocked = false;
+
+	APawn* CurrentPawn = GetPawn();
+	const AEnemyCharacter* EnemyCharacter = Cast<AEnemyCharacter>(CurrentPawn);
+	const bool bPawnValidAndAlive = CurrentPawn && (CurrentPawn == LockedPawn.Get()) && EnemyCharacter && !EnemyCharacter->IsDead();
+
+	if (bPawnValidAndAlive && bStateTreeWasRunningBeforeLock && StateTreeComponent)
+	{
+		StateTreeComponent->StartLogic();
+		if (HasValidCombatTarget())
+		{
+			SendStateTreeEvent(TargetAcquiredEventTag);
+		}
+	}
+
+	bStateTreeWasRunningBeforeLock = false;
+	LockedPawn = nullptr;
+}
+
 bool AEnemyAIController::TryRequestMeleeAttack()
 {
 	AEnemyCharacter* EnemyCharacter = Cast<AEnemyCharacter>(GetPawn());
 	UAbilitySystemComponent* CharacterASC = EnemyCharacter ? EnemyCharacter->GetAbilitySystemComponent() : nullptr;
-	if (IsControlledEnemyDead() || IsEnemyStunned() || IsEnemyHitReactionActive() || !CharacterASC || !EnemyMeleeAbilityTag.IsValid() || !HasValidAttackSet() || IsMeleeAttackOnCooldown()
+	if (IsControlledEnemyDead() || bIsExecutionLocked || IsEnemyStunned() || IsEnemyHitReactionActive() || !CharacterASC || !EnemyMeleeAbilityTag.IsValid() || !HasValidAttackSet() || IsMeleeAttackOnCooldown()
 		|| !HasValidCombatTarget() || !IsCombatTargetInMeleeRange() || !IsPendingAttackInRange())
 	{
 		ClearPendingAttackProfile();
@@ -840,7 +909,7 @@ void AEnemyAIController::HandleControlledEnemyDeath()
 
 void AEnemyAIController::HandleTargetPerceptionUpdated(AActor* Actor, FAIStimulus Stimulus)
 {
-	if (IsControlledEnemyDead())
+	if (IsControlledEnemyDead() || bIsExecutionLocked)
 	{
 		return;
 	}
@@ -882,7 +951,7 @@ bool AEnemyAIController::CanRetainCurrentTargetWithoutSight() const
 
 void AEnemyAIController::ProcessTargetPerception(APlayerCharacter* PlayerCharacter, bool bSuccessfullySensed)
 {
-	if (IsControlledEnemyDead() || !PlayerCharacter)
+	if (IsControlledEnemyDead() || bIsExecutionLocked || !PlayerCharacter)
 	{
 		return;
 	}
@@ -907,7 +976,7 @@ void AEnemyAIController::ProcessTargetPerception(APlayerCharacter* PlayerCharact
 
 void AEnemyAIController::RevalidateRetainedCombatTarget()
 {
-	if (!bIsTargetRetainedWithoutSight)
+	if (bIsExecutionLocked || !bIsTargetRetainedWithoutSight)
 	{
 		return;
 	}
@@ -989,10 +1058,10 @@ void AEnemyAIController::SendStateTreeEvent(const FGameplayTag& EventTag) const
 void AEnemyAIController::UpdateControlRotation(float DeltaTime, bool bUpdatePawn)
 {
 	APawn* ControlledPawn = GetPawn();
-	if (!ControlledPawn || IsControlledEnemyDead())
+	if (!ControlledPawn || IsControlledEnemyDead() || bIsExecutionLocked)
 	{
 		ResetRootMotionFacingHandoff();
-		Super::UpdateControlRotation(DeltaTime, bUpdatePawn);
+		Super::UpdateControlRotation(DeltaTime, false);
 		return;
 	}
 

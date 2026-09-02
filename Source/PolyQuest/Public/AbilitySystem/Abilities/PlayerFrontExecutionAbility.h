@@ -2,7 +2,6 @@
 
 #include "CoreMinimal.h"
 #include "Abilities/GameplayAbility.h"
-#include "Abilities/GameplayAbilityTypes.h"
 #include "GameplayTagContainer.h"
 #include "UObject/WeakObjectPtr.h"
 #include "PlayerFrontExecutionAbility.generated.h"
@@ -12,12 +11,47 @@ class APlayerCharacter;
 class UAbilityTask_PlayMontageAndWait;
 class UAbilityTask_WaitGameplayEvent;
 class UAnimMontage;
+class UExecutionLockContext;
 class UGameplayEffect;
+class UPlayerFrontExecutionAbility;
+
+/**
+ * Per-activation callback context ensuring asynchronous delegate isolation across activation generations.
+ */
+UCLASS(Transient)
+class POLYQUEST_API UPlayerFrontExecutionContext : public UObject
+{
+	GENERATED_BODY()
+
+public:
+	UPROPERTY(Transient)
+	TWeakObjectPtr<UPlayerFrontExecutionAbility> OwningAbility;
+
+	uint32 Token = 0;
+
+	UFUNCTION()
+	void OnMontageCompleted();
+
+	UFUNCTION()
+	void OnMontageBlendOut();
+
+	UFUNCTION()
+	void OnMontageInterrupted();
+
+	UFUNCTION()
+	void OnMontageCancelled();
+
+	UFUNCTION()
+	void OnHitEventReceived(FGameplayEventData Payload);
+
+	UFUNCTION()
+	void OnTargetDestroyed(AActor* DestroyedActor);
+};
 
 /**
  * Server-authoritative front execution ability for the player.
  * Triggered on PrimaryAttack input when facing a stunned enemy (real stance break).
- * Reuses FMeleeHitResolver and standard Damage GameplayEffect delivery.
+ * Reuses FMeleeHitResolver and standard Damage GameplayEffect delivery under paired execution lock.
  */
 UCLASS()
 class POLYQUEST_API UPlayerFrontExecutionAbility : public UGameplayAbility
@@ -46,9 +80,9 @@ public:
 	{
 		bUseMotionWarping = bEnabled;
 		WarpTargetName = InTargetName;
-		MinTriggerDistance = InMin;
+		MinExecutionDistance = InMin;
 		WarpStopDistance = InStop;
-		MaxTriggerDistance = InMax;
+		MaxExecutionDistance = InMax;
 		MaxWarpAngleDegrees = InAngle;
 	}
 	bool TestEvaluateFrontGeometry(const APlayerCharacter* Player, const AEnemyCharacter* Target, float& OutDist2D, float& OutAngleDegrees) const;
@@ -61,16 +95,31 @@ public:
 		float MaxAngle,
 		float& OutDist2D,
 		float& OutAngleDegrees);
-	void TestTriggerHitEvent(const FGameplayEventData& Payload) { OnHitEventReceived(Payload); }
+	void TestTriggerHitEvent(const FGameplayEventData& Payload);
 	void TestEndAbility(bool bWasCancelled = false) { EndAbility(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, true, bWasCancelled); }
 	void SetTestSkipMontageTaskActivation(bool bSkip) { bTestSkipMontageTaskActivation = bSkip; }
+	void SetTestInvalidateWaitHitEventTaskAfterReady(bool bInvalidate) { bTestInvalidateWaitHitEventTaskAfterReady = bInvalidate; }
+	void SetTestEndAbilityDuringTaskReady(bool bEnable) { bTestEndAbilityDuringTaskReady = bEnable; }
 	AEnemyCharacter* GetTestReservedTarget() const { return ReservedTarget.Get(); }
 	bool IsTestDamageEventConsumed() const { return bDamageEventConsumed; }
+	uint32 GetTestActivationToken() const { return CurrentActivationToken; }
+	UPlayerFrontExecutionContext* GetTestActiveContext() const { return ActiveContext; }
+	UExecutionLockContext* GetTestExecutionContext() const { return ActiveExecutionContext.Get(); }
 
 private:
 	bool bTestSkipMontageTaskActivation = false;
+	bool bTestInvalidateWaitHitEventTaskAfterReady = false;
+	bool bTestEndAbilityDuringTaskReady = false;
 public:
 #endif
+
+	void HandleMontageCompleted(uint32 InToken);
+	void HandleMontageBlendOut(uint32 InToken);
+	void HandleMontageInterrupted(uint32 InToken);
+	void HandleMontageCancelled(uint32 InToken);
+	void HandleHitEventReceived(FGameplayEventData Payload, uint32 InToken);
+	void HandleTargetDestroyed(AActor* DestroyedActor, uint32 InToken);
+	void HandleTargetTagChanged(const FGameplayTag Tag, int32 NewCount, uint32 InToken);
 
 protected:
 	virtual void ActivateAbility(
@@ -95,8 +144,8 @@ protected:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Execution", meta = (ClampMin = "0.0", Units = "Centimeters", ToolTip = "允许触发正面处决的最小水平距离（cm）。"))
 	float MinExecutionDistance = 0.0f;
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Execution", meta = (ClampMin = "0.0", Units = "Centimeters", ToolTip = "允许触发正面处决的最大水平距离（cm）。默认0保持fail-closed。"))
-	float MaxExecutionDistance = 0.0f;
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Execution", meta = (ClampMin = "0.0", Units = "Centimeters", ToolTip = "允许触发正面处决的最大水平距离（cm）。默认250cm。"))
+	float MaxExecutionDistance = 250.0f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Execution", meta = (ClampMin = "0.0", ClampMax = "90.0", Units = "Degrees", ToolTip = "允许触发正面处决的目标正前方最大夹角（度）。"))
 	float MaxFrontAngleDegrees = 60.0f;
@@ -107,43 +156,25 @@ protected:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|MotionWarp", meta = (EditCondition = "bUseMotionWarping", ToolTip = "处决 Motion Warp 目标标识名称。"))
 	FName WarpTargetName = FName(TEXT("MeleeContact"));
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|MotionWarp", meta = (EditCondition = "bUseMotionWarping", ClampMin = "0.0", Units = "Centimeters", ToolTip = "处决 Motion Warp 最小触发距离。"))
-	float MinTriggerDistance = 190.0f;
-
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|MotionWarp", meta = (EditCondition = "bUseMotionWarping", ClampMin = "0.0", Units = "Centimeters", ToolTip = "处决 Motion Warp 期望停止距离。"))
 	float WarpStopDistance = 190.0f;
-
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|MotionWarp", meta = (EditCondition = "bUseMotionWarping", ClampMin = "0.0", Units = "Centimeters", ToolTip = "处决 Motion Warp 最大触发距离。"))
-	float MaxTriggerDistance = 300.0f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|MotionWarp", meta = (EditCondition = "bUseMotionWarping", ClampMin = "0.0", ClampMax = "180.0", Units = "Degrees", ToolTip = "处决 Motion Warp 最大允许角度偏转。"))
 	float MaxWarpAngleDegrees = 60.0f;
 
 private:
-	UFUNCTION()
-	void OnMontageCompleted();
-
-	UFUNCTION()
-	void OnMontageBlendOut();
-
-	UFUNCTION()
-	void OnMontageInterrupted();
-
-	UFUNCTION()
-	void OnMontageCancelled();
-
-	UFUNCTION()
-	void OnHitEventReceived(FGameplayEventData Payload);
-
-	UFUNCTION()
-	void OnTargetDestroyed(AActor* DestroyedActor);
-
-	void OnTargetTagChanged(const FGameplayTag Tag, int32 NewCount);
-
 	bool ValidateTargetPrerequisites(const APlayerCharacter* PlayerCharacter, const AEnemyCharacter* TargetActor) const;
 	bool CheckFrontGeometry(const APlayerCharacter* PlayerCharacter, const AEnemyCharacter* TargetActor, float& OutDist2D, float& OutAngleDegrees) const;
-	void BindTargetDelegates(AEnemyCharacter* TargetActor);
+	void BindTargetDelegates(AEnemyCharacter* TargetActor, uint32 InToken);
 	void UnbindTargetDelegates();
+
+	UPROPERTY(Transient)
+	TObjectPtr<UExecutionLockContext> ActiveExecutionContext;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UPlayerFrontExecutionContext> ActiveContext;
+
+	uint32 CurrentActivationToken = 0;
 
 	UPROPERTY(Transient)
 	TObjectPtr<UAbilityTask_PlayMontageAndWait> MontageTask;
@@ -156,6 +187,7 @@ private:
 
 	FDelegateHandle TargetStunnedTagDelegateHandle;
 	FDelegateHandle TargetDeadTagDelegateHandle;
+	FDelegateHandle TargetVictimLockedTagDelegateHandle;
 	TWeakObjectPtr<UAbilitySystemComponent> BoundTargetASC;
 
 	bool bEndAbilityInProgress = false;

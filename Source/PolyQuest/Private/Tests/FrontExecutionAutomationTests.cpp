@@ -4,6 +4,7 @@
 
 #include "AbilitySystemComponent.h"
 #include "AbilitySystem/Abilities/EnemyStanceBreakAbility.h"
+#include "AbilitySystem/Abilities/EnemyVictimExecutionAbility.h"
 #include "AbilitySystem/Abilities/PlayerFrontExecutionAbility.h"
 #include "AbilitySystem/CharacterAttributeSet.h"
 #include "Animation/AnimMontage.h"
@@ -31,10 +32,10 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 
 namespace
 {
-	struct FTestWorldScope
+	struct FFrontExecutionTestWorldScope
 	{
 		UWorld* World = nullptr;
-		~FTestWorldScope()
+		~FFrontExecutionTestWorldScope()
 		{
 			if (World)
 			{
@@ -45,7 +46,7 @@ namespace
 		}
 	};
 
-	void TickWorld(UWorld* World, float DeltaSeconds)
+	void TickFrontExecutionTestWorld(UWorld* World, float DeltaSeconds)
 	{
 		if (World)
 		{
@@ -82,16 +83,20 @@ bool FFrontExecutionAutomationTest::RunTest(const FString& Parameters)
 
 	TestTrue(TEXT("Tag Ability.Action.Execution.Front is registered"), TagExecutionFront.IsValid());
 	TestTrue(TEXT("AbilityTags has Ability.Action.Execution.Front"), ExecutionCDO->GetTestAbilityTags().HasTagExact(TagExecutionFront));
-	TestTrue(TEXT("AbilityTags has CancelableBy.Dodge"), ExecutionCDO->GetTestAbilityTags().HasTagExact(TagCancelByDodge));
-	TestTrue(TEXT("AbilityTags has CancelableBy.Defense"), ExecutionCDO->GetTestAbilityTags().HasTagExact(TagCancelByDefense));
-	TestTrue(TEXT("AbilityTags has CancelableBy.Reaction"), ExecutionCDO->GetTestAbilityTags().HasTagExact(TagCancelByReaction));
+	TestFalse(TEXT("AbilityTags has NO CancelableBy.Dodge"), ExecutionCDO->GetTestAbilityTags().HasTagExact(TagCancelByDodge));
+	TestFalse(TEXT("AbilityTags has NO CancelableBy.Defense"), ExecutionCDO->GetTestAbilityTags().HasTagExact(TagCancelByDefense));
+	TestFalse(TEXT("AbilityTags has NO CancelableBy.Reaction"), ExecutionCDO->GetTestAbilityTags().HasTagExact(TagCancelByReaction));
 	TestTrue(TEXT("AbilityTags has Teardown.OnUnpossess"), ExecutionCDO->GetTestAbilityTags().HasTagExact(TagTeardownOnUnpossess));
 
 	const FGameplayTag TagAttacking = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Action.Attacking")), false);
+	const FGameplayTag TagPlayerLocked = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Action.Execution.PlayerLocked")), false);
+	const FGameplayTag TagInvulnerable = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Status.Invulnerable")), false);
 	const FGameplayTag TagBlockMove = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Input.Block.Movement")), false);
 	const FGameplayTag TagBlockJump = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Input.Block.Jump")), false);
 
 	TestTrue(TEXT("ActivationOwnedTags has State.Action.Attacking"), ExecutionCDO->GetTestActivationOwnedTags().HasTagExact(TagAttacking));
+	TestTrue(TEXT("ActivationOwnedTags has State.Action.Execution.PlayerLocked"), ExecutionCDO->GetTestActivationOwnedTags().HasTagExact(TagPlayerLocked));
+	TestTrue(TEXT("ActivationOwnedTags has State.Status.Invulnerable"), ExecutionCDO->GetTestActivationOwnedTags().HasTagExact(TagInvulnerable));
 	TestTrue(TEXT("ActivationOwnedTags has State.Input.Block.Movement"), ExecutionCDO->GetTestActivationOwnedTags().HasTagExact(TagBlockMove));
 	TestTrue(TEXT("ActivationOwnedTags has State.Input.Block.Jump"), ExecutionCDO->GetTestActivationOwnedTags().HasTagExact(TagBlockJump));
 
@@ -136,7 +141,7 @@ bool FFrontExecutionAutomationTest::RunTest(const FString& Parameters)
 	FWorldContext& WorldContext = GEngine->CreateNewWorldContext(EWorldType::Game);
 	UWorld* World = UWorld::CreateWorld(EWorldType::Game, false, TEXT("FrontExecutionTestWorld"));
 	WorldContext.SetCurrentWorld(World);
-	FTestWorldScope ScopeCleanup{ World };
+	FFrontExecutionTestWorldScope ScopeCleanup{ World };
 
 	if (!TestNotNull(TEXT("Test World created"), World))
 	{
@@ -176,6 +181,9 @@ bool FFrontExecutionAutomationTest::RunTest(const FString& Parameters)
 	const FGameplayTag TagTeamEnemy = FGameplayTag::RequestGameplayTag(FName(TEXT("Team.Enemy")), false);
 	Player->SetTestCombatTeamTag(TagTeamPlayer);
 	Enemy->SetTestCombatTeamTag(TagTeamEnemy);
+
+	FGameplayAbilitySpec VictimSpec(UEnemyVictimExecutionAbility::StaticClass(), 1, INDEX_NONE, Enemy);
+	EnemyASC->GiveAbility(VictimSpec);
 
 	auto GrantAndConfigureExecAbility = [&](APlayerCharacter* InPlayer, UAnimMontage* Montage, TSubclassOf<UGameplayEffect> DamageClass, float MinDist, float MaxDist, float MaxAngle, bool bWarp = false) -> TPair<FGameplayAbilitySpecHandle, UPlayerFrontExecutionAbility*>
 	{
@@ -337,29 +345,24 @@ bool FFrontExecutionAutomationTest::RunTest(const FString& Parameters)
 		TestFalse(TEXT("Fails activation when no target locked"),
 			ExecAbility->CanActivateAbility(ExecHandle, &ActorInfo));
 
-		// 5.2 Target has NO StanceBreak ability -> Should fail
+		// 5.2 Target has NO Stunned tag -> Should fail
 		Player->SetTestLockedTarget(Enemy);
-		TestFalse(TEXT("Fails activation when target has no StanceBreak ability"),
+		TestFalse(TEXT("Fails activation when target has no Stunned tag"),
 			ExecAbility->CanActivateAbility(ExecHandle, &ActorInfo));
 
-		// 5.3 Target only has loose Stunned tag (not active stance break) -> Should fail
+		// 5.3 Target is Invulnerable -> Should fail
 		EnemyASC->AddLooseGameplayTag(TagStunned);
-		TestFalse(TEXT("Fails activation when target only has loose Stunned tag"),
+		EnemyASC->AddLooseGameplayTag(TagInvulnerable);
+		TestFalse(TEXT("Fails activation when target is Invulnerable"),
 			ExecAbility->CanActivateAbility(ExecHandle, &ActorInfo));
+		EnemyASC->RemoveLooseGameplayTag(TagInvulnerable);
 
-		// 5.4 Target has StanceBreak granted & Poise=0 -> CanActivateAbility should SUCCEED
-		if (UCharacterAttributeSet* EnemyAttribs = const_cast<UCharacterAttributeSet*>(EnemyASC->GetSet<UCharacterAttributeSet>()))
-		{
-			EnemyAttribs->SetPoise(0.0f);
-		}
-		const FGameplayAbilitySpecHandle StanceBreakHandle = GrantEnemyStanceBreakAbility(Enemy);
-
-		TestTrue(TEXT("CanActivateAbility succeeds with valid stance break and front geometry"),
+		// 5.4 Target has Stunned tag and valid front geometry -> CanActivateAbility should SUCCEED
+		TestTrue(TEXT("CanActivateAbility succeeds with valid Stunned tag and front geometry"),
 			ExecAbility->CanActivateAbility(ExecHandle, &ActorInfo));
 
 		// Cleanup
 		PlayerASC->ClearAbility(ExecHandle);
-		EnemyASC->ClearAbility(StanceBreakHandle);
 		EnemyASC->RemoveLooseGameplayTag(TagStunned);
 	}
 
@@ -540,15 +543,73 @@ bool FFrontExecutionAutomationTest::RunTest(const FString& Parameters)
 
 		TestNotNull(TEXT("Execution active with reserved target"), ExecAbility->GetTestReservedTarget());
 
-		// Removing target Stunned tag should end the ability
+		// Removing target Stunned / ending victim ability should end the player execution ability fail-closed
 		EnemyASC->RemoveLooseGameplayTag(TagStunned);
-		TickWorld(World, 0.01f);
+		EnemyASC->CancelAbilityHandle(StanceBreakHandle);
+		for (const FGameplayAbilitySpec& Spec : EnemyASC->GetActivatableAbilities())
+		{
+			if (Spec.Ability && Spec.Ability->IsA<UEnemyVictimExecutionAbility>() && Spec.IsActive())
+			{
+				if (UEnemyVictimExecutionAbility* VictimInst = Cast<UEnemyVictimExecutionAbility>(Spec.GetPrimaryInstance()))
+				{
+					VictimInst->TestEndAbility(true);
+				}
+			}
+		}
+		TickFrontExecutionTestWorld(World, 0.01f);
 
 		TestNull(TEXT("Execution ended and target reservation cleared when Stunned was removed"),
 			ExecAbility->GetTestReservedTarget());
 
 		PlayerASC->ClearAbility(ExecHandle);
 		EnemyASC->ClearAbility(StanceBreakHandle);
+	}
+
+	// =========================================================================
+	// 9. ReadyForActivation Synchronous Re-entry Fail-Closed & Re-activation Gate
+	// =========================================================================
+	{
+		UAnimMontage* SyntheticMontage = NewObject<UAnimMontage>();
+		TSubclassOf<UGameplayEffect> DamageGEClass = UTestProjectileDamageGE::StaticClass();
+
+		auto [ReentryHandle, ReentryAbility] = GrantAndConfigureExecAbility(Player, SyntheticMontage, DamageGEClass, 50.0f, 250.0f, 60.0f, true);
+
+		EnemyASC->AddLooseGameplayTag(TagStunned);
+		if (UCharacterAttributeSet* EnemyAttribs = const_cast<UCharacterAttributeSet*>(EnemyASC->GetSet<UCharacterAttributeSet>()))
+		{
+			EnemyAttribs->SetPoise(0.0f);
+		}
+		const FGameplayAbilitySpecHandle StanceBreakHandle = GrantEnemyStanceBreakAbility(Enemy);
+
+		Player->SetTestLockedTarget(Enemy);
+
+		// Configure simulated synchronous EndAbility during task ReadyForActivation
+		ReentryAbility->SetTestEndAbilityDuringTaskReady(true);
+		Player->TriggerTestRequestAbilityForInputIntent(FGameplayTag::RequestGameplayTag(FName(TEXT("Input.PrimaryAttack")), false));
+
+		// Verify ability ended cleanly without double-EndAbility crash, and tags/context are cleanly reset
+		TestFalse(TEXT("Synchronous EndAbility in ReadyForActivation terminated ability cleanly"), ReentryAbility->IsActive());
+		TestNull(TEXT("Target reservation cleared after synchronous end"), ReentryAbility->GetTestReservedTarget());
+		TestFalse(TEXT("PlayerLocked tag not leaked after synchronous end"),
+			PlayerASC->HasMatchingGameplayTag(FGameplayTag::RequestGameplayTag(FName(TEXT("State.Action.Execution.PlayerLocked")), false)));
+
+		// Re-enable normal activation and re-establish Front Execution prerequisites on Enemy (Poise 0 + active StanceBreak)
+		ReentryAbility->SetTestEndAbilityDuringTaskReady(false);
+		if (UCharacterAttributeSet* EnemyAttribs = const_cast<UCharacterAttributeSet*>(EnemyASC->GetSet<UCharacterAttributeSet>()))
+		{
+			EnemyAttribs->SetPoise(0.0f);
+		}
+		const FGameplayAbilitySpecHandle StanceBreakHandle2 = GrantEnemyStanceBreakAbility(Enemy);
+
+		Player->TriggerTestRequestAbilityForInputIntent(FGameplayTag::RequestGameplayTag(FName(TEXT("Input.PrimaryAttack")), false));
+		TestTrue(TEXT("Subsequent activation after synchronous end succeeds"), ReentryAbility->IsActive());
+		TestNotNull(TEXT("Subsequent activation reserved target"), ReentryAbility->GetTestReservedTarget());
+
+		ReentryAbility->TestEndAbility();
+		EnemyASC->RemoveLooseGameplayTag(TagStunned);
+		PlayerASC->ClearAbility(ReentryHandle);
+		EnemyASC->ClearAbility(StanceBreakHandle);
+		EnemyASC->ClearAbility(StanceBreakHandle2);
 	}
 
 	return true;

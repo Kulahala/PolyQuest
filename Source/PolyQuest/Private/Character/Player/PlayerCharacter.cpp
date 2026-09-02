@@ -1433,14 +1433,88 @@ APlayerCharacter::ELockOnValidationResult APlayerCharacter::ValidateCurrentLocke
 			: ELockOnValidationResult::Cleared;
 	}
 
-	if (!FCombatProjectileTargeting::IsValidTargetCandidate(this, SourceASC, CurrentTarget)
-		|| !CacheCurrentLockedTargetCandidate())
+	const bool bCandidateValid = FCombatProjectileTargeting::IsValidTargetCandidate(this, SourceASC, CurrentTarget);
+	const bool bCanRetainExecution = !bCandidateValid && CanRetainExecutionLockedTarget(CurrentTarget, SourceASC);
+
+	if ((!bCandidateValid && !bCanRetainExecution) || !CacheCurrentLockedTargetCandidate())
 	{
 		ClearLockedTarget();
 		return ELockOnValidationResult::Cleared;
 	}
 
 	return ELockOnValidationResult::Valid;
+}
+
+bool APlayerCharacter::CanRetainExecutionLockedTarget(const AEnemyCharacter* CurrentTarget, const UAbilitySystemComponent* SourceASC) const
+{
+	if (!CurrentTarget || !SourceASC)
+	{
+		return false;
+	}
+
+	const APlayerController* PlayerController = Cast<APlayerController>(GetController());
+	const UWorld* CurrentWorld = GetWorld();
+	if (!PlayerController || !CurrentWorld || CurrentWorld != CurrentTarget->GetWorld())
+	{
+		return false;
+	}
+
+	if (CurrentTarget->IsActorBeingDestroyed())
+	{
+		return false;
+	}
+
+	const UAbilitySystemComponent* TargetASC = CurrentTarget->GetAbilitySystemComponent();
+	if (!TargetASC)
+	{
+		return false;
+	}
+
+	const FGameplayTag DeadTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Status.Dead")), false);
+	const FGameplayTag InvulnerableTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Status.Invulnerable")), false);
+	if (!DeadTag.IsValid() || !InvulnerableTag.IsValid())
+	{
+		return false;
+	}
+
+	if (IsActorBeingDestroyed() || SourceASC->HasMatchingGameplayTag(DeadTag)
+		|| CurrentTarget->IsDead() || TargetASC->HasMatchingGameplayTag(DeadTag))
+	{
+		return false;
+	}
+
+	const FGameplayTag PlayerLockedTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Action.Execution.PlayerLocked")), false);
+	const FGameplayTag VictimLockedTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Action.Execution.VictimLocked")), false);
+	if (!PlayerLockedTag.IsValid() || !VictimLockedTag.IsValid())
+	{
+		return false;
+	}
+
+	if (!SourceASC->HasMatchingGameplayTag(PlayerLockedTag) || !TargetASC->HasMatchingGameplayTag(VictimLockedTag))
+	{
+		return false;
+	}
+
+	// The retention branch may compensate only for the target's active Invulnerable gate.
+	if (!TargetASC->HasMatchingGameplayTag(InvulnerableTag))
+	{
+		return false;
+	}
+
+	if (!GetClass()->ImplementsInterface(UCombatTeamAgent::StaticClass())
+		|| !CurrentTarget->GetClass()->ImplementsInterface(UCombatTeamAgent::StaticClass()))
+	{
+		return false;
+	}
+
+	const FGameplayTag SourceTeamTag = ICombatTeamAgent::Execute_GetCombatTeamTag(this);
+	const FGameplayTag TargetTeamTag = ICombatTeamAgent::Execute_GetCombatTeamTag(CurrentTarget);
+	if (!SourceTeamTag.IsValid() || !TargetTeamTag.IsValid() || SourceTeamTag.MatchesTagExact(TargetTeamTag))
+	{
+		return false;
+	}
+
+	return true;
 }
 
 AEnemyCharacter* APlayerCharacter::ResolveValidLockedTarget()

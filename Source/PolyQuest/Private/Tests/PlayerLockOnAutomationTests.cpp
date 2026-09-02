@@ -257,6 +257,8 @@ bool FPlayerLockOnAutomationTest::RunTest(const FString&)
 
 			const FGameplayTag DeadTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Status.Dead")), false);
 			const FGameplayTag InvulnerableTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Status.Invulnerable")), false);
+			const FGameplayTag PlayerLockedTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Action.Execution.PlayerLocked")), false);
+			const FGameplayTag VictimLockedTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Action.Execution.VictimLocked")), false);
 			Player->SetTestLockedTarget(EnemyTie);
 			TestTrue(TEXT("The death handoff fixture caches the current target screen candidate"), Player->TriggerTestValidateCurrentLockedTarget());
 			if (UAbilitySystemComponent* TieAsc = EnemyTie->GetAbilitySystemComponent())
@@ -277,6 +279,51 @@ bool FPlayerLockOnAutomationTest::RunTest(const FString&)
 					TestFalse(TEXT("An invulnerable target clears without replacing it"), Player->TriggerTestValidateCurrentLockedTarget());
 					TestNull(TEXT("Invulnerable target does not auto-retarget"), Player->GetLockedTarget());
 					BottomAsc->RemoveLooseGameplayTag(InvulnerableTag);
+
+					// Focused regression: Execution Lock-On Retention
+					UAbilitySystemComponent* PlayerAsc = Player->GetAbilitySystemComponent();
+
+					if (PlayerAsc)
+					{
+						// Case 1: Only PlayerLocked (missing VictimLocked) -> fails & clears
+						BottomAsc->AddLooseGameplayTag(InvulnerableTag);
+						PlayerAsc->AddLooseGameplayTag(PlayerLockedTag);
+						Player->SetTestLockedTarget(EnemyBottom);
+						TestFalse(TEXT("Only PlayerLocked fails validation on invulnerable target"), Player->TriggerTestValidateCurrentLockedTarget());
+						TestNull(TEXT("Only PlayerLocked clears lock on invulnerable target"), Player->GetLockedTarget());
+						PlayerAsc->RemoveLooseGameplayTag(PlayerLockedTag);
+
+						// Case 2: Only VictimLocked (missing PlayerLocked) -> fails & clears
+						BottomAsc->AddLooseGameplayTag(VictimLockedTag);
+						Player->SetTestLockedTarget(EnemyBottom);
+						TestFalse(TEXT("Only VictimLocked fails validation on invulnerable target"), Player->TriggerTestValidateCurrentLockedTarget());
+						TestNull(TEXT("Only VictimLocked clears lock on invulnerable target"), Player->GetLockedTarget());
+
+						// Case 3: Paired execution lock (PlayerLocked + VictimLocked) + Invulnerable -> succeeds and retains target!
+						PlayerAsc->AddLooseGameplayTag(PlayerLockedTag);
+						Player->SetTestLockedTarget(EnemyBottom);
+						BottomAsc->RemoveLooseGameplayTag(InvulnerableTag);
+						TestFalse(TEXT("Execution retention requires the target to actually hold Invulnerable"),
+							Player->TriggerTestCanRetainExecutionLockedTarget(EnemyBottom));
+						BottomAsc->AddLooseGameplayTag(InvulnerableTag);
+						TestTrue(TEXT("Paired execution lock retains invulnerable target within retention"), Player->TriggerTestValidateCurrentLockedTarget());
+						TestEqual(TEXT("Target is retained during paired execution lock"), Player->GetLockedTarget(), EnemyBottom);
+
+						// Case 4: Target Dead during execution lock -> fails retention and handles death
+						BottomAsc->AddLooseGameplayTag(DeadTag);
+						Player->TriggerTestValidateCurrentLockedTarget();
+						TestTrue(TEXT("Dead target during execution lock is not retained as locked target"), Player->GetLockedTarget() != EnemyBottom);
+						BottomAsc->RemoveLooseGameplayTag(DeadTag);
+
+						// Case 5: Remove execution tags -> next validation returns to ordinary behavior and clears lock
+						Player->SetTestLockedTarget(EnemyBottom);
+						PlayerAsc->RemoveLooseGameplayTag(PlayerLockedTag);
+						BottomAsc->RemoveLooseGameplayTag(VictimLockedTag);
+						TestFalse(TEXT("Removing execution tags restores ordinary validation and clears invulnerable target"), Player->TriggerTestValidateCurrentLockedTarget());
+						TestNull(TEXT("Cleared target remains null after tags removed"), Player->GetLockedTarget());
+
+						BottomAsc->RemoveLooseGameplayTag(InvulnerableTag);
+					}
 				}
 			}
 
@@ -372,6 +419,26 @@ bool FPlayerLockOnAutomationTest::RunTest(const FString&)
 			TestNull(TEXT("Target beyond retention limit does not auto-retarget"), Player->GetLockedTarget());
 			TestEqual(TEXT("Target highlight is collapsed when lock is cleared"), RightHighlight->GetVisibility(), ESlateVisibility::Collapsed);
 
+			// 4.1 Even with paired execution lock, moving beyond 15% retention limit still clears
+			if (UAbilitySystemComponent* RightAsc = EnemyRight->GetAbilitySystemComponent())
+			{
+				UAbilitySystemComponent* PlayerAsc = Player->GetAbilitySystemComponent();
+				if (PlayerAsc)
+				{
+					Player->SetTestLockedTarget(EnemyRight);
+					PlayerAsc->AddLooseGameplayTag(PlayerLockedTag);
+					RightAsc->AddLooseGameplayTag(VictimLockedTag);
+					RightAsc->AddLooseGameplayTag(InvulnerableTag);
+
+					TestFalse(TEXT("Execution target beyond 15% retention limit still clears the lock"), Player->TriggerTestValidateCurrentLockedTarget());
+					TestNull(TEXT("Execution target beyond retention limit is cleared"), Player->GetLockedTarget());
+
+					PlayerAsc->RemoveLooseGameplayTag(PlayerLockedTag);
+					RightAsc->RemoveLooseGameplayTag(VictimLockedTag);
+					RightAsc->RemoveLooseGameplayTag(InvulnerableTag);
+				}
+			}
+
 			// 5. Target returning to strict viewport restores normal Cycle behavior
 			SetProjectionForEnemyRightX(1100.0f);
 			Player->SetTestLockedTarget(EnemyRight);
@@ -385,6 +452,16 @@ bool FPlayerLockOnAutomationTest::RunTest(const FString&)
 			TestEqual(TEXT("Second cycle advances to EnemyBottom"), Player->GetLockedTarget(), EnemyBottom);
 			TestEqual(TEXT("EnemyBottom highlight is updated"), BottomHighlight->GetVisibility(), ESlateVisibility::HitTestInvisible);
 			TestEqual(TEXT("Tie highlight is cleared after second cycle"), TieHighlight->GetVisibility(), ESlateVisibility::Collapsed);
+
+			// 5.1 Verify Target Cycle rejects Invulnerable candidate
+			if (UAbilitySystemComponent* TieAsc = EnemyTie->GetAbilitySystemComponent())
+			{
+				TieAsc->AddLooseGameplayTag(InvulnerableTag);
+				Player->SetTestLockedTarget(EnemyRight);
+				Player->TriggerTestTargetCycle(1.0f);
+				TestTrue(TEXT("Target cycle skips invulnerable candidate"), Player->GetLockedTarget() != EnemyTie);
+				TieAsc->RemoveLooseGameplayTag(InvulnerableTag);
+			}
 
 			Player->SetTestLockOnProjectionHook([](const FVector&, FVector2D& OutScreenPosition, FVector2D& OutViewportSize)
 			{

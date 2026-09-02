@@ -43,6 +43,7 @@ UEnemyStanceBreakAbility::UEnemyStanceBreakAbility()
 	StanceBreakAbilityTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Reaction.Enemy.StanceBreak")), false);
 	StanceBreakEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Reaction.Enemy.StanceBreak")), false);
 	StunnedStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Status.Stunned")), false);
+	VictimLockedStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Action.Execution.VictimLocked")), false);
 	HitReactingStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Action.HitReacting")), false);
 	EnemyMeleeAbilityTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Attack.Enemy.Melee")), false);
 	EnemyHitReactionAbilityTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Reaction.Enemy.Big")), false);
@@ -61,6 +62,10 @@ UEnemyStanceBreakAbility::UEnemyStanceBreakAbility()
 	ActivationOwnedTags.AddTag(StunnedStateTag);
 	ActivationBlockedTags.AddTag(FGameplayTag::RequestGameplayTag(FName(TEXT("State.Status.Dead")), false));
 	ActivationBlockedTags.AddTag(StunnedStateTag);
+	if (VictimLockedStateTag.IsValid())
+	{
+		ActivationBlockedTags.AddTag(VictimLockedStateTag);
+	}
 
 	FAbilityTriggerData StanceBreakTrigger;
 	StanceBreakTrigger.TriggerTag = StanceBreakEventTag;
@@ -267,11 +272,14 @@ void UEnemyStanceBreakAbility::EndAbility(
 	if (bCanRestoreEnemy)
 	{
 		const UAbilitySystemComponent* CharacterASC = GetAbilitySystemComponentFromActorInfo();
+		const bool bVictimLocked = CharacterASC && VictimLockedStateTag.IsValid()
+			&& CharacterASC->HasMatchingGameplayTag(VictimLockedStateTag);
 		const bool bHitReactionStillOwnsMovement = CharacterASC && HitReactingStateTag.IsValid()
 			&& CharacterASC->HasMatchingGameplayTag(HitReactingStateTag);
 		// A failed stance Montage can leave the existing hit reaction active; let
 		// that Ability recover its own movement lock after Stunned is released.
-		if (bMovementLockedByStanceBreak && !bHitReactionStillOwnsMovement)
+		// If victim lock is active, victim ability takes ownership of the movement lock.
+		if (bMovementLockedByStanceBreak && !bHitReactionStillOwnsMovement && !bVictimLocked)
 		{
 			if (UCharacterMovementComponent* MovementComponent = EnemyCharacter->GetCharacterMovement())
 			{
@@ -281,9 +289,13 @@ void UEnemyStanceBreakAbility::EndAbility(
 
 		// Restore through the authored Instant GE path while the Stunned tag is
 		// still owned; StateTree can resume only after Super removes that tag.
-		if (!EnemyCharacter->RestorePoiseToMax())
+		// If victim lock is active, victim ability takes ownership of restoring Poise on release.
+		if (!bVictimLocked)
 		{
-			UE_LOG(LogPolyQuest, Warning, TEXT("Enemy stance break ended for '%s' but Poise could not be restored; verify the authored recovery GameplayEffect."), *GetNameSafe(EnemyCharacter));
+			if (!EnemyCharacter->RestorePoiseToMax())
+			{
+				UE_LOG(LogPolyQuest, Warning, TEXT("Enemy stance break ended for '%s' but Poise could not be restored; verify the authored recovery GameplayEffect."), *GetNameSafe(EnemyCharacter));
+			}
 		}
 	}
 	bMovementLockedByStanceBreak = false;

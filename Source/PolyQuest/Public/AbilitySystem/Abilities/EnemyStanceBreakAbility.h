@@ -136,6 +136,9 @@ private:
 	FGameplayTag StunnedStateTag;
 
 	UPROPERTY(Transient)
+	FGameplayTag VictimLockedStateTag;
+
+	UPROPERTY(Transient)
 	FGameplayTag HitReactingStateTag;
 
 	UPROPERTY(Transient)

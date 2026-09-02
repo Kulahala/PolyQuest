@@ -338,6 +338,10 @@ public:
 	void SetTestCurrentMoveInput(const FVector2D& InInput) { CurrentMoveInput = InInput; }
 	bool TriggerTestAcquireLockOnTarget() { return TryAcquireLockOnTarget(); }
 	bool TriggerTestValidateCurrentLockedTarget() { return ValidateCurrentLockedTarget() != ELockOnValidationResult::Cleared; }
+	bool TriggerTestCanRetainExecutionLockedTarget(AEnemyCharacter* InTarget)
+	{
+		return CanRetainExecutionLockedTarget(InTarget, GetAbilitySystemComponent());
+	}
 	void TriggerTestTargetCycle(float InAxisValue);
 	void SetTestLockOnProjectionHook(TFunction<bool(const FVector&, FVector2D&, FVector2D&)> InHook) { TestLockOnProjectionHook = MoveTemp(InHook); }
 	void SetTestLockOnCursorPosition(const FVector2D& InPosition) { TestLockOnCursorPosition = InPosition; }
@@ -403,6 +407,7 @@ private:
 	bool BuildLockOnCandidates(TArray<FPlayerLockOnCandidate>& OutCandidates, FVector2D& OutPlayerScreenPosition) const;
 	bool TryProjectLockOnWorldPoint(const APlayerController* PlayerController, const FVector& WorldPoint, FVector2D& OutScreenPosition, FVector2D& OutViewportSize, float MarginRatio = 0.0f) const;
 	ELockOnValidationResult ValidateCurrentLockedTarget();
+	bool CanRetainExecutionLockedTarget(const AEnemyCharacter* CurrentTarget, const UAbilitySystemComponent* SourceASC) const;
 	bool CacheCurrentLockedTargetCandidate();
 	bool TryRetargetAfterLockedTargetDeath(AEnemyCharacter* DeadTarget);
 	bool TryGetLockedTargetDirection(FVector& OutDirection);

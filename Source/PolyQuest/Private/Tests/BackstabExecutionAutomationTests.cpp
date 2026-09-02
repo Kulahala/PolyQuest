@@ -4,6 +4,7 @@
 
 #include "AbilitySystemComponent.h"
 #include "AbilitySystem/Abilities/EnemyStanceBreakAbility.h"
+#include "AbilitySystem/Abilities/EnemyVictimExecutionAbility.h"
 #include "AbilitySystem/Abilities/PlayerBackstabExecutionAbility.h"
 #include "AbilitySystem/Abilities/PlayerFrontExecutionAbility.h"
 #include "AbilitySystem/Abilities/PrimaryAttackAbility.h"
@@ -33,10 +34,10 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 
 namespace
 {
-	struct FTestWorldScope
+	struct FBackstabExecutionTestWorldScope
 	{
 		UWorld* World = nullptr;
-		~FTestWorldScope()
+		~FBackstabExecutionTestWorldScope()
 		{
 			if (World)
 			{
@@ -47,7 +48,7 @@ namespace
 		}
 	};
 
-	void TickWorld(UWorld* World, float DeltaSeconds)
+	void TickBackstabExecutionTestWorld(UWorld* World, float DeltaSeconds)
 	{
 		if (World)
 		{
@@ -84,16 +85,20 @@ bool FBackstabExecutionAutomationTest::RunTest(const FString& Parameters)
 
 	TestTrue(TEXT("Tag Ability.Action.Execution.Backstab is registered"), TagExecutionBackstab.IsValid());
 	TestTrue(TEXT("AbilityTags has Ability.Action.Execution.Backstab"), BackstabCDO->GetTestAbilityTags().HasTagExact(TagExecutionBackstab));
-	TestTrue(TEXT("AbilityTags has CancelableBy.Dodge"), BackstabCDO->GetTestAbilityTags().HasTagExact(TagCancelByDodge));
-	TestTrue(TEXT("AbilityTags has CancelableBy.Defense"), BackstabCDO->GetTestAbilityTags().HasTagExact(TagCancelByDefense));
-	TestTrue(TEXT("AbilityTags has CancelableBy.Reaction"), BackstabCDO->GetTestAbilityTags().HasTagExact(TagCancelByReaction));
+	TestFalse(TEXT("AbilityTags has NO CancelableBy.Dodge"), BackstabCDO->GetTestAbilityTags().HasTagExact(TagCancelByDodge));
+	TestFalse(TEXT("AbilityTags has NO CancelableBy.Defense"), BackstabCDO->GetTestAbilityTags().HasTagExact(TagCancelByDefense));
+	TestFalse(TEXT("AbilityTags has NO CancelableBy.Reaction"), BackstabCDO->GetTestAbilityTags().HasTagExact(TagCancelByReaction));
 	TestTrue(TEXT("AbilityTags has Teardown.OnUnpossess"), BackstabCDO->GetTestAbilityTags().HasTagExact(TagTeardownOnUnpossess));
 
 	const FGameplayTag TagAttacking = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Action.Attacking")), false);
+	const FGameplayTag TagPlayerLocked = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Action.Execution.PlayerLocked")), false);
+	const FGameplayTag TagInvulnerable = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Status.Invulnerable")), false);
 	const FGameplayTag TagBlockMove = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Input.Block.Movement")), false);
 	const FGameplayTag TagBlockJump = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Input.Block.Jump")), false);
 
 	TestTrue(TEXT("ActivationOwnedTags has State.Action.Attacking"), BackstabCDO->GetTestActivationOwnedTags().HasTagExact(TagAttacking));
+	TestTrue(TEXT("ActivationOwnedTags has State.Action.Execution.PlayerLocked"), BackstabCDO->GetTestActivationOwnedTags().HasTagExact(TagPlayerLocked));
+	TestTrue(TEXT("ActivationOwnedTags has State.Status.Invulnerable"), BackstabCDO->GetTestActivationOwnedTags().HasTagExact(TagInvulnerable));
 	TestTrue(TEXT("ActivationOwnedTags has State.Input.Block.Movement"), BackstabCDO->GetTestActivationOwnedTags().HasTagExact(TagBlockMove));
 	TestTrue(TEXT("ActivationOwnedTags has State.Input.Block.Jump"), BackstabCDO->GetTestActivationOwnedTags().HasTagExact(TagBlockJump));
 
@@ -140,7 +145,7 @@ bool FBackstabExecutionAutomationTest::RunTest(const FString& Parameters)
 	FWorldContext& WorldContext = GEngine->CreateNewWorldContext(EWorldType::Game);
 	UWorld* World = UWorld::CreateWorld(EWorldType::Game, false, TEXT("BackstabExecutionTestWorld"));
 	WorldContext.SetCurrentWorld(World);
-	FTestWorldScope ScopeCleanup{ World };
+	FBackstabExecutionTestWorldScope ScopeCleanup{ World };
 
 	if (!TestNotNull(TEXT("Test World created"), World))
 	{
@@ -180,6 +185,9 @@ bool FBackstabExecutionAutomationTest::RunTest(const FString& Parameters)
 	const FGameplayTag TagTeamEnemy = FGameplayTag::RequestGameplayTag(FName(TEXT("Team.Enemy")), false);
 	Player->SetTestCombatTeamTag(TagTeamPlayer);
 	Enemy->SetTestCombatTeamTag(TagTeamEnemy);
+
+	FGameplayAbilitySpec VictimSpec(UEnemyVictimExecutionAbility::StaticClass(), 1, INDEX_NONE, Enemy);
+	EnemyASC->GiveAbility(VictimSpec);
 
 	auto GrantAndConfigureBackstabAbility = [&](APlayerCharacter* InPlayer, UAnimMontage* Montage, TSubclassOf<UGameplayEffect> DamageClass, float MinDist, float MaxDist, float MaxAngle, bool bWarp = false) -> TPair<FGameplayAbilitySpecHandle, UPlayerBackstabExecutionAbility*>
 	{
@@ -340,7 +348,6 @@ bool FBackstabExecutionAutomationTest::RunTest(const FString& Parameters)
 			BackstabAbility->CanActivateAbility(BackstabHandle, &ActorInfo));
 
 		// 5.4 Target is Invulnerable -> Should fail
-		const FGameplayTag TagInvulnerable = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Status.Invulnerable")), false);
 		EnemyASC->AddLooseGameplayTag(TagInvulnerable);
 		TestFalse(TEXT("Fails activation when target is Invulnerable"),
 			BackstabAbility->CanActivateAbility(BackstabHandle, &ActorInfo));
@@ -548,7 +555,7 @@ bool FBackstabExecutionAutomationTest::RunTest(const FString& Parameters)
 		UAnimMontage* SyntheticMontage = NewObject<UAnimMontage>();
 		TSubclassOf<UGameplayEffect> DamageGEClass = UTestProjectileDamageGE::StaticClass();
 
-		// Case 9.1: Target gains Stunned tag during windup -> Ability ends immediately
+		// Case 9.1: Target loses VictimLocked tag during execution -> Ability ends immediately
 		{
 			auto [BackstabHandle, BackstabAbility] = GrantAndConfigureBackstabAbility(Player, SyntheticMontage, DamageGEClass, 50.0f, 250.0f, 60.0f);
 			Player->SetTestLockedTarget(Enemy);
@@ -556,14 +563,13 @@ bool FBackstabExecutionAutomationTest::RunTest(const FString& Parameters)
 
 			TestNotNull(TEXT("Backstab active with reserved target"), BackstabAbility->GetTestReservedTarget());
 
-			// Target gains Stunned tag during windup
-			EnemyASC->AddLooseGameplayTag(TagStunned);
-			TickWorld(World, 0.01f);
+			const FGameplayTag TagVictimLocked = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Action.Execution.VictimLocked")), false);
+			EnemyASC->RemoveLooseGameplayTag(TagVictimLocked);
+			TickBackstabExecutionTestWorld(World, 0.01f);
 
-			TestNull(TEXT("Backstab ended and target reservation cleared when target became Stunned"),
+			TestNull(TEXT("Backstab ended and target reservation cleared when target lost VictimLocked"),
 				BackstabAbility->GetTestReservedTarget());
 
-			EnemyASC->RemoveLooseGameplayTag(TagStunned);
 			PlayerASC->ClearAbility(BackstabHandle);
 		}
 
@@ -702,7 +708,7 @@ bool FBackstabExecutionAutomationTest::RunTest(const FString& Parameters)
 
 			// End input state and clean up
 			Player->TriggerTestHandleCombatInputEnded(PrimaryAttackInputTag);
-			TickWorld(World, 0.01f);
+			TickBackstabExecutionTestWorld(World, 0.01f);
 
 			PlayerASC->ClearAbility(FrontHandle);
 			PlayerASC->ClearAbility(BackstabHandle);
@@ -742,7 +748,7 @@ bool FBackstabExecutionAutomationTest::RunTest(const FString& Parameters)
 
 			// End input state and clean up
 			Player->TriggerTestHandleCombatInputEnded(PrimaryAttackInputTag);
-			TickWorld(World, 0.01f);
+			TickBackstabExecutionTestWorld(World, 0.01f);
 
 			PlayerASC->ClearAbility(FrontHandle);
 			PlayerASC->ClearAbility(BackstabHandle);
@@ -869,6 +875,40 @@ bool FBackstabExecutionAutomationTest::RunTest(const FString& Parameters)
 		}
 
 		PlayerASC->ClearAbility(FailureHandle);
+	}
+
+	// =========================================================================
+	// 13. ReadyForActivation Synchronous Re-entry Fail-Closed & Re-activation Gate
+	// =========================================================================
+	{
+		UAnimMontage* SyntheticMontage = NewObject<UAnimMontage>();
+		TSubclassOf<UGameplayEffect> DamageGEClass = UTestProjectileDamageGE::StaticClass();
+
+		auto [ReentryHandle, ReentryAbility] = GrantAndConfigureBackstabAbility(Player, SyntheticMontage, DamageGEClass, 50.0f, 250.0f, 60.0f);
+
+		Player->SetActorLocation(FVector(0.0f, 0.0f, 0.0f));
+		Enemy->SetActorLocation(FVector(150.0f, 0.0f, 0.0f));
+		Enemy->SetActorRotation(FRotator(0.0f, 0.0f, 0.0f));
+		Player->SetTestLockedTarget(Enemy);
+
+		// Configure simulated synchronous EndAbility during task ReadyForActivation
+		ReentryAbility->SetTestEndAbilityDuringTaskReady(true);
+		Player->TriggerTestRequestAbilityForInputIntent(FGameplayTag::RequestGameplayTag(FName(TEXT("Input.PrimaryAttack")), false));
+
+		// Verify ability ended cleanly without double-EndAbility crash, and tags/context are cleanly reset
+		TestFalse(TEXT("Synchronous EndAbility in ReadyForActivation terminated Backstab cleanly"), ReentryAbility->IsActive());
+		TestNull(TEXT("Target reservation cleared after synchronous end"), ReentryAbility->GetTestReservedTarget());
+		TestFalse(TEXT("PlayerLocked tag not leaked after synchronous end"),
+			PlayerASC->HasMatchingGameplayTag(FGameplayTag::RequestGameplayTag(FName(TEXT("State.Action.Execution.PlayerLocked")), false)));
+
+		// Re-enable normal activation and verify next activation succeeds cleanly
+		ReentryAbility->SetTestEndAbilityDuringTaskReady(false);
+		Player->TriggerTestRequestAbilityForInputIntent(FGameplayTag::RequestGameplayTag(FName(TEXT("Input.PrimaryAttack")), false));
+		TestTrue(TEXT("Subsequent activation after synchronous end succeeds"), ReentryAbility->IsActive());
+		TestNotNull(TEXT("Subsequent activation reserved target"), ReentryAbility->GetTestReservedTarget());
+
+		ReentryAbility->TestEndAbility();
+		PlayerASC->ClearAbility(ReentryHandle);
 	}
 
 	return true;
