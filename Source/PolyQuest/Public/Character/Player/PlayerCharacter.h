@@ -524,6 +524,8 @@ public:
 	bool bTestBypassLockOnValidation = false;
 	void TestClearLockedTarget() { ClearLockedTarget(); }
 	void TriggerTestRequestAbilityForInputIntent(const FGameplayTag& InputIntentTag) { RequestAbilityForInputIntent(InputIntentTag); }
+	void TriggerTestHandleCombatInputStarted(const FGameplayTag& InputIntentTag) { HandleCombatInputStarted(InputIntentTag); }
+	void TriggerTestHandleCombatInputEnded(const FGameplayTag& InputIntentTag, bool bWasCanceled = false) { HandleCombatInputEnded(InputIntentTag, bWasCanceled); }
 	void TestUnPossessed() { UnPossessed(); }
 #endif
 };

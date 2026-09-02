@@ -1001,7 +1001,7 @@ void APlayerCharacter::RequestAbilityForInputIntent(const FGameplayTag& InputInt
 		}
 	}
 
-	// Front execution attempt: only on non-sprint PrimaryAttack with an equipped melee main hand.
+	// Melee special execution attempts: Front execution has precedence over Backstab on non-sprint PrimaryAttack with an equipped melee main hand.
 	if (InputIntentTag == PrimaryAttackInputTag && !ShouldRequestSprintAttack() && WeaponEquipment)
 	{
 		const UMeleeWeaponDefinition* MeleeWeapon = Cast<UMeleeWeaponDefinition>(WeaponEquipment->GetCurrentMainHandWeapon());
@@ -1017,6 +1017,18 @@ void APlayerCharacter::RequestAbilityForInputIntent(const FGameplayTag& InputInt
 					if (CharacterASC->TryActivateAbilitiesByTag(ExecutionTags))
 					{
 						UE_LOG(LogPolyQuest, Verbose, TEXT("CombatInput: owner='%s', intent='%s', ability='%s', activationRequested=true."), *GetNameSafe(this), *InputIntentTag.ToString(), *FrontExecutionTag.ToString());
+						return;
+					}
+				}
+
+				const FGameplayTag BackstabExecutionTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Action.Execution.Backstab")), false);
+				if (BackstabExecutionTag.IsValid())
+				{
+					FGameplayTagContainer ExecutionTags;
+					ExecutionTags.AddTag(BackstabExecutionTag);
+					if (CharacterASC->TryActivateAbilitiesByTag(ExecutionTags))
+					{
+						UE_LOG(LogPolyQuest, Verbose, TEXT("CombatInput: owner='%s', intent='%s', ability='%s', activationRequested=true."), *GetNameSafe(this), *InputIntentTag.ToString(), *BackstabExecutionTag.ToString());
 						return;
 					}
 				}
