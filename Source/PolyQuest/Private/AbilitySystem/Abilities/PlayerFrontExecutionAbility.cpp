@@ -424,7 +424,8 @@ void UPlayerFrontExecutionAbility::ActivateAbility(
 		return;
 	}
 
-	const FGameplayTag HitEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Action.Execution.Front.Hit")), false);
+	const FGameplayTag HitEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Action.Execution.Hit")), false);
+	const FGameplayTag LegacyHitEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Action.Execution.Front.Hit")), false);
 	const FGameplayTag ReleaseRequestTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Action.Execution.Request.Release")), false);
 	const FGameplayTag VictimStartTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Action.Execution.Request.VictimStart")), false);
 	if (!HitEventTag.IsValid() || !ReleaseRequestTag.IsValid() || !VictimStartTag.IsValid() || !ExecutionMontage)
@@ -518,11 +519,15 @@ void UPlayerFrontExecutionAbility::ActivateAbility(
 
 	// 3. Create Montage, Hit Event, Release Request, VictimStart tasks
 	WaitVictimStartEventTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, VictimStartTag, nullptr, false, false);
-	WaitHitEventTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, HitEventTag, nullptr, false, false);
+	WaitHitEventTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, HitEventTag, nullptr, false, true);
+	if (LegacyHitEventTag.IsValid())
+	{
+		WaitLegacyHitEventTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, LegacyHitEventTag, nullptr, false, true);
+	}
 	WaitReleaseRequestEventTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, ReleaseRequestTag, nullptr, false, false);
 	MontageTask = UAbilityTask_PlayMontageAndWait::CreatePlayMontageAndWaitProxy(this, NAME_None, ExecutionMontage, 1.0f);
 
-	if (!WaitVictimStartEventTask || !WaitHitEventTask || !WaitReleaseRequestEventTask || !MontageTask)
+	if (!WaitVictimStartEventTask || !WaitHitEventTask || !WaitReleaseRequestEventTask || !MontageTask || (LegacyHitEventTag.IsValid() && !WaitLegacyHitEventTask))
 	{
 		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
 		return;
@@ -530,13 +535,17 @@ void UPlayerFrontExecutionAbility::ActivateAbility(
 
 	WaitVictimStartEventTask->EventReceived.AddDynamic(ActiveContext.Get(), &UPlayerFrontExecutionContext::OnVictimStartEventReceived);
 	WaitHitEventTask->EventReceived.AddDynamic(ActiveContext.Get(), &UPlayerFrontExecutionContext::OnHitEventReceived);
+	if (WaitLegacyHitEventTask)
+	{
+		WaitLegacyHitEventTask->EventReceived.AddDynamic(ActiveContext.Get(), &UPlayerFrontExecutionContext::OnHitEventReceived);
+	}
 	WaitReleaseRequestEventTask->EventReceived.AddDynamic(ActiveContext.Get(), &UPlayerFrontExecutionContext::OnReleaseRequestEventReceived);
 	MontageTask->OnCompleted.AddDynamic(ActiveContext.Get(), &UPlayerFrontExecutionContext::OnMontageCompleted);
 	MontageTask->OnBlendOut.AddDynamic(ActiveContext.Get(), &UPlayerFrontExecutionContext::OnMontageBlendOut);
 	MontageTask->OnInterrupted.AddDynamic(ActiveContext.Get(), &UPlayerFrontExecutionContext::OnMontageInterrupted);
 	MontageTask->OnCancelled.AddDynamic(ActiveContext.Get(), &UPlayerFrontExecutionContext::OnMontageCancelled);
 
-	// 4. Activate VictimStart, Hit & Release listener tasks first
+	// 4. Activate VictimStart, Hit, Legacy Hit & Release listener tasks first
 	WaitVictimStartEventTask->ReadyForActivation();
 #if WITH_DEV_AUTOMATION_TESTS
 	if (bTestEndAbilityDuringTaskReady && IsActive())
@@ -548,7 +557,11 @@ void UPlayerFrontExecutionAbility::ActivateAbility(
 		WaitVictimStartEventTask = nullptr;
 	}
 #endif
-	if (!IsActive() || !ActiveExecutionContext || !ActiveExecutionContext->IsCurrent(this, ActivationToken) || !WaitVictimStartEventTask || !WaitVictimStartEventTask->IsActive())
+	if (!IsActive())
+	{
+		return;
+	}
+	if (!ActiveExecutionContext || !ActiveExecutionContext->IsCurrent(this, ActivationToken) || !WaitVictimStartEventTask || !WaitVictimStartEventTask->IsActive())
 	{
 		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
 		return;
@@ -565,10 +578,34 @@ void UPlayerFrontExecutionAbility::ActivateAbility(
 		WaitHitEventTask = nullptr;
 	}
 #endif
-	if (!IsActive() || !ActiveExecutionContext || !ActiveExecutionContext->IsCurrent(this, ActivationToken) || !WaitHitEventTask || !WaitHitEventTask->IsActive())
+	if (!IsActive())
+	{
+		return;
+	}
+	if (!ActiveExecutionContext || !ActiveExecutionContext->IsCurrent(this, ActivationToken) || !WaitHitEventTask || !WaitHitEventTask->IsActive())
 	{
 		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
 		return;
+	}
+
+	if (WaitLegacyHitEventTask)
+	{
+		WaitLegacyHitEventTask->ReadyForActivation();
+#if WITH_DEV_AUTOMATION_TESTS
+		if (bTestInvalidateWaitLegacyHitEventTaskAfterReady)
+		{
+			WaitLegacyHitEventTask = nullptr;
+		}
+#endif
+		if (!IsActive())
+		{
+			return;
+		}
+		if (!ActiveExecutionContext || !ActiveExecutionContext->IsCurrent(this, ActivationToken) || !WaitLegacyHitEventTask || !WaitLegacyHitEventTask->IsActive())
+		{
+			EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
+			return;
+		}
 	}
 
 	WaitReleaseRequestEventTask->ReadyForActivation();
@@ -582,7 +619,11 @@ void UPlayerFrontExecutionAbility::ActivateAbility(
 		WaitReleaseRequestEventTask = nullptr;
 	}
 #endif
-	if (!IsActive() || !ActiveExecutionContext || !ActiveExecutionContext->IsCurrent(this, ActivationToken) || !WaitReleaseRequestEventTask || !WaitReleaseRequestEventTask->IsActive())
+	if (!IsActive())
+	{
+		return;
+	}
+	if (!ActiveExecutionContext || !ActiveExecutionContext->IsCurrent(this, ActivationToken) || !WaitReleaseRequestEventTask || !WaitReleaseRequestEventTask->IsActive())
 	{
 		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
 		return;
@@ -668,8 +709,11 @@ void UPlayerFrontExecutionAbility::HandleHitEventReceived(FGameplayEventData Pay
 		return;
 	}
 
-	const FGameplayTag HitEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Action.Execution.Front.Hit")), false);
-	if (Payload.EventTag != HitEventTag)
+	const FGameplayTag CanonicalHitTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Action.Execution.Hit")), false);
+	const FGameplayTag LegacyHitTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Action.Execution.Front.Hit")), false);
+	const bool bIsCanonicalHit = CanonicalHitTag.IsValid() && Payload.EventTag.MatchesTagExact(CanonicalHitTag);
+	const bool bIsLegacyHit = LegacyHitTag.IsValid() && Payload.EventTag.MatchesTagExact(LegacyHitTag);
+	if (!bIsCanonicalHit && !bIsLegacyHit)
 	{
 		return;
 	}
@@ -902,7 +946,6 @@ bool UPlayerFrontExecutionAbility::SendFormalReleaseToVictim(bool bWasCancelled,
 		{
 			const FGameplayTag VictimLockedTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Action.Execution.VictimLocked")), false);
 			const FGameplayTag InvulnerableTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Status.Invulnerable")), false);
-			const FGameplayTag StunnedTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Status.Stunned")), false);
 			if (VictimLockedTag.IsValid() && TargetASC->HasMatchingGameplayTag(VictimLockedTag))
 			{
 				TargetASC->RemoveLooseGameplayTag(VictimLockedTag);
@@ -910,10 +953,6 @@ bool UPlayerFrontExecutionAbility::SendFormalReleaseToVictim(bool bWasCancelled,
 			if (InvulnerableTag.IsValid() && TargetASC->HasMatchingGameplayTag(InvulnerableTag))
 			{
 				TargetASC->RemoveLooseGameplayTag(InvulnerableTag);
-			}
-			if (StunnedTag.IsValid() && TargetASC->HasMatchingGameplayTag(StunnedTag))
-			{
-				TargetASC->RemoveLooseGameplayTag(StunnedTag);
 			}
 		}
 	};
@@ -1031,7 +1070,7 @@ void UPlayerFrontExecutionAbility::EndAbility(
 	bool bReplicateEndAbility,
 	bool bWasCancelled)
 {
-	if (bEndAbilityInProgress)
+	if (!IsActive() || bEndAbilityInProgress)
 	{
 		return;
 	}
@@ -1076,6 +1115,12 @@ void UPlayerFrontExecutionAbility::EndAbility(
 	{
 		WaitHitEventTask->EndTask();
 		WaitHitEventTask = nullptr;
+	}
+
+	if (WaitLegacyHitEventTask)
+	{
+		WaitLegacyHitEventTask->EndTask();
+		WaitLegacyHitEventTask = nullptr;
 	}
 
 	if (WaitReleaseRequestEventTask)
