@@ -96,6 +96,14 @@ void UPlayerBackstabExecutionContext::OnReleaseRequestEventReceived(FGameplayEve
 	}
 }
 
+void UPlayerBackstabExecutionContext::OnVictimStartEventReceived(FGameplayEventData Payload)
+{
+	if (UPlayerBackstabExecutionAbility* Ability = OwningAbility.Get())
+	{
+		Ability->HandleVictimStartEventReceived(Payload, Token);
+	}
+}
+
 void UPlayerBackstabExecutionContext::OnTargetDestroyed(AActor* DestroyedActor)
 {
 	if (UPlayerBackstabExecutionAbility* Ability = OwningAbility.Get())
@@ -421,7 +429,8 @@ void UPlayerBackstabExecutionAbility::ActivateAbility(
 
 	const FGameplayTag HitEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Action.Execution.Backstab.Hit")), false);
 	const FGameplayTag ReleaseRequestTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Action.Execution.Request.Release")), false);
-	if (!HitEventTag.IsValid() || !ReleaseRequestTag.IsValid() || !ExecutionMontage)
+	const FGameplayTag VictimStartTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Action.Execution.Request.VictimStart")), false);
+	if (!HitEventTag.IsValid() || !ReleaseRequestTag.IsValid() || !VictimStartTag.IsValid() || !ExecutionMontage)
 	{
 		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
 		return;
@@ -459,6 +468,7 @@ void UPlayerBackstabExecutionAbility::ActivateAbility(
 	ReservedTarget = TargetActor;
 	bReleaseRequestLatched = false;
 	bVictimReleaseExpected = false;
+	bVictimStartForwarded = false;
 
 	// Setup Motion Warping or fallback horizontal Yaw facing
 	FMeleeMotionWarpConfig WarpConfig;
@@ -509,17 +519,19 @@ void UPlayerBackstabExecutionAbility::ActivateAbility(
 
 	BindTargetDelegates(TargetActor, ActivationToken);
 
-	// 3. Create Montage, Hit Event, Release Request tasks
+	// 3. Create Montage, Hit Event, Release Request, VictimStart tasks
+	WaitVictimStartEventTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, VictimStartTag, nullptr, false, false);
 	WaitHitEventTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, HitEventTag, nullptr, false, false);
 	WaitReleaseRequestEventTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, ReleaseRequestTag, nullptr, false, false);
 	MontageTask = UAbilityTask_PlayMontageAndWait::CreatePlayMontageAndWaitProxy(this, NAME_None, ExecutionMontage, 1.0f);
 
-	if (!WaitHitEventTask || !WaitReleaseRequestEventTask || !MontageTask)
+	if (!WaitVictimStartEventTask || !WaitHitEventTask || !WaitReleaseRequestEventTask || !MontageTask)
 	{
 		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
 		return;
 	}
 
+	WaitVictimStartEventTask->EventReceived.AddDynamic(ActiveContext.Get(), &UPlayerBackstabExecutionContext::OnVictimStartEventReceived);
 	WaitHitEventTask->EventReceived.AddDynamic(ActiveContext.Get(), &UPlayerBackstabExecutionContext::OnHitEventReceived);
 	WaitReleaseRequestEventTask->EventReceived.AddDynamic(ActiveContext.Get(), &UPlayerBackstabExecutionContext::OnReleaseRequestEventReceived);
 	MontageTask->OnCompleted.AddDynamic(ActiveContext.Get(), &UPlayerBackstabExecutionContext::OnMontageCompleted);
@@ -527,7 +539,24 @@ void UPlayerBackstabExecutionAbility::ActivateAbility(
 	MontageTask->OnInterrupted.AddDynamic(ActiveContext.Get(), &UPlayerBackstabExecutionContext::OnMontageInterrupted);
 	MontageTask->OnCancelled.AddDynamic(ActiveContext.Get(), &UPlayerBackstabExecutionContext::OnMontageCancelled);
 
-	// 4. Activate Hit & Release listener tasks first
+	// 4. Activate VictimStart, Hit & Release listener tasks first
+	WaitVictimStartEventTask->ReadyForActivation();
+#if WITH_DEV_AUTOMATION_TESTS
+	if (bTestEndAbilityDuringTaskReady && IsActive())
+	{
+		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
+	}
+	if (bTestInvalidateWaitVictimStartEventTaskAfterReady)
+	{
+		WaitVictimStartEventTask = nullptr;
+	}
+#endif
+	if (!IsActive() || !ActiveExecutionContext || !ActiveExecutionContext->IsCurrent(this, ActivationToken) || !WaitVictimStartEventTask || !WaitVictimStartEventTask->IsActive())
+	{
+		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
+		return;
+	}
+
 	WaitHitEventTask->ReadyForActivation();
 #if WITH_DEV_AUTOMATION_TESTS
 	if (bTestEndAbilityDuringTaskReady && IsActive())
@@ -562,7 +591,7 @@ void UPlayerBackstabExecutionAbility::ActivateAbility(
 		return;
 	}
 
-	// 4. All listeners active -> activate Montage task
+	// 5. All listeners active -> activate Montage task
 #if WITH_DEV_AUTOMATION_TESTS
 	if (bTestSkipMontageTaskActivation)
 	{
@@ -741,6 +770,58 @@ void UPlayerBackstabExecutionAbility::HandleReleaseRequestEventReceived(FGamepla
 	{
 		bReleaseRequestLatched = true;
 	}
+}
+
+void UPlayerBackstabExecutionAbility::HandleVictimStartEventReceived(FGameplayEventData Payload, uint32 InToken)
+{
+	if (InToken != CurrentActivationToken || !IsActive() || !ActiveExecutionContext || !ActiveExecutionContext->IsCurrent(this, InToken))
+	{
+		return;
+	}
+
+	if (bVictimStartForwarded)
+	{
+		return;
+	}
+
+	const FGameplayTag VictimStartTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Action.Execution.Request.VictimStart")), false);
+	if (!VictimStartTag.IsValid() || Payload.EventTag != VictimStartTag)
+	{
+		return;
+	}
+
+	APlayerCharacter* PlayerCharacter = Cast<APlayerCharacter>(GetAvatarActorFromActorInfo());
+	if (!PlayerCharacter || Payload.Instigator != PlayerCharacter || Payload.Target != PlayerCharacter)
+	{
+		return;
+	}
+
+	if (!IsBackstabExecutionAnimationFromMontage(ExecutionMontage, Payload.OptionalObject.Get()))
+	{
+		return;
+	}
+
+	if (ActiveExecutionContext->IsReleaseSent() || ActiveExecutionContext->IsVictimReleased() || bVictimReleaseExpected)
+	{
+		return;
+	}
+
+	AActor* TargetActor = ReservedTarget.Get() ? ReservedTarget.Get() : ActiveExecutionContext->GetTargetActor();
+	UAbilitySystemComponent* TargetASC = BoundTargetASC.Get() ? BoundTargetASC.Get() : ActiveExecutionContext->GetVictimASC();
+	if (!IsValid(TargetActor) || !TargetASC || TargetActor != ActiveExecutionContext->GetTargetActor() || TargetASC != ActiveExecutionContext->GetVictimASC())
+	{
+		return;
+	}
+
+	bVictimStartForwarded = true;
+
+	FGameplayEventData ForwardPayload;
+	ForwardPayload.EventTag = VictimStartTag;
+	ForwardPayload.Instigator = PlayerCharacter;
+	ForwardPayload.Target = TargetActor;
+	ForwardPayload.OptionalObject = ActiveExecutionContext;
+	ForwardPayload.OptionalObject2 = Payload.OptionalObject;
+	TargetASC->HandleGameplayEvent(VictimStartTag, &ForwardPayload);
 }
 
 void UPlayerBackstabExecutionAbility::HandleTargetDestroyed(AActor* DestroyedActor, uint32 InToken)
@@ -968,6 +1049,12 @@ void UPlayerBackstabExecutionAbility::EndAbility(
 	}
 
 	// 4. End tasks and stop montage
+	if (WaitVictimStartEventTask)
+	{
+		WaitVictimStartEventTask->EndTask();
+		WaitVictimStartEventTask = nullptr;
+	}
+
 	if (WaitHitEventTask)
 	{
 		WaitHitEventTask->EndTask();
@@ -1003,6 +1090,7 @@ void UPlayerBackstabExecutionAbility::EndAbility(
 	bDamageEventConsumed = false;
 	bReleaseRequestLatched = false;
 	bVictimReleaseExpected = false;
+	bVictimStartForwarded = false;
 
 	Super::EndAbility(Handle, ActorInfo, ActivationInfo, bReplicateEndAbility, bWasCancelled);
 	bEndAbilityInProgress = false;
@@ -1012,5 +1100,10 @@ void UPlayerBackstabExecutionAbility::EndAbility(
 void UPlayerBackstabExecutionAbility::TestTriggerReleaseRequestEvent(const FGameplayEventData& Payload)
 {
 	HandleReleaseRequestEventReceived(Payload, CurrentActivationToken);
+}
+
+void UPlayerBackstabExecutionAbility::TestTriggerVictimStartEvent(const FGameplayEventData& Payload)
+{
+	HandleVictimStartEventReceived(Payload, CurrentActivationToken);
 }
 #endif

@@ -230,7 +230,7 @@ bool FExecutionReleaseOutcomesAutomationTest::RunTest(const FString& Parameters)
 	UAnimMontage* PlayerExecutionMontage = NewObject<UAnimMontage>(GetTransientPackage());
 	UAnimMontage* EnemyVictimMontage = NewObject<UAnimMontage>(GetTransientPackage());
 
-	auto GrantAndConfigureVictimAbility = [&](AEnemyCharacter* InEnemy) -> TPair<FGameplayAbilitySpecHandle, UEnemyVictimExecutionAbility*>
+	auto GrantAndConfigureVictimAbility = [&](AEnemyCharacter* InEnemy, bool bConfigureVictimMontage = false) -> TPair<FGameplayAbilitySpecHandle, UEnemyVictimExecutionAbility*>
 	{
 		UAbilitySystemComponent* TargetASC = InEnemy->GetAbilitySystemComponent();
 		FGameplayAbilitySpec VictimSpec(UEnemyVictimExecutionAbility::StaticClass(), 1, INDEX_NONE, InEnemy);
@@ -239,12 +239,19 @@ bool FExecutionReleaseOutcomesAutomationTest::RunTest(const FString& Parameters)
 		UEnemyVictimExecutionAbility* Instance = FoundSpec ? Cast<UEnemyVictimExecutionAbility>(FoundSpec->GetPrimaryInstance()) : nullptr;
 		if (Instance)
 		{
-			Instance->SetTestVictimMontages(EnemyVictimMontage, EnemyVictimMontage);
+			if (bConfigureVictimMontage)
+			{
+				Instance->SetTestVictimMontages(EnemyVictimMontage, EnemyVictimMontage);
+			}
+			else
+			{
+				Instance->SetTestVictimMontages(nullptr, nullptr);
+			}
 		}
 		return { VictimHandle, Instance };
 	};
 
-	auto SetupFrontAndVictimExec = [&](float InEnemyHealth = 100.0f, bool bLaunchOnRelease = true) -> TTuple<FGameplayAbilitySpecHandle, UPlayerFrontExecutionAbility*, FGameplayAbilitySpecHandle, UEnemyVictimExecutionAbility*>
+	auto SetupFrontAndVictimExec = [&](float InEnemyHealth = 100.0f, bool bLaunchOnRelease = true, bool bConfigureVictimMontage = false) -> TTuple<FGameplayAbilitySpecHandle, UPlayerFrontExecutionAbility*, FGameplayAbilitySpecHandle, UEnemyVictimExecutionAbility*>
 	{
 		Player->SetActorLocation(FVector(0.0f, 0.0f, 0.0f));
 		Player->SetActorRotation(FRotator::ZeroRotator);
@@ -267,7 +274,7 @@ bool FExecutionReleaseOutcomesAutomationTest::RunTest(const FString& Parameters)
 		Player->SetTestLockedTarget(Enemy);
 
 		// 1. Grant Victim Ability FIRST
-		auto [VictimHandle, VictimAbility] = GrantAndConfigureVictimAbility(Enemy);
+		auto [VictimHandle, VictimAbility] = GrantAndConfigureVictimAbility(Enemy, bConfigureVictimMontage);
 		if (VictimAbility)
 		{
 			VictimAbility->SetTestLaunchNonLethalOnRelease(bLaunchOnRelease);
@@ -766,13 +773,22 @@ bool FExecutionReleaseOutcomesAutomationTest::RunTest(const FString& Parameters)
 		Enemy->RestorePoiseToMax();
 		Enemy->GetCharacterMovement()->SetMovementMode(MOVE_Walking);
 
-		auto [FrontHandle, FrontAbility, VictimHandle, VictimAbility] = SetupFrontAndVictimExec(100.0f, true);
+		auto [FrontHandle, FrontAbility, VictimHandle, VictimAbility] = SetupFrontAndVictimExec(100.0f, true, true);
 		if (!TestNotNull(TEXT("FrontAbility valid"), FrontAbility) ||
 			!TestTrue(TEXT("Front ability active in Section 13"), FrontAbility->IsActive()) ||
 			!TestNotNull(TEXT("VictimAbility valid"), VictimAbility))
 		{
 			return false;
 		}
+
+		// Trigger VictimStart to initiate presentation montage
+		const FGameplayTag VictimStartTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Action.Execution.Request.VictimStart")), false);
+		FGameplayEventData VictimStartPayload;
+		VictimStartPayload.EventTag = VictimStartTag;
+		VictimStartPayload.Instigator = Player;
+		VictimStartPayload.Target = Player;
+		VictimStartPayload.OptionalObject = PlayerExecutionMontage;
+		FrontAbility->TestTriggerVictimStartEvent(VictimStartPayload);
 
 		// Trigger early victim montage completion
 		VictimAbility->TestTriggerVictimMontageCompleted();

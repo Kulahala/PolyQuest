@@ -51,6 +51,7 @@ public:
 	const FGameplayTagContainer& GetTestActivationBlockedTags() const { return ActivationBlockedTags; }
 	const FGameplayTagContainer& GetTestAbilityTags() const { return AbilityTags; }
 	const FGameplayTagContainer& GetTestAbilitiesToCancel() const { return AbilitiesToCancel; }
+	const TArray<FAbilityTriggerData>& GetTestAbilityTriggers() const { return AbilityTriggers; }
 	UExecutionLockContext* GetTestExecutionContext() const { return ActiveExecutionContext.Get(); }
 	bool IsTestAIExecutionLocked() const { return bLockedAI; }
 	bool HasTestHandoffFromStanceBreak() const { return bHandoffFromStanceBreak; }
@@ -68,11 +69,16 @@ public:
 	void SetTestLaunchNonLethalOnRelease(bool bLaunch) { bLaunchNonLethalOnRelease = bLaunch; }
 	bool GetTestLaunchNonLethalOnRelease() const { return bLaunchNonLethalOnRelease; }
 	UAnimMontage* GetTestActiveVictimMontage() const { return ActiveVictimMontage.Get(); }
+	UAnimMontage* GetTestPendingVictimMontage() const { return PendingVictimMontage.Get(); }
 	UAbilityTask_PlayMontageAndWait* GetTestVictimMontageTask() const { return VictimMontageTask.Get(); }
+	bool IsTestVictimPresentationStarted() const { return bVictimPresentationStarted; }
+	void TestTriggerVictimStartEvent(const FGameplayEventData& Payload) { OnVictimStartReceived(Payload); }
+	void SetTestInvalidateWaitVictimStartTaskAfterReady(bool bInvalidate) { bTestInvalidateWaitVictimStartTaskAfterReady = bInvalidate; }
 	void TestTriggerVictimMontageCompleted() { OnVictimMontageCompleted(); }
 	void TestTriggerVictimMontageBlendOut() { OnVictimMontageBlendOut(); }
 private:
 	bool bTestInvalidateWaitReleaseTaskAfterReady = false;
+	bool bTestInvalidateWaitVictimStartTaskAfterReady = false;
 public:
 #endif
 
@@ -104,6 +110,9 @@ private:
 	void OnReleaseReceived(FGameplayEventData Payload);
 
 	UFUNCTION()
+	void OnVictimStartReceived(FGameplayEventData Payload);
+
+	UFUNCTION()
 	void OnVictimMontageCompleted();
 
 	UFUNCTION()
@@ -115,7 +124,7 @@ private:
 	UFUNCTION()
 	void OnVictimMontageCancelled();
 
-	void StopVictimMontagePresentation();
+	void StopVictimMontagePresentation(bool bIsNaturalCompletion);
 
 	bool ValidateExecutionRequest(const FGameplayEventData* TriggerEventData, AEnemyCharacter* EnemyCharacter) const;
 
@@ -126,7 +135,13 @@ private:
 	TObjectPtr<UAbilityTask_WaitGameplayEvent> WaitReleaseTask;
 
 	UPROPERTY(Transient)
+	TObjectPtr<UAbilityTask_WaitGameplayEvent> WaitVictimStartTask;
+
+	UPROPERTY(Transient)
 	TObjectPtr<UAbilityTask_PlayMontageAndWait> VictimMontageTask;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UAnimMontage> PendingVictimMontage;
 
 	UPROPERTY(Transient)
 	TObjectPtr<UAnimMontage> ActiveVictimMontage;
@@ -135,6 +150,7 @@ private:
 	FGameplayTag FrontRequestEventTag;
 	FGameplayTag BackstabRequestEventTag;
 	FGameplayTag ReleaseEventTag;
+	FGameplayTag VictimStartEventTag;
 	FGameplayTag VictimLockedStateTag;
 	FGameplayTag DeadStateTag;
 	FGameplayTag StanceBreakAbilityTag;
@@ -154,4 +170,5 @@ private:
 	bool bDeathPending = false;
 	bool bAddedDeathPendingTag = false;
 	bool bEndAbilityInProgress = false;
+	bool bVictimPresentationStarted = false;
 };

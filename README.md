@@ -128,6 +128,8 @@ PolyQuest 是一个以 UE 5.8、C++ 与 GAS 为核心的单机低多边形动作
 
 `TODO-05A1-C` 已完成释放结果与双人表现收口：Player 的 `UAnimNotify_PlayerExecutionRelease` 只发出 Release Request，Hit/Release 按独立状态轴完成一次认证释放；Victim 可选播放 Front/Backstab 配合 Montage，致死路径延续 `DeathPending` 后的既有死亡链，非致死路径在解除锁定后复用既有 Enemy Launch Reaction，条件不满足时降级为存活站立。用户已确认阶段 PIE 与 Automation，第二轮修复后的 `PolyQuest.Combat.ExecutionReleaseOutcomes` 为 15/15 `Success`；作者化 Montage/Notify 配置仍属于本地 `Content/**` WIP。
 
+`TODO-05A1-D1` 已完成受害者表现时序收口：握手阶段只建立锁定，主角 Montage 的 `UAnimNotify_PlayerExecutionVictimStart` 经当前 Player Ability 与执行会话校验后同步转发，受害者 Montage 延迟到 `VictimStart` 才开播；`VictimStart -> Hit -> Release` 三个语义点不改变唯一伤害、致死恢复和非致死 Launch/站立降级所有权，缺失或失败表现安全降级。用户已确认 Scene01 PIE 与专项/回归 Automation；编译与 Editor readback 以执行报告记录，作者化 Montage/Notify 仍是本地 `Content/**` WIP。
+
 `TODO-07B2` 已完成由精确 Trace Window 生命周期驱动的 Player/Enemy Niagara 近战武器拖尾，既有 Sweep/Resolver 伤害路径不变。用户已确认聚焦 `Scene01` PIE 视觉验收，以及包含 `PolyQuest.Melee.WeaponTrail` 的十三套 Unreal Editor Automation 全部通过；Niagara 资产和 Blueprint 绑定仍是本地 `Content/**` WIP，不作为干净检出的复现证据。
 
 `TODO-07B4` 已实现玩家攻击者命中镜头冲击反馈：Enemy 的权威 Health/Team 边界把 `Data.Reaction.Small/Big/Launch` 单次转发到 Player；Player 以独立的 attacker 字段解析三档 Shake，允许复用同一组 Camera Shake 资产但禁止字段回退，且与受击路径共用单一 CameraManager/清理生命周期。用户已确认 focused Automation 与 Scene01 PIE；本次收口没有独立手动编译日志或六字段 Editor 读回，因此作者化字段基线仍是本地 WIP。

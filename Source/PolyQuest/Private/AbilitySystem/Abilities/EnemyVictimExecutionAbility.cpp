@@ -25,6 +25,7 @@ UEnemyVictimExecutionAbility::UEnemyVictimExecutionAbility()
 	FrontRequestEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Action.Execution.Request.Front")), false);
 	BackstabRequestEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Action.Execution.Request.Backstab")), false);
 	ReleaseEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Action.Execution.Release")), false);
+	VictimStartEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Action.Execution.Request.VictimStart")), false);
 	VictimLockedStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Action.Execution.VictimLocked")), false);
 	InvulnerableStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Status.Invulnerable")), false);
 	StunnedStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Status.Stunned")), false);
@@ -327,26 +328,40 @@ void UEnemyVictimExecutionAbility::ActivateAbility(
 		return;
 	}
 
-	// 6. Try start optional Victim Montage for presentation
-	UAnimMontage* MontageToPlay = bHandoffFromStanceBreak ? FrontExecutionVictimMontage : BackstabExecutionVictimMontage;
-	if (MontageToPlay && EnemyCharacter && !EnemyCharacter->IsActorBeingDestroyed())
+	// 6. Cache pending victim montage and listen for VictimStart event to drive presentation
+	PendingVictimMontage = bHandoffFromStanceBreak ? FrontExecutionVictimMontage : BackstabExecutionVictimMontage;
+	bVictimPresentationStarted = false;
+
+	const FGameplayTag VictimStartTag = VictimStartEventTag.IsValid()
+		? VictimStartEventTag
+		: FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Action.Execution.Request.VictimStart")), false);
+	if (!VictimStartTag.IsValid())
 	{
-		if (USkeletalMeshComponent* Mesh = EnemyCharacter->GetMesh())
-		{
-			if (UAnimInstance* AnimInstance = Mesh->GetAnimInstance())
-			{
-				ActiveVictimMontage = MontageToPlay;
-				VictimMontageTask = UAbilityTask_PlayMontageAndWait::CreatePlayMontageAndWaitProxy(this, NAME_None, MontageToPlay, 1.0f);
-				if (VictimMontageTask)
-				{
-					VictimMontageTask->OnCompleted.AddDynamic(this, &UEnemyVictimExecutionAbility::OnVictimMontageCompleted);
-					VictimMontageTask->OnBlendOut.AddDynamic(this, &UEnemyVictimExecutionAbility::OnVictimMontageBlendOut);
-					VictimMontageTask->OnInterrupted.AddDynamic(this, &UEnemyVictimExecutionAbility::OnVictimMontageInterrupted);
-					VictimMontageTask->OnCancelled.AddDynamic(this, &UEnemyVictimExecutionAbility::OnVictimMontageCancelled);
-					VictimMontageTask->ReadyForActivation();
-				}
-			}
-		}
+		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
+		return;
+	}
+
+	WaitVictimStartTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, VictimStartTag, nullptr, false, false);
+	if (!WaitVictimStartTask)
+	{
+		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
+		return;
+	}
+
+	WaitVictimStartTask->EventReceived.AddDynamic(this, &UEnemyVictimExecutionAbility::OnVictimStartReceived);
+	WaitVictimStartTask->ReadyForActivation();
+
+#if WITH_DEV_AUTOMATION_TESTS
+	if (bTestInvalidateWaitVictimStartTaskAfterReady)
+	{
+		WaitVictimStartTask = nullptr;
+	}
+#endif
+
+	if (!IsActive() || !ActiveExecutionContext || !WaitVictimStartTask || !WaitVictimStartTask->IsActive())
+	{
+		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
+		return;
 	}
 }
 
@@ -383,27 +398,120 @@ void UEnemyVictimExecutionAbility::NotifyLethalDamageReceived()
 	}
 }
 
+void UEnemyVictimExecutionAbility::OnVictimStartReceived(FGameplayEventData Payload)
+{
+	if (!IsActive() || bEndAbilityInProgress)
+	{
+		return;
+	}
+
+	if (bVictimPresentationStarted)
+	{
+		return;
+	}
+
+	const FGameplayTag ExpectedVictimStartTag = VictimStartEventTag.IsValid()
+		? VictimStartEventTag
+		: FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Action.Execution.Request.VictimStart")), false);
+	if (!ExpectedVictimStartTag.IsValid() || Payload.EventTag != ExpectedVictimStartTag)
+	{
+		return;
+	}
+
+	UExecutionLockContext* Context = ActiveExecutionContext.Get();
+	if (!Context || !Context->IsActive())
+	{
+		return;
+	}
+
+	if (Payload.OptionalObject.Get() != Context)
+	{
+		return;
+	}
+
+	if (Context->IsReleaseSent() || Context->IsVictimReleased())
+	{
+		return;
+	}
+
+	AActor* AvatarActor = GetAvatarActorFromActorInfo();
+	AActor* ContextSourceActor = Context->GetSourceActor();
+	AActor* PayloadInstigator = const_cast<AActor*>(Payload.Instigator.Get());
+	AActor* PayloadTarget = const_cast<AActor*>(Payload.Target.Get());
+
+	if (!IsValid(AvatarActor) || !IsValid(ContextSourceActor) || !IsValid(PayloadInstigator) || !IsValid(PayloadTarget))
+	{
+		return;
+	}
+
+	if (Context->GetTargetActor() != AvatarActor || Context->GetVictimAbility() != this)
+	{
+		return;
+	}
+
+	if (PayloadInstigator != ContextSourceActor || PayloadTarget != AvatarActor)
+	{
+		return;
+	}
+
+	const UObject* AnimObj = Payload.OptionalObject2.Get();
+	if (!AnimObj || (!AnimObj->IsA<UAnimMontage>() && !AnimObj->IsA<UAnimSequenceBase>()))
+	{
+		return;
+	}
+
+	bVictimPresentationStarted = true;
+
+	UAnimMontage* MontageToPlay = PendingVictimMontage.Get();
+	AEnemyCharacter* EnemyCharacter = Cast<AEnemyCharacter>(AvatarActor);
+	if (MontageToPlay && EnemyCharacter && !EnemyCharacter->IsActorBeingDestroyed())
+	{
+		if (USkeletalMeshComponent* Mesh = EnemyCharacter->GetMesh())
+		{
+			if (UAnimInstance* AnimInstance = Mesh->GetAnimInstance())
+			{
+				ActiveVictimMontage = MontageToPlay;
+				VictimMontageTask = UAbilityTask_PlayMontageAndWait::CreatePlayMontageAndWaitProxy(
+					this,
+					NAME_None,
+					MontageToPlay,
+					1.0f,
+					NAME_None,
+					false /* bStopWhenAbilityEnds = false */);
+				if (VictimMontageTask)
+				{
+					VictimMontageTask->OnCompleted.AddDynamic(this, &UEnemyVictimExecutionAbility::OnVictimMontageCompleted);
+					VictimMontageTask->OnBlendOut.AddDynamic(this, &UEnemyVictimExecutionAbility::OnVictimMontageBlendOut);
+					VictimMontageTask->OnInterrupted.AddDynamic(this, &UEnemyVictimExecutionAbility::OnVictimMontageInterrupted);
+					VictimMontageTask->OnCancelled.AddDynamic(this, &UEnemyVictimExecutionAbility::OnVictimMontageCancelled);
+					VictimMontageTask->ReadyForActivation();
+				}
+			}
+		}
+	}
+}
+
 void UEnemyVictimExecutionAbility::OnVictimMontageCompleted()
 {
-	StopVictimMontagePresentation();
+	StopVictimMontagePresentation(true);
 }
 
 void UEnemyVictimExecutionAbility::OnVictimMontageBlendOut()
 {
-	StopVictimMontagePresentation();
+	StopVictimMontagePresentation(true);
 }
 
 void UEnemyVictimExecutionAbility::OnVictimMontageInterrupted()
 {
-	StopVictimMontagePresentation();
+	StopVictimMontagePresentation(false);
 }
 
 void UEnemyVictimExecutionAbility::OnVictimMontageCancelled()
 {
-	StopVictimMontagePresentation();
+	StopVictimMontagePresentation(false);
 }
 
-void UEnemyVictimExecutionAbility::StopVictimMontagePresentation()
+void UEnemyVictimExecutionAbility::StopVictimMontagePresentation(bool bIsNaturalCompletion)
 {
 	if (VictimMontageTask)
 	{
@@ -415,17 +523,20 @@ void UEnemyVictimExecutionAbility::StopVictimMontagePresentation()
 		VictimMontageTask = nullptr;
 	}
 
-	if (AEnemyCharacter* EnemyCharacter = Cast<AEnemyCharacter>(GetAvatarActorFromActorInfo()))
+	if (!bIsNaturalCompletion)
 	{
-		if (!EnemyCharacter->IsActorBeingDestroyed())
+		if (AEnemyCharacter* EnemyCharacter = Cast<AEnemyCharacter>(GetAvatarActorFromActorInfo()))
 		{
-			if (USkeletalMeshComponent* Mesh = EnemyCharacter->GetMesh())
+			if (!EnemyCharacter->IsActorBeingDestroyed())
 			{
-				if (UAnimInstance* AnimInstance = Mesh->GetAnimInstance())
+				if (USkeletalMeshComponent* Mesh = EnemyCharacter->GetMesh())
 				{
-					if (ActiveVictimMontage && AnimInstance->Montage_IsActive(ActiveVictimMontage))
+					if (UAnimInstance* AnimInstance = Mesh->GetAnimInstance())
 					{
-						AnimInstance->Montage_Stop(0.2f, ActiveVictimMontage);
+						if (ActiveVictimMontage && AnimInstance->Montage_IsActive(ActiveVictimMontage) && !AnimInstance->Montage_GetIsStopped(ActiveVictimMontage))
+						{
+							AnimInstance->Montage_Stop(0.2f, ActiveVictimMontage);
+						}
 					}
 				}
 			}
@@ -510,7 +621,7 @@ void UEnemyVictimExecutionAbility::EndAbility(
 	UExecutionLockContext* CachedContext = ActiveExecutionContext.Get();
 	AActor* CachedSourceActor = CachedContext ? CachedContext->GetSourceActor() : nullptr;
 
-	StopVictimMontagePresentation();
+	StopVictimMontagePresentation(false);
 
 	const bool bCommitDeath = bDeathPending || (CachedEnemy && CachedEnemy->IsDeathPending());
 	bool bDeathCommittedSuccessfully = false;
@@ -518,6 +629,17 @@ void UEnemyVictimExecutionAbility::EndAbility(
 	const bool bIsConfirmedNonLethal = !bCommitDeath && !bWasCancelled && CachedContext &&
 		(CachedContext->GetHitState() == EExecutionSessionHitState::NonLethal) &&
 		(CachedContext->IsVictimReleased() || CachedContext->IsReleaseSent());
+
+	const bool bHitResolved = CachedContext && (
+		CachedContext->GetHitState() == EExecutionSessionHitState::NonLethal ||
+		CachedContext->GetHitState() == EExecutionSessionHitState::DeathPending);
+	const bool bConfirmedRelease = !bWasCancelled && CachedContext &&
+		(CachedContext->IsVictimReleased() || CachedContext->IsReleaseSent());
+	if (PendingVictimMontage.Get() != nullptr && bConfirmedRelease && bHitResolved && !bVictimPresentationStarted)
+	{
+		UE_LOG(LogPolyQuest, Warning, TEXT("EnemyVictimExecutionAbility for '%s' configured victim montage '%s' but received no VictimStart event before Release."),
+			*GetNameSafe(CachedEnemy), *GetNameSafe(PendingVictimMontage.Get()));
+	}
 
 	if (bCommitDeath && CachedEnemy && CachedASC)
 	{
@@ -611,6 +733,15 @@ void UEnemyVictimExecutionAbility::EndAbility(
 		WaitReleaseTask->EndTask();
 		WaitReleaseTask = nullptr;
 	}
+
+	if (WaitVictimStartTask)
+	{
+		WaitVictimStartTask->EndTask();
+		WaitVictimStartTask = nullptr;
+	}
+
+	PendingVictimMontage = nullptr;
+	bVictimPresentationStarted = false;
 
 	if (CachedContext && bWasCancelled)
 	{

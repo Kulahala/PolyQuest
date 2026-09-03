@@ -1,181 +1,133 @@
-# TODO-05A1-C：Release Outcomes And Paired Presentation
+# TODO-05A1-D1：Execution Victim Presentation Timing And Launch Fallback v1
 
 ## 阶段状态与基线
 
-- 状态：已实施、用户验证通过、Main Fresh Review 通过；等待明确提交批准。
+- 状态：已实施、用户 PIE/Automation 验证通过、Main Fresh Review 通过；等待明确提交批准；本文件保留当前阶段收口详情。
 - 日期：2026-09-03。
-- 仓库：E:\GameDevelop\PolyQuest。
-- 基线：main @ e97564c435b541aeb9acf3bcc22426ac01509ffc。
-- 前置阶段：TODO-05A1-A 的成对锁定/Lock-On retention 与 TODO-05A1-B 的 DeathPending/延迟死亡已完成；详细收口已在 ROADMAP-archive.md 归档。
-- 路线：TODO-05A1-A -> TODO-05A1-B -> TODO-05A1-C -> TODO-03C。
-- 工作树：包含用户-owned Content/**、资产差异、Config/Automation/Presets/1.json、AGENTS.md 及其他 WIP；这些内容必须保留并排除，不作为本阶段基线或提交内容。
+- 仓库：`E:\GameDevelop\PolyQuest`。
+- 基线：`main @ 5922c1f01844d4f26c56348359dbc41d5cadbe43`。
+- 前置阶段：`TODO-05A1-A/B/C` 已完成成对锁定、授权命中/DeathPending、Release 结果分流；C 的详细收口已在 `ROADMAP-archive.md` 归档。
+- 工作树：存在用户-owned `Content/**`、Config、`AGENTS.md` 及其他 WIP；本阶段只处理下列批准路径，绝不回滚或吞并这些变动。
 
-## 阶段目标
+## 实施收口记录
 
-本阶段只回答一个运行时问题：处决命中后，Player 与 Victim 能否通过明确的 Release Request/Release 握手，在不重复结算伤害的前提下完成双人锁定解除，并根据命中结果选择延迟死亡/Ragdoll 或非致死 Launch/站立恢复。
+- 实际实施严格落在 11 个批准路径：`Config/Tags/PolyQuestGameplayTags.ini`；`AnimNotify_PlayerExecutionVictimStart` 的 Public/Private 文件；Player Front/Backstab Execution Ability 的 Public/Private 文件；`EnemyVictimExecutionAbility` 的 Public/Private 文件；`ExecutionVictimPresentationAutomationTests.cpp`；以及 `ExecutionReleaseOutcomesAutomationTests.cpp` 的兼容性修订。未修改未批准的 `ExecutionLockContext.*`、`EnemyCharacter.*`、`MeleeHitResolver.*`、`PlayerCharacter.*`、Launch Ability、旧 Hit Notify、Build.cs、Blueprint 或二进制资产。
+- D1 已落地 `VictimStart -> Hit -> Release` 三语义点：握手只建立锁定和监听，受害者 Montage 由经过 Player/Context/Token/Actor/ASC/动画身份校验的 `VictimStart` 同步转发后才启动；Hit 仍是唯一伤害点，Release 仍是唯一结果提交点；无表现、缺失通知、播放失败和提前结束均不改变 gameplay 收尾。
+- Gemini 报告：手动 Visual Studio `PolyQuestEditor (Development Editor)` 编译、Rider 静态检查、`git diff --check`、9 场景 `PolyQuest.Combat.ExecutionVictimPresentation` 及既有回归套件均通过，并完成相应 Editor readback。用户在本轮明确确认 PIE 与 Automation 通过；这些证据分别只覆盖其报告或确认的门禁，不互相扩展。
+- Main 已完成一轮独立、diff-first、缺陷优先 `ue-strict-review`：未发现当前批准范围内可证实的 P0/P1/P2 缺陷。`code-review-graph` 索引早于本阶段审查基线，仅作为 stale-coverage 提示；结论以批准 diff、定向源码核对和已有验证证据为准。
+- 作者化 Front/Backstab Montage、Victim Montage、Notify 放置、Launch/AnimBP/Blueprint 关系仍属于用户 `Content/**` WIP，不纳入本阶段提交，也不宣称干净检出即可复现完整 authored fixture。Gemini 报告的编译/readback与用户确认的 PIE/Automation需保持证据来源区分。
+- 阶段候选提交仅包含上述批准实现路径及 Main 收口文档 `plan.md`、`ROADMAP.md`、`ROADMAP-archive.md`、`ARCHITECTURE.md`、`README.md`；不包含 `AGENTS.md`、全部 `Content/**`、其他 Config WIP 或生成目录。必须在文档检查后另行取得用户明确提交批准。
 
-核心链路固定为：
+## 阶段目标与成功标准
 
-~~~text
-Hit -> Release Request -> Authenticated Release -> Victim Outcome -> Finalize
-~~~
+本阶段只解决一个运行时问题：受害者配合 Montage 必须由主角 Montage 的明确接触通知启动，而不是在握手瞬间提前播放；缺少表现或表现失败时，既有 Hit/Release/Launch/Death 结果仍须安全收尾。
 
-- Hit 是唯一伤害结算点。
-- Release 只负责解除锁定和提交结果，不产生第二次伤害。
-- Player Montage 是唯一 gameplay 时钟；Victim Montage 只负责表现，不参与时长同步或完成屏障。
-- 正常致死处决在 Player 尾段结束前保持 DeathPending，随后沿用现有 CommitExecutionDeath() 死亡链。
-- 正常非致死处决在释放后恢复敌人并派发既有 Launch Reaction；无法激活 Launch 时安全降级为存活站立。
+稳定不变量：
+
+- Player Montage 是唯一 gameplay 时钟。
+- `VictimStart` 只启动受害者表现；`Hit` 是唯一伤害结算点；`Release` 是唯一解除锁定和提交结果点。
+- Victim Montage 完成、BlendOut、播放失败或缺失通知都不能结束执行会话、改变伤害或提前 Release。
+- 保留 `bLaunchNonLethalOnRelease` 作为唯一特殊物理结果开关；Small/Big/倒地等差异由 Victim Montage 作者化，不增加结果枚举。
+- 正常非致死 Release 仍先恢复受害者控制状态，再按既有 Launch 或站立降级路径收尾。
 
 ## 工具路线与责任
 
-- Outer：ue-stage-workflow。
-- Primary：ue5-cpp-gameplay。
+- Outer：`ue-stage-workflow`。
+- Primary：`ue5-cpp-gameplay`。
 - Support：none。
-- Route reason：这是现有 GAS 成对执行会话的 Release/结果垂直切片，不引入新的动画同步框架或第二条伤害路径。
-- Execution route：manual/out-of-band Gemini。
+- Route reason：这是既有 GAS 成对执行会话的窄表现时序切片，不引入新的动画同步框架、伤害路径或通用 Ability。
+- Execution route：`manual/out-of-band Gemini`。
 - Contract owner：Main/Codex。
-- Implementation writer：Gemini，仅能写下列批准路径中的冻结实现。
-- Main 负责架构、计划、范围、验证解释、ue-strict-review、文档、暂存和提交；用户负责 Visual Studio 编译、Editor readback、Automation、PIE/视觉验证和最终提交批准。
-- Gemini 不得修改 plan.md、ROADMAP.md、ROADMAP-archive.md、ARCHITECTURE.md 或 README.md，不得暂存或提交。
+- Implementation writer：Gemini，仅能修改批准路径中的冻结实现。
+- Main 负责架构、范围、验证解释、`ue-strict-review`、文档、暂存和提交；用户负责 Visual Studio 编译、Editor readback、Automation、PIE/视觉验证和最终提交批准。
+- Gemini 不得修改 `plan.md`、`ROADMAP.md`、`ROADMAP-archive.md`、`ARCHITECTURE.md` 或 `README.md`，不得暂存或提交。
 
 ## 批准变更路径
 
-1. Config/Tags/PolyQuestGameplayTags.ini
-2. Source/PolyQuest/Public/Animation/Combat/AnimNotify_PlayerExecutionRelease.h
-3. Source/PolyQuest/Private/Animation/Combat/AnimNotify_PlayerExecutionRelease.cpp
-4. Source/PolyQuest/Public/Combat/Execution/ExecutionLockContext.h
-5. Source/PolyQuest/Private/Combat/Execution/ExecutionLockContext.cpp
-6. Source/PolyQuest/Public/AbilitySystem/Abilities/PlayerFrontExecutionAbility.h
-7. Source/PolyQuest/Private/AbilitySystem/Abilities/PlayerFrontExecutionAbility.cpp
-8. Source/PolyQuest/Public/AbilitySystem/Abilities/PlayerBackstabExecutionAbility.h
-9. Source/PolyQuest/Private/AbilitySystem/Abilities/PlayerBackstabExecutionAbility.cpp
-10. Source/PolyQuest/Public/AbilitySystem/Abilities/EnemyVictimExecutionAbility.h
-11. Source/PolyQuest/Private/AbilitySystem/Abilities/EnemyVictimExecutionAbility.cpp
-12. Source/PolyQuest/Private/Tests/ExecutionReleaseOutcomesAutomationTests.cpp
+1. `Config/Tags/PolyQuestGameplayTags.ini`
+2. `Source/PolyQuest/Public/Animation/Combat/AnimNotify_PlayerExecutionVictimStart.h`
+3. `Source/PolyQuest/Private/Animation/Combat/AnimNotify_PlayerExecutionVictimStart.cpp`
+4. `Source/PolyQuest/Public/AbilitySystem/Abilities/PlayerFrontExecutionAbility.h`
+5. `Source/PolyQuest/Private/AbilitySystem/Abilities/PlayerFrontExecutionAbility.cpp`
+6. `Source/PolyQuest/Public/AbilitySystem/Abilities/PlayerBackstabExecutionAbility.h`
+7. `Source/PolyQuest/Private/AbilitySystem/Abilities/PlayerBackstabExecutionAbility.cpp`
+8. `Source/PolyQuest/Public/AbilitySystem/Abilities/EnemyVictimExecutionAbility.h`
+9. `Source/PolyQuest/Private/AbilitySystem/Abilities/EnemyVictimExecutionAbility.cpp`
+10. `Source/PolyQuest/Private/Tests/ExecutionVictimPresentationAutomationTests.cpp`
+11. `Source/PolyQuest/Private/Tests/ExecutionReleaseOutcomesAutomationTests.cpp`（仅测试夹具兼容性修订）
 
-需要未列出的路径、Tag、Input、Config、资产或公开接口时，Gemini 必须停止并把证据交回 Main 做范围决定。
+`ExecutionReleaseOutcomesAutomationTests.cpp` 的允许修订仅用于：结果测试默认不配置 Victim Montage，或在专门的表现用例中显式发送 VictimStart，避免新契约产生无意义 Warning；不得改变 C 阶段的结果断言。
 
-停止条件：发现需要修改批准路径之外的文件、普通 Melee/Projectile 死亡语义、AttributeSet、Projectile Targeting、Blueprint/资产、Build.cs 或新的 Tag/Input；无法证明同步 Release、AbilityTask 重入、Context 失效或死亡提交的安全顺序；或测试夹具只能绕过而不能驱动真实 GAS 路径时，立即停止，不得自行扩展范围或用测试旁路掩盖契约缺口。
+未批准路径：`ExecutionLockContext.*`、`EnemyCharacter.*`、`MeleeHitResolver.*`、`PlayerCharacter.*`、`EnemyLaunchReactionAbility.*`、旧 Front/Backstab Hit Notify、Build.cs、Blueprint、地图和所有 `.uasset/.umap`。如确实需要其中任一路径，Gemini 必须停止并返回证据，由 Main 重新定范围。
 
-### 实施期编译修复例外
+## 冻结事件与 Payload 契约
 
-- 允许仅修改 Source/PolyQuest/Private/AbilitySystem/Abilities/EnemyLaunchReactionAbility.cpp：将匿名命名空间中的 AirborneTransitionGraceSeconds 重命名为 EnemyAirborneTransitionGraceSeconds，并同步修改其唯一使用点，以消除 UE Unity Build 与 PlayerLaunchReactionAbility.cpp 的同名符号冲突。
-- 该例外是语义不变的编译修复，不属于 C 阶段功能；不得修改 PlayerLaunchReactionAbility.cpp，不得借机重构 Launch、Task、Movement 或其他共享代码。
-- 修复完成后必须单独报告该路径和两处名称变更，并重新执行适用的静态检查与 git diff --check；用户仍负责手动编译验证。
+### VictimStart
 
-## 冻结状态与事件契约
+新增唯一 Tag：`Event.Action.Execution.Request.VictimStart`。Notify 与 Player 转发使用同一个 Tag，不增加对称的第二个 Tag。
 
-新增 Event.Action.Execution.Request.Release 和 UAnimNotify_PlayerExecutionRelease：
+`UAnimNotify_PlayerExecutionVictimStart`：
 
-- Notify 只向 Player 自身 ASC 发送 Request。
-- Notify Payload 必须使用 Instigator=Owner、Target=Owner、OptionalObject=Animation。
-- 正式 Event.Action.Execution.Release 只能由 Front/Backstab 的 Player helper 发送。
-- Request 与正式 Release 必须校验当前 Ability、activation token、Source/Target Actor、ASC、Montage/Sequence 身份；错误、重复、迟到和旧 Context 均 fail-closed。
+- 只向 Notify 所属 Player 的 ASC 发送事件。
+- Payload 固定为 `Instigator=Owner`、`Target=Owner`、`OptionalObject=Animation`。
+- 不查找 Victim、不直接激活目标 Ability、不修改 Health/Poise/Movement。
 
-Hit/Release 顺序：
+Player Front/Backstab：
 
-- Hit 先到：只完成命中结算并收敛到 NonLethal 或 DeathPending，不得立即发送正式 Release。
-- Release Request 先到：锁存 Request；在 Hit 尚未完成时仍允许唯一一次合法 Hit。
-- Hit 完成且已有锁存 Request，或已完成 Hit 后收到合法 Request：调用唯一 formal-release helper。
-- 同帧或相邻帧的多个 Request/Hit 只能产生一次正式 Release。
-- Montage 自然结束可生成释放兜底；无命中时只解除锁定，不得触发 Launch。
-- 取消、中断、销毁和 UnPossess 不得触发非致死 Launch；若已确认致死，异常收尾仍必须完成死亡。
+- 各自新增 `VictimStart` WaitGameplayEvent Task、代际回调和一次性消费状态。
+- Task 必须在 Player Montage Task 之前创建并 `ReadyForActivation()`；每次 Ready 后立即检查 Ability、Context、Token、Task UObject 和 `IsActive()`，同步重入时直接统一 `EndAbility()`。
+- Player 端验证当前 Ability、activation token、Context、Player/ReservedTarget/双方 ASC、事件 Actor 以及现有 Front/Backstab Montage/Sequence identity helper。
+- 验证通过后同步向 Victim ASC 转发同一个 Tag：`Instigator=Player`、`Target=Enemy`、`OptionalObject=ActiveExecutionContext`、`OptionalObject2=原始 Animation`。
+- 重复、迟到、旧 Context、错误 Actor/ASC/动画和已 Release 会话全部 fail-closed；每个会话最多成功转发一次。
 
-Context 保留两条正交状态轴：
+Victim Ability：
 
-~~~text
-Hit:     Ready -> Resolving -> NonLethal/DeathPending -> Finalizing -> Finalized
-Release: NotRequested -> Requested -> VictimReleased -> Finalized/Failed
-~~~
+- `AbilityTriggers` 只能保留 Front/Backstab Request；严禁加入 `VictimStart`，避免重新激活 Ability。
+- 握手时只建立锁定、Release 监听和 VictimStart 监听，不立即播放 Front/Backstab Victim Montage。
+- `OptionalObject` 必须是当前活动 Context；Actor、Source/Target 和 ASC 必须匹配当前会话。
+- `OptionalObject2` 只做防御性检查：非空且为 `UAnimMontage` 或 `UAnimSequenceBase`。Victim 不反向比较 Player Montage 资产；Player 负责精确动画归属认证。
+- 有效 VictimStart 每会话只消费一次；无 Victim Montage 是合法无表现降级，不创建播放 Task。
 
-- ReleaseRequested/锁存状态不能阻断后续合法 Hit。
-- 只有正式 Release/VictimReleased 后才拒绝迟到 Hit。
-- Lethal 路径必须在 Hit 状态仍为 DeathPending 时执行 BeginFinalization -> CommitExecutionDeath -> CompleteFinalization；Release 状态不得替代 DeathPending 门禁。
-- 正常 Victim Release 后不立即 InvalidateSession()；Context 保持到 Player Montage 尾段完成。异常清理才提前失效。
+`VictimStart` 与 `Hit` 可同帧或任意先后。`Release` 仍必须等待唯一一次合法 Hit 解决；既有 Hit/Release latch、Exactly-Once 和 Context 生命周期不改变。
 
-## 实施顺序与生命周期
+## Victim Montage 生命周期与 Launch
 
-### 1. Task 与 Player 激活
+- 使用 `UAbilityTask_PlayMontageAndWait` 时将 `bStopWhenAbilityEnds=false`，由 Victim Ability 自己拥有停止顺序。
+- 自然 `OnCompleted`/`OnBlendOut` 只解绑本 Ability 委托、结束自身 Task、清空表现引用，不再次调用 `Montage_Stop`，保留引擎自然融合。
+- `OnInterrupted`、`OnCancelled`、正式 Release 和异常 teardown 先解绑委托；仅当 Montage 仍 active 且 `!Montage_GetIsStopped()` 时执行一次 `Montage_Stop(0.2f, Montage)`，随后结束 Task 并清空引用。任何 GAS Task `OnDestroy()` 清理不得二次零时长覆盖。
+- `ReadyForActivation()` 期间若同步进入 End/Cancel，不得恢复旧 Task、旧 Context 或旧 Montage identity。
+- 只有“已配置 Victim Montage、正常正式 Release、Hit 已为 NonLethal/DeathPending、从未收到有效 VictimStart”时输出一次缺失通知 Warning。无 Montage、取消、中断、无命中、销毁、错误请求和异常 teardown 不报警。
+- 非致死正常 Release 继续在 `Super::EndAbility()` 前恢复 AI/Movement/Poise，之后发送带 `Instigator=Player`、`Target=Enemy` 的既有 Launch 事件；Launch 不可激活时不重试，保留站立恢复降级。取消、无命中和致死不得发送 Launch。
 
-- Front/Backstab 创建 Montage、Hit Event、Release Request 三个 Task，并先绑定自己的回调。
-- CommitAbility 成功后，先 ReadyForActivation() Hit/Release 监听 Task，再激活 Montage Task。
-- 每个 ReadyForActivation() 都是同步重入边界：立即检查 Ability 是否仍 Active、Context/token 是否仍 Current、Task 指针是否有效且 IsActive()；若已结束，不得恢复旧 Task 或旧 activation。
-- 任一监听 Task 创建、激活或复验失败时，不得启动 Montage，直接统一清理。
-- Release Request 到达时，Player 设置 release-expected 屏障；正式 Release 前解绑自己注册的目标 Tag/Destroyed 委托，防止 Victim 同步清理掐断 Player 尾段。
-- 正式 Release 发送后 Player 继续播放自身 Montage；只有完成、BlendOut、Interrupted、Cancelled、Destroyed 或其他终止路径才最终 EndAbility()。
+## 实施顺序
 
-### 2. Execution Context
+1. 注册 Tag，新增固定 Payload 的 VictimStart Notify。
+2. 对称扩展 Front/Backstab 的 callback context、监听 Task、校验、同步转发、一次性状态和测试 seam。
+3. 修改 Victim Ability 的延迟播放、VictimStart 消费、自然/异常停止和缺失通知诊断；保持现有 Release/Death/Launch 所有权。
+4. 新增表现专项 Automation，并调整 C 阶段结果测试夹具以符合新 Warning 契约。
+5. 对批准 C++ 路径执行 Rider error-level 检查、`git diff --check` 和有界静态复核；不运行 UBT/Build.bat/Rider build。
 
-- 增加 Release Request、Victim Released、Source/token/Actor 校验及非致死 outcome 收尾 API。
-- Formal Release 和 Victim Released 必须幂等；Context 失效后所有 Hit、Release、委托和异步回调 fail-closed。
-- Release 后不得再次授权执行命中；不得在 Player 尾段尚未结束时清除当前 session。
+## 自动化测试矩阵
 
-### 3. Victim Ability 与表现
+新增 `PolyQuest.Combat.ExecutionVictimPresentation`，覆盖：
 
-- UEnemyVictimExecutionAbility 增加可选 Front/Backstab Victim Montage，以及默认开启的 bLaunchNonLethalOnRelease。
-- Victim Montage 播放失败或提前结束只影响表现，不结束锁定 Ability，不作为 gameplay 完成屏障。
-- 停止 Victim Montage 时只移除本 Ability 自己绑定的动态委托，结束 Task，并执行唯一一次约 0.2f BlendOut；不得对共享委托无条件 Clear()，不得由后续 Super::EndAbility() 再次零时长硬停覆盖。
-- 在调用 Super::EndAbility() 前缓存 ASC、Enemy、Source Actor、Context 和 Montage 指针。
-- Lethal Release：保持 DeathPending，在 Context 有效且 Hit 状态满足 CommitExecutionDeath() 门禁时完成最终死亡；不得恢复 AI、Movement 或 Poise。
-- NonLethal 正常 Release：清理 Victim 锁和 AI，恢复 MOVE_Walking 与 Poise，调用 Super::EndAbility() 移除 Stunned 等拥有标签，再派发 Event.Reaction.Enemy.Launch。
-- Launch Payload 必须明确设置 Instigator=PlayerActor、Target=EnemyActor；不得在本阶段直接调用 LaunchCharacter()。
-- Launch 条件、配置、grounded 校验或事件激活不满足时，保持敌人存活站立，不伪造 Ragdoll。
-- Release Notify 注释和 Editor 清单提示美术将 Release 放在 Hit 之后，最好至少间隔一个 Montage tick；代码仍需容错错序事件。
+- Tag/Notify Payload、VictimStart 不在 AbilityTriggers。
+- Front/Backstab 有效同步转发、同帧/错序 Hit、重复/迟到/错误 Context/Actor/ASC/动画拒绝。
+- 有 Victim Montage 延迟到 VictimStart 才启动；无 Montage 和缺失 VictimStart 安全降级。
+- 自然完成/BlendOut 不结束会话；异常停止最多一次 BlendOut；Task Ready 同步失效不泄漏。
+- 正常 NonLethal Launch、关闭 Launch 的站立结果，以及取消、无命中、致死、Malformed Release 均不 Launch。
 
-## 非目标与不变量
+回归运行：`PolyQuest.Combat.ExecutionLockIn`、`PolyQuest.Combat.FrontExecution`、`PolyQuest.Combat.Backstab`、`PolyQuest.Combat.ExecutionReleaseOutcomes`。测试证据只代表 Automation，不替代编译或 PIE。
 
-- 不修改 EnemyCharacter.*、MeleeHitResolver.*、PlayerCharacter.*、CharacterAttributeSet.*、Build.cs 或既有测试文件；除上方明确的一行级 Unity Build 编译修复例外外，不修改 EnemyLaunchReactionAbility.*。
-- 不修改普通 Melee/Projectile 即时死亡语义，不放宽全局 Projectile Targeting 或 Lock-On acquisition。
-- 不新增通用 PlayerExecutionAbilityBase、双侧完成屏障、全局动画监听器、全局 Time Dilation、Camera/Audio/Hit-Stop、多人复制或预测。
-- 不通过文件系统修改 Blueprint、AnimBP、Montage、.uasset 或 .umap；资产作者化由用户在 Editor 完成。
-- 不建立第二条伤害或死亡路径；既有 CommitExecutionDeath()、Launch Reaction 和 Lock-On retention 是唯一复用入口。
+## 用户门禁与收口证据
 
-## Automation 与验证矩阵
+- Gemini 报告手动编译、Editor readback、专项 `PolyQuest.Combat.ExecutionVictimPresentation`（9 个场景）及回归 Automation 均通过；本轮用户明确确认 PIE 与 Automation 通过。
+- Scene01 PIE 的实际确认覆盖握手后不提前播放、VictimStart 驱动表现、Hit/Release 收尾、非致死 Launch/站立降级及取消清理；不把该确认扩展为未运行的全量或网络验证。
+- Main Fresh Review 已完成；静态检查、图工具和 Automation 不替代编译、Editor readback 或 PIE 证据，报告中各来源保持分列。
+- authored 资产仍由用户维护并排除在提交之外；若后续需要干净 authored baseline 或 packaging 声明，须另行提供可追溯的资产基线和读回记录。
 
-新增套件：PolyQuest.Combat.ExecutionReleaseOutcomes。测试旁路只能置于 WITH_DEV_AUTOMATION_TESTS，并优先驱动真实 GAS 授予、激活、GameplayEvent、Task 和清理路径。
+## 非目标、文档与提交边界
 
-必须覆盖：
-
-- Hit 先到不提前 Release；Release 先到锁存并在 Hit 后补发。
-- 同帧/重复/错误/旧 Context、错误 Actor/ASC/Montage、malformed Payload 全部拒绝且不改变锁定。
-- Hit/Release 监听 Task 先于 Montage 激活，首帧事件不会漏收；ReadyForActivation() 同步结束时不恢复旧状态。
-- Victim Montage 缺失、播放失败、提前结束和 BlendOut 清理不影响 gameplay 收尾。
-- 正常 NonLethal Release 只派发一次 Launch；Launch 条件不满足时恢复存活站立且不派发 Launch。
-- 取消、中断、Destroyed、UnPossess 和无命中兜底不产生 Launch。
-- Lethal Release 保持 DeathPending，只提交一次 Dead/Ragdoll，并覆盖同步 CancelAllAbilities 重入。
-- Player Montage 尾段不因 VictimLocked/Dead 标签同步移除而提前中断；Context 在尾段结束前保持有效。
-- 回归 ExecutionLethalRecovery、ExecutionLockIn、FrontExecution、Backstab、Player.LockOn、HitReaction、Enemy.DeathRagdoll。
-
-实施前静态门禁：读取最终 diff、检查相关 Tag/接口、运行 Rider lint_files 或 get_file_problems 和 git diff --check；不得将静态结果当作编译或 PIE 证据。
-
-用户门禁：
-
-1. Visual Studio 2022 手动编译 PolyQuestEditor (Development Editor)。
-2. Editor readback 确认 Notify 类、Victim Montage 属性、Launch 配置、敌人 Blueprint 授予的 Ability 和现有 Montage/GE 引用。
-3. /Game/Maps/Scene01 PIE 验证有/无 Victim Montage、Hit/Release 同帧或相邻帧、非致死 Launch、Launch 降级站立、致死完整播放、Player 尾段、Lock-On 保留和异常清理。
-
-## 交接、文档与提交
-
-- Gemini 已报告实际修改路径、生命周期/所有权、静态检查和第二轮修复结果；未把未执行的独立编译或 PIE 收据写成已完成证据。
-- 用户此前确认本阶段 PIE 与 Automation 通过，并在第二轮修复后再次确认 `PolyQuest.Combat.ExecutionReleaseOutcomes` Automation 通过；Main 已完成一次独立 `ue-strict-review`，共享改动使用一次有界 `code-review-graph` 雷达和一次定向 CodeGraph 核对。
-- Review 通过后，Main 负责更新 ROADMAP.md 的里程碑/债务指针、ROADMAP-archive.md 的阶段收口和 ARCHITECTURE.md 的稳定合同；临时资产调参不写入架构文档。
-- 只有用户明确批准后才暂存和提交；提交排除 AGENTS.md、全部 Content/**、Config/Automation/Presets/1.json 及其他 WIP。
-
-## 阶段收口记录
-
-### 实际实施范围
-
-- 12 个计划批准路径均已实施：`Config/Tags/PolyQuestGameplayTags.ini`；`AnimNotify_PlayerExecutionRelease.h/.cpp`；`ExecutionLockContext.h/.cpp`；`PlayerFrontExecutionAbility.h/.cpp`；`PlayerBackstabExecutionAbility.h/.cpp`；`EnemyVictimExecutionAbility.h/.cpp`；`ExecutionReleaseOutcomesAutomationTests.cpp`。
-- 另有一项计划明确允许的语义不变 Unity Build 修复：`Source/PolyQuest/Private/AbilitySystem/Abilities/EnemyLaunchReactionAbility.cpp` 仅将匿名命名空间常量重命名为 `EnemyAirborneTransitionGraceSeconds` 并同步唯一使用点。阶段实际源码/Config/test 路径共 13 个。
-- 第二轮修复把命中失败时的 formal-release 失败分支收敛到受害者取消、Context 失效和残余 Tag 清理，并补充真实 GE 应用失败的 Section 15；Front/Backstab 的同名匿名辅助函数同时完成 Unity Build 隔离。
-
-### 验证与复核证据
-
-- 用户确认 `PolyQuest.Combat.ExecutionReleaseOutcomes` 在第二轮修复后 15 个章节均为 `Success`；此前已确认本阶段 PIE/Automation 通过。第二轮报告没有提供新的独立编译、Editor readback 或 PIE 收据。
-- Gemini 报告涉及源文件 Rider error-level 检查为 0 errors，且 `git diff --check` 通过；这些属于静态证据，不替代编译、Editor 或 PIE 证据。
-- Main 的独立 Fresh Review 结论为通过，未发现当前批准范围内可证明的 P0/P1/P2 缺陷；第一批使用与基线匹配的有界 `code-review-graph` 影响雷达，第二批仅对 Release/死亡/Launch 生命周期疑点使用一次定向 CodeGraph，随后按两批门禁停止探索。
-
-### 残余风险与提交边界
-
-- `FrontExecutionVictimMontage`、`BackstabExecutionVictimMontage`、Player Release Notify 放置和 Launch/GE/Montage 等作者化关系仍属于用户-owned `Content/**`；本阶段不宣称干净检出即可复现完整表现基线。没有单独归档的手动 `PolyQuestEditor (Development Editor)` 编译或 Editor readback 收据，作为非阻塞 authored-validation debt 保留。
-- 阶段候选提交只包含上述 13 个源码/Config/test 路径与 Main 收口文档 `plan.md`、`ROADMAP.md`、`ROADMAP-archive.md`、`ARCHITECTURE.md`、`README.md`；明确排除 `AGENTS.md`、全部 `Content/**`、`Config/Automation/Presets/1.json` 及其他 WIP。当前尚未暂存或提交，等待用户明确批准。
+- 不做统一 Front/Backstab Hit Notify（`REC-05A1-03`）、武器专属 Montage（`TODO-05A1-D2`）、震屏/出血反馈（`TODO-05A1-E`）、Contextual Animation（`REC-05A1-02`）、Small/Big 枚举、Boss 投技或通用 Ability 基类。
+- Gemini 只交付实现证据和剩余风险；Main 在验证/Review 通过后维护 `ROADMAP.md`、必要的 `ARCHITECTURE.md` 和历史归档。本阶段 D1 已完成，下一开放切片为 `TODO-05A1-D2`。
+- 最终提交只允许包含批准源码/Config/test 路径及 Main 收口文档；排除全部用户 `Content/**`、`AGENTS.md`、其他 Config WIP 和生成目录。提交前必须显式获得用户批准，按路径暂存并检查 staged diff。
