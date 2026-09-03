@@ -73,6 +73,7 @@ void UExecutionLockContext::InitializeSession(
 	VictimAbility = nullptr;
 	VictimASC = nullptr;
 	HitState = EExecutionSessionHitState::Ready;
+	ReleaseState = EExecutionSessionReleaseState::NotRequested;
 	bVictimAccepted = false;
 	bActive = true;
 	bReleaseSent = false;
@@ -145,6 +146,11 @@ bool UExecutionLockContext::IsHitAuthorized(
 	}
 
 	if (HitState != EExecutionSessionHitState::Ready && HitState != EExecutionSessionHitState::Resolving)
+	{
+		return false;
+	}
+
+	if (bReleaseSent || IsVictimReleased() || ReleaseState == EExecutionSessionReleaseState::Failed)
 	{
 		return false;
 	}
@@ -296,10 +302,124 @@ void UExecutionLockContext::AbortFinalization(const UGameplayAbility* InVictimAb
 	HitState = EExecutionSessionHitState::DeathPending;
 }
 
+bool UExecutionLockContext::TryBeginRelease(
+	const UGameplayAbility* InSourceAbility,
+	uint32 InToken,
+	bool bWasCancelled,
+	bool bRequireResolvedHit)
+{
+	if (!bActive || !bVictimAccepted)
+	{
+		return false;
+	}
+
+	if (!InSourceAbility || InSourceAbility != SourceAbility.Get() || InToken != SourceActivationToken)
+	{
+		return false;
+	}
+
+	if (bReleaseSent || IsVictimReleased() || ReleaseState == EExecutionSessionReleaseState::Finalized || ReleaseState == EExecutionSessionReleaseState::Failed)
+	{
+		return false;
+	}
+
+	if (HitState == EExecutionSessionHitState::Resolving || HitState == EExecutionSessionHitState::Failed)
+	{
+		return false;
+	}
+
+	if (bRequireResolvedHit)
+	{
+		if (HitState != EExecutionSessionHitState::NonLethal && HitState != EExecutionSessionHitState::DeathPending)
+		{
+			return false;
+		}
+	}
+
+	MarkReleaseSent(bWasCancelled);
+	return true;
+}
+
+bool UExecutionLockContext::MarkVictimReleased(const UGameplayAbility* InVictimAbility)
+{
+	if (!bActive || !InVictimAbility || InVictimAbility != VictimAbility.Get())
+	{
+		return false;
+	}
+
+	if (ReleaseState == EExecutionSessionReleaseState::Finalized || ReleaseState == EExecutionSessionReleaseState::Failed)
+	{
+		return false;
+	}
+
+	ReleaseState = EExecutionSessionReleaseState::VictimReleased;
+	return true;
+}
+
+bool UExecutionLockContext::BeginOutcomeFinalization(const UGameplayAbility* InVictimAbility)
+{
+	if (!bActive || !InVictimAbility || InVictimAbility != VictimAbility.Get())
+	{
+		return false;
+	}
+
+	if (ReleaseState != EExecutionSessionReleaseState::VictimReleased && ReleaseState != EExecutionSessionReleaseState::Requested)
+	{
+		return false;
+	}
+
+	if (HitState == EExecutionSessionHitState::DeathPending)
+	{
+		HitState = EExecutionSessionHitState::Finalizing;
+		return true;
+	}
+	else if (HitState == EExecutionSessionHitState::NonLethal || HitState == EExecutionSessionHitState::Ready)
+	{
+		return true;
+	}
+
+	return false;
+}
+
+void UExecutionLockContext::CompleteOutcomeFinalization(const UGameplayAbility* InVictimAbility)
+{
+	if (!bActive || !InVictimAbility || InVictimAbility != VictimAbility.Get())
+	{
+		return;
+	}
+
+	if (HitState == EExecutionSessionHitState::Finalizing)
+	{
+		HitState = EExecutionSessionHitState::Finalized;
+	}
+	ReleaseState = EExecutionSessionReleaseState::Finalized;
+}
+
+void UExecutionLockContext::AbortOutcomeFinalization(const UGameplayAbility* InVictimAbility)
+{
+	if (!bActive || !InVictimAbility || InVictimAbility != VictimAbility.Get())
+	{
+		return;
+	}
+
+	if (HitState == EExecutionSessionHitState::Finalizing)
+	{
+		HitState = EExecutionSessionHitState::DeathPending;
+	}
+	if (ReleaseState == EExecutionSessionReleaseState::Finalized)
+	{
+		ReleaseState = EExecutionSessionReleaseState::VictimReleased;
+	}
+}
+
 void UExecutionLockContext::MarkReleaseSent(bool bWasCancelled)
 {
 	bReleaseSent = true;
 	bReleaseWasCancelled = bWasCancelled;
+	if (ReleaseState == EExecutionSessionReleaseState::NotRequested)
+	{
+		ReleaseState = EExecutionSessionReleaseState::Requested;
+	}
 }
 
 void UExecutionLockContext::InvalidateSession()
@@ -307,6 +427,11 @@ void UExecutionLockContext::InvalidateSession()
 	if (HitState == EExecutionSessionHitState::Resolving)
 	{
 		AbortHitScope();
+	}
+
+	if (ReleaseState != EExecutionSessionReleaseState::Finalized)
+	{
+		ReleaseState = EExecutionSessionReleaseState::Failed;
 	}
 
 	bActive = false;

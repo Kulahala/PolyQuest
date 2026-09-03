@@ -23,6 +23,16 @@ enum class EExecutionSessionHitState : uint8
 	Failed
 };
 
+UENUM(BlueprintType)
+enum class EExecutionSessionReleaseState : uint8
+{
+	NotRequested,
+	Requested,
+	VictimReleased,
+	Finalized,
+	Failed
+};
+
 /**
  * Stack RAII scope guard ensuring that an execution hit transaction begins and resolves deterministically.
  */
@@ -115,14 +125,33 @@ public:
 	/** Aborts an active hit transaction scope. */
 	void AbortHitScope();
 
-	/** Begins finalization of execution death. */
+	/** Begins finalization of execution death (B-stage compatibility). */
 	bool BeginFinalization(const UGameplayAbility* InVictimAbility);
 
-	/** Completes finalization of execution death. */
+	/** Completes finalization of execution death (B-stage compatibility). */
 	void CompleteFinalization(const UGameplayAbility* InVictimAbility);
 
-	/** Rolls back finalization to DeathPending if execution death commit failed. */
+	/** Rolls back finalization to DeathPending if execution death commit failed (B-stage compatibility). */
 	void AbortFinalization(const UGameplayAbility* InVictimAbility);
+
+	/** Authorizes and initiates the release sequence from the player ability side. */
+	bool TryBeginRelease(
+		const UGameplayAbility* InSourceAbility,
+		uint32 InToken,
+		bool bWasCancelled,
+		bool bRequireResolvedHit);
+
+	/** Synchronously called on the victim ability side when formal Release is accepted. */
+	bool MarkVictimReleased(const UGameplayAbility* InVictimAbility);
+
+	/** Begins finalization of execution outcome (both lethal and non-lethal). */
+	bool BeginOutcomeFinalization(const UGameplayAbility* InVictimAbility);
+
+	/** Completes finalization of execution outcome. */
+	void CompleteOutcomeFinalization(const UGameplayAbility* InVictimAbility);
+
+	/** Aborts finalization of execution outcome. */
+	void AbortOutcomeFinalization(const UGameplayAbility* InVictimAbility);
 
 	/** Marks that a Release event has been dispatched. */
 	void MarkReleaseSent(bool bWasCancelled = false);
@@ -135,6 +164,9 @@ public:
 	bool IsReleaseSent() const { return bReleaseSent; }
 	bool WasReleaseCancelled() const { return bReleaseWasCancelled; }
 	EExecutionSessionHitState GetHitState() const { return HitState; }
+	EExecutionSessionReleaseState GetReleaseState() const { return ReleaseState; }
+	bool IsVictimReleased() const { return ReleaseState == EExecutionSessionReleaseState::VictimReleased || ReleaseState == EExecutionSessionReleaseState::Finalized; }
+	bool IsReleaseRequested() const { return ReleaseState == EExecutionSessionReleaseState::Requested; }
 	bool IsResolving() const { return HitState == EExecutionSessionHitState::Resolving; }
 	bool IsDeathPending() const { return HitState == EExecutionSessionHitState::DeathPending; }
 	bool IsFinalizing() const { return HitState == EExecutionSessionHitState::Finalizing; }
@@ -152,6 +184,7 @@ public:
 
 #if WITH_DEV_AUTOMATION_TESTS
 	void SetTestHitState(EExecutionSessionHitState InState) { HitState = InState; }
+	void SetTestReleaseState(EExecutionSessionReleaseState InState) { ReleaseState = InState; }
 #endif
 
 private:
@@ -176,6 +209,7 @@ private:
 	FGameplayTag RequestTag;
 	uint32 SourceActivationToken = 0;
 	EExecutionSessionHitState HitState = EExecutionSessionHitState::Ready;
+	EExecutionSessionReleaseState ReleaseState = EExecutionSessionReleaseState::NotRequested;
 	bool bVictimAccepted = false;
 	bool bActive = false;
 	bool bReleaseSent = false;

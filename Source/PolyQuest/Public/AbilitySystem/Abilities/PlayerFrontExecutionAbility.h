@@ -45,6 +45,9 @@ public:
 	void OnHitEventReceived(FGameplayEventData Payload);
 
 	UFUNCTION()
+	void OnReleaseRequestEventReceived(FGameplayEventData Payload);
+
+	UFUNCTION()
 	void OnTargetDestroyed(AActor* DestroyedActor);
 };
 
@@ -96,20 +99,27 @@ public:
 		float& OutDist2D,
 		float& OutAngleDegrees);
 	void TestTriggerHitEvent(const FGameplayEventData& Payload);
+	void TestTriggerReleaseRequestEvent(const FGameplayEventData& Payload);
 	void TestEndAbility(bool bWasCancelled = false) { EndAbility(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, true, bWasCancelled); }
 	void SetTestSkipMontageTaskActivation(bool bSkip) { bTestSkipMontageTaskActivation = bSkip; }
 	void SetTestInvalidateWaitHitEventTaskAfterReady(bool bInvalidate) { bTestInvalidateWaitHitEventTaskAfterReady = bInvalidate; }
+	void SetTestInvalidateWaitReleaseRequestTaskAfterReady(bool bInvalidate) { bTestInvalidateWaitReleaseRequestTaskAfterReady = bInvalidate; }
 	void SetTestEndAbilityDuringTaskReady(bool bEnable) { bTestEndAbilityDuringTaskReady = bEnable; }
 	AEnemyCharacter* GetTestReservedTarget() const { return ReservedTarget.Get(); }
 	bool IsTestDamageEventConsumed() const { return bDamageEventConsumed; }
+	bool IsTestReleaseRequestLatched() const { return bReleaseRequestLatched; }
+	bool IsTestVictimReleaseExpected() const { return bVictimReleaseExpected; }
 	uint32 GetTestActivationToken() const { return CurrentActivationToken; }
 	UPlayerFrontExecutionContext* GetTestActiveContext() const { return ActiveContext; }
 	UExecutionLockContext* GetTestExecutionContext() const { return ActiveExecutionContext.Get(); }
+	void SetTestForceCommitAbilityFailure(bool bForce) { bTestForceCommitAbilityFailure = bForce; }
 
 private:
 	bool bTestSkipMontageTaskActivation = false;
 	bool bTestInvalidateWaitHitEventTaskAfterReady = false;
+	bool bTestInvalidateWaitReleaseRequestTaskAfterReady = false;
 	bool bTestEndAbilityDuringTaskReady = false;
+	bool bTestForceCommitAbilityFailure = false;
 public:
 #endif
 
@@ -118,10 +128,19 @@ public:
 	void HandleMontageInterrupted(uint32 InToken);
 	void HandleMontageCancelled(uint32 InToken);
 	void HandleHitEventReceived(FGameplayEventData Payload, uint32 InToken);
+	void HandleReleaseRequestEventReceived(FGameplayEventData Payload, uint32 InToken);
 	void HandleTargetDestroyed(AActor* DestroyedActor, uint32 InToken);
 	void HandleTargetTagChanged(const FGameplayTag Tag, int32 NewCount, uint32 InToken);
 
+	bool SendFormalReleaseToVictim(bool bWasCancelled, bool bRequireResolvedHit);
+
 protected:
+	virtual bool CommitAbility(
+		const FGameplayAbilitySpecHandle Handle,
+		const FGameplayAbilityActorInfo* ActorInfo,
+		const FGameplayAbilityActivationInfo ActivationInfo,
+		OUT FGameplayTagContainer* OptionalRelevantTags = nullptr) override;
+
 	virtual void ActivateAbility(
 		const FGameplayAbilitySpecHandle Handle,
 		const FGameplayAbilityActorInfo* ActorInfo,
@@ -183,6 +202,9 @@ private:
 	TObjectPtr<UAbilityTask_WaitGameplayEvent> WaitHitEventTask;
 
 	UPROPERTY(Transient)
+	TObjectPtr<UAbilityTask_WaitGameplayEvent> WaitReleaseRequestEventTask;
+
+	UPROPERTY(Transient)
 	TWeakObjectPtr<AEnemyCharacter> ReservedTarget;
 
 	FDelegateHandle TargetStunnedTagDelegateHandle;
@@ -192,4 +214,6 @@ private:
 
 	bool bEndAbilityInProgress = false;
 	bool bDamageEventConsumed = false;
+	bool bReleaseRequestLatched = false;
+	bool bVictimReleaseExpected = false;
 };

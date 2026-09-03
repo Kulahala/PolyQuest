@@ -124,7 +124,9 @@ PolyQuest 是一个以 UE 5.8、C++ 与 GAS 为核心的单机低多边形动作
 
 `TODO-05A1-A` 已完成 Front/Backstab 的成对处决接触锁定：Player Ability 通过同步 Request/Release Gameplay Event 与目标侧 `UEnemyVictimExecutionAbility` 共享 transient execution context；双方的 GAS 锁定/无敌、目标移动与 StateTree AI 暂停、外部伤害阻断和唯一 `FMeleeHitResolver` 授权均在各自所有者内闭环，已有 Lock-On 目标在执行期间保留而初次候选搜索仍严格排除无敌目标。用户已确认相关 Automation、编译与 `Scene01` PIE；DeathPending、延迟死亡和非致死 Launch/Knockback 不属于本阶段，仍需后续独立验证。
 
-`TODO-05A1-B` 已完成授权命中与致死恢复：执行命中在唯一 `FMeleeHitResolver` 内以 RAII scope 保证 Exactly-Once，致死结果先进入目标侧 `State.Status.DeathPending`，保持成对锁定、无敌与 Lock-On，待合法 Release 或异常收尾后才通过既有 `SetDeadState -> HandleDeath -> CancelAllAbilities -> StartDeathRagdoll` 链完成死亡；普通伤害仍保持即时死亡语义。用户已确认相关编译、Automation、`Scene01` PIE 与 Main Fresh Review；受害者专用 Montage、Release 后非致死 Launch/Knockback 属于下一阶段 `TODO-05A1-C`。
+`TODO-05A1-B` 已完成授权命中与致死恢复：执行命中在唯一 `FMeleeHitResolver` 内以 RAII scope 保证 Exactly-Once，致死结果先进入目标侧 `State.Status.DeathPending`，保持成对锁定、无敌与 Lock-On，待合法 Release 或异常收尾后才通过既有 `SetDeadState -> HandleDeath -> CancelAllAbilities -> StartDeathRagdoll` 链完成死亡；普通伤害仍保持即时死亡语义。用户已确认相关编译、Automation、`Scene01` PIE 与 Main Fresh Review。
+
+`TODO-05A1-C` 已完成释放结果与双人表现收口：Player 的 `UAnimNotify_PlayerExecutionRelease` 只发出 Release Request，Hit/Release 按独立状态轴完成一次认证释放；Victim 可选播放 Front/Backstab 配合 Montage，致死路径延续 `DeathPending` 后的既有死亡链，非致死路径在解除锁定后复用既有 Enemy Launch Reaction，条件不满足时降级为存活站立。用户已确认阶段 PIE 与 Automation，第二轮修复后的 `PolyQuest.Combat.ExecutionReleaseOutcomes` 为 15/15 `Success`；作者化 Montage/Notify 配置仍属于本地 `Content/**` WIP。
 
 `TODO-07B2` 已完成由精确 Trace Window 生命周期驱动的 Player/Enemy Niagara 近战武器拖尾，既有 Sweep/Resolver 伤害路径不变。用户已确认聚焦 `Scene01` PIE 视觉验收，以及包含 `PolyQuest.Melee.WeaponTrail` 的十三套 Unreal Editor Automation 全部通过；Niagara 资产和 Blueprint 绑定仍是本地 `Content/**` WIP，不作为干净检出的复现证据。
 

@@ -6,7 +6,9 @@
 #include "EnemyVictimExecutionAbility.generated.h"
 
 class AEnemyCharacter;
+class UAbilityTask_PlayMontageAndWait;
 class UAbilityTask_WaitGameplayEvent;
+class UAnimMontage;
 class UExecutionLockContext;
 
 /**
@@ -58,6 +60,17 @@ public:
 	void TestEndAbility(bool bWasCancelled = false) { EndAbility(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, true, bWasCancelled); }
 	void TestTriggerReleaseEvent(const FGameplayEventData& Payload) { OnReleaseReceived(Payload); }
 	void SetTestInvalidateWaitReleaseTaskAfterReady(bool bInvalidate) { bTestInvalidateWaitReleaseTaskAfterReady = bInvalidate; }
+	void SetTestVictimMontages(UAnimMontage* InFront, UAnimMontage* InBackstab)
+	{
+		FrontExecutionVictimMontage = InFront;
+		BackstabExecutionVictimMontage = InBackstab;
+	}
+	void SetTestLaunchNonLethalOnRelease(bool bLaunch) { bLaunchNonLethalOnRelease = bLaunch; }
+	bool GetTestLaunchNonLethalOnRelease() const { return bLaunchNonLethalOnRelease; }
+	UAnimMontage* GetTestActiveVictimMontage() const { return ActiveVictimMontage.Get(); }
+	UAbilityTask_PlayMontageAndWait* GetTestVictimMontageTask() const { return VictimMontageTask.Get(); }
+	void TestTriggerVictimMontageCompleted() { OnVictimMontageCompleted(); }
+	void TestTriggerVictimMontageBlendOut() { OnVictimMontageBlendOut(); }
 private:
 	bool bTestInvalidateWaitReleaseTaskAfterReady = false;
 public:
@@ -77,9 +90,32 @@ protected:
 		bool bReplicateEndAbility,
 		bool bWasCancelled) override;
 
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Execution", meta = (ToolTip = "正面处决时受害者播放的可选配合动画 Montage。"))
+	TObjectPtr<UAnimMontage> FrontExecutionVictimMontage;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Execution", meta = (ToolTip = "背刺处决时受害者播放的可选配合动画 Montage。"))
+	TObjectPtr<UAnimMontage> BackstabExecutionVictimMontage;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Execution", meta = (ToolTip = "非致死处决释放时是否派发击飞受击反应。默认开启。"))
+	bool bLaunchNonLethalOnRelease = true;
+
 private:
 	UFUNCTION()
 	void OnReleaseReceived(FGameplayEventData Payload);
+
+	UFUNCTION()
+	void OnVictimMontageCompleted();
+
+	UFUNCTION()
+	void OnVictimMontageBlendOut();
+
+	UFUNCTION()
+	void OnVictimMontageInterrupted();
+
+	UFUNCTION()
+	void OnVictimMontageCancelled();
+
+	void StopVictimMontagePresentation();
 
 	bool ValidateExecutionRequest(const FGameplayEventData* TriggerEventData, AEnemyCharacter* EnemyCharacter) const;
 
@@ -88,6 +124,12 @@ private:
 
 	UPROPERTY(Transient)
 	TObjectPtr<UAbilityTask_WaitGameplayEvent> WaitReleaseTask;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UAbilityTask_PlayMontageAndWait> VictimMontageTask;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UAnimMontage> ActiveVictimMontage;
 
 	FGameplayTag VictimAbilityTag;
 	FGameplayTag FrontRequestEventTag;

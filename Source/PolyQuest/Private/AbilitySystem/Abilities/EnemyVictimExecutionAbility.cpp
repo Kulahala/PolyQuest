@@ -2,12 +2,16 @@
 
 #include "AbilitySystemComponent.h"
 #include "Abilities/GameplayAbilityTriggerType.h"
+#include "Abilities/Tasks/AbilityTask_PlayMontageAndWait.h"
 #include "Abilities/Tasks/AbilityTask_WaitGameplayEvent.h"
 #include "AbilitySystem/Abilities/EnemyStanceBreakAbility.h"
 #include "AI/EnemyAIController.h"
 #include "AbilitySystem/CharacterAttributeSet.h"
+#include "Animation/AnimInstance.h"
+#include "Animation/AnimMontage.h"
 #include "Character/Enemy/EnemyCharacter.h"
 #include "Combat/Execution/ExecutionLockContext.h"
+#include "Components/SkeletalMeshComponent.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "PolyQuest.h"
 
@@ -15,6 +19,7 @@ UEnemyVictimExecutionAbility::UEnemyVictimExecutionAbility()
 {
 	InstancingPolicy = EGameplayAbilityInstancingPolicy::InstancedPerActor;
 	NetExecutionPolicy = EGameplayAbilityNetExecutionPolicy::ServerOnly;
+	bLaunchNonLethalOnRelease = true;
 
 	VictimAbilityTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Action.Execution.Victim")), false);
 	FrontRequestEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Action.Execution.Request.Front")), false);
@@ -321,6 +326,28 @@ void UEnemyVictimExecutionAbility::ActivateAbility(
 		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
 		return;
 	}
+
+	// 6. Try start optional Victim Montage for presentation
+	UAnimMontage* MontageToPlay = bHandoffFromStanceBreak ? FrontExecutionVictimMontage : BackstabExecutionVictimMontage;
+	if (MontageToPlay && EnemyCharacter && !EnemyCharacter->IsActorBeingDestroyed())
+	{
+		if (USkeletalMeshComponent* Mesh = EnemyCharacter->GetMesh())
+		{
+			if (UAnimInstance* AnimInstance = Mesh->GetAnimInstance())
+			{
+				ActiveVictimMontage = MontageToPlay;
+				VictimMontageTask = UAbilityTask_PlayMontageAndWait::CreatePlayMontageAndWaitProxy(this, NAME_None, MontageToPlay, 1.0f);
+				if (VictimMontageTask)
+				{
+					VictimMontageTask->OnCompleted.AddDynamic(this, &UEnemyVictimExecutionAbility::OnVictimMontageCompleted);
+					VictimMontageTask->OnBlendOut.AddDynamic(this, &UEnemyVictimExecutionAbility::OnVictimMontageBlendOut);
+					VictimMontageTask->OnInterrupted.AddDynamic(this, &UEnemyVictimExecutionAbility::OnVictimMontageInterrupted);
+					VictimMontageTask->OnCancelled.AddDynamic(this, &UEnemyVictimExecutionAbility::OnVictimMontageCancelled);
+					VictimMontageTask->ReadyForActivation();
+				}
+			}
+		}
+	}
 }
 
 bool UEnemyVictimExecutionAbility::BeginAuthorizedHitScope()
@@ -354,6 +381,58 @@ void UEnemyVictimExecutionAbility::NotifyLethalDamageReceived()
 			bAddedDeathPendingTag = true;
 		}
 	}
+}
+
+void UEnemyVictimExecutionAbility::OnVictimMontageCompleted()
+{
+	StopVictimMontagePresentation();
+}
+
+void UEnemyVictimExecutionAbility::OnVictimMontageBlendOut()
+{
+	StopVictimMontagePresentation();
+}
+
+void UEnemyVictimExecutionAbility::OnVictimMontageInterrupted()
+{
+	StopVictimMontagePresentation();
+}
+
+void UEnemyVictimExecutionAbility::OnVictimMontageCancelled()
+{
+	StopVictimMontagePresentation();
+}
+
+void UEnemyVictimExecutionAbility::StopVictimMontagePresentation()
+{
+	if (VictimMontageTask)
+	{
+		VictimMontageTask->OnCompleted.RemoveDynamic(this, &UEnemyVictimExecutionAbility::OnVictimMontageCompleted);
+		VictimMontageTask->OnBlendOut.RemoveDynamic(this, &UEnemyVictimExecutionAbility::OnVictimMontageBlendOut);
+		VictimMontageTask->OnInterrupted.RemoveDynamic(this, &UEnemyVictimExecutionAbility::OnVictimMontageInterrupted);
+		VictimMontageTask->OnCancelled.RemoveDynamic(this, &UEnemyVictimExecutionAbility::OnVictimMontageCancelled);
+		VictimMontageTask->EndTask();
+		VictimMontageTask = nullptr;
+	}
+
+	if (AEnemyCharacter* EnemyCharacter = Cast<AEnemyCharacter>(GetAvatarActorFromActorInfo()))
+	{
+		if (!EnemyCharacter->IsActorBeingDestroyed())
+		{
+			if (USkeletalMeshComponent* Mesh = EnemyCharacter->GetMesh())
+			{
+				if (UAnimInstance* AnimInstance = Mesh->GetAnimInstance())
+				{
+					if (ActiveVictimMontage && AnimInstance->Montage_IsActive(ActiveVictimMontage))
+					{
+						AnimInstance->Montage_Stop(0.2f, ActiveVictimMontage);
+					}
+				}
+			}
+		}
+	}
+
+	ActiveVictimMontage = nullptr;
 }
 
 void UEnemyVictimExecutionAbility::OnReleaseReceived(FGameplayEventData Payload)
@@ -407,6 +486,7 @@ void UEnemyVictimExecutionAbility::OnReleaseReceived(FGameplayEventData Payload)
 		return;
 	}
 
+	Context->MarkVictimReleased(this);
 	EndAbility(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, true, Context->WasReleaseCancelled());
 }
 
@@ -425,44 +505,52 @@ void UEnemyVictimExecutionAbility::EndAbility(
 	bEndAbilityInProgress = true;
 	bInAuthorizedHitScope = false;
 
-	AEnemyCharacter* EnemyCharacter = Cast<AEnemyCharacter>(ActorInfo ? ActorInfo->AvatarActor.Get() : nullptr);
-	UAbilitySystemComponent* CharacterASC = GetAbilitySystemComponentFromActorInfo();
+	AEnemyCharacter* CachedEnemy = Cast<AEnemyCharacter>(ActorInfo ? ActorInfo->AvatarActor.Get() : nullptr);
+	UAbilitySystemComponent* CachedASC = GetAbilitySystemComponentFromActorInfo();
+	UExecutionLockContext* CachedContext = ActiveExecutionContext.Get();
+	AActor* CachedSourceActor = CachedContext ? CachedContext->GetSourceActor() : nullptr;
 
-	const bool bCommitDeath = bDeathPending || (EnemyCharacter && EnemyCharacter->IsDeathPending());
+	StopVictimMontagePresentation();
+
+	const bool bCommitDeath = bDeathPending || (CachedEnemy && CachedEnemy->IsDeathPending());
 	bool bDeathCommittedSuccessfully = false;
 
-	if (bCommitDeath && EnemyCharacter && CharacterASC)
+	const bool bIsConfirmedNonLethal = !bCommitDeath && !bWasCancelled && CachedContext &&
+		(CachedContext->GetHitState() == EExecutionSessionHitState::NonLethal) &&
+		(CachedContext->IsVictimReleased() || CachedContext->IsReleaseSent());
+
+	if (bCommitDeath && CachedEnemy && CachedASC)
 	{
-		const bool bCanFinalize = ActiveExecutionContext && ActiveExecutionContext->BeginFinalization(this);
+		const bool bCanFinalize = CachedContext && CachedContext->BeginOutcomeFinalization(this);
 		if (bCanFinalize)
 		{
-			bDeathCommittedSuccessfully = EnemyCharacter->CommitExecutionDeath(ActiveExecutionContext.Get());
+			bDeathCommittedSuccessfully = CachedEnemy->CommitExecutionDeath(CachedContext);
 			if (bDeathCommittedSuccessfully)
 			{
-				ActiveExecutionContext->CompleteFinalization(this);
+				CachedContext->CompleteOutcomeFinalization(this);
 			}
 			else
 			{
-				ActiveExecutionContext->AbortFinalization(this);
+				CachedContext->AbortOutcomeFinalization(this);
 			}
 		}
 
 		// Fallback: If execution commit failed or context was invalid, verify if Health is <= 0.
 		// Never leave an enemy with Health <= 0 without Dead or DeathPending.
-		const float CurrentHealth = CharacterASC->GetNumericAttribute(UCharacterAttributeSet::GetHealthAttribute());
+		const float CurrentHealth = CachedASC->GetNumericAttribute(UCharacterAttributeSet::GetHealthAttribute());
 		if (!bDeathCommittedSuccessfully && CurrentHealth <= 0.0f)
 		{
-			EnemyCharacter->SetDeadState();
-			bDeathCommittedSuccessfully = EnemyCharacter->IsDead();
+			CachedEnemy->SetDeadState();
+			bDeathCommittedSuccessfully = CachedEnemy->IsDead();
 		}
 	}
 	else
 	{
 		if (bLockedAI)
 		{
-			if (EnemyCharacter)
+			if (CachedEnemy)
 			{
-				if (AEnemyAIController* AIController = Cast<AEnemyAIController>(EnemyCharacter->GetController()))
+				if (AEnemyAIController* AIController = Cast<AEnemyAIController>(CachedEnemy->GetController()))
 				{
 					AIController->EndExecutionLock();
 				}
@@ -470,12 +558,12 @@ void UEnemyVictimExecutionAbility::EndAbility(
 			bLockedAI = false;
 		}
 
-		const bool bCanRestoreEnemy = EnemyCharacter && !EnemyCharacter->IsDead() && !EnemyCharacter->IsActorBeingDestroyed();
+		const bool bCanRestoreEnemy = CachedEnemy && !CachedEnemy->IsDead() && !CachedEnemy->IsActorBeingDestroyed();
 		if (bCanRestoreEnemy)
 		{
 			if (bMovementLockedByVictim)
 			{
-				if (UCharacterMovementComponent* MovementComponent = EnemyCharacter->GetCharacterMovement())
+				if (UCharacterMovementComponent* MovementComponent = CachedEnemy->GetCharacterMovement())
 				{
 					MovementComponent->SetMovementMode(MOVE_Walking);
 				}
@@ -483,9 +571,9 @@ void UEnemyVictimExecutionAbility::EndAbility(
 
 			if (bHandoffFromStanceBreak)
 			{
-				if (!EnemyCharacter->RestorePoiseToMax())
+				if (!CachedEnemy->RestorePoiseToMax())
 				{
-					UE_LOG(LogPolyQuest, Warning, TEXT("Victim execution ended for '%s' but Poise could not be restored."), *GetNameSafe(EnemyCharacter));
+					UE_LOG(LogPolyQuest, Warning, TEXT("Victim execution ended for '%s' but Poise could not be restored."), *GetNameSafe(CachedEnemy));
 				}
 			}
 		}
@@ -497,21 +585,21 @@ void UEnemyVictimExecutionAbility::EndAbility(
 		? DeathPendingStateTag
 		: FGameplayTag::RequestGameplayTag(FName(TEXT("State.Status.DeathPending")), false);
 
-	const bool bIsDeadConfirmed = EnemyCharacter ? EnemyCharacter->IsDead() : false;
+	const bool bIsDeadConfirmed = CachedEnemy ? CachedEnemy->IsDead() : false;
 	const bool bSafeToClearPendingTag = bIsDeadConfirmed || !bCommitDeath;
 
 	if (bAddedDeathPendingTag && ActualDeathPendingTag.IsValid() && bSafeToClearPendingTag)
 	{
-		if (CharacterASC)
+		if (CachedASC)
 		{
-			CharacterASC->RemoveLooseGameplayTag(ActualDeathPendingTag);
+			CachedASC->RemoveLooseGameplayTag(ActualDeathPendingTag);
 		}
 		bAddedDeathPendingTag = false;
 	}
 
-	if (EnemyCharacter)
+	if (CachedEnemy)
 	{
-		EnemyCharacter->ClearExecutionVictimAbility(this);
+		CachedEnemy->ClearExecutionVictimAbility(this);
 	}
 
 	bMovementLockedByVictim = false;
@@ -524,12 +612,26 @@ void UEnemyVictimExecutionAbility::EndAbility(
 		WaitReleaseTask = nullptr;
 	}
 
-	if (ActiveExecutionContext)
+	if (CachedContext && bWasCancelled)
 	{
-		ActiveExecutionContext->InvalidateSession();
-		ActiveExecutionContext = nullptr;
+		CachedContext->InvalidateSession();
 	}
+	ActiveExecutionContext = nullptr;
 
 	Super::EndAbility(Handle, ActorInfo, ActivationInfo, bReplicateEndAbility, bWasCancelled);
+
+	if (bIsConfirmedNonLethal && bLaunchNonLethalOnRelease && CachedASC && CachedEnemy && !CachedEnemy->IsDead() && !CachedEnemy->IsActorBeingDestroyed())
+	{
+		const FGameplayTag LaunchReactionEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Reaction.Enemy.Launch")), false);
+		if (LaunchReactionEventTag.IsValid())
+		{
+			FGameplayEventData LaunchPayload;
+			LaunchPayload.EventTag = LaunchReactionEventTag;
+			LaunchPayload.Instigator = CachedSourceActor;
+			LaunchPayload.Target = CachedEnemy;
+			CachedASC->HandleGameplayEvent(LaunchReactionEventTag, &LaunchPayload);
+		}
+	}
+
 	bEndAbilityInProgress = false;
 }

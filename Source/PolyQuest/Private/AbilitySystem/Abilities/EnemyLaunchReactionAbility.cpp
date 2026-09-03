@@ -316,7 +316,7 @@ void UEnemyLaunchReactionAbility::EndAbility(
 
 namespace
 {
-	constexpr float AirborneTransitionGraceSeconds = 0.10f;
+	constexpr float EnemyAirborneTransitionGraceSeconds = 0.10f;
 }
 
 void UEnemyLaunchReactionAbility::OnLaunchCommitEventReceived(FGameplayEventData Payload)
@@ -421,7 +421,7 @@ void UEnemyLaunchReactionAbility::CommitFrozenLaunch()
 	}
 	else
 	{
-		FallValidationTask = UAbilityTask_WaitDelay::WaitDelay(this, AirborneTransitionGraceSeconds);
+		FallValidationTask = UAbilityTask_WaitDelay::WaitDelay(this, EnemyAirborneTransitionGraceSeconds);
 		if (FallValidationTask)
 		{
 			FallValidationTask->OnFinish.AddDynamic(this, &UEnemyLaunchReactionAbility::OnFallValidationFinished);
