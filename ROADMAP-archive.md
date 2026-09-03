@@ -1266,3 +1266,13 @@ TODO-03A3E World Pickup Interaction Prompt v1
 - **验证与复核证据**：用户确认 Visual Studio `PolyQuestEditor (Development Editor)` 编译通过（0 错误）、`PolyQuest.Combat.ExecutionHitNotify`、`PolyQuest.Combat.FrontExecution` 和 `PolyQuest.Combat.Backstab` Automation 成功、Editor Notify 列表可读回 `Player Execution Hit`，且 Scene01 PIE 无 Ensure/崩溃。Gemini 报告独立自审 0 缺陷；Main 使用与基线匹配的有界 code-review-graph 雷达和一次定向 CodeGraph 完成 Fresh Review，未发现批准范围内 P0/P1/P2 blocker；`git diff --check` 退出码为 0。
 - **提交边界**：本阶段提交只包含上述 8 个实现路径及 Main 的 `plan.md`、`ROADMAP.md`、`ROADMAP-archive.md`、`ARCHITECTURE.md` 文档同步；排除 `AGENTS.md`、全部 `Content/**`、其他 Config WIP、生成目录和任何二进制资产。
 - **后续门禁**：`REC-05A1-03-MIG` 单独负责实际 Montage/Notify 清单、Unreal Editor 替换、时序与引用 readback、旧/新入口回归及旧 Notify/Tag 零引用证明。只有 MIG 完成后，才可另立删除 Legacy listener、旧 Notify 类和旧 Tag 的提交；D2A、D2B、E 不得把旧路径退役提前作为隐含实现。
+
+## REC-05A1-03-MIG Authored Execution Hit Notify Migration / Legacy Retirement Gate Closeout (2026-09-04; parent HEAD `95dda582dfbeea27d3f6e5f800ab2ced5fdd2a0f`, working-tree not clean)
+
+> 本节记录 `REC-05A1-03-MIG` 的 authored No-Op/readback 收口。快照基于当前父 HEAD `95dda582dfbeea27d3f6e5f800ab2ced5fdd2a0f`；工作树同时含用户-owned WIP，因此不是干净 HEAD 快照。本节只作历史追溯，不替代实际 Unreal Editor 资产、源码或 Config 作为运行时权威。
+
+- **范围与实际结果**：用户在 Unreal Editor 读取 `/Game/BP/Montages/LightSword/AM_LightSword_PlayerExecution`，确认全部命中 Notify 已是 `UAnimNotify_PlayerExecutionHit` / `Player Execution Hit`，未执行替换、未重新保存；最终判定为 `No-Op / already canonical`。`GA_PlayerFrontExecution` 与 `GA_PlayerBackstabExecution` 共用该轻剑 Execution Montage 是当前预期设计，方向/武器专属 Montage 延后至 `TODO-05A1-D2B`。
+- **引用证据**：两个旧 Native 类 `AnimNotify_PlayerFrontExecutionHit` 与 `AnimNotify_PlayerBackstabExecutionHit` 在 Reference Viewer 中没有项目 authored `.uasset/.umap` 连线，仅有模块级反射边；旧方向 Gameplay Tag 没有资产引用。Legacy 源码、兼容 listener、旧 Tag 与旧测试引用未删除。
+- **用户验证**：用户确认 Visual Studio `PolyQuestEditor (Development Editor)` 编译通过且编辑器正常运行；`ExecutionHitNotify`、`FrontExecution`、`Backstab`、`ExecutionLockIn`、`ExecutionLethalRecovery`、`ExecutionReleaseOutcomes`、`ExecutionVictimPresentation` 七项 Automation 全部 `Success`；Scene01 PIE 的 Front/Backstab 扣血、动画时序、Release、状态恢复通过，无崩溃或 Ensure。
+- **Main Fresh Review**：Main 按 `ue-strict-review` 完成单轮 diff-first、缺陷优先审查；当前批准范围内无 P0/P1/P2 blocker。`code-review-graph` 因本次收口为文档/证据变更且无 Source/shared-contract diff 而跳过；不将该工具状态当作运行时证据。
+- **提交边界与后续指针**：本阶段没有 authored asset、Source、Config、Blueprint、地图或测试文件变更；未暂存、未提交孤立 Montage 或其 Sequence 依赖，用户-owned WIP 原样保留。下一执行切片为 `TODO-05A1-D2A`；删除 Legacy Notify 类、兼容 listener、旧 Tag 和相关测试引用必须另立 Retirement 阶段，在新的零引用/readback、编译、Automation、Scene01 PIE、Main Review 和显式 commit approval 后执行。

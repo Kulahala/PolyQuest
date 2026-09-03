@@ -1,162 +1,224 @@
-# REC-05A1-03：Unified Execution Hit Notify v1
+# REC-05A1-03-MIG：Authored Execution Hit Notify Migration / Legacy Retirement Gate
 
 ## 阶段状态与基线
 
-- 状态：Native Contract Gate 已完成；Gemini 独立自审 0 缺陷，Main Fresh Review 通过，用户已确认编译、Editor readback、Automation 和 Scene01 PIE 门禁。Authored Migration / Legacy Retirement 仍是后续独立门。
+- 状态：阶段已完成并通过收口门禁；结果为 No-Op / already canonical。Legacy Notify、Legacy Tag 与兼容 listener 暂不删除，后续另立 Retirement 阶段。
 - 日期：2026-09-04。
-- 仓库：`E:\GameDevelop\PolyQuest`。
-- 当前基线：`main @ 8f1357af39ec520c94f93e9b93c8ccf781170ff0`（TODO-05A1-D1 已提交；D2A 尚未实施）。
-- 前置阶段：`TODO-05A1-A/B/C/D1` 已完成并有收口记录；本阶段先于 D2A/D2B，避免新武器专属处决 Montage 继续产生方向专用 Hit Notify。
-- 当前工作树：存在用户-owned `Content/**` 增删改和未跟踪内容、`Config/DefaultEngine.ini` WIP、`Config/Automation/Presets/1.json` 删除、`ROADMAP.md`/本文件 WIP 及其他配置改动。不得回滚、清理或顺带纳入这些变更。
+- 仓库：E:\GameDevelop\PolyQuest。
+- 当前基线：main @ 95dda582dfbeea27d3f6e5f800ab2ced5fdd2a0f。
+- 工作树：存在用户-owned WIP；以下状态数量仅为计划制定时的快照，不构成批准路径或提交集合。实际范围以冻结的 migration manifest 为准。
+- 现有 plan.md 是 REC-05A1-03 Native Contract 收口记录，基线早于当前 HEAD；上一阶段详细收口已在 ROADMAP-archive.md 归档。
+- ROADMAP.md 在计划制定时将本阶段列为下一执行切片；本次 No-Op/readback 收口已完成，下一执行切片为 `TODO-05A1-D2A`，Legacy 删除仍需另立 Retirement 阶段。
+- 计划制定时观察到的磁盘候选 AM_LightSword_PlayerExecution、GA_PlayerFrontExecution、GA_PlayerBackstabExecution 均为未跟踪 WIP；其中 Montage 的静态字符串显示统一 Notify，但这不是当前 Editor 或 Reference Viewer 证据，实际状态以冻结 manifest/readback 为准。
 
-## 目标与运行时问题
+## 目标与成功标准
 
-正面处决与背刺处决当前各有一套 Native Hit Notify 和事件 Tag。两套 Ability 的伤害、锁定、动画身份和生命周期逻辑本来就是独立的，但动画制作只需要表达同一个语义：在这一帧结算处决命中。
+以 No-Op 验证为主路径，确认所有实际由 Front/Backstab 执行能力使用的 authored Execution Montage 是否已经采用 UAnimNotify_PlayerExecutionHit。
 
-本阶段建立一个新的 Native 入口：
+成功标准：
 
-1. 新增 `UAnimNotify_PlayerExecutionHit`，发送统一的 `Event.Action.Execution.Hit` Gameplay Event。
-2. Front/Backstab Ability 的 active instance 同时支持统一入口和各自旧入口，旧资产在迁移前继续工作。
-3. 两个方向仍分别保留自己的 Ability 身份、几何校验、`ExecutionLockContext`、Activation Token、动画归属校验、`FMeleeHitResolver` 唯一伤害路径和 exactly-once 门禁。
-4. 本阶段只收口 Native contract；不自动迁移或修改任何 `.uasset`/Montage。新武器从本阶段起只使用统一 Notify。
+1. 在 Editor 中冻结完整 migration manifest，列出所有运行时可达 Front/Backstab Execution Montage 及旧 Notify 引用。
+2. 已经是统一 Notify 的资产不编辑、不重新保存；存在旧 Notify 的资产才做一对一替换。
+3. 每个替换资产保持原 Notify Track、帧/秒位置、Section、Slot、邻接事件和 Montage 结构。
+4. Reference Viewer/readback 证明项目 authored 资产不再引用两个旧 Native Notify 类，Tag readback 不再显示旧方向 Hit 事件的 authored 使用。
+5. 用户编译、指定 Automation、Scene01 PIE 和 Main Fresh Review 全部通过。
+6. Legacy listener、旧 Notify 类、旧 Tag 和旧测试引用保留到后续独立 Retirement 阶段。
 
 ## 工具路线与责任
 
-- Outer：`ue-stage-workflow`。
-- Primary：`ue5-cpp-gameplay`。
-- Support：none。
-- Route reason：这是现有 GAS 处决能力的窄事件契约收口，需要 Native AnimNotify、Gameplay Tag、AbilityTask 监听和 focused Automation；不需要 Blueprint、资产编辑或通用战斗重构。
-- Execution route：`manual/out-of-band Gemini`。
+- Outer：ue-stage-workflow。
+- Primary：ue5-blueprint-workflow。
+- Support：unreal-mcp（仅在用户明确授权 live Editor 操作时使用）。
+- Route reason：本阶段是 authored Content/AnimMontage 的 Editor 流程和引用验证，不修改 Blueprint graph、Native C++、Gameplay Tag 或运行时逻辑。
+- Execution route：用户-owned Unreal Editor authoring。
+- Implementation executors：Gemini（manual/out-of-band；仅按下方 handoff 执行）。
 - Contract owner：Main/Codex。
-- Implementation writer：Gemini，仅能修改下列批准路径；不得改变契约、所有权或范围。
-- Main 负责架构与计划、范围决策、用户验证解释、Fresh Review、文档、暂存和提交；用户负责 Visual Studio 编译、Editor readback、Automation、PIE/视觉验证和最终提交批准。
-- Gemini 不得修改 `plan.md`、`ROADMAP.md`、`ROADMAP-archive.md`、`ARCHITECTURE.md`、`README.md`，不得暂存或提交。
-- Code navigation：需要确认源码调用链或 UE/GAS 声明时，使用一次有目标的 CodeGraph 查询；禁止全库漫游。实现完成后的影响审查按 `ue-strict-review` 的 diff-first 规则使用 code-review-graph，图输出不是运行时证据。
+- Implementation writer：Gemini，仅能修改 migration manifest 中明确批准的 authored Montage package。
+- Main 负责计划、范围、manifest 冻结、证据解释、Review、文档和提交门禁；用户负责 Editor 授权、手动编译、Automation、PIE/视觉验证和最终提交批准。
+- Gemini 不得修改 plan.md、ROADMAP.md、ROADMAP-archive.md、ARCHITECTURE.md、README.md，不得暂存或提交，不得使用文件系统直接编辑 .uasset/.umap。
 
-## 批准修改路径
+## 冻结运行时合同
 
-1. `E:\GameDevelop\PolyQuest\Config\Tags\PolyQuestGameplayTags.ini`
-2. `E:\GameDevelop\PolyQuest\Source\PolyQuest\Public\Animation\Combat\AnimNotify_PlayerExecutionHit.h`（新增）
-3. `E:\GameDevelop\PolyQuest\Source\PolyQuest\Private\Animation\Combat\AnimNotify_PlayerExecutionHit.cpp`（新增）
-4. `E:\GameDevelop\PolyQuest\Source\PolyQuest\Public\AbilitySystem\Abilities\PlayerFrontExecutionAbility.h`
-5. `E:\GameDevelop\PolyQuest\Source\PolyQuest\Private\AbilitySystem\Abilities\PlayerFrontExecutionAbility.cpp`
-6. `E:\GameDevelop\PolyQuest\Source\PolyQuest\Public\AbilitySystem\Abilities\PlayerBackstabExecutionAbility.h`
-7. `E:\GameDevelop\PolyQuest\Source\PolyQuest\Private\AbilitySystem\Abilities\PlayerBackstabExecutionAbility.cpp`
-8. `E:\GameDevelop\PolyQuest\Source\PolyQuest\Private\Tests\ExecutionHitNotifyAutomationTests.cpp`（新增）
+- 统一入口固定为 UAnimNotify_PlayerExecutionHit，发送 Event.Action.Execution.Hit。
+- 旧映射保持不变：
+  - UAnimNotify_PlayerFrontExecutionHit -> Event.Action.Execution.Front.Hit
+  - UAnimNotify_PlayerBackstabExecutionHit -> Event.Action.Execution.Backstab.Hit
+  - UAnimNotify_PlayerExecutionHit -> Event.Action.Execution.Hit
+- Front/Backstab Ability 的 ExecutionMontage、精确 listener、动画身份校验、ExecutionLockContext、FMeleeHitResolver、Release、VictimStart 和 exactly-once 逻辑不改。
+- 不修改 Release、VictimStart、RateWindow、MotionWarping、Root Motion、Section、Slot、Blend 或其他 Notify 的时序。
+- authored 零引用只统计项目 .uasset/.umap 和项目-owned package；Native C++、Automation 和兼容 listener 中保留的旧类名/旧 Tag 不阻塞本门。
 
-允许的现有 Ability 修改仅限：统一 Hit Tag 的 Task/回调接入、各自 Legacy Hit Task、Task 的失效测试 seam、相关 EndAbility 清理和精确 Payload 校验。不得改写伤害计算、锁定状态机或其他处决事件。
+## 批准范围
 
-### 明确未批准路径
+### 初始候选与只读引用根
 
-- `AnimNotify_PlayerFrontExecutionHit.*`、`AnimNotify_PlayerBackstabExecutionHit.*`（本阶段保持原样）
-- 既有测试文件（包括 `ExecutionReleaseOutcomesAutomationTests.cpp`）
-- `ExecutionLockContext.*`、`MeleeHitResolver.*`、`EnemyVictimExecutionAbility.*`、`EnemyCharacter.*`、`PlayerCharacter.*`
-- `Build.cs`、其他 Tag/Input/Config 文件、Blueprint、地图以及全部 `Content/**`/`.uasset`/`.umap`
-- D2A/D2B 的 Snap 对齐、武器 Montage 选择、VictimStart/Release、Launch/反馈表现和普通攻击 Motion Warping
+- 初始候选 Montage：Content/BP/Montages/LightSword/AM_LightSword_PlayerExecution.uasset。
+- 初始只读引用根：
+  - Content/_Abilities/Weapon/LightSword/Execution/GA_PlayerFrontExecution.uasset
+  - Content/_Abilities/Weapon/LightSword/Execution/GA_PlayerBackstabExecution.uasset
+  - Content/BP/Characters/Player/BP_Player.uasset
+- 上述文件当前是未跟踪 WIP；它们只是 inventory seed，不是预批准提交集合。
+- 实际写入集合只能来自 Slice 1 冻结的 migration manifest。未列入 manifest 的资产不得编辑、保存或暂存。
+- Saved/Autosaves、生成目录、imported/read-only package、无运行时归属的复制品和无关 Montage 永不自动纳入。
 
-若实现确实需要未批准路径，必须停止并返回证据，由 Main 重新定范围；不得通过复制逻辑或临时文件绕过边界。
+### 明确不在范围内
 
-## Canonical Native 合同
+- 所有 Native C++、Gameplay Tag 配置、Build.cs、Input、Blueprint graph、AnimBP、地图、GA/GE 默认值和敌方 Victim Montage。
+- D2A Snap、D2B 武器/方向专属 Montage 选择、E 反馈、Launch、震屏、普通攻击 Motion Warping。
+- 旧 Notify 类、旧 Tag、Legacy listener、旧测试和兼容代码的删除。
 
-### 统一 Notify
+## 有序执行切片
 
-- 类：`UAnimNotify_PlayerExecutionHit`。
-- `Notify` 只从 `MeshComp->GetOwner()` 获取 Owner/ASC，失败或 ASC 不存在时 fail-closed 并返回。
-- 事件 Tag：`Event.Action.Execution.Hit`，必须从配置注册且无效时 fail-closed。
-- Payload 固定为：`Instigator = Owner`、`Target = Owner`、`OptionalObject = Animation`。
-- Notify 只发送 Gameplay Event；不选择处决目标、不直接施加 GE、不绕过 Ability 或 `FMeleeHitResolver`。
-- 显示名：`Player Execution Hit`。
+### Slice 1：No-Op 优先与 manifest 冻结
 
-### Tag 与触发器
+1. 在 Editor 打开 /Game/BP/Montages/LightSword/AM_LightSword_PlayerExecution。
+2. 先检查全部 Notify Track、Hit 点和显示名；若全部是 Player Execution Hit 且没有旧方向 Notify，标记 No-Op / already canonical，不编辑、不重新保存，直接进入 Slice 3。
+3. 通过 Front/Backstab GA 的 ExecutionMontage 默认值确认实际归属。
+4. 明确记录 Front 与 Backstab 共用同一轻剑 Execution Montage 是当前预期设计，不是配置错误；武器/方向专属 Montage 属于 TODO-05A1-D2B。
+5. Gemini 先只读回交候选 manifest；Main/Codex 冻结并明确批准行集合后，才允许任何资产写入。
+6. 由 Main/Codex 在本文件中维护 manifest 表格；Gemini 只回交每行所需的包路径、使用方、Sequence/Section/Slot、Notify 类/显示名/Tag、Track、帧号/秒数、邻接事件、tracked 状态、imported 状态和 Reference Viewer 结果。
+7. 使用 Reference Viewer/Asset Registry 检查所有项目 authored package，而不是只检查文件名命中的候选。
+8. 缺少 Montage、无法解析 GA 归属、存在重复命中点、未知复制品或只读引用时停止。
 
-- 在 `PolyQuestGameplayTags.ini` 注册 `Event.Action.Execution.Hit`。
-- 保留 `Event.Action.Execution.Front.Hit` 和 `Event.Action.Execution.Backstab.Hit` 及旧 Notify，直到 Authored Migration / Retirement Gate 完成。
-- 统一 Hit Tag 只由 active Front/Backstab instance 内的 `UAbilityTask_WaitGameplayEvent` 消费；不得把统一 Tag 或 Legacy Hit Tag 添加到 `UEnemyVictimExecutionAbility` 或处决 Ability 的 `AbilityTriggers`，不得用 Hit 事件重新激活 Ability。
-- 所有 Hit Task 使用 `OnlyMatchExact = true`。禁止监听 `Event.Action.Execution` 父 Tag 或其他宽匹配。
+### Slice 2：仅在需要时做一对一替换
 
-### 双方向精确白名单
+- 只操作 manifest 中由用户确认的资产。
+- 每个旧 Hit Notify 替换为一个 UAnimNotify_PlayerExecutionHit，保持原 Track、帧/秒位置、Section、Slot 和事件顺序。
+- 已经是统一 Notify 的实例不重复添加；共享 Montage 不按 Front/Backstab 方向复制 Hit 点。
+- 不修改其他 Notify、Sequence、Montage 结构、Root Motion、Motion Warping 或 Ability 默认值。
+- 保存前后只保存批准 package，不执行无关 Save All。
 
-共享 `HandleHitEventReceived` 回调内部必须再次做精确校验，因为测试 seam 可以绕过 AbilityTask 直接调用回调：
+### Slice 3：Native Class 与 Tag readback
 
-- Front 只接受 `Event.Action.Execution.Hit` 或 `Event.Action.Execution.Front.Hit`。
-- Backstab 只接受 `Event.Action.Execution.Hit` 或 `Event.Action.Execution.Backstab.Hit`。
-- 跨方向 Tag、Release/VictimStart、父 Tag、任意无关 Tag 一律拒绝。
-- 统一入口与对应 Legacy 入口混合到达时，只允许第一个完整合法事件进入现有命中路径；`bDamageEventConsumed` 仍是唯一 exactly-once 门禁，第二个事件完全忽略。
-- 保留现有 Player/Target 身份、Activation Token、Context current/active、动画 Montage/Sequence identity、几何/距离、目标存活和 ASC 有效性校验；任何校验失败不得结算伤害，也不得消耗事件。
-- 成功命中仍只构造现有 `FMeleeHitRequest` 并调用 `FMeleeHitResolver::TryResolveHit`；不得新增第二条伤害入口。
+Native C++ 类的定位：
 
-## Legacy 兼容实现
+1. Content Browser -> Settings/View Options -> Show C++ Classes。
+2. 导航至 PolyQuest C++ Classes/PolyQuest/Animation/Combat/。
+3. 对 AnimNotify_PlayerFrontExecutionHit 和 AnimNotify_PlayerBackstabExecutionHit 右键执行 Reference Viewer。
+4. Engine/Module 内部反射边可以存在，但不能有项目 authored .uasset/.umap 连线。
+5. 检查 AnimNotify_PlayerExecutionHit，确认类可用且显示名为 Player Execution Hit。
 
-- Front 新增一个可选 `WaitLegacyHitEventTask`，精确监听 Front Legacy Tag；Backstab 对称监听 Backstab Legacy Tag。
-- 统一 Task 与 Legacy Task 共用现有 Hit callback、Token 检查和 exactly-once 门禁，不复制命中逻辑。
-- Legacy Tag 请求无效时只跳过对应可选 Task；统一 Tag/统一 Task 无效时按 canonical contract fail-closed，不得静默改回宽匹配。
-- Legacy Task 与现有事件 Task 一样声明为 `UPROPERTY(Transient)`，在正常结束、取消、目标销毁和失效路径中清理。
-- 在 `WITH_DEV_AUTOMATION_TESTS` 下增加 `SetTestInvalidateWaitLegacyHitEventTaskAfterReady(bool)`，并在 Task `ReadyForActivation()` 后按现有重入规则检查 Ability/Context/Task 有效性；若同步重入已结束 Ability，不得恢复旧 Task 或 active identity。
-- 不修改旧 Notify 的 `GetNotifyName_Implementation()` 为 `[DEPRECATED]`；这属于 Editor hygiene/Authored Migration，不进入本 Native Gate，也不修改既有测试文件。
+Gameplay Tag 验证：
 
-## 实施顺序
+- Project Settings -> GameplayTags。
+- 搜索 Execution.Front.Hit 与 Execution.Backstab.Hit。
+- 若当前 UE 5.8 面板提供关联资产/引用列表，确认 authored 资产列表为空。
+- 再确认 Event.Action.Execution.Hit 已注册。
+- 若面板没有关联资产列表，记录工具限制，不能把“搜索到 Tag”当成零引用证明。
 
-1. 以当前 HEAD 重新确认基线、批准路径和工作树 WIP；不沿用旧 SHA，不修改无关文件。
-2. 核对现有 Front/Backstab Hit Task、回调和测试 seam；需要补充调用链时进行目标明确的 CodeGraph 查询。
-3. 注册统一 Tag，新增 `UAnimNotify_PlayerExecutionHit` 头/源文件。
-4. 对称更新 Front/Backstab：添加统一 exact Task、可选 Legacy Task、任务成员/测试注入、回调白名单和 EndAbility 清理；保持现有命中与生命周期代码不变。
-5. 新增 focused Automation，覆盖统一/Legacy/跨方向/畸形 Payload/重复事件/失效重入。
-6. 运行 Rider `get_file_problems`（所有改动 C++ 文件）和 `git diff --check`；不运行 UBT、`Build.bat`、UAT 或 Rider build。
-7. 提交静态证据和未运行门禁给 Main；由用户执行手动编译、Editor readback、Automation 和 Scene01 PIE。
-8. 用户门禁通过后，Main 执行一次独立 `ue-strict-review`；发现具体缺陷时只按 review 规定做一次有证据的修复和一次定向复跑。
+辅助静态证据：
 
-## Automation 测试矩阵
+- 优先使用用户已有的 Tag/Notify 扫描脚本。
+- 当前仓库没有发现该脚本；无脚本时使用精确文本/二进制扫描检查 Content/**，排除 Saved/Autosaves/** 和生成目录。
+- 静态扫描只用于辅助定位，不能替代 Editor/Reference Viewer/readback。
 
-新增套件：`PolyQuest.Combat.ExecutionHitNotify`，至少覆盖：
+### Slice 4：回归与阶段关闭
 
-1. Notify 无 Owner、无 ASC、无 Animation 和无效 Tag 时静默 fail-closed；统一 Tag 已注册；显示名正确。
-2. Front 收到统一 Hit 时正确进入现有命中路径且只结算一次。
-3. Front 收到 Front Legacy Hit 时保持兼容且只结算一次。
-4. Backstab 收到统一 Hit 时正确进入现有命中路径且只结算一次。
-5. Backstab 收到 Backstab Legacy Hit 时保持兼容且只结算一次。
-6. Front 收到 Backstab Legacy、Backstab 收到 Front Legacy，以及任意无关/父/Release/VictimStart Tag 时拒绝，不扣血、不消耗事件。
-7. 统一与对应 Legacy 混合、重复派发时只允许第一个合法命中；`bDamageEventConsumed` 和 Context 状态保持正确。
-8. 错误 Instigator、Target、Animation、Token、Context、死亡目标或无效 ASC 时 fail-closed。
-9. 每个事件 Task 和 Legacy Task 在 `ReadyForActivation()` 同步失效、取消、目标销毁、正常 EndAbility 后都不残留；Legacy task 的测试失效注入与统一 task 对称。
+- 迁移前若存在可运行旧资产，记录 Legacy baseline；没有可追溯旧资产时记录 no-baseline，不补造证据。
+- 迁移或 No-Op 确认后运行：
+  - PolyQuest.Combat.ExecutionHitNotify
+  - PolyQuest.Combat.FrontExecution
+  - PolyQuest.Combat.Backstab
+  - PolyQuest.Combat.ExecutionLockIn
+  - PolyQuest.Combat.ExecutionLethalRecovery
+  - PolyQuest.Combat.ExecutionReleaseOutcomes
+  - PolyQuest.Combat.ExecutionVictimPresentation
+- 用户在 Scene01 PIE 验证 Front/Backstab 实际 Montage 的单次命中、Lock/Invulnerable/DeathPending/Release、致死/非致死结果、取消/销毁清理及无 Ensure/崩溃。
+- 用户手动编译 PolyQuestEditor (Development Editor)。
+- Main 收齐证据后执行一次独立 ue-strict-review。
 
-回归运行：`PolyQuest.Combat.ExecutionLockIn`、`PolyQuest.Combat.FrontExecution`、`PolyQuest.Combat.Backstab`、`PolyQuest.Combat.ExecutionLethalRecovery`、`PolyQuest.Combat.ExecutionReleaseOutcomes`、`PolyQuest.Combat.ExecutionVictimPresentation`。不得把既有 GAS 日志警告或静态检查结果描述为 PIE 证据。
+## Migration Manifest 与验收记录
 
-## 用户验证门禁
+manifest 由 Main/Codex 维护，必须在每个资产保存前冻结，并在 readback 后补齐结果。Gemini 不得直接编辑本文件。至少包含：
 
-- Compile：用户在 Visual Studio 2022 手动构建 `PolyQuestEditor (Development Editor)`，报告真实结果和首个错误（如失败）。
-- Editor readback：用户确认 `Event.Action.Execution.Hit` 可在项目 Tag 配置中读取、`Player Execution Hit` Native Notify 可在编辑器类列表中出现；不修改资产，不要求本阶段完成 Montage 迁移。
-- Automation：专项套件与上述回归套件通过；专项测试通过不等于资产或 PIE 已验证。
-- Scene01 PIE：使用现有 Front/Backstab 资产验证旧 Legacy Notify 仍可完成处决且命中不重复；若用户已在测试 Montage 中手动放置统一 Notify，再分别验证统一入口。记录输入、命中、锁定释放和回归行为。
-- Main 未收到适用门禁证据前，不得标记 Native Gate 完成、更新退役结论或提交。
+| 字段 | 要求 |
+| --- | --- |
+| Asset package | 唯一项目包路径 |
+| Runtime owner | Front、Backstab 或共享 |
+| Montage source | Sequence、Section、Slot |
+| Before | 旧/统一 Notify、Track、帧/秒 |
+| After | 新 Notify、Track、帧/秒 |
+| Neighbors | VictimStart、Release、RateWindow、MotionWarping 等邻接事件 |
+| Reference | Reference Viewer 与 Tag 面板结果 |
+| Package state | saved、untracked、imported/read-only、依赖闭包 |
+| Outcome | replaced、already canonical、blocked、no-baseline |
 
-## 两道关闭门与后续迁移
+## 关闭条件
 
-### Native Contract Gate（本阶段）
+- manifest 完整，所有运行时可达 Front/Backstab Montage 已分类。
+- 每个旧 Notify 已替换，或明确记录为 already canonical。
+- 两个旧 Native Notify 类无项目 authored asset 引用；Engine/Module 反射边不计入失败。
+- authored 资产不再使用旧方向 Hit 事件；源码/Automation 兼容引用可保留。
+- 所有发生替换的批准 package 已保存；本阶段 No-Op package 明确未编辑、未重新保存；redirector、未保存 package、复制品和未知引用已处理。
+- 用户编译、Automation、Scene01 PIE 和 Main Review 通过。
+- Legacy 源码仍保留，不能把 MIG 结果描述成 Legacy 已删除。
 
-满足以下条件后才算完成：新 Notify/Tag 编译可用；Front/Backstab 双通道 exact listener、Legacy 兼容、Payload 防御和 focused Automation 通过；旧路径未被破坏；用户编译/Automation/必要 PIE 证据齐全；Main Fresh Review 无未解决 P0-P2。
+## 资产与提交边界
 
-### Authored Migration / Retirement Gate（后续独立门）
+- No-Op 或只修改未跟踪 WIP 时，默认只提交门禁记录与文档，不孤立暂存 Montage。
+- 若未跟踪 Montage 及其 Sequence 依赖被修改，不得只暂存 Montage；除非用户另行批准完整 authored dependency closure，否则保持本地 WIP，并在收口中注明不构成 clean-checkout authored baseline。
+- 只有用户明确批准完整 authored dependency closure 后，才允许按显式路径暂存相关 .uasset/.umap；每个资产必须验证 Git LFS pointer。
+- 禁止 git add -A；排除 Saved/Autosaves、孤立未跟踪依赖、imported/read-only 资产、无关 Content、Config WIP、AGENTS.md 和任何源码删除。
+- Legacy 删除必须另立阶段/提交，并在删除前更新相关 Automation 与源码引用。
 
-用户在 Unreal Editor 中将实际处决 Montage 的旧 Notify 替换为统一 Notify，并通过 Editor/Reference Viewer/readback 证明旧 Notify 类无资产引用；随后再进行用户编译、Automation、Scene01 PIE 和 Main 审查。只有该门通过，才另立阶段移除 Legacy listener、旧 Notify 类和旧 Tag。禁止文件系统自动迁移、手改 `.uasset` 或提前删除兼容路径。
+## 文档收口
 
-## 非目标、债务与提交边界
+- 本阶段由 Main 用当前 HEAD 重写 plan.md；上一 Native Contract 记录保留在 ROADMAP-archive.md。
+- 计划制定和 Gemini 执行期间不修改 ROADMAP.md；阶段关闭后只同步里程碑状态、下一阶段指针和真实债务。
+- MIG 收口历史追加到 ROADMAP-archive.md 时必须标明 working-tree snapshot，不得描述为 clean HEAD。
+- 没有新的稳定运行时契约时不修改 ARCHITECTURE.md 或 README.md。
 
-- 不做武器专属处决 Montage 选择（D2B）、握手 Snap 对齐（D2A）、VictimStart/Release 或受害者表现、Launch/震屏/出血、Contextual Animation、Boss 投技和普通攻击 Motion-Warp 重构。
-- 不修改旧 Notify 显示名，不引入 `Small/Big/Launch` 反应枚举，不新增共享处决 Ability 基类。
-- 不修改 `MeleeHitResolver`、`ExecutionLockContext`、Enemy/Victim 能力或任何资产/Blueprint。
-- 阶段候选源码提交只允许本计划 8 个路径及 Main 的文档变更；排除全部 `Content/**`、`AGENTS.md`、其他 Config WIP、生成目录和临时文件。提交前 Main 必须按显式路径暂存、检查 staged diff 和 `git diff --cached --check`，并取得用户明确批准。
-- 已知债务：旧资产迁移、旧 Notify/Tag 零引用证明和 Editor deprecated hygiene 仍由 Authored Migration / Retirement Gate 负责；在该门通过前，Legacy 兼容代码是有意保留的运行时边界，不是遗漏。
-- 任意新增公共 API、Tag/Input/Config 契约、资产字段、生命周期所有权或未列文件需求都必须停止并返回 Main 重新定范围。
+## 风险与停止条件
 
-## Handoff 完成凭证要求
+- No-Op 只跳过替换编辑，不跳过完整 manifest、Reference Viewer、Tag readback、回归和 Review。
+- 当前静态扫描没有发现旧 class 字符串，不能据此宣称零引用。
+- imported/read-only asset 若仍引用旧 Notify，不能擅自编辑；保持 Legacy 兼容并记录 closure trigger。
+- 发现未列出的 Asset、Blueprint、Tag、Config、Source 或生命周期变更需求时，返回 Main 重新定范围。
+- 任一验证根因最多允许一次有证据修复和一次定向复跑；再次失败则停止并保留首个失败证据。
+- 若所有资产已 canonical 但没有可提交的完整依赖闭包，允许关闭本地 authored/readback 功能门，但必须明确“不构成 clean-checkout authored baseline”。
 
-Gemini 回交时必须列出：实际修改路径、每个路径对应的函数/类、统一与 Legacy Task 的 exact 监听证据、Rider 静态检查结果、`git diff --check` 结果、focused/regression Automation 是否运行、未运行的用户门禁、严格实施自审 findings、剩余风险；明确未暂存、未提交且未修改批准范围外文件。
+## Gemini Handoff Completion Requirements
 
-## 阶段收口记录（2026-09-04）
+Gemini 回交必须列出：
 
-- **实现证据（Executor）**：Gemini 已完成统一 `UAnimNotify_PlayerExecutionHit`、`Event.Action.Execution.Hit` 注册、Front/Backstab 双方向 exact listener、Legacy Hit 兼容 task、Payload 白名单和 focused Automation；Gemini 报告独立实施自审为 0 缺陷。该证据属于实现交付和静态/测试报告，不替代用户编译、Editor 或 PIE 证据。
-- **实际变更范围**：当前批准的 8 个路径均为本阶段候选范围：1 个 Tag 配置、1 对统一 Notify 源文件、Front/Backstab Ability 各 1 对文件、1 个专项测试文件。旧 Notify、既有测试、资产、Blueprint、Build.cs 和其他用户 WIP 未获本阶段授权。
-- **Main Fresh Review**：基线 `8f1357af39ec520c94f93e9b93c8ccf781170ff0` 与 code-review-graph 构建 SHA 一致；按两批有界流程检查批准 diff、相关事件/生命周期一跳调用链和 exact Tag 合同，未发现可证实的 P0/P1/P2 缺陷。图谱提示的结构性测试覆盖缺口保留为残余验证风险，不作为缺陷结论。
-- **已确认验证**：用户确认 Visual Studio `PolyQuestEditor (Development Editor)` 编译通过（0 错误）、`PolyQuest.Combat.ExecutionHitNotify`、`PolyQuest.Combat.FrontExecution`、`PolyQuest.Combat.Backstab` Automation 成功、Editor Notify 列表可读回 `Player Execution Hit`，且 Scene01 PIE 无 Ensure/崩溃；`git diff --check` 退出码为 0（仅有行尾转换提示）。
-- **当前结论**：Native Contract Gate 已完成；本阶段提交不移除 Legacy 路径，也不建立旧资产引用为零的结论。完成态历史记录追加到 `ROADMAP-archive.md`，后续迁移门单独管理。
-- **下一门禁节奏**：下一阶段为 Authored Migration / Legacy Retirement Gate：先建立实际 Montage/Notify 清单，再在 Unreal Editor 逐资产替换旧 Notify，读回时序和引用，运行旧/新入口回归并证明旧类/Tag 零引用，最后另立退役提交。D2A、D2B、E 不依赖旧路径退役，但新武器只能使用统一 Native Notify。
+- 实际检查和修改的 package 路径，以及 manifest 条目。
+- No-Op 或替换分支的判定依据。
+- 每个资产的 Notify 前后类型、Tag 映射、Track、帧/秒、邻接事件和引用 readback。
+- Native C++ class Reference Viewer 结果、Gameplay Tag 面板结果及静态扫描辅助结果。
+- 是否执行了用户编译、Automation、Scene01 PIE；未运行门禁必须明确列出。
+- 是否存在未跟踪依赖、imported/read-only 引用、redirector 或 no-baseline。
+- 严格实施自审 findings、剩余风险、未暂存/未提交状态。
+- 明确没有修改 manifest 外资产、Source、Config、Blueprint、地图或文档。
+
+## 收口记录（2026-09-04；parent HEAD `95dda582dfbeea27d3f6e5f800ab2ced5fdd2a0f`；working-tree not clean）
+
+### 实际结果与 Migration Manifest
+
+- 用户完成 Editor readback：`/Game/BP/Montages/LightSword/AM_LightSword_PlayerExecution` 的命中 Notify 已是 `UAnimNotify_PlayerExecutionHit` / `Player Execution Hit`，未执行替换、未重新保存，分支判定为 `No-Op / already canonical`。
+- Front 与 Backstab 继续共用同一轻剑 Execution Montage；这是当前预期设计，方向/武器专属 Montage 仍属于 `TODO-05A1-D2B`。
+- Main/Codex 维护的最终 manifest 行：
+
+| Asset package | Runtime owner | Before / After | Timing / neighbors | Package state | Reference / Tag readback | Outcome |
+| --- | --- | --- | --- | --- | --- | --- |
+| `/Game/BP/Montages/LightSword/AM_LightSword_PlayerExecution` | Front + Backstab（共享） | 已为 `Player Execution Hit`；未发生替换 | 未编辑、未改变 Track/帧/秒/Section/Slot 或邻接事件 | 未跟踪用户-owned WIP；无保存或暂存 | 两个旧 Native Notify 无项目 authored 连线；旧方向 Tag 无资产引用 | `already canonical` / `No-Op` |
+
+- No-Op 不构成 clean-checkout authored baseline；相关未跟踪 Montage/Sequence 依赖仍按用户-owned WIP 保留，未孤立暂存。
+
+### 用户验证收据
+
+- **Editor readback**：`AM_LightSword_PlayerExecution` 确认为 `Player Execution Hit`；`AnimNotify_PlayerFrontExecutionHit` 与 `AnimNotify_PlayerBackstabExecutionHit` 的 Reference Viewer 仅有模块级反射边，无项目 authored 资产连线；旧 Tag 无资产引用。
+- **Build**：用户确认 Visual Studio `PolyQuestEditor (Development Editor)` 编译通过，编辑器正常运行。
+- **Automation**：用户确认以下 7 项全部 `Success`：`ExecutionHitNotify`、`FrontExecution`、`Backstab`、`ExecutionLockIn`、`ExecutionLethalRecovery`、`ExecutionReleaseOutcomes`、`ExecutionVictimPresentation`。
+- **Scene01 PIE**：用户确认 Front/Backstab 处决的扣血、动画时序、Release、状态恢复均通过，无崩溃或 Ensure。
+
+### Main Fresh Review
+
+- Review route：`ue-strict-review`，Main 单轮、diff-first、缺陷优先；审查范围限定为本阶段文档收口与用户确认的 No-Op 资产证据。
+- Findings：未发现当前批准范围内 P0/P1/P2 blocker；无需要修复的 Source/asset contract 回归。
+- `code-review-graph`：`skipped (docs-only closeout; no Source/shared-contract diff)`；无必要的第二批 CodeGraph 扩展。
+- 证据层已分开记录：用户验证属于 Editor readback、build、Automation、PIE/runtime；本次 Review 结论不替代这些门禁。
+
+### 提交与后续边界
+
+- 本阶段没有 authored asset、Source、Config、Blueprint、地图或测试文件变更；默认提交候选仅为 Main 收口文档，须等用户明确批准后再 staging/commit。
+- 旧 Notify 源码、兼容 listener、旧 Tag 与旧测试引用保留；Legacy 删除必须另立 Retirement 阶段和独立提交，并在删除前重新确认 authored 零引用与完整验证闭环。
