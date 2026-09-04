@@ -12,8 +12,9 @@
 #include "Combat/Equipment/MeleeWeaponDefinition.h"
 #include "Combat/Equipment/WeaponEquipmentComponent.h"
 #include "Combat/Execution/ExecutionLockContext.h"
+#include "Combat/Execution/ExecutionSnapAlignment.h"
 #include "Combat/Melee/MeleeHitResolver.h"
-#include "Combat/Melee/MeleeMotionWarping.h"
+#include "Components/CapsuleComponent.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "GameplayEffect.h"
@@ -119,7 +120,6 @@ UPlayerBackstabExecutionAbility::UPlayerBackstabExecutionAbility()
 
 	MinExecutionDistance = 0.0f;
 	MaxExecutionDistance = 250.0f;
-	WarpStopDistance = 190.0f;
 
 	const FGameplayTag ExecutionBackstabAbilityTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Action.Execution.Backstab")), false);
 	const FGameplayTag TeardownOnUnpossessTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Action.Teardown.OnUnpossess")), false);
@@ -222,6 +222,14 @@ bool UPlayerBackstabExecutionAbility::ValidateTargetPrerequisites(
 	const UWeaponEquipmentComponent* Equipment = PlayerCharacter->FindComponentByClass<UWeaponEquipmentComponent>();
 	const UMeleeWeaponDefinition* MeleeWeapon = Equipment ? Cast<UMeleeWeaponDefinition>(Equipment->GetCurrentMainHandWeapon()) : nullptr;
 	if (!MeleeWeapon)
+	{
+		return false;
+	}
+
+	const float SnapDistance = MeleeWeapon->ExecutionSnapDistance;
+	if (!FExecutionSnapAlignment::IsSnapDistanceValid(SnapDistance)
+		|| SnapDistance < MinExecutionDistance
+		|| SnapDistance > MaxExecutionDistance)
 	{
 		return false;
 	}
@@ -357,6 +365,98 @@ bool UPlayerBackstabExecutionAbility::TestEvaluateBackstabGeometryVectors(
 	return AngleDeg <= MaxAngle;
 }
 
+bool UPlayerBackstabExecutionAbility::TryApplyExecutionSnap(
+	APlayerCharacter* PlayerCharacter,
+	AEnemyCharacter* TargetActor,
+	const FVector& TargetForwardSnapshot)
+{
+	if (!PlayerCharacter || !TargetActor)
+	{
+		return false;
+	}
+
+	UCapsuleComponent* PlayerCapsule = PlayerCharacter->GetCapsuleComponent();
+	UCharacterMovementComponent* MoveComp = PlayerCharacter->GetCharacterMovement();
+	if (!PlayerCapsule || !MoveComp)
+	{
+		return false;
+	}
+
+	const UWeaponEquipmentComponent* Equipment = PlayerCharacter->FindComponentByClass<UWeaponEquipmentComponent>();
+	const UMeleeWeaponDefinition* MeleeWeapon = Equipment ? Cast<UMeleeWeaponDefinition>(Equipment->GetCurrentMainHandWeapon()) : nullptr;
+	if (!MeleeWeapon || !FExecutionSnapAlignment::IsSnapDistanceValid(MeleeWeapon->ExecutionSnapDistance))
+	{
+		return false;
+	}
+
+	const FVector OriginalLocation = PlayerCharacter->GetActorLocation();
+	const FRotator OriginalRotation = PlayerCharacter->GetActorRotation();
+
+	FTransform TargetTransform;
+	if (!FExecutionSnapAlignment::TryBuildTransform(
+		OriginalLocation,
+		TargetActor->GetActorLocation(),
+		TargetForwardSnapshot,
+		MeleeWeapon->ExecutionSnapDistance,
+		EExecutionSnapSide::Backstab,
+		TargetTransform))
+	{
+		return false;
+	}
+
+	const bool bWasIgnoringTarget = PlayerCapsule->GetMoveIgnoreActors().Contains(TargetActor);
+	if (!bWasIgnoringTarget)
+	{
+		PlayerCapsule->IgnoreActorWhenMoving(TargetActor, true);
+	}
+
+	FHitResult HitResult;
+	PlayerCharacter->SetActorLocationAndRotation(
+		TargetTransform.GetLocation(),
+		TargetTransform.Rotator(),
+		/*bSweep=*/true,
+		&HitResult,
+		ETeleportType::TeleportPhysics);
+
+	if (!bWasIgnoringTarget)
+	{
+		PlayerCapsule->IgnoreActorWhenMoving(TargetActor, false);
+	}
+
+	bool bBlocked = false;
+	if (HitResult.bBlockingHit && HitResult.GetActor() != TargetActor)
+	{
+		bBlocked = true;
+	}
+
+	constexpr float LocationTolerance = 1.0f; // 1.0 cm
+	constexpr float RotationToleranceDegrees = 1.0f; // 1.0 deg
+
+	const FVector ActualLocation = PlayerCharacter->GetActorLocation();
+	const float DistanceDelta = FVector::Dist(ActualLocation, TargetTransform.GetLocation());
+	const bool bLocationOk = (DistanceDelta <= LocationTolerance);
+
+	const float ActualYaw = PlayerCharacter->GetActorRotation().Yaw;
+	const float TargetYaw = TargetTransform.Rotator().Yaw;
+	const float YawDelta = FMath::Abs(FMath::FindDeltaAngleDegrees(TargetYaw, ActualYaw));
+	const bool bRotationOk = (YawDelta <= RotationToleranceDegrees);
+
+	if (!bBlocked && bLocationOk && bRotationOk)
+	{
+		return true;
+	}
+
+	PlayerCharacter->SetActorLocationAndRotation(
+		OriginalLocation,
+		OriginalRotation,
+		/*bSweep=*/false,
+		nullptr,
+		ETeleportType::TeleportPhysics);
+
+	MoveComp->StopMovementImmediately();
+	return false;
+}
+
 #if WITH_DEV_AUTOMATION_TESTS
 bool UPlayerBackstabExecutionAbility::TestEvaluateBackstabGeometry(
 	const APlayerCharacter* Player,
@@ -420,6 +520,8 @@ void UPlayerBackstabExecutionAbility::ActivateAbility(
 		return;
 	}
 
+	const FVector TargetForwardAtActivation = TargetActor->GetActorForwardVector();
+
 	UAbilitySystemComponent* TargetASC = TargetActor->GetAbilitySystemComponent();
 	if (!TargetASC)
 	{
@@ -470,47 +572,11 @@ void UPlayerBackstabExecutionAbility::ActivateAbility(
 	bVictimReleaseExpected = false;
 	bVictimStartForwarded = false;
 
-	// Setup Motion Warping or fallback horizontal Yaw facing
-	FMeleeMotionWarpConfig WarpConfig;
-	WarpConfig.bUseMotionWarping = bUseMotionWarping;
-	WarpConfig.WarpTargetName = WarpTargetName;
-	WarpConfig.MinTriggerDistance = MinExecutionDistance;
-	WarpConfig.WarpStopDistance = WarpStopDistance;
-	WarpConfig.MaxTriggerDistance = MaxExecutionDistance;
-	WarpConfig.MaxWarpAngleDegrees = MaxWarpAngleDegrees;
-
-	const UCharacterMovementComponent* PlayerMoveComp = PlayerCharacter->GetCharacterMovement();
-	const bool bPlayerOnGround = PlayerMoveComp && PlayerMoveComp->IsMovingOnGround();
-	const UCharacterMovementComponent* TargetMoveComp = TargetActor->GetCharacterMovement();
-	const bool bTargetOnGround = TargetMoveComp && TargetMoveComp->IsMovingOnGround();
-
-	FTransform WarpTransform;
-	if (bUseMotionWarping && FMeleeMotionWarpingLifecycle::EvaluateMeleeMotionWarpTransform(
-		PlayerCharacter->GetActorLocation(),
-		PlayerCharacter->GetActorForwardVector(),
-		bPlayerOnGround,
-		TargetActor->GetActorLocation(),
-		bTargetOnGround,
-		WarpConfig,
-		WarpTransform))
+	// One-shot deterministic execution snap alignment
+	if (!TryApplyExecutionSnap(PlayerCharacter, TargetActor, TargetForwardAtActivation))
 	{
-		if (!PlayerCharacter->SetMeleeMotionWarpTarget(WarpTargetName, WarpTransform))
-		{
-			PlayerCharacter->ClearMeleeMotionWarpTargets();
-			const FVector ToTarget = (TargetActor->GetActorLocation() - PlayerCharacter->GetActorLocation()).GetSafeNormal2D();
-			if (!ToTarget.IsNearlyZero())
-			{
-				PlayerCharacter->SetActorRotation(FRotator(0.0f, ToTarget.Rotation().Yaw, 0.0f));
-			}
-		}
-	}
-	else
-	{
-		const FVector ToTarget = (TargetActor->GetActorLocation() - PlayerCharacter->GetActorLocation()).GetSafeNormal2D();
-		if (!ToTarget.IsNearlyZero())
-		{
-			PlayerCharacter->SetActorRotation(FRotator(0.0f, ToTarget.Rotation().Yaw, 0.0f));
-		}
+		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
+		return;
 	}
 
 	ActiveContext = NewObject<UPlayerBackstabExecutionContext>(this);
@@ -1082,8 +1148,6 @@ void UPlayerBackstabExecutionAbility::EndAbility(
 
 	if (PlayerCharacter)
 	{
-		PlayerCharacter->ClearMeleeMotionWarpTargets();
-
 		if (UAnimInstance* AnimInstance = PlayerCharacter->GetMesh() ? PlayerCharacter->GetMesh()->GetAnimInstance() : nullptr)
 		{
 			if (ExecutionMontage && AnimInstance->Montage_IsActive(ExecutionMontage))

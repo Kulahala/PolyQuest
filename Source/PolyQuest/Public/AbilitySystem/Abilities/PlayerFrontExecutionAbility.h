@@ -82,15 +82,6 @@ public:
 	void SetTestDamageGameplayEffectClass(TSubclassOf<UGameplayEffect> InClass) { DamageGameplayEffectClass = InClass; }
 	void SetTestExecutionDistances(float InMin, float InMax) { MinExecutionDistance = InMin; MaxExecutionDistance = InMax; }
 	void SetTestMaxFrontAngleDegrees(float InAngle) { MaxFrontAngleDegrees = InAngle; }
-	void SetTestMotionWarpConfig(bool bEnabled, FName InTargetName, float InMin, float InStop, float InMax, float InAngle)
-	{
-		bUseMotionWarping = bEnabled;
-		WarpTargetName = InTargetName;
-		MinExecutionDistance = InMin;
-		WarpStopDistance = InStop;
-		MaxExecutionDistance = InMax;
-		MaxWarpAngleDegrees = InAngle;
-	}
 	bool TestEvaluateFrontGeometry(const APlayerCharacter* Player, const AEnemyCharacter* Target, float& OutDist2D, float& OutAngleDegrees) const;
 	static bool TestEvaluateFrontGeometryVectors(
 		const FVector& PlayerLoc,
@@ -177,21 +168,11 @@ protected:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Execution", meta = (ClampMin = "0.0", ClampMax = "90.0", Units = "Degrees", ToolTip = "允许触发正面处决的目标正前方最大夹角（度）。"))
 	float MaxFrontAngleDegrees = 60.0f;
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|MotionWarp", meta = (ToolTip = "是否在处决前摇启用 Motion Warping 贴近对齐目标。"))
-	bool bUseMotionWarping = false;
-
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|MotionWarp", meta = (EditCondition = "bUseMotionWarping", ToolTip = "处决 Motion Warp 目标标识名称。"))
-	FName WarpTargetName = FName(TEXT("MeleeContact"));
-
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|MotionWarp", meta = (EditCondition = "bUseMotionWarping", ClampMin = "0.0", Units = "Centimeters", ToolTip = "处决 Motion Warp 期望停止距离。"))
-	float WarpStopDistance = 190.0f;
-
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|MotionWarp", meta = (EditCondition = "bUseMotionWarping", ClampMin = "0.0", ClampMax = "180.0", Units = "Degrees", ToolTip = "处决 Motion Warp 最大允许角度偏转。"))
-	float MaxWarpAngleDegrees = 60.0f;
 
 private:
 	bool ValidateTargetPrerequisites(const APlayerCharacter* PlayerCharacter, const AEnemyCharacter* TargetActor) const;
 	bool CheckFrontGeometry(const APlayerCharacter* PlayerCharacter, const AEnemyCharacter* TargetActor, float& OutDist2D, float& OutAngleDegrees) const;
+	bool TryApplyExecutionSnap(APlayerCharacter* PlayerCharacter, AEnemyCharacter* TargetActor, const FVector& TargetForwardSnapshot);
 	void BindTargetDelegates(AEnemyCharacter* TargetActor, uint32 InToken);
 	void UnbindTargetDelegates();
 

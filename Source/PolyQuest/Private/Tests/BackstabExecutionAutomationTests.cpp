@@ -15,6 +15,7 @@
 #include "Combat/Equipment/MeleeWeaponDefinition.h"
 #include "Combat/Equipment/WeaponEquipmentComponent.h"
 #include "Combat/Melee/MeleeHitResolver.h"
+#include "Components/BoxComponent.h"
 #include "Engine/Engine.h"
 #include "Engine/World.h"
 #include "Framework/PolyQuestPlayerController.h"
@@ -177,7 +178,7 @@ bool FBackstabExecutionAutomationTest::RunTest(const FString& Parameters)
 	FGameplayAbilitySpec VictimSpec(UEnemyVictimExecutionAbility::StaticClass(), 1, INDEX_NONE, Enemy);
 	EnemyASC->GiveAbility(VictimSpec);
 
-	auto GrantAndConfigureBackstabAbility = [&](APlayerCharacter* InPlayer, UAnimMontage* Montage, TSubclassOf<UGameplayEffect> DamageClass, float MinDist, float MaxDist, float MaxAngle, bool bWarp = false) -> TPair<FGameplayAbilitySpecHandle, UPlayerBackstabExecutionAbility*>
+	auto GrantAndConfigureBackstabAbility = [&](APlayerCharacter* InPlayer, UAnimMontage* Montage, TSubclassOf<UGameplayEffect> DamageClass, float MinDist, float MaxDist, float MaxAngle) -> TPair<FGameplayAbilitySpecHandle, UPlayerBackstabExecutionAbility*>
 	{
 		UAbilitySystemComponent* ASC = InPlayer->GetAbilitySystemComponent();
 		FGameplayAbilitySpec Spec(UPlayerBackstabExecutionAbility::StaticClass(), 1, INDEX_NONE, InPlayer);
@@ -191,10 +192,6 @@ bool FBackstabExecutionAutomationTest::RunTest(const FString& Parameters)
 			Instance->SetTestDamageGameplayEffectClass(DamageClass);
 			Instance->SetTestExecutionDistances(MinDist, MaxDist);
 			Instance->SetTestMaxBackAngleDegrees(MaxAngle);
-			if (bWarp)
-			{
-				Instance->SetTestMotionWarpConfig(true, FName(TEXT("MeleeContact")), 50.0f, 150.0f, 300.0f, 60.0f);
-			}
 		}
 		return { Handle, Instance };
 	};
@@ -341,6 +338,32 @@ bool FBackstabExecutionAutomationTest::RunTest(const FString& Parameters)
 			BackstabAbility->CanActivateAbility(BackstabHandle, &ActorInfo));
 		EnemyASC->RemoveLooseGameplayTag(TagInvulnerable);
 
+		// 5.5 Weapon ExecutionSnapDistance range check gate [MinExecutionDistance, MaxExecutionDistance]
+		{
+			UWeaponEquipmentComponent* EquipComp = Player->FindComponentByClass<UWeaponEquipmentComponent>();
+			UMeleeWeaponDefinition* WeaponDef = EquipComp ? EquipComp->GetEquippedMainHandMelee() : nullptr;
+			if (TestNotNull(TEXT("Main hand melee weapon exists for backstab snap check"), WeaponDef))
+			{
+				const float OriginalSnapDist = WeaponDef->ExecutionSnapDistance;
+
+				WeaponDef->ExecutionSnapDistance = 300.0f;
+				TestFalse(TEXT("CanActivateAbility fails when ExecutionSnapDistance > MaxExecutionDistance"),
+					BackstabAbility->CanActivateAbility(BackstabHandle, &ActorInfo));
+
+				WeaponDef->ExecutionSnapDistance = 20.0f;
+				TestFalse(TEXT("CanActivateAbility fails when ExecutionSnapDistance < MinExecutionDistance"),
+					BackstabAbility->CanActivateAbility(BackstabHandle, &ActorInfo));
+
+				WeaponDef->ExecutionSnapDistance = -10.0f;
+				TestFalse(TEXT("CanActivateAbility fails when ExecutionSnapDistance is negative"),
+					BackstabAbility->CanActivateAbility(BackstabHandle, &ActorInfo));
+
+				WeaponDef->ExecutionSnapDistance = OriginalSnapDist;
+				TestTrue(TEXT("CanActivateAbility succeeds after restoring valid ExecutionSnapDistance"),
+					BackstabAbility->CanActivateAbility(BackstabHandle, &ActorInfo));
+			}
+		}
+
 		// Cleanup
 		PlayerASC->ClearAbility(BackstabHandle);
 	}
@@ -364,10 +387,37 @@ bool FBackstabExecutionAutomationTest::RunTest(const FString& Parameters)
 		TestEqual(TEXT("Reserved target is indeed Enemy"),
 			BackstabAbility->GetTestReservedTarget(), Enemy);
 
+		// Verify Backstab Snap Transform: Enemy is at (150, 0, 0) facing (+1, 0, 0), Distance is 190
+		// Expected Player Location: (150 - 190, 0, 0) = (-40, 0, 0)
+		// Expected Player Facing: +Forward = (+1, 0, 0) -> Yaw = 0 deg
+		const FVector ExpectedSnapLoc(-40.0f, 0.0f, 0.0f);
+		TestTrue(TEXT("Player location snapped to target back within 1cm"),
+			FVector::Dist(Player->GetActorLocation(), ExpectedSnapLoc) <= 1.0f);
+		TestTrue(TEXT("Player rotation snapped facing target (+Forward) within 1deg"),
+			FMath::Abs(FMath::FindDeltaAngleDegrees(Player->GetActorRotation().Yaw, 0.0f)) <= 1.0f);
+
+		// Verify Enemy entered MOVE_None under victim execution lock
+		if (UCharacterMovementComponent* EnemyMove = Enemy->GetCharacterMovement())
+		{
+			TestEqual(TEXT("Enemy movement mode is MOVE_None under backstab execution lock"),
+				EnemyMove->MovementMode, MOVE_None);
+		}
+
 		// End ability
 		BackstabAbility->TestEndAbility();
 		TestNull(TEXT("Target reservation cleared on EndAbility"),
 			BackstabAbility->GetTestReservedTarget());
+
+		// Verify Enemy restored to MOVE_Walking after release
+		if (UCharacterMovementComponent* EnemyMove = Enemy->GetCharacterMovement())
+		{
+			TestEqual(TEXT("Enemy movement mode restored to MOVE_Walking after backstab release"),
+				EnemyMove->MovementMode, MOVE_Walking);
+		}
+
+		// Reset Player location for subsequent sections
+		Player->SetActorLocation(FVector(0.0f, 0.0f, 0.0f));
+		Player->SetActorRotation(FRotator::ZeroRotator);
 
 		PlayerASC->ClearAbility(BackstabHandle);
 	}
@@ -897,6 +947,131 @@ bool FBackstabExecutionAutomationTest::RunTest(const FString& Parameters)
 
 		ReentryAbility->TestEndAbility();
 		PlayerASC->ClearAbility(ReentryHandle);
+	}
+
+	// =========================================================================
+	// 14. Environment Blocking Snap Rollback, Zero Velocity & Formal Release Gate
+	// =========================================================================
+	{
+		UAnimMontage* SyntheticMontage = NewObject<UAnimMontage>();
+		TSubclassOf<UGameplayEffect> DamageGEClass = UTestProjectileDamageGE::StaticClass();
+
+		Player->SetActorLocation(FVector(0.0f, 0.0f, 0.0f));
+		Player->SetActorRotation(FRotator::ZeroRotator);
+		Enemy->SetActorLocation(FVector(150.0f, 0.0f, 0.0f));
+		Enemy->SetActorRotation(FRotator(0.0f, 0.0f, 0.0f)); // Enemy forward is (+1, 0, 0)
+
+		auto [BlockExecHandle, BlockExecAbility] = GrantAndConfigureBackstabAbility(Player, SyntheticMontage, DamageGEClass, 50.0f, 250.0f, 60.0f);
+
+		Player->SetTestLockedTarget(Enemy);
+
+		// Spawn temporary blocking actor at the backstab snap target location (-40, 0, 0)
+		AActor* BlockingActor = World->SpawnActor<AActor>();
+		if (TestNotNull(TEXT("Temporary blocking actor spawned for backstab"), BlockingActor))
+		{
+			UBoxComponent* BoxComp = NewObject<UBoxComponent>(BlockingActor);
+			BoxComp->InitBoxExtent(FVector(50.0f, 50.0f, 100.0f));
+			BoxComp->SetCollisionProfileName(TEXT("BlockAll"));
+			BlockingActor->SetRootComponent(BoxComp);
+			BoxComp->RegisterComponent();
+			BlockingActor->SetActorLocation(FVector(-40.0f, 0.0f, 0.0f));
+
+			const FVector OriginalPlayerLoc = Player->GetActorLocation();
+			const FRotator OriginalPlayerRot = Player->GetActorRotation();
+
+			// Trigger backstab attempt into the blocking actor
+			Player->TriggerTestRequestAbilityForInputIntent(FGameplayTag::RequestGameplayTag(FName(TEXT("Input.PrimaryAttack")), false));
+
+			// Snap must fail, ability must end via cancel, and player transform rolled back
+			TestFalse(TEXT("Backstab aborted cleanly when snap is blocked"), BlockExecAbility->IsActive());
+			TestEqual(TEXT("Player location rolled back to original on backstab block"), Player->GetActorLocation(), OriginalPlayerLoc);
+			TestTrue(TEXT("Player rotation rolled back to original on backstab block"),
+				FMath::Abs(FMath::FindDeltaAngleDegrees(Player->GetActorRotation().Yaw, OriginalPlayerRot.Yaw)) <= 1.0f);
+			TestTrue(TEXT("Player velocity cleared on backstab block rollback"), Player->GetVelocity().IsNearlyZero());
+			TestNull(TEXT("Target reservation cleared after blocked backstab abort"), BlockExecAbility->GetTestReservedTarget());
+
+			// Victim must be formally released and restored to MOVE_Walking
+			if (UCharacterMovementComponent* EnemyMove = Enemy->GetCharacterMovement())
+			{
+				TestEqual(TEXT("Victim restored to MOVE_Walking after blocked backstab cancel"), EnemyMove->MovementMode, MOVE_Walking);
+			}
+
+			BlockingActor->Destroy();
+		}
+
+		PlayerASC->ClearAbility(BlockExecHandle);
+	}
+
+	// =========================================================================
+	// 15. Preserving Other Abilities' Motion Warp Targets Across EndAbility
+	// =========================================================================
+	{
+		UAnimMontage* SyntheticMontage = NewObject<UAnimMontage>();
+		TSubclassOf<UGameplayEffect> DamageGEClass = UTestProjectileDamageGE::StaticClass();
+
+		Player->SetActorLocation(FVector(0.0f, 0.0f, 0.0f));
+		Player->SetActorRotation(FRotator::ZeroRotator);
+		Enemy->SetActorLocation(FVector(150.0f, 0.0f, 0.0f));
+		Enemy->SetActorRotation(FRotator(0.0f, 0.0f, 0.0f));
+
+		const FName RegularWarpTargetName(TEXT("MeleeContact"));
+		Player->SetMeleeMotionWarpTarget(RegularWarpTargetName, FTransform(FRotator::ZeroRotator, FVector(500.0f, 0.0f, 0.0f)));
+		TestTrue(TEXT("Regular motion warp target registered before backstab execution"),
+			Player->HasTestMeleeMotionWarpTarget(RegularWarpTargetName));
+
+		auto [ExecHandle, ExecAbility] = GrantAndConfigureBackstabAbility(Player, SyntheticMontage, DamageGEClass, 50.0f, 250.0f, 60.0f);
+
+		Player->SetTestLockedTarget(Enemy);
+		Player->TriggerTestRequestAbilityForInputIntent(FGameplayTag::RequestGameplayTag(FName(TEXT("Input.PrimaryAttack")), false));
+
+		TestTrue(TEXT("Backstab execution activated successfully"), ExecAbility->IsActive());
+
+		// End ability
+		ExecAbility->TestEndAbility();
+		TestFalse(TEXT("Backstab execution ability ended"), ExecAbility->IsActive());
+
+		// Invariant: Regular attack's Motion Warp target must NOT have been cleared!
+		TestTrue(TEXT("Regular motion warp target preserved after backstab EndAbility"),
+			Player->HasTestMeleeMotionWarpTarget(RegularWarpTargetName));
+
+		// Cleanup
+		Player->ClearMeleeMotionWarpTargets();
+		PlayerASC->ClearAbility(ExecHandle);
+	}
+
+	// =========================================================================
+	// 16. Target Forward Snapshot Invariant During Activation
+	// =========================================================================
+	{
+		UAnimMontage* SyntheticMontage = NewObject<UAnimMontage>();
+		TSubclassOf<UGameplayEffect> DamageGEClass = UTestProjectileDamageGE::StaticClass();
+
+		Player->SetActorLocation(FVector(0.0f, 0.0f, 0.0f));
+		Player->SetActorRotation(FRotator::ZeroRotator);
+		Enemy->SetActorLocation(FVector(150.0f, 0.0f, 0.0f));
+		Enemy->SetActorRotation(FRotator(0.0f, 0.0f, 0.0f)); // Enemy forward is (+1, 0, 0)
+
+		auto [ExecHandle, ExecAbility] = GrantAndConfigureBackstabAbility(Player, SyntheticMontage, DamageGEClass, 50.0f, 250.0f, 60.0f);
+
+		Player->SetTestLockedTarget(Enemy);
+		Player->TriggerTestRequestAbilityForInputIntent(FGameplayTag::RequestGameplayTag(FName(TEXT("Input.PrimaryAttack")), false));
+
+		TestTrue(TEXT("Backstab activated"), ExecAbility->IsActive());
+
+		// Expected location is based on activation forward (+1, 0, 0) -> (-40, 0, 0)
+		const FVector SnapLocationAtActivation = Player->GetActorLocation();
+		TestTrue(TEXT("Player snapped behind original target orientation"),
+			FVector::Dist(SnapLocationAtActivation, FVector(-40.0f, 0.0f, 0.0f)) <= 1.0f);
+
+		// Now enemy turns 90 degrees after activation
+		Enemy->SetActorRotation(FRotator(0.0f, 90.0f, 0.0f));
+
+		// Player location must remain anchored to activation snapshot, not updated dynamically
+		TestEqual(TEXT("Player location does not track post-activation target rotation"),
+			Player->GetActorLocation(), SnapLocationAtActivation);
+
+		ExecAbility->TestEndAbility();
+		PlayerASC->ClearAbility(ExecHandle);
 	}
 
 	return true;

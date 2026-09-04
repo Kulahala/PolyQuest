@@ -130,6 +130,8 @@ PolyQuest 是一个以 UE 5.8、C++ 与 GAS 为核心的单机低多边形动作
 
 `TODO-05A1-D1` 已完成受害者表现时序收口：握手阶段只建立锁定，主角 Montage 的 `UAnimNotify_PlayerExecutionVictimStart` 经当前 Player Ability 与执行会话校验后同步转发，受害者 Montage 延迟到 `VictimStart` 才开播；`VictimStart -> Hit -> Release` 三个语义点不改变唯一伤害、致死恢复和非致死 Launch/站立降级所有权，缺失或失败表现安全降级。用户已确认 Scene01 PIE 与专项/回归 Automation；编译与 Editor readback 以执行报告记录，作者化 Montage/Notify 仍是本地 `Content/**` WIP。
 
+`TODO-05A1-D2A` 已完成执行握手的一次性 Snap 对齐：Front/Backstab 在握手成功、玩家 Montage 启动前，读取武器 `ExecutionSnapDistance`，对受害者前/后方做带临时自身碰撞忽略的 Sweep；阻挡时恢复原始 Transform 并清速，再沿既有 formal Release 清理。最终位置/Yaw 使用有限容差与回绕安全比较，输出高度保留玩家当前 `Z`，解决已发现的玩家/目标高度差导致背刺下陷的问题；复杂坡地和台阶贴地仍未覆盖。Ability 的 `Min/MaxExecutionDistance` 继续负责玩法窗口与安全边界，未与武器字段合并；执行专用旧 Motion-Warp 字段按产品决定删除，普通攻击的 Motion-Warp 仍由各自 Ability 拥有。用户已确认 `ExecutionSnapAlignment`、`FrontExecution`、`Backstab` Automation 与 Scene01 PIE；本阶段独立编译/readback 收据未另行归档，作者化资产仍是本地 `Content/**` WIP。下一阶段为 `TODO-05A1-D2B`。
+
 `TODO-07B2` 已完成由精确 Trace Window 生命周期驱动的 Player/Enemy Niagara 近战武器拖尾，既有 Sweep/Resolver 伤害路径不变。用户已确认聚焦 `Scene01` PIE 视觉验收，以及包含 `PolyQuest.Melee.WeaponTrail` 的十三套 Unreal Editor Automation 全部通过；Niagara 资产和 Blueprint 绑定仍是本地 `Content/**` WIP，不作为干净检出的复现证据。
 
 `TODO-07B4` 已实现玩家攻击者命中镜头冲击反馈：Enemy 的权威 Health/Team 边界把 `Data.Reaction.Small/Big/Launch` 单次转发到 Player；Player 以独立的 attacker 字段解析三档 Shake，允许复用同一组 Camera Shake 资产但禁止字段回退，且与受击路径共用单一 CameraManager/清理生命周期。用户已确认 focused Automation 与 Scene01 PIE；本次收口没有独立手动编译日志或六字段 Editor 读回，因此作者化字段基线仍是本地 WIP。

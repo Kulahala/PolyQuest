@@ -13,6 +13,7 @@
 #include "Combat/Equipment/MeleeWeaponDefinition.h"
 #include "Combat/Equipment/WeaponEquipmentComponent.h"
 #include "Combat/Melee/MeleeHitResolver.h"
+#include "Components/BoxComponent.h"
 #include "Engine/Engine.h"
 #include "Engine/World.h"
 #include "Framework/PolyQuestPlayerController.h"
@@ -175,7 +176,7 @@ bool FFrontExecutionAutomationTest::RunTest(const FString& Parameters)
 	FGameplayAbilitySpec VictimSpec(UEnemyVictimExecutionAbility::StaticClass(), 1, INDEX_NONE, Enemy);
 	EnemyASC->GiveAbility(VictimSpec);
 
-	auto GrantAndConfigureExecAbility = [&](APlayerCharacter* InPlayer, UAnimMontage* Montage, TSubclassOf<UGameplayEffect> DamageClass, float MinDist, float MaxDist, float MaxAngle, bool bWarp = false) -> TPair<FGameplayAbilitySpecHandle, UPlayerFrontExecutionAbility*>
+	auto GrantAndConfigureExecAbility = [&](APlayerCharacter* InPlayer, UAnimMontage* Montage, TSubclassOf<UGameplayEffect> DamageClass, float MinDist, float MaxDist, float MaxAngle) -> TPair<FGameplayAbilitySpecHandle, UPlayerFrontExecutionAbility*>
 	{
 		UAbilitySystemComponent* ASC = InPlayer->GetAbilitySystemComponent();
 		FGameplayAbilitySpec Spec(UPlayerFrontExecutionAbility::StaticClass(), 1, INDEX_NONE, InPlayer);
@@ -189,10 +190,6 @@ bool FFrontExecutionAutomationTest::RunTest(const FString& Parameters)
 			Instance->SetTestDamageGameplayEffectClass(DamageClass);
 			Instance->SetTestExecutionDistances(MinDist, MaxDist);
 			Instance->SetTestMaxFrontAngleDegrees(MaxAngle);
-			if (bWarp)
-			{
-				Instance->SetTestMotionWarpConfig(true, FName(TEXT("MeleeContact")), 50.0f, 150.0f, 300.0f, 60.0f);
-			}
 		}
 		return { Handle, Instance };
 	};
@@ -351,6 +348,32 @@ bool FFrontExecutionAutomationTest::RunTest(const FString& Parameters)
 		TestTrue(TEXT("CanActivateAbility succeeds with valid Stunned tag and front geometry"),
 			ExecAbility->CanActivateAbility(ExecHandle, &ActorInfo));
 
+		// 5.5 Weapon ExecutionSnapDistance range check gate [MinExecutionDistance, MaxExecutionDistance]
+		{
+			UWeaponEquipmentComponent* EquipComp = Player->FindComponentByClass<UWeaponEquipmentComponent>();
+			UMeleeWeaponDefinition* WeaponDef = EquipComp ? EquipComp->GetEquippedMainHandMelee() : nullptr;
+			if (TestNotNull(TEXT("Main hand melee weapon exists for snap check"), WeaponDef))
+			{
+				const float OriginalSnapDist = WeaponDef->ExecutionSnapDistance;
+
+				WeaponDef->ExecutionSnapDistance = 300.0f;
+				TestFalse(TEXT("CanActivateAbility fails when ExecutionSnapDistance > MaxExecutionDistance"),
+					ExecAbility->CanActivateAbility(ExecHandle, &ActorInfo));
+
+				WeaponDef->ExecutionSnapDistance = 20.0f;
+				TestFalse(TEXT("CanActivateAbility fails when ExecutionSnapDistance < MinExecutionDistance"),
+					ExecAbility->CanActivateAbility(ExecHandle, &ActorInfo));
+
+				WeaponDef->ExecutionSnapDistance = -10.0f;
+				TestFalse(TEXT("CanActivateAbility fails when ExecutionSnapDistance is negative"),
+					ExecAbility->CanActivateAbility(ExecHandle, &ActorInfo));
+
+				WeaponDef->ExecutionSnapDistance = OriginalSnapDist;
+				TestTrue(TEXT("CanActivateAbility succeeds after restoring valid ExecutionSnapDistance"),
+					ExecAbility->CanActivateAbility(ExecHandle, &ActorInfo));
+			}
+		}
+
 		// Cleanup
 		PlayerASC->ClearAbility(ExecHandle);
 		EnemyASC->RemoveLooseGameplayTag(TagStunned);
@@ -382,10 +405,37 @@ bool FFrontExecutionAutomationTest::RunTest(const FString& Parameters)
 		TestEqual(TEXT("Reserved target is indeed Enemy"),
 			ExecAbility->GetTestReservedTarget(), Enemy);
 
+		// Verify Snap Transform: Enemy is at (150, 0, 0) facing (-1, 0, 0), Distance is 190
+		// Expected Player Location: (150 - 190, 0, 0) = (-40, 0, 0)
+		// Expected Player Facing: -(-1, 0, 0) = (+1, 0, 0) -> Yaw = 0 deg
+		const FVector ExpectedSnapLoc(-40.0f, 0.0f, 0.0f);
+		TestTrue(TEXT("Player location snapped to target front within 1cm"),
+			FVector::Dist(Player->GetActorLocation(), ExpectedSnapLoc) <= 1.0f);
+		TestTrue(TEXT("Player rotation snapped facing target within 1deg"),
+			FMath::Abs(FMath::FindDeltaAngleDegrees(Player->GetActorRotation().Yaw, 0.0f)) <= 1.0f);
+
+		// Verify Enemy entered MOVE_None under victim execution lock
+		if (UCharacterMovementComponent* EnemyMove = Enemy->GetCharacterMovement())
+		{
+			TestEqual(TEXT("Enemy movement mode is MOVE_None under execution lock"),
+				EnemyMove->MovementMode, MOVE_None);
+		}
+
 		// End ability
 		ExecAbility->TestEndAbility();
 		TestNull(TEXT("Target reservation cleared on EndAbility"),
 			ExecAbility->GetTestReservedTarget());
+
+		// Verify Enemy restored to MOVE_Walking after release
+		if (UCharacterMovementComponent* EnemyMove = Enemy->GetCharacterMovement())
+		{
+			TestEqual(TEXT("Enemy movement mode restored to MOVE_Walking after release"),
+				EnemyMove->MovementMode, MOVE_Walking);
+		}
+
+		// Reset Player location for subsequent sections
+		Player->SetActorLocation(FVector(0.0f, 0.0f, 0.0f));
+		Player->SetActorRotation(FRotator::ZeroRotator);
 
 		PlayerASC->ClearAbility(ExecHandle);
 		EnemyASC->ClearAbility(StanceBreakHandle);
@@ -519,7 +569,7 @@ bool FFrontExecutionAutomationTest::RunTest(const FString& Parameters)
 		UAnimMontage* SyntheticMontage = NewObject<UAnimMontage>();
 		TSubclassOf<UGameplayEffect> DamageGEClass = UTestProjectileDamageGE::StaticClass();
 
-		auto [ExecHandle, ExecAbility] = GrantAndConfigureExecAbility(Player, SyntheticMontage, DamageGEClass, 50.0f, 250.0f, 60.0f, true);
+		auto [ExecHandle, ExecAbility] = GrantAndConfigureExecAbility(Player, SyntheticMontage, DamageGEClass, 50.0f, 250.0f, 60.0f);
 
 		EnemyASC->AddLooseGameplayTag(TagStunned);
 		if (UCharacterAttributeSet* EnemyAttribs = const_cast<UCharacterAttributeSet*>(EnemyASC->GetSet<UCharacterAttributeSet>()))
@@ -562,7 +612,7 @@ bool FFrontExecutionAutomationTest::RunTest(const FString& Parameters)
 		UAnimMontage* SyntheticMontage = NewObject<UAnimMontage>();
 		TSubclassOf<UGameplayEffect> DamageGEClass = UTestProjectileDamageGE::StaticClass();
 
-		auto [ReentryHandle, ReentryAbility] = GrantAndConfigureExecAbility(Player, SyntheticMontage, DamageGEClass, 50.0f, 250.0f, 60.0f, true);
+		auto [ReentryHandle, ReentryAbility] = GrantAndConfigureExecAbility(Player, SyntheticMontage, DamageGEClass, 50.0f, 250.0f, 60.0f);
 
 		EnemyASC->AddLooseGameplayTag(TagStunned);
 		if (UCharacterAttributeSet* EnemyAttribs = const_cast<UCharacterAttributeSet*>(EnemyASC->GetSet<UCharacterAttributeSet>()))
@@ -600,6 +650,114 @@ bool FFrontExecutionAutomationTest::RunTest(const FString& Parameters)
 		PlayerASC->ClearAbility(ReentryHandle);
 		EnemyASC->ClearAbility(StanceBreakHandle);
 		EnemyASC->ClearAbility(StanceBreakHandle2);
+	}
+
+	// =========================================================================
+	// 10. Environment Blocking Snap Rollback, Zero Velocity & Formal Release Gate
+	// =========================================================================
+	{
+		UAnimMontage* SyntheticMontage = NewObject<UAnimMontage>();
+		TSubclassOf<UGameplayEffect> DamageGEClass = UTestProjectileDamageGE::StaticClass();
+
+		Player->SetActorLocation(FVector(0.0f, 0.0f, 0.0f));
+		Player->SetActorRotation(FRotator::ZeroRotator);
+		Enemy->SetActorLocation(FVector(150.0f, 0.0f, 0.0f));
+		Enemy->SetActorRotation(FRotator(0.0f, 180.0f, 0.0f)); // Enemy forward is (-1, 0, 0)
+
+		auto [BlockExecHandle, BlockExecAbility] = GrantAndConfigureExecAbility(Player, SyntheticMontage, DamageGEClass, 50.0f, 250.0f, 60.0f);
+
+		EnemyASC->AddLooseGameplayTag(TagStunned);
+		if (UCharacterAttributeSet* EnemyAttribs = const_cast<UCharacterAttributeSet*>(EnemyASC->GetSet<UCharacterAttributeSet>()))
+		{
+			EnemyAttribs->SetPoise(0.0f);
+		}
+		const FGameplayAbilitySpecHandle StanceBreakHandle = GrantEnemyStanceBreakAbility(Enemy);
+
+		Player->SetTestLockedTarget(Enemy);
+
+		// Spawn temporary blocking actor at the snap target location (-40, 0, 0)
+		AActor* BlockingActor = World->SpawnActor<AActor>();
+		if (TestNotNull(TEXT("Temporary blocking actor spawned"), BlockingActor))
+		{
+			UBoxComponent* BoxComp = NewObject<UBoxComponent>(BlockingActor);
+			BoxComp->InitBoxExtent(FVector(50.0f, 50.0f, 100.0f));
+			BoxComp->SetCollisionProfileName(TEXT("BlockAll"));
+			BlockingActor->SetRootComponent(BoxComp);
+			BoxComp->RegisterComponent();
+			BlockingActor->SetActorLocation(FVector(-40.0f, 0.0f, 0.0f));
+
+			const FVector OriginalPlayerLoc = Player->GetActorLocation();
+			const FRotator OriginalPlayerRot = Player->GetActorRotation();
+
+			// Trigger execution attempt into the blocking actor
+			Player->TriggerTestRequestAbilityForInputIntent(FGameplayTag::RequestGameplayTag(FName(TEXT("Input.PrimaryAttack")), false));
+
+			// Snap must fail, ability must end via cancel, and player transform rolled back
+			TestFalse(TEXT("Execution aborted cleanly when snap is blocked"), BlockExecAbility->IsActive());
+			TestEqual(TEXT("Player location rolled back to original on block"), Player->GetActorLocation(), OriginalPlayerLoc);
+			TestTrue(TEXT("Player rotation rolled back to original on block"),
+				FMath::Abs(FMath::FindDeltaAngleDegrees(Player->GetActorRotation().Yaw, OriginalPlayerRot.Yaw)) <= 1.0f);
+			TestTrue(TEXT("Player velocity cleared on block rollback"), Player->GetVelocity().IsNearlyZero());
+			TestNull(TEXT("Target reservation cleared after blocked snap abort"), BlockExecAbility->GetTestReservedTarget());
+
+			// Victim must be formally released and restored to MOVE_Walking
+			if (UCharacterMovementComponent* EnemyMove = Enemy->GetCharacterMovement())
+			{
+				TestEqual(TEXT("Victim restored to MOVE_Walking after blocked execution cancel"), EnemyMove->MovementMode, MOVE_Walking);
+			}
+
+			BlockingActor->Destroy();
+		}
+
+		EnemyASC->RemoveLooseGameplayTag(TagStunned);
+		PlayerASC->ClearAbility(BlockExecHandle);
+		EnemyASC->ClearAbility(StanceBreakHandle);
+	}
+
+	// =========================================================================
+	// 11. Preserving Other Abilities' Motion Warp Targets Across EndAbility
+	// =========================================================================
+	{
+		UAnimMontage* SyntheticMontage = NewObject<UAnimMontage>();
+		TSubclassOf<UGameplayEffect> DamageGEClass = UTestProjectileDamageGE::StaticClass();
+
+		Player->SetActorLocation(FVector(0.0f, 0.0f, 0.0f));
+		Player->SetActorRotation(FRotator::ZeroRotator);
+		Enemy->SetActorLocation(FVector(150.0f, 0.0f, 0.0f));
+		Enemy->SetActorRotation(FRotator(0.0f, 180.0f, 0.0f));
+
+		const FName RegularWarpTargetName(TEXT("MeleeContact"));
+		Player->SetMeleeMotionWarpTarget(RegularWarpTargetName, FTransform(FRotator::ZeroRotator, FVector(500.0f, 0.0f, 0.0f)));
+		TestTrue(TEXT("Regular motion warp target registered before execution"),
+			Player->HasTestMeleeMotionWarpTarget(RegularWarpTargetName));
+
+		auto [ExecHandle, ExecAbility] = GrantAndConfigureExecAbility(Player, SyntheticMontage, DamageGEClass, 50.0f, 250.0f, 60.0f);
+
+		EnemyASC->AddLooseGameplayTag(TagStunned);
+		if (UCharacterAttributeSet* EnemyAttribs = const_cast<UCharacterAttributeSet*>(EnemyASC->GetSet<UCharacterAttributeSet>()))
+		{
+			EnemyAttribs->SetPoise(0.0f);
+		}
+		const FGameplayAbilitySpecHandle StanceBreakHandle = GrantEnemyStanceBreakAbility(Enemy);
+
+		Player->SetTestLockedTarget(Enemy);
+		Player->TriggerTestRequestAbilityForInputIntent(FGameplayTag::RequestGameplayTag(FName(TEXT("Input.PrimaryAttack")), false));
+
+		TestTrue(TEXT("Execution activated successfully"), ExecAbility->IsActive());
+
+		// End ability
+		ExecAbility->TestEndAbility();
+		TestFalse(TEXT("Execution ability ended"), ExecAbility->IsActive());
+
+		// Invariant: Regular attack's Motion Warp target must NOT have been cleared!
+		TestTrue(TEXT("Regular motion warp target preserved after execution EndAbility"),
+			Player->HasTestMeleeMotionWarpTarget(RegularWarpTargetName));
+
+		// Cleanup
+		Player->ClearMeleeMotionWarpTargets();
+		EnemyASC->RemoveLooseGameplayTag(TagStunned);
+		PlayerASC->ClearAbility(ExecHandle);
+		EnemyASC->ClearAbility(StanceBreakHandle);
 	}
 
 	return true;

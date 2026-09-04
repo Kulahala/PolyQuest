@@ -1,6 +1,7 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "Combat/Equipment/MeleeWeaponDefinition.h"
+#include "Combat/Execution/ExecutionSnapAlignment.h"
 #include "Engine/StaticMesh.h"
 #include "Engine/StaticMeshSocket.h"
 
@@ -235,6 +236,12 @@ bool UMeleeWeaponDefinition::IsValidWeaponDefinition(FString& OutReason) const
 	if (BladeSubdivisions < 1 || BladeSubdivisions > 8)
 	{
 		OutReason = TEXT("BladeSubdivisions must be between 1 and 8.");
+		return false;
+	}
+
+	if (!FExecutionSnapAlignment::IsSnapDistanceValid(ExecutionSnapDistance))
+	{
+		OutReason = TEXT("ExecutionSnapDistance must be positive and finite.");
 		return false;
 	}
 

@@ -89,4 +89,8 @@ public:
 	/** Sphere-sweep samples along this weapon's blade. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Trace", meta = (ClampMin = "1", ClampMax = "8", ToolTip = "刀刃根部到尖端之间的球扫掠采样插值段数。"))
 	int32 BladeSubdivisions = 4;
+
+	/** Target snap displacement distance used by front/backstab execution alignment (cm). */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Execution", meta = (ClampMin = "1.0", Units = "Centimeters", ToolTip = "处决对齐目标锚点位移距离（厘米）。"))
+	float ExecutionSnapDistance = 190.0f;
 };
