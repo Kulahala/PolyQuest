@@ -428,7 +428,6 @@ void UPlayerBackstabExecutionAbility::ActivateAbility(
 	}
 
 	const FGameplayTag HitEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Action.Execution.Hit")), false);
-	const FGameplayTag LegacyHitEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Action.Execution.Backstab.Hit")), false);
 	const FGameplayTag ReleaseRequestTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Action.Execution.Request.Release")), false);
 	const FGameplayTag VictimStartTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Action.Execution.Request.VictimStart")), false);
 	if (!HitEventTag.IsValid() || !ReleaseRequestTag.IsValid() || !VictimStartTag.IsValid() || !ExecutionMontage)
@@ -523,14 +522,10 @@ void UPlayerBackstabExecutionAbility::ActivateAbility(
 	// 3. Create Montage, Hit Event, Release Request, VictimStart tasks
 	WaitVictimStartEventTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, VictimStartTag, nullptr, false, false);
 	WaitHitEventTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, HitEventTag, nullptr, false, true);
-	if (LegacyHitEventTag.IsValid())
-	{
-		WaitLegacyHitEventTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, LegacyHitEventTag, nullptr, false, true);
-	}
 	WaitReleaseRequestEventTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, ReleaseRequestTag, nullptr, false, false);
 	MontageTask = UAbilityTask_PlayMontageAndWait::CreatePlayMontageAndWaitProxy(this, NAME_None, ExecutionMontage, 1.0f);
 
-	if (!WaitVictimStartEventTask || !WaitHitEventTask || !WaitReleaseRequestEventTask || !MontageTask || (LegacyHitEventTag.IsValid() && !WaitLegacyHitEventTask))
+	if (!WaitVictimStartEventTask || !WaitHitEventTask || !WaitReleaseRequestEventTask || !MontageTask)
 	{
 		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
 		return;
@@ -538,17 +533,13 @@ void UPlayerBackstabExecutionAbility::ActivateAbility(
 
 	WaitVictimStartEventTask->EventReceived.AddDynamic(ActiveContext.Get(), &UPlayerBackstabExecutionContext::OnVictimStartEventReceived);
 	WaitHitEventTask->EventReceived.AddDynamic(ActiveContext.Get(), &UPlayerBackstabExecutionContext::OnHitEventReceived);
-	if (WaitLegacyHitEventTask)
-	{
-		WaitLegacyHitEventTask->EventReceived.AddDynamic(ActiveContext.Get(), &UPlayerBackstabExecutionContext::OnHitEventReceived);
-	}
 	WaitReleaseRequestEventTask->EventReceived.AddDynamic(ActiveContext.Get(), &UPlayerBackstabExecutionContext::OnReleaseRequestEventReceived);
 	MontageTask->OnCompleted.AddDynamic(ActiveContext.Get(), &UPlayerBackstabExecutionContext::OnMontageCompleted);
 	MontageTask->OnBlendOut.AddDynamic(ActiveContext.Get(), &UPlayerBackstabExecutionContext::OnMontageBlendOut);
 	MontageTask->OnInterrupted.AddDynamic(ActiveContext.Get(), &UPlayerBackstabExecutionContext::OnMontageInterrupted);
 	MontageTask->OnCancelled.AddDynamic(ActiveContext.Get(), &UPlayerBackstabExecutionContext::OnMontageCancelled);
 
-	// 4. Activate VictimStart, Hit, Legacy Hit & Release listener tasks first
+	// 4. Activate VictimStart, canonical Hit & Release listener tasks first
 	WaitVictimStartEventTask->ReadyForActivation();
 #if WITH_DEV_AUTOMATION_TESTS
 	if (bTestEndAbilityDuringTaskReady && IsActive())
@@ -589,26 +580,6 @@ void UPlayerBackstabExecutionAbility::ActivateAbility(
 	{
 		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
 		return;
-	}
-
-	if (WaitLegacyHitEventTask)
-	{
-		WaitLegacyHitEventTask->ReadyForActivation();
-#if WITH_DEV_AUTOMATION_TESTS
-		if (bTestInvalidateWaitLegacyHitEventTaskAfterReady)
-		{
-			WaitLegacyHitEventTask = nullptr;
-		}
-#endif
-		if (!IsActive())
-		{
-			return;
-		}
-		if (!ActiveExecutionContext || !ActiveExecutionContext->IsCurrent(this, ActivationToken) || !WaitLegacyHitEventTask || !WaitLegacyHitEventTask->IsActive())
-		{
-			EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
-			return;
-		}
 	}
 
 	WaitReleaseRequestEventTask->ReadyForActivation();
@@ -713,10 +684,7 @@ void UPlayerBackstabExecutionAbility::HandleHitEventReceived(FGameplayEventData 
 	}
 
 	const FGameplayTag CanonicalHitTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Action.Execution.Hit")), false);
-	const FGameplayTag LegacyHitTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Action.Execution.Backstab.Hit")), false);
-	const bool bIsCanonicalHit = CanonicalHitTag.IsValid() && Payload.EventTag.MatchesTagExact(CanonicalHitTag);
-	const bool bIsLegacyHit = LegacyHitTag.IsValid() && Payload.EventTag.MatchesTagExact(LegacyHitTag);
-	if (!bIsCanonicalHit && !bIsLegacyHit)
+	if (!CanonicalHitTag.IsValid() || !Payload.EventTag.MatchesTagExact(CanonicalHitTag))
 	{
 		return;
 	}
@@ -1098,12 +1066,6 @@ void UPlayerBackstabExecutionAbility::EndAbility(
 	{
 		WaitHitEventTask->EndTask();
 		WaitHitEventTask = nullptr;
-	}
-
-	if (WaitLegacyHitEventTask)
-	{
-		WaitLegacyHitEventTask->EndTask();
-		WaitLegacyHitEventTask = nullptr;
 	}
 
 	if (WaitReleaseRequestEventTask)

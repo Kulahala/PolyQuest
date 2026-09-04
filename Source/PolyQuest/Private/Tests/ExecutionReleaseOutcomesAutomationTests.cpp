@@ -221,7 +221,7 @@ bool FExecutionReleaseOutcomesAutomationTest::RunTest(const FString& Parameters)
 	Enemy->SetTestCombatTeamTag(TagTeamEnemy);
 
 	const FGameplayTag ReleaseRequestTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Action.Execution.Request.Release")), false);
-	const FGameplayTag FrontHitTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Action.Execution.Front.Hit")), false);
+	const FGameplayTag FrontHitTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Action.Execution.Hit")), false);
 	const FGameplayTag VictimLockedTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Action.Execution.VictimLocked")), false);
 	const FGameplayTag DeadTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Status.Dead")), false);
 	const FGameplayTag InvulnerableTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Status.Invulnerable")), false);
@@ -603,7 +603,7 @@ bool FExecutionReleaseOutcomesAutomationTest::RunTest(const FString& Parameters)
 		}
 
 		// Hit
-		const FGameplayTag BackstabHitTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Action.Execution.Backstab.Hit")), false);
+		const FGameplayTag BackstabHitTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Action.Execution.Hit")), false);
 		FGameplayEventData HitPayload;
 		HitPayload.EventTag = BackstabHitTag;
 		HitPayload.Instigator = Player;

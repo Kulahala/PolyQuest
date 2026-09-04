@@ -107,7 +107,6 @@ public:
 	void TestEndAbility(bool bWasCancelled = false) { EndAbility(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, true, bWasCancelled); }
 	void SetTestSkipMontageTaskActivation(bool bSkip) { bTestSkipMontageTaskActivation = bSkip; }
 	void SetTestInvalidateWaitHitEventTaskAfterReady(bool bInvalidate) { bTestInvalidateWaitHitEventTaskAfterReady = bInvalidate; }
-	void SetTestInvalidateWaitLegacyHitEventTaskAfterReady(bool bInvalidate) { bTestInvalidateWaitLegacyHitEventTaskAfterReady = bInvalidate; }
 	void SetTestInvalidateWaitReleaseRequestTaskAfterReady(bool bInvalidate) { bTestInvalidateWaitReleaseRequestTaskAfterReady = bInvalidate; }
 	void SetTestInvalidateWaitVictimStartEventTaskAfterReady(bool bInvalidate) { bTestInvalidateWaitVictimStartEventTaskAfterReady = bInvalidate; }
 	void SetTestEndAbilityDuringTaskReady(bool bEnable) { bTestEndAbilityDuringTaskReady = bEnable; }
@@ -124,7 +123,6 @@ public:
 private:
 	bool bTestSkipMontageTaskActivation = false;
 	bool bTestInvalidateWaitHitEventTaskAfterReady = false;
-	bool bTestInvalidateWaitLegacyHitEventTaskAfterReady = false;
 	bool bTestInvalidateWaitReleaseRequestTaskAfterReady = false;
 	bool bTestInvalidateWaitVictimStartEventTaskAfterReady = false;
 	bool bTestEndAbilityDuringTaskReady = false;
@@ -211,9 +209,6 @@ private:
 
 	UPROPERTY(Transient)
 	TObjectPtr<UAbilityTask_WaitGameplayEvent> WaitHitEventTask;
-
-	UPROPERTY(Transient)
-	TObjectPtr<UAbilityTask_WaitGameplayEvent> WaitLegacyHitEventTask;
 
 	UPROPERTY(Transient)
 	TObjectPtr<UAbilityTask_WaitGameplayEvent> WaitReleaseRequestEventTask;

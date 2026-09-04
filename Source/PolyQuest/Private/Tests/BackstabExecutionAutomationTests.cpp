@@ -10,7 +10,6 @@
 #include "AbilitySystem/Abilities/PrimaryAttackAbility.h"
 #include "AbilitySystem/CharacterAttributeSet.h"
 #include "Animation/AnimMontage.h"
-#include "Animation/Combat/AnimNotify_PlayerBackstabExecutionHit.h"
 #include "Character/Enemy/EnemyCharacter.h"
 #include "Character/Player/PlayerCharacter.h"
 #include "Combat/Equipment/MeleeWeaponDefinition.h"
@@ -112,19 +111,8 @@ bool FBackstabExecutionAutomationTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("ActivationBlockedTags has State.Status.Exhausted"), BackstabCDO->GetTestActivationBlockedTags().HasTagExact(TagExhausted));
 	TestTrue(TEXT("ActivationBlockedTags has State.Movement.Sprinting"), BackstabCDO->GetTestActivationBlockedTags().HasTagExact(TagSprinting));
 
-	// Notify CDO verification
-	const UAnimNotify_PlayerBackstabExecutionHit* NotifyCDO = UAnimNotify_PlayerBackstabExecutionHit::StaticClass()->GetDefaultObject<UAnimNotify_PlayerBackstabExecutionHit>();
-	if (!TestNotNull(TEXT("UAnimNotify_PlayerBackstabExecutionHit CDO exists"), NotifyCDO))
-	{
-		return false;
-	}
-
-	TestEqual(TEXT("NotifyName is 'Player Backstab Execution Hit'"),
-		NotifyCDO->GetNotifyName(),
-		FString(TEXT("Player Backstab Execution Hit")));
-
-	const FGameplayTag TagHitEvent = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Action.Execution.Backstab.Hit")), false);
-	TestTrue(TEXT("Tag Event.Action.Execution.Backstab.Hit is registered"), TagHitEvent.IsValid());
+	const FGameplayTag TagHitEvent = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Action.Execution.Hit")), false);
+	TestTrue(TEXT("Tag Event.Action.Execution.Hit is registered"), TagHitEvent.IsValid());
 
 	// =========================================================================
 	// 2. Fail-Closed Default Configuration Verification

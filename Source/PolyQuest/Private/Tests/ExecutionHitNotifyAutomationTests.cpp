@@ -72,8 +72,8 @@ bool FExecutionHitNotifyAutomationTest::RunTest(const FString& Parameters)
 	const FGameplayTag TagVictimStartEvent = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Action.Execution.Request.VictimStart")), false);
 
 	TestTrue(TEXT("Tag Event.Action.Execution.Hit is registered"), TagCanonicalHit.IsValid());
-	TestTrue(TEXT("Tag Event.Action.Execution.Front.Hit is registered"), TagFrontLegacyHit.IsValid());
-	TestTrue(TEXT("Tag Event.Action.Execution.Backstab.Hit is registered"), TagBackstabLegacyHit.IsValid());
+	TestFalse(TEXT("Tag Event.Action.Execution.Front.Hit is not registered"), TagFrontLegacyHit.IsValid());
+	TestFalse(TEXT("Tag Event.Action.Execution.Backstab.Hit is not registered"), TagBackstabLegacyHit.IsValid());
 
 	// =========================================================================
 	// 2. Notify Fail-Closed Static Checks (No MeshComp, No Owner, No Animation)
@@ -234,7 +234,7 @@ bool FExecutionHitNotifyAutomationTest::RunTest(const FString& Parameters)
 	}
 
 	// =========================================================================
-	// 4. Front Execution: Canonical Hit vs Legacy Hit vs Exactly-Once
+	// 4. Front Execution: Canonical Hit & Exactly-Once
 	// =========================================================================
 	{
 		const FGameplayAbilitySpecHandle StanceBreakHandle = SetupFrontPrerequisites(Enemy);
@@ -268,15 +268,15 @@ bool FExecutionHitNotifyAutomationTest::RunTest(const FString& Parameters)
 		const float HealthAfterHit = EnemyAttribSet ? EnemyAttribSet->GetHealth() : 0.0f;
 		TestTrue(TEXT("Enemy health was reduced by canonical Hit"), HealthAfterHit < HealthBeforeHit);
 
-		// 4.2 Legacy Hit sent afterwards must be idempotent (no double damage)
-		FGameplayEventData LegacyPayload;
-		LegacyPayload.EventTag = TagFrontLegacyHit;
-		LegacyPayload.Instigator = Player;
-		LegacyPayload.Target = Player;
-		LegacyPayload.OptionalObject = SyntheticMontage;
-		FrontAbility->TestTriggerHitEvent(LegacyPayload);
+		// 4.2 Second Canonical Hit sent afterwards must be idempotent (no double damage)
+		FGameplayEventData DuplicateCanonicalPayload;
+		DuplicateCanonicalPayload.EventTag = TagCanonicalHit;
+		DuplicateCanonicalPayload.Instigator = Player;
+		DuplicateCanonicalPayload.Target = Player;
+		DuplicateCanonicalPayload.OptionalObject = SyntheticMontage;
+		FrontAbility->TestTriggerHitEvent(DuplicateCanonicalPayload);
 
-		TestEqual(TEXT("Subsequent Legacy Hit does not re-apply damage"), EnemyAttribSet->GetHealth(), HealthAfterHit);
+		TestEqual(TEXT("Subsequent Canonical Hit does not re-apply damage"), EnemyAttribSet->GetHealth(), HealthAfterHit);
 
 		FrontAbility->TestEndAbility();
 		PlayerASC->ClearAbility(FrontHandle);
@@ -284,7 +284,7 @@ bool FExecutionHitNotifyAutomationTest::RunTest(const FString& Parameters)
 	}
 
 	// =========================================================================
-	// 5. Front Execution: Legacy Hit Path & Whitelist Rejections
+	// 5. Front Execution: Canonical Hit Whitelist Rejections
 	// =========================================================================
 	{
 		const FGameplayAbilitySpecHandle StanceBreakHandle = SetupFrontPrerequisites(Enemy);
@@ -322,37 +322,13 @@ bool FExecutionHitNotifyAutomationTest::RunTest(const FString& Parameters)
 		FrontAbility->TestTriggerHitEvent(BadPayload);
 		TestFalse(TEXT("Front Hit handler rejects unrelated Tag"), FrontAbility->IsTestDamageEventConsumed());
 
-		// 5.5 Front Legacy Hit path works directly
-		const UCharacterAttributeSet* EnemyAttribSet = EnemyASC->GetSet<UCharacterAttributeSet>();
-		const float HealthBeforeHit = EnemyAttribSet ? EnemyAttribSet->GetHealth() : 0.0f;
-
-		FGameplayEventData LegacyPayload;
-		LegacyPayload.EventTag = TagFrontLegacyHit;
-		LegacyPayload.Instigator = Player;
-		LegacyPayload.Target = Player;
-		LegacyPayload.OptionalObject = SyntheticMontage;
-		FrontAbility->TestTriggerHitEvent(LegacyPayload);
-
-		TestTrue(TEXT("Front ability consumed legacy Hit event"), FrontAbility->IsTestDamageEventConsumed());
-		const float HealthAfterHit = EnemyAttribSet ? EnemyAttribSet->GetHealth() : 0.0f;
-		TestTrue(TEXT("Enemy health was reduced by legacy Hit"), HealthAfterHit < HealthBeforeHit);
-
-		// Subsequent Canonical Hit must be ignored
-		FGameplayEventData CanonicalPayload;
-		CanonicalPayload.EventTag = TagCanonicalHit;
-		CanonicalPayload.Instigator = Player;
-		CanonicalPayload.Target = Player;
-		CanonicalPayload.OptionalObject = SyntheticMontage;
-		FrontAbility->TestTriggerHitEvent(CanonicalPayload);
-		TestEqual(TEXT("Subsequent Canonical Hit does not re-apply damage"), EnemyAttribSet->GetHealth(), HealthAfterHit);
-
 		FrontAbility->TestEndAbility();
 		PlayerASC->ClearAbility(FrontHandle);
 		CleanupFrontPrerequisites(Enemy, StanceBreakHandle);
 	}
 
 	// =========================================================================
-	// 6. Backstab Execution: Canonical Hit, Legacy Hit & Cross-Direction Rejection
+	// 6. Backstab Execution: Canonical Hit & Exactly-Once
 	// =========================================================================
 	{
 		if (EnemyASC->HasMatchingGameplayTag(TagStunned))
@@ -400,43 +376,14 @@ bool FExecutionHitNotifyAutomationTest::RunTest(const FString& Parameters)
 		const float HealthAfterHit = EnemyAttribSet ? EnemyAttribSet->GetHealth() : 0.0f;
 		TestTrue(TEXT("Enemy health was reduced by canonical Hit on backstab"), HealthAfterHit < HealthBeforeHit);
 
-		// Subsequent Backstab Legacy Hit must be ignored (exactly-once)
-		FGameplayEventData LegacyPayload;
-		LegacyPayload.EventTag = TagBackstabLegacyHit;
-		LegacyPayload.Instigator = Player;
-		LegacyPayload.Target = Player;
-		LegacyPayload.OptionalObject = SyntheticMontage;
-		BackstabAbility->TestTriggerHitEvent(LegacyPayload);
-		TestEqual(TEXT("Subsequent Backstab Legacy Hit does not re-apply damage"), EnemyAttribSet->GetHealth(), HealthAfterHit);
-
-		BackstabAbility->TestEndAbility();
-		PlayerASC->ClearAbility(BackstabHandle);
-	}
-
-	// 6.3 Backstab Legacy Hit standalone
-	{
-		if (UCharacterAttributeSet* EnemyAttribs = const_cast<UCharacterAttributeSet*>(EnemyASC->GetSet<UCharacterAttributeSet>()))
-		{
-			EnemyAttribs->SetHealth(100.0f);
-		}
-
-		auto [BackstabHandle, BackstabAbility] = GrantAndConfigureBackstabAbility(Player, SyntheticMontage, DamageGEClass);
-		Player->SetTestLockedTarget(Enemy);
-		Player->TriggerTestRequestAbilityForInputIntent(FGameplayTag::RequestGameplayTag(FName(TEXT("Input.PrimaryAttack")), false));
-		TestTrue(TEXT("Backstab ability re-activated for legacy check"), BackstabAbility->IsActive());
-
-		const UCharacterAttributeSet* EnemyAttribSet = EnemyASC->GetSet<UCharacterAttributeSet>();
-		const float HealthBeforeHit = EnemyAttribSet ? EnemyAttribSet->GetHealth() : 0.0f;
-
-		FGameplayEventData LegacyPayload;
-		LegacyPayload.EventTag = TagBackstabLegacyHit;
-		LegacyPayload.Instigator = Player;
-		LegacyPayload.Target = Player;
-		LegacyPayload.OptionalObject = SyntheticMontage;
-		BackstabAbility->TestTriggerHitEvent(LegacyPayload);
-
-		TestTrue(TEXT("Backstab consumed Backstab Legacy Hit event"), BackstabAbility->IsTestDamageEventConsumed());
-		TestTrue(TEXT("Enemy health reduced by Backstab Legacy Hit"), EnemyAttribSet->GetHealth() < HealthBeforeHit);
+		// Subsequent Canonical Hit must be ignored (exactly-once)
+		FGameplayEventData DuplicateCanonicalPayload;
+		DuplicateCanonicalPayload.EventTag = TagCanonicalHit;
+		DuplicateCanonicalPayload.Instigator = Player;
+		DuplicateCanonicalPayload.Target = Player;
+		DuplicateCanonicalPayload.OptionalObject = SyntheticMontage;
+		BackstabAbility->TestTriggerHitEvent(DuplicateCanonicalPayload);
+		TestEqual(TEXT("Subsequent Canonical Hit does not re-apply damage on backstab"), EnemyAttribSet->GetHealth(), HealthAfterHit);
 
 		BackstabAbility->TestEndAbility();
 		PlayerASC->ClearAbility(BackstabHandle);
@@ -516,51 +463,10 @@ bool FExecutionHitNotifyAutomationTest::RunTest(const FString& Parameters)
 	}
 
 	// =========================================================================
-	// 9. Task Lifecycle, Invalidation Seams & Re-entry Checks
+	// 9. Task Lifecycle & Re-entry Checks
 	// =========================================================================
 	{
-		// 9.1 Front: Legacy Hit task invalidation seam on ReadyForActivation
-		{
-			const FGameplayAbilitySpecHandle StanceBreakHandle = SetupFrontPrerequisites(Enemy);
-			Player->SetActorLocation(FVector(0.0f, 0.0f, 0.0f));
-			Player->SetActorRotation(FRotator::ZeroRotator);
-			Enemy->SetActorLocation(FVector(150.0f, 0.0f, 0.0f));
-			Enemy->SetActorRotation(FRotator(0.0f, 180.0f, 0.0f));
-
-			auto [FrontHandle, FrontAbility] = GrantAndConfigureFrontAbility(Player, SyntheticMontage, DamageGEClass);
-			FrontAbility->SetTestInvalidateWaitLegacyHitEventTaskAfterReady(true);
-			Player->SetTestLockedTarget(Enemy);
-			Player->TriggerTestRequestAbilityForInputIntent(FGameplayTag::RequestGameplayTag(FName(TEXT("Input.PrimaryAttack")), false));
-
-			TestFalse(TEXT("Front ability fail-closed when Legacy Hit Task invalidated"), FrontAbility->IsActive());
-			TestNull(TEXT("Front reserved target cleared on fail-closed"), FrontAbility->GetTestReservedTarget());
-			PlayerASC->ClearAbility(FrontHandle);
-			CleanupFrontPrerequisites(Enemy, StanceBreakHandle);
-		}
-
-		// 9.2 Backstab: Legacy Hit task invalidation seam on ReadyForActivation
-		{
-			if (EnemyASC->HasMatchingGameplayTag(TagStunned))
-			{
-				EnemyASC->RemoveLooseGameplayTag(TagStunned);
-			}
-
-			Player->SetActorLocation(FVector(0.0f, 0.0f, 0.0f));
-			Player->SetActorRotation(FRotator::ZeroRotator);
-			Enemy->SetActorLocation(FVector(150.0f, 0.0f, 0.0f));
-			Enemy->SetActorRotation(FRotator(0.0f, 0.0f, 0.0f));
-
-			auto [BackstabHandle, BackstabAbility] = GrantAndConfigureBackstabAbility(Player, SyntheticMontage, DamageGEClass);
-			BackstabAbility->SetTestInvalidateWaitLegacyHitEventTaskAfterReady(true);
-			Player->SetTestLockedTarget(Enemy);
-			Player->TriggerTestRequestAbilityForInputIntent(FGameplayTag::RequestGameplayTag(FName(TEXT("Input.PrimaryAttack")), false));
-
-			TestFalse(TEXT("Backstab ability fail-closed when Legacy Hit Task invalidated"), BackstabAbility->IsActive());
-			TestNull(TEXT("Backstab reserved target cleared on fail-closed"), BackstabAbility->GetTestReservedTarget());
-			PlayerASC->ClearAbility(BackstabHandle);
-		}
-
-		// 9.3 Synchronous EndAbility during Task Ready
+		// 9.1 Synchronous EndAbility during Task Ready
 		{
 			const FGameplayAbilitySpecHandle StanceBreakHandle = SetupFrontPrerequisites(Enemy);
 			Player->SetActorLocation(FVector(0.0f, 0.0f, 0.0f));

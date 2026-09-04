@@ -1276,3 +1276,15 @@ TODO-03A3E World Pickup Interaction Prompt v1
 - **用户验证**：用户确认 Visual Studio `PolyQuestEditor (Development Editor)` 编译通过且编辑器正常运行；`ExecutionHitNotify`、`FrontExecution`、`Backstab`、`ExecutionLockIn`、`ExecutionLethalRecovery`、`ExecutionReleaseOutcomes`、`ExecutionVictimPresentation` 七项 Automation 全部 `Success`；Scene01 PIE 的 Front/Backstab 扣血、动画时序、Release、状态恢复通过，无崩溃或 Ensure。
 - **Main Fresh Review**：Main 按 `ue-strict-review` 完成单轮 diff-first、缺陷优先审查；当前批准范围内无 P0/P1/P2 blocker。`code-review-graph` 因本次收口为文档/证据变更且无 Source/shared-contract diff 而跳过；不将该工具状态当作运行时证据。
 - **提交边界与后续指针**：本阶段没有 authored asset、Source、Config、Blueprint、地图或测试文件变更；未暂存、未提交孤立 Montage 或其 Sequence 依赖，用户-owned WIP 原样保留。下一执行切片为 `TODO-05A1-D2A`；删除 Legacy Notify 类、兼容 listener、旧 Tag 和相关测试引用必须另立 Retirement 阶段，在新的零引用/readback、编译、Automation、Scene01 PIE、Main Review 和显式 commit approval 后执行。
+
+## REC-05A1-03-RET Legacy Execution Notify / Tag Retirement Closeout (2026-09-04; parent HEAD `55dc5304c88e9506bba84917d9863175abab0856`, working-tree not clean)
+
+> 本节记录 `REC-05A1-03-RET` 的 Native Notify、方向 Hit Tag 与兼容 listener retirement 收口。快照基于实施前父 HEAD `55dc5304c88e9506bba84917d9863175abab0856`；工作树同时含用户-owned `Content/**`、`AGENTS.md`、其他 Config/WIP 和本阶段未提交变更，因此不是干净 checkout 快照。本节只作历史追溯，不替代当前 Source、Config 或 Unreal Editor 资产作为运行时权威。
+
+- **范围与实际结果**：删除 `AnimNotify_PlayerFrontExecutionHit` 与 `AnimNotify_PlayerBackstabExecutionHit` 的四个 Native `.h/.cpp` 文件；从 Front/Backstab Ability 移除方向旧 Tag、`WaitLegacyHitEventTask` 的创建/绑定/激活/清理和测试 seam；两个方向旧 Gameplay Tag 从 `PolyQuestGameplayTags.ini` 删除；六个受影响 Execution Automation 文件改为 canonical Hit 输入并保留旧 Tag 的负向注册断言。运行时只保留 `UAnimNotify_PlayerExecutionHit` 与 exact `Event.Action.Execution.Hit`。
+- **稳定合同**：`ExecutionLockContext`、Activation Token、动画身份、`VictimStart -> Hit -> Release` 时序、`FMeleeHitResolver -> Damage GameplayEffect` 唯一路径、exactly-once 语义和既有 `EndAbility()` 清理顺序未改变；未新增父级 Tag 匹配、兼容层、第二条伤害路径、输入或网络合同。
+- **用户验证证据**：用户确认 `AM_LightSword_PlayerExecution` 正常打开并使用 `Player Execution Hit`，无 Missing Class/Tag 警告；Visual Studio 编译通过；`ExecutionHitNotify`、`FrontExecution`、`Backstab`、`ExecutionLockIn`、`ExecutionLethalRecovery`、`ExecutionReleaseOutcomes`、`ExecutionVictimPresentation` 7/7 `Success`；Scene01 正面与背刺处决的动画、扣血、`VictimStart -> Hit -> Release`、锁/Tag 恢复和位移对齐通过。
+- **明确未覆盖与债务**：处决中断/强制取消、目标销毁、UnPossess、Teardown 未能在当前 PIE 环境中可重复构造。用户接受 `Debt-REC-05A1-03-RET-Teardown` 作为非阻塞验证债务；本收口不将这些路径描述为已通过。关闭条件是未来用户-owned PIE receipt，或经 Main 接受的 test-only focused fixture / evidence-backed no-adoption。
+- **Main 复核**：Main 完成限定批准路径的 diff-first Fresh Review；未发现 P0/P1/P2 blocker，Legacy 语义残留注释已在批准文件内修正，`git diff --check` 通过。静态/Review 证据不扩写为额外运行时或生命周期证明。
+- **提交边界**：本阶段提交包含上述 15 个 Source/Config/Test 路径，以及 Main 的 `plan.md`、`ROADMAP.md`、`ROADMAP-archive.md`、`ARCHITECTURE.md` 文档同步；明确排除 `AGENTS.md`、`Config/DefaultEngine.ini`、`Config/Automation/Presets/1.json`、全部 `Content/**`、所有用户-owned `.uasset/.umap` 和其他 WIP。
+- **后续指针**：下一执行切片恢复为 `TODO-05A1-D2A`。可另立独立 test-only fixture 阶段关闭 `Debt-REC-05A1-03-RET-Teardown`，不回滚本次 Legacy retirement，也不扩大本阶段资产或运行时范围。

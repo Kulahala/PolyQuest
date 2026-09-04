@@ -8,7 +8,6 @@
 #include "AbilitySystem/Abilities/PlayerFrontExecutionAbility.h"
 #include "AbilitySystem/CharacterAttributeSet.h"
 #include "Animation/AnimMontage.h"
-#include "Animation/Combat/AnimNotify_PlayerFrontExecutionHit.h"
 #include "Character/Enemy/EnemyCharacter.h"
 #include "Character/Player/PlayerCharacter.h"
 #include "Combat/Equipment/MeleeWeaponDefinition.h"
@@ -110,17 +109,8 @@ bool FFrontExecutionAutomationTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("ActivationBlockedTags has State.Status.Exhausted"), ExecutionCDO->GetTestActivationBlockedTags().HasTagExact(TagExhausted));
 	TestTrue(TEXT("ActivationBlockedTags has State.Movement.Sprinting"), ExecutionCDO->GetTestActivationBlockedTags().HasTagExact(TagSprinting));
 
-	// Notify CDO verification
-	const UAnimNotify_PlayerFrontExecutionHit* NotifyCDO = UAnimNotify_PlayerFrontExecutionHit::StaticClass()->GetDefaultObject<UAnimNotify_PlayerFrontExecutionHit>();
-	if (TestNotNull(TEXT("UAnimNotify_PlayerFrontExecutionHit CDO exists"), NotifyCDO))
-	{
-		TestEqual(TEXT("NotifyName is 'Player Front Execution Hit'"),
-			NotifyCDO->GetNotifyName(),
-			FString(TEXT("Player Front Execution Hit")));
-	}
-
-	const FGameplayTag TagHitEvent = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Action.Execution.Front.Hit")), false);
-	TestTrue(TEXT("Tag Event.Action.Execution.Front.Hit is registered"), TagHitEvent.IsValid());
+	const FGameplayTag TagHitEvent = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Action.Execution.Hit")), false);
+	TestTrue(TEXT("Tag Event.Action.Execution.Hit is registered"), TagHitEvent.IsValid());
 
 	// =========================================================================
 	// 2. Fail-Closed Default Configuration Verification

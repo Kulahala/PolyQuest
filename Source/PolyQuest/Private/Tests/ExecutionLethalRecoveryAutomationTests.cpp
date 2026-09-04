@@ -278,7 +278,7 @@ bool FExecutionLethalRecoveryAutomationTest::RunTest(const FString& Parameters)
 			TestNotNull(TEXT("Active ExecutionLockContext valid"), ExecContext);
 
 			// Trigger lethal execution hit via production GAS HandleGameplayEvent
-			const FGameplayTag HitEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Action.Execution.Front.Hit")), false);
+			const FGameplayTag HitEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Action.Execution.Hit")), false);
 			FGameplayEventData HitPayload;
 			HitPayload.EventTag = HitEventTag;
 			HitPayload.Instigator = Player;
@@ -384,7 +384,7 @@ bool FExecutionLethalRecoveryAutomationTest::RunTest(const FString& Parameters)
 			TestNotNull(TEXT("Backstab ExecutionLockContext valid"), ExecContext);
 
 			// Trigger lethal Backstab hit via production GAS HandleGameplayEvent
-			const FGameplayTag HitEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Action.Execution.Backstab.Hit")), false);
+			const FGameplayTag HitEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Action.Execution.Hit")), false);
 			FGameplayEventData HitPayload;
 			HitPayload.EventTag = HitEventTag;
 			HitPayload.Instigator = Player;
