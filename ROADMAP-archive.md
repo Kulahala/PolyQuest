@@ -1312,3 +1312,15 @@ TODO-03A3E World Pickup Interaction Prompt v1
 - **执行者回交证据**：Gemini 报告列出 Visual Studio `PolyQuestEditor (Development Editor)` 编译、Rider `get_file_problems` 对批准 C++ 路径零 errors，以及执行资产配置/readback 通过；Main 未重复这些用户-owned 门禁，故仅按执行者报告记录，不改写为 Main 独立收据。
 - **Main Fresh Review**：Main 按 `ue-strict-review` 完成两批有界、缺陷优先审查；第二批后硬停止。`code-review-graph` 索引基于旧 SHA `55dc530`，按 stale-coverage fallback 处理；定向 CodeGraph 只作一跳导航。旧全局 `ExecutionMontage` 残留、resolver/快照/Commit 顺序和 `git diff --check` 均已核对；当前批准范围内未发现 P0/P1/P2 blocker。Gemini 实施自审不计作独立 Main Review。
 - **剩余债务与后续指针**：D2B 没有单独归档的 Main/用户手动编译与执行 Weapon/GA/Montage readback 收据，继续作为非阻塞 authored-validation debt；D2A 的同类 compile/readback 收据、`D2A-VERTICAL-SURFACE` 和 `Debt-REC-05A1-03-RET-Teardown` 也继续开放。下一执行切片为 `TODO-05A1-E`；D2C/D2D 仍需独立产品与证据触发条件。本节只同步文档，未暂存或提交，用户-owned WIP 原样保留。
+
+## TODO-05A1-D2C StanceBreak Backstab Compatibility v1 Closeout (2026-09-04; parent HEAD `3254c10`, working-tree not clean)
+
+> 本节记录 TODO-05A1-D2C 的 StanceBreak 后 Backstab 兼容、Victim handoff 与恢复责任收口。快照基于实施前父 HEAD `3254c1068e66732cbc213b92c794d94c0883278d`；工作树同时含用户-owned `Content/**`、Config、`AGENTS.md` 和其他 WIP，因此不是干净 HEAD 快照。本节只作历史追溯，不替代当前 Source、配置或 Unreal Editor 资产作为运行时权威。
+
+- **范围与实际结果**：严格修改批准的 `EnemyVictimExecutionAbility.cpp/.h`、`PlayerBackstabExecutionAbility.cpp`、`BackstabExecutionAutomationTests.cpp` 和 `ExecutionVictimPresentationAutomationTests.cpp`。Player/Victim 各自使用同构的 `S/C` fail-closed 判定；只允许一个 active `UEnemyStanceBreakAbility` 与一份 Stunned contribution，其他组合继续拒绝。
+- **生命周期与表现合同**：Victim 在 `CancelAbilities()` 前捕获 StanceBreak handoff；`VictimLocked` 使 StanceBreak 跳过自身移动/Poise 恢复，存活目标由 Victim `EndAbility()` exactly-once 恢复 Poise、移动和 AI 锁。Pending Victim Montage 按请求方向选择，handoff Backstab 仍使用 Backstab Montage；D2A Snap、D2B resolver、统一 Hit Notify、`VictimStart -> Hit -> Release` 和唯一 `FMeleeHitResolver` 路径未改变。
+- **测试修复**：Main 在 Review 修复回路中为 `S=1,C=1` 正例改用真实 StanceBreak 激活；异常计数行明确保留为合成 fail-closed 边界，不伪称为完整真实 contribution 生命周期证明。
+- **用户验证证据**：用户确认 `PolyQuest.Combat.Backstab`、`PolyQuest.Combat.FrontExecution`、`PolyQuest.Combat.ExecutionVictimPresentation` Automation 通过，并确认 Scene01 PIE 的 StanceBreak-after-Backstab、Backstab Victim Montage、Release/Cancel 恢复和 Front 回归通过。
+- **执行者与 Main 证据**：Gemini 报告 Rider 零 Error、手动 `PolyQuestEditor (Development Editor)` 编译和资产 readback；这些保留为执行者报告。Main 对批准 diff 完成两批有界 Fresh Review，code-review-graph 基线与 `3254c10` 匹配，定向 CodeGraph 核对一跳生命周期/所有权，未发现 P0/P1/P2 blocker；`git diff --check` 退出码为 0。
+- **剩余债务**：D2C 独立 Main/user 编译与执行资产 Editor readback 收据未单独归档，继续作为非阻塞 authored-validation debt；`Debt-05A1-D2C-OwnershipMatrix` 记录合成异常矩阵的证据边界。D2A 垂直面限制、D2A/D2B compile/readback 与 `Debt-REC-05A1-03-RET-Teardown` 继续按原关闭条件保留。
+- **提交边界与后续指针**：阶段提交候选仅含上述 5 个 Source/Test 文件及 Main 的 `plan.md`、`ROADMAP.md`、`ROADMAP-archive.md`、`ARCHITECTURE.md`；排除全部 `Content/**`、用户 Config/Blueprint/地图和其他 WIP。下一执行切片为 `TODO-05A1-E`，`TODO-05A1-D2D` 仍是独立条件分支。

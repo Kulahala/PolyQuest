@@ -303,6 +303,47 @@ bool FExecutionVictimPresentationAutomationTest::RunTest(const FString& Paramete
 		return MakeTuple(BackstabHandle, BackstabAbility, VictimHandle, VictimAbility);
 	};
 
+	auto SetupStanceBreakBackstabExec = [&](float InEnemyHealth = 100.0f, bool bConfigVictimMontage = true) -> TTuple<FGameplayAbilitySpecHandle, UPlayerBackstabExecutionAbility*, FGameplayAbilitySpecHandle, UEnemyVictimExecutionAbility*>
+	{
+		Player->SetActorLocation(FVector(0.0f, 0.0f, 0.0f));
+		Player->SetActorRotation(FRotator::ZeroRotator);
+		Enemy->SetActorLocation(FVector(150.0f, 0.0f, 0.0f));
+		Enemy->SetActorRotation(FRotator::ZeroRotator);
+
+		if (UCharacterAttributeSet* EnemyAttribs = const_cast<UCharacterAttributeSet*>(EnemyASC->GetSet<UCharacterAttributeSet>()))
+		{
+			EnemyAttribs->SetHealth(InEnemyHealth);
+			EnemyAttribs->SetPoise(0.0f);
+		}
+
+		ExecutionVictimPresentationAutomation::ActivateEnemyStanceBreak(Enemy);
+		const FGameplayTag StunnedTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Status.Stunned")), false);
+		if (!EnemyASC->HasMatchingGameplayTag(StunnedTag))
+		{
+			EnemyASC->AddLooseGameplayTag(StunnedTag);
+		}
+
+		Player->SetTestLockedTarget(Enemy);
+
+		auto [VictimHandle, VictimAbility] = GrantAndConfigureVictimAbility(Enemy, bConfigVictimMontage);
+
+		FGameplayAbilitySpec BackstabSpec(UPlayerBackstabExecutionAbility::StaticClass(), 1, INDEX_NONE, Player);
+		const FGameplayAbilitySpecHandle BackstabHandle = PlayerASC->GiveAbility(BackstabSpec);
+		FGameplayAbilitySpec* FoundSpec = PlayerASC->FindAbilitySpecFromHandle(BackstabHandle);
+		UPlayerBackstabExecutionAbility* BackstabAbility = FoundSpec ? Cast<UPlayerBackstabExecutionAbility>(FoundSpec->GetPrimaryInstance()) : nullptr;
+		if (BackstabAbility)
+		{
+			BackstabAbility->SetTestExecutionMontage(PlayerExecutionMontage);
+			BackstabAbility->SetTestDamageGameplayEffectClass(UTestProjectileDamageGE::StaticClass());
+			BackstabAbility->SetTestExecutionDistances(0.0f, 250.0f);
+			BackstabAbility->SetTestMaxBackAngleDegrees(60.0f);
+			BackstabAbility->SetTestSkipMontageTaskActivation(true);
+		}
+
+		PlayerASC->TryActivateAbility(BackstabHandle);
+		return MakeTuple(BackstabHandle, BackstabAbility, VictimHandle, VictimAbility);
+	};
+
 	auto CleanupExec = [&](FGameplayAbilitySpecHandle PlayerHandle, FGameplayAbilitySpecHandle VictimHandle)
 	{
 		PlayerASC->ClearAbility(PlayerHandle);
@@ -330,6 +371,7 @@ bool FExecutionVictimPresentationAutomationTest::RunTest(const FString& Paramete
 		TestFalse(TEXT("Victim presentation is NOT started on handshake"), VictimAbility->IsTestVictimPresentationStarted());
 		TestNull(TEXT("ActiveVictimMontage is null before VictimStart"), VictimAbility->GetTestActiveVictimMontage());
 		TestEqual(TEXT("PendingVictimMontage cached Front montage"), VictimAbility->GetTestPendingVictimMontage(), EnemyFrontVictimMontage);
+		TestTrue(TEXT("Front execution has handoff from StanceBreak"), VictimAbility->HasTestHandoffFromStanceBreak());
 
 		// Now trigger VictimStart
 		FGameplayEventData StartPayload;
@@ -383,6 +425,7 @@ bool FExecutionVictimPresentationAutomationTest::RunTest(const FString& Paramete
 
 		TestFalse(TEXT("Backstab handshake: victim presentation not started"), VictimAbility->IsTestVictimPresentationStarted());
 		TestEqual(TEXT("PendingVictimMontage cached Backstab montage"), VictimAbility->GetTestPendingVictimMontage(), EnemyBackstabVictimMontage);
+		TestFalse(TEXT("Ordinary Backstab has NO handoff from StanceBreak"), VictimAbility->HasTestHandoffFromStanceBreak());
 
 		FGameplayEventData StartPayload;
 		StartPayload.EventTag = VictimStartTag;
@@ -410,6 +453,114 @@ bool FExecutionVictimPresentationAutomationTest::RunTest(const FString& Paramete
 		BackstabAbility->TestTriggerReleaseRequestEvent(ReleasePayload);
 
 		BackstabAbility->TestEndAbility(false);
+		CleanupExec(BackstabHandle, VictimHandle);
+	}
+
+	// =========================================================================
+	// 3B. StanceBreak Backstab Compatibility: Handoff, Backstab Montage, & Full Poise Recovery
+	// =========================================================================
+	{
+		Enemy->RestorePoiseToMax();
+		Enemy->GetCharacterMovement()->SetMovementMode(MOVE_Walking);
+
+		auto [BackstabHandle, BackstabAbility, VictimHandle, VictimAbility] = SetupStanceBreakBackstabExec(100.0f, true);
+		if (!TestNotNull(TEXT("BackstabAbility valid in Sec 3B"), BackstabAbility) ||
+			!TestTrue(TEXT("Backstab ability active on StanceBreak target"), BackstabAbility->IsActive()) ||
+			!TestNotNull(TEXT("VictimAbility valid in Sec 3B"), VictimAbility) ||
+			!TestTrue(TEXT("Victim ability active on StanceBreak target"), VictimAbility->IsActive()))
+		{
+			return false;
+		}
+
+		// Contract: Handoff from StanceBreak MUST be true
+		TestTrue(TEXT("StanceBreak Backstab has handoff from StanceBreak"), VictimAbility->HasTestHandoffFromStanceBreak());
+
+		// Contract: PendingVictimMontage MUST be Backstab Montage (NOT Front Montage despite handoff!)
+		TestEqual(TEXT("PendingVictimMontage cached Backstab montage for StanceBreak backstab"),
+			VictimAbility->GetTestPendingVictimMontage(), EnemyBackstabVictimMontage);
+
+		// Contract: StanceBreak was canceled by victim activation, but because VictimLocked was active,
+		// StanceBreak skipped restoring Poise/movement. The enemy Poise is still 0 during execution!
+		const UCharacterAttributeSet* EnemyAttribs = EnemyASC->GetSet<UCharacterAttributeSet>();
+		TestNotNull(TEXT("Enemy CharacterAttributeSet valid"), EnemyAttribs);
+		if (EnemyAttribs)
+		{
+			TestTrue(TEXT("Poise is 0 during execution lock"), FMath::IsNearlyZero(EnemyAttribs->GetPoise(), KINDA_SMALL_NUMBER));
+		}
+
+		// Trigger VictimStart
+		FGameplayEventData StartPayload;
+		StartPayload.EventTag = VictimStartTag;
+		StartPayload.Instigator = Player;
+		StartPayload.Target = Player;
+		StartPayload.OptionalObject = PlayerExecutionMontage;
+		BackstabAbility->TestTriggerVictimStartEvent(StartPayload);
+
+		TestTrue(TEXT("Backstab forwarded VictimStart"), BackstabAbility->IsTestVictimStartForwarded());
+		TestTrue(TEXT("Victim presentation started"), VictimAbility->IsTestVictimPresentationStarted());
+
+		// Complete Hit and Release
+		FGameplayEventData HitPayload;
+		HitPayload.EventTag = BackstabHitTag;
+		HitPayload.Instigator = Player;
+		HitPayload.Target = Player;
+		HitPayload.OptionalObject = PlayerExecutionMontage;
+		BackstabAbility->TestTriggerHitEvent(HitPayload);
+
+		FGameplayEventData ReleasePayload;
+		ReleasePayload.EventTag = ReleaseRequestTag;
+		ReleasePayload.Instigator = Player;
+		ReleasePayload.Target = Player;
+		ReleasePayload.OptionalObject = PlayerExecutionMontage;
+		BackstabAbility->TestTriggerReleaseRequestEvent(ReleasePayload);
+
+		BackstabAbility->TestEndAbility(false);
+
+		// Contract: Upon Release & EndAbility for living enemy, Victim restores Poise to MaxPoise,
+		// restores MovementMode to MOVE_Walking, and releases AI lock!
+		if (EnemyAttribs)
+		{
+			TestEqual(TEXT("Enemy Poise fully restored to MaxPoise after StanceBreak Backstab release"),
+				EnemyAttribs->GetPoise(), EnemyAttribs->GetMaxPoise());
+		}
+		TestEqual(TEXT("Enemy movement restored to MOVE_Walking"),
+			Enemy->GetCharacterMovement()->MovementMode.GetValue(), MOVE_Walking);
+		TestFalse(TEXT("Victim AI lock released"), VictimAbility->IsTestAIExecutionLocked());
+
+		CleanupExec(BackstabHandle, VictimHandle);
+	}
+
+	// =========================================================================
+	// 3C. StanceBreak Backstab Interruption: Restores Poise & Movement on Cancel
+	// =========================================================================
+	{
+		Enemy->RestorePoiseToMax();
+		Enemy->GetCharacterMovement()->SetMovementMode(MOVE_Walking);
+
+		auto [BackstabHandle, BackstabAbility, VictimHandle, VictimAbility] = SetupStanceBreakBackstabExec(100.0f, true);
+		if (!TestNotNull(TEXT("BackstabAbility valid in Sec 3C"), BackstabAbility) ||
+			!TestNotNull(TEXT("VictimAbility valid in Sec 3C"), VictimAbility))
+		{
+			return false;
+		}
+
+		// Cancel VictimAbility directly mid-execution
+		VictimAbility->TestEndAbility(true);
+
+		const UCharacterAttributeSet* EnemyAttribs = EnemyASC->GetSet<UCharacterAttributeSet>();
+		if (EnemyAttribs)
+		{
+			TestEqual(TEXT("Enemy Poise restored to MaxPoise on cancellation of StanceBreak Backstab"),
+				EnemyAttribs->GetPoise(), EnemyAttribs->GetMaxPoise());
+		}
+		TestEqual(TEXT("Enemy movement restored to MOVE_Walking on cancellation"),
+			Enemy->GetCharacterMovement()->MovementMode.GetValue(), MOVE_Walking);
+		TestFalse(TEXT("Victim AI lock released on cancellation"), VictimAbility->IsTestAIExecutionLocked());
+
+		if (BackstabAbility)
+		{
+			BackstabAbility->TestEndAbility(true);
+		}
 		CleanupExec(BackstabHandle, VictimHandle);
 	}
 

@@ -9,6 +9,7 @@
 #include "AbilitySystem/Abilities/PlayerFrontExecutionAbility.h"
 #include "AbilitySystem/Abilities/PrimaryAttackAbility.h"
 #include "AbilitySystem/CharacterAttributeSet.h"
+#include "Animation/AnimInstance.h"
 #include "Animation/AnimMontage.h"
 #include "Character/Enemy/EnemyCharacter.h"
 #include "Character/Player/PlayerCharacter.h"
@@ -55,6 +56,44 @@ namespace
 			World->Tick(ELevelTick::LEVELTICK_All, DeltaSeconds);
 			++GFrameCounter;
 		}
+	}
+
+	FGameplayAbilitySpecHandle ActivateTestStanceBreak(AEnemyCharacter* InEnemy)
+	{
+		UAbilitySystemComponent* ASC = InEnemy ? InEnemy->GetAbilitySystemComponent() : nullptr;
+		if (!ASC)
+		{
+			return FGameplayAbilitySpecHandle();
+		}
+
+		ASC->SetNumericAttributeBase(UCharacterAttributeSet::GetPoiseAttribute(), 0.0f);
+
+		UAnimMontage* MockMontage = NewObject<UAnimMontage>(GetTransientPackage());
+		UAnimInstance* MockAnimInstance = NewObject<UAnimInstance>(InEnemy->GetMesh());
+
+		FGameplayAbilitySpec StanceBreakSpec(UEnemyStanceBreakAbility::StaticClass(), 1, INDEX_NONE, InEnemy);
+		const FGameplayAbilitySpecHandle StanceBreakHandle = ASC->GiveAbility(StanceBreakSpec);
+		if (FGameplayAbilitySpec* FoundSpec = ASC->FindAbilitySpecFromHandle(StanceBreakHandle))
+		{
+			if (UEnemyStanceBreakAbility* CDO = Cast<UEnemyStanceBreakAbility>(FoundSpec->Ability))
+			{
+				UAnimMontage* OldMontage = CDO->GetTestStanceBreakMontage();
+				UAnimInstance* OldAnim = CDO->GetTestBoundAnimInstance();
+				const bool bOldBypass = CDO->GetTestBypassMontageActiveCheck();
+
+				CDO->SetTestStanceBreakMontage(MockMontage);
+				CDO->SetTestBoundAnimInstance(MockAnimInstance);
+				CDO->SetTestBypassMontageActiveCheck(true);
+
+				ASC->TryActivateAbility(StanceBreakHandle);
+
+				CDO->SetTestStanceBreakMontage(OldMontage);
+				CDO->SetTestBoundAnimInstance(OldAnim);
+				CDO->SetTestBypassMontageActiveCheck(bOldBypass);
+			}
+		}
+
+		return StanceBreakHandle;
 	}
 }
 
@@ -335,14 +374,66 @@ bool FBackstabExecutionAutomationTest::RunTest(const FString& Parameters)
 		TestFalse(TEXT("Fails activation when no target locked"),
 			BackstabAbility->CanActivateAbility(BackstabHandle, &ActorInfo));
 
-		// 5.2 Target is Stunned -> Backstab MUST FAIL (Backstab explicitly excludes Stunned targets!)
+		// 5.2 Target is Stunned without StanceBreak (S=0, C=1) -> Backstab MUST FAIL
 		Player->SetTestLockedTarget(Enemy);
 		EnemyASC->AddLooseGameplayTag(TagStunned);
-		TestFalse(TEXT("Fails activation when target is Stunned (Backstab excludes Stunned)"),
+		TestFalse(TEXT("Fails activation when target has external Stunned without StanceBreak (S=0, C=1)"),
 			BackstabAbility->CanActivateAbility(BackstabHandle, &ActorInfo));
+		EnemyASC->RemoveLooseGameplayTag(TagStunned);
+
+		// 5.2b Target in StanceBreak with matching single Stunned contribution (S=1, C=1) -> CanActivateAbility MUST SUCCEED
+		{
+			// Use a real StanceBreak activation for the positive ownership path.
+			const FGameplayAbilitySpecHandle ActiveStanceBreakHandle = ActivateTestStanceBreak(Enemy);
+			FGameplayAbilitySpec* ActiveStanceBreakSpec = EnemyASC->FindAbilitySpecFromHandle(ActiveStanceBreakHandle);
+			TestTrue(TEXT("Real StanceBreak ability is active for positive ownership path"),
+				ActiveStanceBreakSpec && ActiveStanceBreakSpec->IsActive());
+			TestEqual(TEXT("Real StanceBreak contributes exactly one Stunned tag"),
+				EnemyASC->GetTagCount(TagStunned), 1);
+			TestTrue(TEXT("CanActivateAbility succeeds for target in real StanceBreak from behind (S=1, C=1)"),
+				BackstabAbility->CanActivateAbility(BackstabHandle, &ActorInfo));
+
+			EnemyASC->ClearAbility(ActiveStanceBreakHandle);
+
+			// The remaining rows are synthetic state-table edges: they validate the
+			// fail-closed count contract without pretending to model tag ownership.
+			FGameplayAbilitySpec StanceBreakSpec(UEnemyStanceBreakAbility::StaticClass(), 1, INDEX_NONE, Enemy);
+			const FGameplayAbilitySpecHandle EnemySBHandle = EnemyASC->GiveAbility(StanceBreakSpec);
+			if (FGameplayAbilitySpec* FoundSBSpec = EnemyASC->FindAbilitySpecFromHandle(EnemySBHandle))
+			{
+				FoundSBSpec->ActivationInfo.SetActivationConfirmed();
+				FoundSBSpec->ActiveCount = 1;
+			}
+
+			// S=1, C=0: StanceBreak ability is active but Stunned tag contribution is missing -> MUST FAIL
+			TestFalse(TEXT("Fails activation when target has StanceBreak without Stunned tag (S=1, C=0)"),
+				BackstabAbility->CanActivateAbility(BackstabHandle, &ActorInfo));
+
+			// 5.2c Target in StanceBreak but with extra Stunned contribution (S=1, C=2) -> MUST FAIL
+			EnemyASC->AddLooseGameplayTag(TagStunned);
+			EnemyASC->AddLooseGameplayTag(TagStunned);
+			TestFalse(TEXT("Fails activation when StanceBreak target has extra Stunned contribution (S=1, C=2)"),
+				BackstabAbility->CanActivateAbility(BackstabHandle, &ActorInfo));
+			EnemyASC->RemoveLooseGameplayTag(TagStunned);
+
+			// 5.2d Multiple active StanceBreak abilities (S=2, C=1) -> MUST FAIL
+			FGameplayAbilitySpec StanceBreakSpec2(UEnemyStanceBreakAbility::StaticClass(), 1, INDEX_NONE, Enemy);
+			const FGameplayAbilitySpecHandle EnemySBHandle2 = EnemyASC->GiveAbility(StanceBreakSpec2);
+			if (FGameplayAbilitySpec* FoundSBSpec2 = EnemyASC->FindAbilitySpecFromHandle(EnemySBHandle2))
+			{
+				FoundSBSpec2->ActivationInfo.SetActivationConfirmed();
+				FoundSBSpec2->ActiveCount = 1;
+			}
+			TestFalse(TEXT("Fails activation when target has multiple active StanceBreak abilities (S=2, C=1)"),
+				BackstabAbility->CanActivateAbility(BackstabHandle, &ActorInfo));
+
+			// Clean up StanceBreak specs and tag
+			EnemyASC->ClearAbility(EnemySBHandle2);
+			EnemyASC->ClearAbility(EnemySBHandle);
+			EnemyASC->RemoveLooseGameplayTag(TagStunned);
+		}
 
 		// 5.3 Target is NOT Stunned, living, valid lock & behind geometry -> CanActivateAbility should SUCCEED
-		EnemyASC->RemoveLooseGameplayTag(TagStunned);
 		TestTrue(TEXT("CanActivateAbility succeeds for living non-stunned target from behind"),
 			BackstabAbility->CanActivateAbility(BackstabHandle, &ActorInfo));
 
@@ -832,6 +923,69 @@ bool FBackstabExecutionAutomationTest::RunTest(const FString& Parameters)
 			PlayerASC->ClearAbility(FrontHandle);
 			PlayerASC->ClearAbility(BackstabHandle);
 			EnemyASC->RemoveLooseGameplayTag(TagStunned);
+			ResetWeaponExecutionMontages(Player);
+		}
+
+		// 10.2b StanceBreak target attacked from behind -> Front rejected, Backstab ACTIVATES (does NOT fallback to Primary)
+		{
+			auto [BackstabHandle, BackstabAbility] = GrantAndConfigureBackstabAbility(Player, SyntheticMontage, DamageGEClass, 50.0f, 250.0f, 60.0f);
+
+			FGameplayAbilitySpec FrontSpec(UPlayerFrontExecutionAbility::StaticClass(), 1, INDEX_NONE, Player);
+			const FGameplayAbilitySpecHandle FrontHandle = PlayerASC->GiveAbility(FrontSpec);
+			FGameplayAbilitySpec* FoundFrontSpec = PlayerASC->FindAbilitySpecFromHandle(FrontHandle);
+			UPlayerFrontExecutionAbility* FrontInstance = FoundFrontSpec ? Cast<UPlayerFrontExecutionAbility>(FoundFrontSpec->GetPrimaryInstance()) : nullptr;
+			if (FrontInstance)
+			{
+				FrontInstance->SetTestSkipMontageTaskActivation(true);
+				FrontInstance->SetTestExecutionMontage(SyntheticMontage);
+			}
+
+			// Enemy facing away (Yaw 0), Player at (0,0,0) (Player is behind Enemy), Enemy is in active StanceBreak (S=1, C=1)
+			Player->SetActorLocation(FVector(0.0f, 0.0f, 0.0f));
+			Enemy->SetActorLocation(FVector(150.0f, 0.0f, 0.0f));
+			Enemy->SetActorRotation(FRotator(0.0f, 0.0f, 0.0f));
+			if (UCharacterAttributeSet* EnemyAttribs = const_cast<UCharacterAttributeSet*>(EnemyASC->GetSet<UCharacterAttributeSet>()))
+			{
+				EnemyAttribs->SetPoise(0.0f);
+			}
+			const FGameplayAbilitySpecHandle EnemySBHandle = ActivateTestStanceBreak(Enemy);
+			FGameplayAbilitySpec* FoundSBSpec = EnemyASC->FindAbilitySpecFromHandle(EnemySBHandle);
+			TestTrue(TEXT("Real StanceBreak ability is active for Backstab arbitration"),
+				FoundSBSpec && FoundSBSpec->IsActive());
+
+			Player->SetTestLockedTarget(Enemy);
+
+			// Establish held-input prerequisite and trigger input handling
+			Player->TriggerTestHandleCombatInputStarted(PrimaryAttackInputTag);
+
+			TestFalse(TEXT("Front execution rejected for behind geometry on StanceBreak target"), FrontInstance ? FrontInstance->IsActive() : false);
+			TestTrue(TEXT("Backstab activates for behind geometry on valid StanceBreak target (S=1, C=1)"), BackstabAbility ? BackstabAbility->IsActive() : false);
+
+			// Assert direct Primary attack ability was NOT activated (Backstab won arbitration)
+			FGameplayAbilitySpec* PrimaryAttackSpec = nullptr;
+			for (FGameplayAbilitySpec& Spec : PlayerASC->GetActivatableAbilities())
+			{
+				if (Spec.Ability && Spec.Ability->IsA<UPrimaryAttackAbility>())
+				{
+					PrimaryAttackSpec = &Spec;
+					break;
+				}
+			}
+			TestNotNull(TEXT("Direct PrimaryAttack ability spec exists on Player ASC"), PrimaryAttackSpec);
+			TestFalse(TEXT("Direct PrimaryAttack is NOT active when Backstab activates on StanceBreak target"),
+				PrimaryAttackSpec && PrimaryAttackSpec->IsActive());
+
+			// End input state and clean up
+			Player->TriggerTestHandleCombatInputEnded(PrimaryAttackInputTag);
+			TickBackstabExecutionTestWorld(World, 0.01f);
+
+			if (BackstabAbility)
+			{
+				BackstabAbility->TestEndAbility(false);
+			}
+			PlayerASC->ClearAbility(FrontHandle);
+			PlayerASC->ClearAbility(BackstabHandle);
+			EnemyASC->ClearAbility(EnemySBHandle);
 			ResetWeaponExecutionMontages(Player);
 		}
 

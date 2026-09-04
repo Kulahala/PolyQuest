@@ -126,7 +126,10 @@ private:
 
 	void StopVictimMontagePresentation(bool bIsNaturalCompletion);
 
-	bool ValidateExecutionRequest(const FGameplayEventData* TriggerEventData, AEnemyCharacter* EnemyCharacter) const;
+	bool ValidateExecutionRequest(
+		const FGameplayEventData* TriggerEventData,
+		AEnemyCharacter* EnemyCharacter,
+		bool& bOutHandoffFromStanceBreak) const;
 
 	UPROPERTY(Transient)
 	TObjectPtr<UExecutionLockContext> ActiveExecutionContext;

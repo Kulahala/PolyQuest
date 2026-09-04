@@ -15,6 +15,35 @@
 #include "GameFramework/CharacterMovementComponent.h"
 #include "PolyQuest.h"
 
+namespace
+{
+	bool EvaluateStanceBreakCompatibility(
+		int32 ActiveStanceBreakCount,
+		int32 PreActivationStunnedContribution,
+		bool& bOutHandoff)
+	{
+		bOutHandoff = false;
+		if (ActiveStanceBreakCount < 0 || PreActivationStunnedContribution < 0)
+		{
+			return false;
+		}
+
+		if (ActiveStanceBreakCount == 0 && PreActivationStunnedContribution == 0)
+		{
+			bOutHandoff = false;
+			return true;
+		}
+
+		if (ActiveStanceBreakCount == 1 && PreActivationStunnedContribution == 1)
+		{
+			bOutHandoff = true;
+			return true;
+		}
+
+		return false;
+	}
+}
+
 UEnemyVictimExecutionAbility::UEnemyVictimExecutionAbility()
 {
 	InstancingPolicy = EGameplayAbilityInstancingPolicy::InstancedPerActor;
@@ -109,8 +138,11 @@ bool UEnemyVictimExecutionAbility::CanActivateAbility(
 
 bool UEnemyVictimExecutionAbility::ValidateExecutionRequest(
 	const FGameplayEventData* TriggerEventData,
-	AEnemyCharacter* EnemyCharacter) const
+	AEnemyCharacter* EnemyCharacter,
+	bool& bOutHandoffFromStanceBreak) const
 {
+	bOutHandoffFromStanceBreak = false;
+
 	if (!TriggerEventData || !EnemyCharacter || EnemyCharacter->IsDead() || EnemyCharacter->IsDeathPending() || EnemyCharacter->IsActorBeingDestroyed())
 	{
 		return false;
@@ -194,22 +226,11 @@ bool UEnemyVictimExecutionAbility::ValidateExecutionRequest(
 		{
 			return false;
 		}
+
+		bOutHandoffFromStanceBreak = true;
 	}
 	else if (TriggerEventData->EventTag == BackstabReqTag)
 	{
-		for (const FGameplayAbilitySpec& Spec : CharacterASC->GetActivatableAbilities())
-		{
-			if (Spec.Ability && Spec.Ability->IsA<UEnemyStanceBreakAbility>() && Spec.IsActive())
-			{
-				return false;
-			}
-		}
-
-		if (StunnedTag.IsValid() && CharacterASC->GetTagCount(StunnedTag) > 1)
-		{
-			return false;
-		}
-
 		if (VictimLockedTag.IsValid() && CharacterASC->GetTagCount(VictimLockedTag) > 1)
 		{
 			return false;
@@ -219,6 +240,36 @@ bool UEnemyVictimExecutionAbility::ValidateExecutionRequest(
 		{
 			return false;
 		}
+
+		if (!StunnedTag.IsValid() || !ActivationOwnedTags.HasTagExact(StunnedTag))
+		{
+			return false;
+		}
+
+		const int32 TotalStunnedCount = CharacterASC->GetTagCount(StunnedTag);
+		if (TotalStunnedCount < 1)
+		{
+			return false;
+		}
+
+		const int32 PreActivationStunnedContribution = TotalStunnedCount - 1;
+
+		int32 ActiveStanceBreakCount = 0;
+		for (const FGameplayAbilitySpec& Spec : CharacterASC->GetActivatableAbilities())
+		{
+			if (Spec.Ability && Spec.Ability->IsA<UEnemyStanceBreakAbility>() && Spec.IsActive())
+			{
+				++ActiveStanceBreakCount;
+			}
+		}
+
+		bool bHandoff = false;
+		if (!EvaluateStanceBreakCompatibility(ActiveStanceBreakCount, PreActivationStunnedContribution, bHandoff))
+		{
+			return false;
+		}
+
+		bOutHandoffFromStanceBreak = bHandoff;
 	}
 	else
 	{
@@ -247,7 +298,8 @@ void UEnemyVictimExecutionAbility::ActivateAbility(
 		bAddedDeathPendingTag = false;
 	}
 
-	if (!ValidateExecutionRequest(TriggerEventData, EnemyCharacter) || !CharacterASC)
+	bool bHandoff = false;
+	if (!ValidateExecutionRequest(TriggerEventData, EnemyCharacter, bHandoff) || !CharacterASC)
 	{
 		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
 		return;
@@ -262,8 +314,7 @@ void UEnemyVictimExecutionAbility::ActivateAbility(
 		return;
 	}
 
-	const FGameplayTag FrontReqTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Action.Execution.Request.Front")), false);
-	bHandoffFromStanceBreak = (TriggerEventData->EventTag == FrontReqTag);
+	bHandoffFromStanceBreak = bHandoff;
 
 	// 1. Stop physical movement immediately
 	if (UCharacterMovementComponent* MovementComponent = EnemyCharacter->GetCharacterMovement())
@@ -329,7 +380,13 @@ void UEnemyVictimExecutionAbility::ActivateAbility(
 	}
 
 	// 6. Cache pending victim montage and listen for VictimStart event to drive presentation
-	PendingVictimMontage = bHandoffFromStanceBreak ? FrontExecutionVictimMontage : BackstabExecutionVictimMontage;
+	const FGameplayTag FrontReqTag = FrontRequestEventTag.IsValid()
+		? FrontRequestEventTag
+		: FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Action.Execution.Request.Front")), false);
+
+	PendingVictimMontage = (TriggerEventData && TriggerEventData->EventTag == FrontReqTag)
+		? FrontExecutionVictimMontage
+		: BackstabExecutionVictimMontage;
 	bVictimPresentationStarted = false;
 
 	const FGameplayTag VictimStartTag = VictimStartEventTag.IsValid()

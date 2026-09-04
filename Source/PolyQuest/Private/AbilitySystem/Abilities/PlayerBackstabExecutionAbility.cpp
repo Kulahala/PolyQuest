@@ -2,6 +2,7 @@
 
 #include "Abilities/Tasks/AbilityTask_PlayMontageAndWait.h"
 #include "Abilities/Tasks/AbilityTask_WaitGameplayEvent.h"
+#include "AbilitySystem/Abilities/EnemyStanceBreakAbility.h"
 #include "AbilitySystem/Abilities/EnemyVictimExecutionAbility.h"
 #include "AbilitySystemComponent.h"
 #include "AbilitySystem/CharacterAttributeSet.h"
@@ -22,6 +23,32 @@
 
 namespace
 {
+	bool EvaluateStanceBreakCompatibility(
+		int32 ActiveStanceBreakCount,
+		int32 PreActivationStunnedContribution,
+		bool& bOutHandoff)
+	{
+		bOutHandoff = false;
+		if (ActiveStanceBreakCount < 0 || PreActivationStunnedContribution < 0)
+		{
+			return false;
+		}
+
+		if (ActiveStanceBreakCount == 0 && PreActivationStunnedContribution == 0)
+		{
+			bOutHandoff = false;
+			return true;
+		}
+
+		if (ActiveStanceBreakCount == 1 && PreActivationStunnedContribution == 1)
+		{
+			bOutHandoff = true;
+			return true;
+		}
+
+		return false;
+	}
+
 	bool IsBackstabExecutionAnimationFromMontage(const UAnimMontage* Montage, const UObject* AnimationObject)
 	{
 		if (!Montage || !AnimationObject)
@@ -318,8 +345,20 @@ bool UPlayerBackstabExecutionAbility::ValidateTargetPrerequisites(
 		return false;
 	}
 
+	int32 ActiveStanceBreakCount = 0;
+	for (const FGameplayAbilitySpec& Spec : TargetASC->GetActivatableAbilities())
+	{
+		if (Spec.Ability && Spec.Ability->IsA<UEnemyStanceBreakAbility>() && Spec.IsActive())
+		{
+			++ActiveStanceBreakCount;
+		}
+	}
+
 	const FGameplayTag StunnedTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Status.Stunned")), false);
-	if (StunnedTag.IsValid() && TargetASC->HasMatchingGameplayTag(StunnedTag))
+	const int32 StunnedContribution = StunnedTag.IsValid() ? TargetASC->GetTagCount(StunnedTag) : 0;
+
+	bool bHandoff = false;
+	if (!EvaluateStanceBreakCompatibility(ActiveStanceBreakCount, StunnedContribution, bHandoff))
 	{
 		return false;
 	}

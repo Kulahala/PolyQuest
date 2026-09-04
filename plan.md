@@ -1,207 +1,234 @@
-# TODO-05A1-D2B：Weapon-Specific Execution Montage Selection v1（实施计划）
+# TODO-05A1-D2C：StanceBreak Backstab Compatibility v1（实施计划）
 
 ## 阶段状态与基线
 
-- 状态：D2B 已实现并完成 Main 收口；用户已确认 Focused Automation 与 Scene01 PIE 通过，Main Fresh Review 未发现 P0-P2 blocker，等待显式 commit approval。
+- 状态：D2C 实现已完成；用户已确认相关 Focused Automation 与 Scene01 PIE 通过；Main 最终 Fresh Review 未发现批准范围内 P0-P2 blocker。手动编译与 Editor readback 仅按执行者报告记录，未形成 Main 独立收据。
 - 日期：2026-09-04。
-- 仓库：`E:\GameDevelop\PolyQuest`；分支：`main`。
-- 基线：`main @ 5cba1e2f42146082b7fee26d488ac1feec7e6d36`，相对 `origin/main` ahead 5。
-- 工作树：321 条状态记录，包含用户-owned `Content/**`、`Config/**`、`AGENTS.md` 和其他 WIP；这些变更不是本阶段批准集合，必须原样保留。
-- D2A 收口已写入 `ROADMAP-archive.md`；本阶段替换本文件不会丢失 D2A 历史证据。
-- Archive preflight: PASS；替换本阶段 `plan.md` 前已确认 D2A 的日期化归档条目、基线、范围、验证与下一指针均存在。
-- 阶段开始时仅有源码/文档/定向 CodeGraph 基线证据；收口证据与其来源在下方“D2B 实施与 Main 收口记录”中分层记录。
+- 仓库：E:\GameDevelop\PolyQuest；分支：main；父 HEAD：3254c10（D2B“武器专属处决 Montage 选择”已提交），本阶段提交前相对 origin/main ahead 6。
+- 工作树：约 321 条用户-owned Content、Config、AGENTS.md 和其他 WIP；这些变更不是本阶段批准集合，必须原样保留。
+- Archive preflight：PASS。D2B 收口已存在于 ROADMAP-archive.md 的日期化条目；替换本文件不会丢失 D2B 历史证据。
+- 本阶段触发条件已满足且 D2C 已收口；TODO-05A1-E、D2D 不纳入本阶段，也不因本计划被标记为完成。
 
 ## 目标与成功标准
 
-本阶段回答一个运行时问题：Front Execution 与 Backstab 是否能从当前主手近战 `UMeleeWeaponDefinition` 选择各自的玩家 Montage，并在激活时锁定该武器/Montage，避免执行期间换装或配置漂移破坏既有握手和命中合同。
+本阶段只回答一个运行时问题：目标处于由单一 active UEnemyStanceBreakAbility 拥有的 Stunned 状态时，Backstab 是否能安全接管 StanceBreak 的恢复责任，同时仍使用 Backstab 的受害者 Montage。
 
 成功标准：
 
-1. `FrontExecutionMontage` 与 `BackstabExecutionMontage` 成为唯一的方向专属玩家 Montage 来源；缺失方向只拒绝该路线，不回退到 Unarmed 或 Ability 全局 CDO。
-2. `CanActivateAbility()`、`ActivateAbility()` 和 `CommitAbility()` 使用同一只读 resolver；Commit 前复核当前主手与 Montage 身份，任何不一致均 fail-closed，不建立 Victim 握手。
-3. Commit 成功后，Montage Task、动画身份校验、D2A Snap 距离读取和 `EndAbility()` 停止逻辑只使用激活快照，不在执行中重新选择 Montage。
-4. 执行期间继续由既有 `State.Action.Attacking`/`CanSwapNow()` 阻止 `EquipWeapon()` 与 `TryEquipWorldPickup()`；不新增换装锁服务或 Gameplay Tag。
-5. 既有 `VictimStart -> Hit -> Release`、`FMeleeHitResolver -> Damage GameplayEffect`、exactly-once、目标/朝向快照、formal Release 和幂等清理合同保持不变。
-6. 现有 Front/Backstab 输入优先级不变；缺失方向 Montage 时能继续普通 Primary 路由。
+1. 普通非 Stunned 目标继续允许 Backstab；普通/外部 Stunned 目标继续拒绝。
+2. 仅当目标有一个 active StanceBreak 且 State.Status.Stunned 总 contribution 恰好为一份时允许 Backstab。
+3. StanceBreak 加额外 Stunned contribution、多个 active StanceBreak、StanceBreak 与 Stunned 计数不一致时 fail-closed。
+4. Victim 在取消 StanceBreak 前捕获 handoff；VictimLocked 继续是 StanceBreak 跳过自身移动/Poise 恢复的既有闸门。
+5. handoff 只表示恢复所有权；Backstab 请求始终选择 BackstabExecutionVictimMontage，Front 请求始终选择 Front Montage。
+6. 存活目标在 Release、取消或中断后只由 Victim 恢复移动、Poise 与 AI 锁一次；死亡/销毁路径不新增恢复。
+7. D2A Snap、D2B 激活 Montage 快照、统一 Hit Notify、唯一 FMeleeHitResolver、VictimStart -> Hit -> Release、Exactly-Once 和 Front 优先级保持不变。
 
-## 冻结接口与行为
+## 证据基线与状态合同
 
-### Weapon DataAsset
+- Player 目标校验当前直接拒绝 State.Status.Stunned：PlayerBackstabExecutionAbility.cpp:321。
+- Victim 当前在 Backstab 分支拒绝 active StanceBreak 和额外 Stunned contribution：EnemyVictimExecutionAbility.cpp:198。
+- Victim 当前用 bHandoffFromStanceBreak 同时决定方向 Montage 与 Poise 恢复：EnemyVictimExecutionAbility.cpp:265。
+- Victim 的 Backstab Montage 选择位于 EnemyVictimExecutionAbility.cpp:332；Poise 恢复位于 EnemyVictimExecutionAbility.cpp:694。
+- StanceBreak 在 VictimLocked 存在时跳过自身恢复：EnemyStanceBreakAbility.cpp:271。
+- UE 5.8 GAS PreActivate 会在进入 ActivateAbility 前添加 ActivationOwnedTags；Victim 的 ActivationOwnedTags 明确包含一份 State.Status.Stunned。因此 Victim 校验必须先扣除自身一份，再应用同一状态表。
 
-- 在 `UMeleeWeaponDefinition` 增加以下可选字段，均默认 `nullptr`，使用 `EditDefaultsOnly`、`BlueprintReadOnly`、`Weapon|Execution` 分类：
-  - `TObjectPtr<UAnimMontage> FrontExecutionMontage`
-  - `TObjectPtr<UAnimMontage> BackstabExecutionMontage`
-- 不改变 `IsValidWeaponDefinition()`；可选 Montage 缺失不使武器整体失效。现有 `ExecutionSnapDistance` 合法性校验保持不变，因此不修改 `MeleeWeaponDefinition.cpp`。
+定义 S = active UEnemyStanceBreakAbility 数量，C = Victim 激活前 State.Status.Stunned 总 contribution 数量：
 
-### Ability resolver 与快照
+| S | C | 结果 |
+|---:|---:|---|
+| 0 | 0 | 普通 Backstab，handoff=false |
+| 1 | 1 | 允许 Backstab，handoff=true |
+| 0 | >=1 | 拒绝 |
+| 1 | !=1 | 拒绝 |
+| >=2 | 任意 | 拒绝 |
 
-- 两个 Ability 各自提供同形状的私有 resolver，使用 `GetEquippedMainHandMelee()`，清空输出并对 Avatar、装备、主手近战定义及对应方向 Montage 做 fail-closed 检查：
+## 冻结实现合同
 
-```
-bool TryResolveExecutionMontage(
-    const FGameplayAbilityActorInfo* ActorInfo,
-    const UMeleeWeaponDefinition*& OutWeaponDef,
-    UAnimMontage*& OutMontage) const;
-```
+### 同构私有判定
 
-- 两个 Ability 各自增加以下 `Transient` 快照；`TObjectPtr<const UMeleeWeaponDefinition>` 语法已由 UE 5.8/项目现有代码核实：
+- 在 PlayerBackstabExecutionAbility.cpp 和 EnemyVictimExecutionAbility.cpp 的匿名命名空间中各实现同名、同逻辑的纯函数：
 
-```
-UPROPERTY(Transient)
-TObjectPtr<const UMeleeWeaponDefinition> ActiveExecutionWeaponDefinition;
+~~~cpp
+bool EvaluateStanceBreakCompatibility(
+    int32 ActiveStanceBreakCount,
+    int32 PreActivationStunnedContribution,
+    bool& bOutHandoff);
+~~~
 
-UPROPERTY(Transient)
-TObjectPtr<UAnimMontage> ActiveExecutionMontage;
-```
+## Main Review Repair Loop（2026-09-04）
 
-### 生命周期与 Commit 顺序
+- Review finding：新增 Backstab 正例曾通过手动设置 StanceBreak spec 的 ActiveCount 和 loose Stunned tag 构造，不能证明真实 StanceBreak-owned tag 生命周期。
+- Main/Codex 依据 AGENTS.md Main narrow-fix 例外直接修复，仅修改已批准的 E:\GameDevelop\PolyQuest\Source\PolyQuest\Private\Tests\BackstabExecutionAutomationTests.cpp；生产状态判定、公开 API、所有权和资产未改动。
+- 修复内容：新增 ActivateTestStanceBreak()，使用真实 StanceBreak 激活模式；Section 5.2b 与 10.2b 的 S=1,C=1 正例改用该夹具；S=1,C=0、S=1,C=2、S=2,C=1 继续作为明确标注的合成 fail-closed 计数边界。
+- Main 已执行该文件和本计划的 git diff --check；随后用户确认修复后的 focused Automation 与 Scene01 PIE 通过。Main 未自行重跑用户-owned 编译、Editor readback、Automation 或 PIE。
+- 当前剩余验证说明：真实 GAS owned-tag 归属由实际 StanceBreak 正例覆盖；按计数构造的异常行不作为真实 Ability 生命周期证明，也不扩大为新的生产测试接口。
 
-- `CanActivateAbility()` 在现有 `Super`、Damage GE、距离/角度、目标和几何门禁中调用 resolver；不再读取 Ability 全局 `ExecutionMontage`。
-- `ActivateAbility()` 在 Commit 前重新调用 resolver并写入快照；解析失败或快照无效直接走既有 `EndAbility()`，不得创建锁定会话或发送 Victim 请求。
-- `CommitAbility()` 固定按以下顺序执行：
-  1. `WITH_DEV_AUTOMATION_TESTS` 下的 `bTestForceCommitAbilityFailure` 优先返回失败；
-  2. 检查两个快照有效；
-  3. 用同一 resolver 读取当前主手/方向 Montage，并与快照做指针身份比较；
-  4. 通过后才调用 `Super::CommitAbility()`。
-- Commit 成功后，所有 Montage 播放、`Montage_IsActive`、Hit/VictimStart/Release 的动画身份校验和停止逻辑只使用 `ActiveExecutionMontage`。D2A Snap 使用 `ActiveExecutionWeaponDefinition->ExecutionSnapDistance`，不重新读取 live 武器。
-- `EndAbility()` 保留既有 formal Release、delegate、Task 和 Montage 清理顺序；停止快照 Montage 后清空武器/Montage 快照。不得清理普通攻击拥有的 Motion-Warp target。
+- 函数先清零输出，负数拒绝，只接受上表两种成功组合；不引入共享公共 Helper、Runtime Service 或新的 reflected API。
+- Player 传入目标 ASC 的原始 Stunned count。
+- Victim 先确认自身 Stunned ActivationOwnedTags 合同和总数至少一，再使用 TotalStunnedCount - 1 作为 C；自身 contribution 缺失或计数下溢直接拒绝。
+- active StanceBreak 数量通过目标 ASC 的 GetActivatableAbilities() 统计 Spec.Ability->IsA<UEnemyStanceBreakAbility>() && Spec.IsActive()。
 
-### 测试适配器与隔离
+### Player 侧
 
-- 保留 `SetTestExecutionMontage()` 名称，仅在 `WITH_DEV_AUTOMATION_TESTS` 下实现为写入当前测试玩家 transient 主手武器的对应方向字段；不恢复 Ability 级 fallback。
-- CDO、无 Avatar、无装备组件或无主手近战定义时安全静默返回。
-- `FrontExecutionAutomationTests.cpp` 与 `BackstabExecutionAutomationTests.cpp` 的每个 Section 必须在 Ability 结束、清理 Handle 后把两个方向字段恢复为 `nullptr`，并在下一次配置前先清理；组合测试同时配置两个方向时也必须显式清理，禁止单 World 夹具状态串扰。
-- 不新增“在同步 Commit 缝隙注入换装”的生产或公共测试接口；使用现有 force-fail seam、事件身份断言和 post-activation 字段变更覆盖可观测边界。
+- 仅在 ValidateTargetPrerequisites() 放宽目标 Stunned 判断，CanActivateAbility() 与 ActivateAbility() 继续共用该校验。
+- Player 自身 ActivationBlockedTags 中的 State.Status.Stunned 不变。
+- 失败必须发生在 Commit/握手/Snap 之前；不改变 CommitAbility()、D2A Snap 或 D2B Montage resolver。
 
-## 执行路线、切片与范围
+### Victim 侧
 
-- Outer：`ue-stage-workflow`
-- Primary：`ue5-cpp-gameplay`
-- Support：`ue5-debug-validation`
-- Route reason：Native GAS、DataAsset 和现有 Automation 的窄垂直切片，不涉及 Blueprint 图、资产迁移或新模块。
-- Execution route：`manual/out-of-band Gemini`。
-- Contract owner：Main/Codex；Implementation executor：Gemini；Codex 子代理委派数：0。
-- Main 负责范围冻结、公共合同、计划、静态门禁、验证解释、Fresh Review、文档、staging 和 commit gate；用户负责 Editor authoring/readback、手动编译、Automation、PIE 和最终 commit approval。
-- Gemini 首次切片交付前优先派发 1 个无历史污染的只读子代理做严格实施自审；后续修复回路由 Gemini 单兵复核，该自审不替代 Main 的 `ue-strict-review`。
+- 将私有 ValidateExecutionRequest() 增加 bool& bOutHandoffFromStanceBreak 输出，并在函数入口初始化为 false。
+- Front 分支保留现有 Poise-zero 和 active-StanceBreak 要求，并直接输出 handoff=true；不对 Front 引入新的计数门禁。
+- Backstab 分支使用同构判定；校验成功后在 CancelAbilities() 前写入 bHandoffFromStanceBreak。
+- PendingVictimMontage 只由请求 Event Tag 决定，不能再读取 handoff 标志决定方向。
+- EndAbility() 继续是存活目标恢复的唯一所有者，并保持现有幂等清理顺序；不得让 StanceBreak 和 Victim 同时恢复 Poise/移动。
+- 现有 HasTestHandoffFromStanceBreak() 已存在于测试宏区，直接复用，不重复添加测试暴露接口。
 
-有序切片：
+## 范围、所有权与路线
 
-1. 在 `MeleeWeaponDefinition.h` 增加两个方向字段；在两个 Ability Header 中移除全局 `ExecutionMontage` CDO 字段，加入 resolver 声明、前向声明和 `Transient` 快照。
-2. 在两个 Ability CPP 中接入 resolver、快照、Commit 复核，以及快照驱动的 Montage/Snap 使用；保持目标、锁、事件、伤害和清理路径。
-3. 更新两个 Execution Automation 文件的配置适配器、方向选择/缺失回退/快照固定/换装闸门断言和 Section 复位。
-4. Gemini 完成静态自审并回交证据；用户完成编译、Editor readback、Automation 和 Scene01 PIE 后，Main 做一轮限定范围 `ue-strict-review`。
+- Outer：ue-stage-workflow
+- Primary：ue5-cpp-gameplay
+- Support：ue5-debug-validation
+- Execution route：manual/out-of-band Gemini
+- Contract owner：Main/Codex；implementation writer：Gemini；Codex 子代理委派数：0。
+- 允许修改的唯一 Source/Test 路径：
+  - E:\GameDevelop\PolyQuest\Source\PolyQuest\Public\AbilitySystem\Abilities\PlayerBackstabExecutionAbility.h
+  - E:\GameDevelop\PolyQuest\Source\PolyQuest\Private\AbilitySystem\Abilities\PlayerBackstabExecutionAbility.cpp
+  - E:\GameDevelop\PolyQuest\Source\PolyQuest\Public\AbilitySystem\Abilities\EnemyVictimExecutionAbility.h
+  - E:\GameDevelop\PolyQuest\Source\PolyQuest\Private\AbilitySystem\Abilities\EnemyVictimExecutionAbility.cpp
+  - E:\GameDevelop\PolyQuest\Source\PolyQuest\Private\Tests\BackstabExecutionAutomationTests.cpp
+  - E:\GameDevelop\PolyQuest\Source\PolyQuest\Private\Tests\ExecutionVictimPresentationAutomationTests.cpp
+- EnemyStanceBreakAbility.*、Front Ability、FrontExecutionAutomationTests.cpp、ExecutionLockInAutomationTests.cpp 默认只读/回归运行；需要修改时必须停止并返回 Main 决策。
+- 明确排除：Gameplay Tags、Input、Config、Build.cs、PlayerCharacter.*、装备组件、ExecutionLockContext.*、Blueprint、AnimBP、Montage、地图、全部 Content、D2A/D2B/E/D2D 逻辑和任何通用处决框架。
 
-批准修改路径：
+## 执行顺序与停止条件
 
-- `E:\GameDevelop\PolyQuest\Source\PolyQuest\Public\Combat\Equipment\MeleeWeaponDefinition.h`
-- `E:\GameDevelop\PolyQuest\Source\PolyQuest\Public\AbilitySystem\Abilities\PlayerFrontExecutionAbility.h`
-- `E:\GameDevelop\PolyQuest\Source\PolyQuest\Private\AbilitySystem\Abilities\PlayerFrontExecutionAbility.cpp`
-- `E:\GameDevelop\PolyQuest\Source\PolyQuest\Public\AbilitySystem\Abilities\PlayerBackstabExecutionAbility.h`
-- `E:\GameDevelop\PolyQuest\Source\PolyQuest\Private\AbilitySystem\Abilities\PlayerBackstabExecutionAbility.cpp`
-- `E:\GameDevelop\PolyQuest\Source\PolyQuest\Private\Tests\FrontExecutionAutomationTests.cpp`
-- `E:\GameDevelop\PolyQuest\Source\PolyQuest\Private\Tests\BackstabExecutionAutomationTests.cpp`
+1. 用户先在 Editor 读取真实 StanceBreak Montage、Backstab Victim Montage、骨架、AnimBP、Slot 和统一 Hit Notify 组合；不自动保存、不迁移、不创建新跪地/倒地资产。组合不兼容时停止。
+2. 计划接受后 Main 发送下方 Gemini handoff；Gemini 只修改冻结路径中的 Source/Test。
+3. Gemini 完成实现和首次切片严格自审；按项目规则优先派发一个无历史污染的只读自审代理，后续修复由 Gemini 单兵复核。
+4. Main 读取最终 diff，运行静态门禁、git diff --check 和 Rider C++ inspection；不调用 UBT 或 Editor 编译。
+5. 用户手动编译 PolyQuestEditor (Development Editor)，运行 Focused Automation、Editor readback 和 Scene01 PIE。
+6. Main 运行一次限定范围 ue-strict-review；通过后再同步 Roadmap/阶段收口，等待用户显式 commit approval。
 
-明确排除：`MeleeWeaponDefinition.cpp`、`PlayerCharacter.*`、`WeaponEquipmentComponent.*`、`CombatAutomationFixture.*`、`EnemyVictimExecutionAbility.*`、`ExecutionLockContext.*`、`Build.cs`、Gameplay Tags、Input、Config、Blueprint、AnimBP、Montage、地图、全部 `Content/**` 及任何未列出的公共 API。需要未列出路径、资产、Tag、Input、Config 或生命周期规则时必须停止并返回 Main 决策。
+任何实现需要未列路径、公共 API、Tag/Input/Config、资产写入或改变 StanceBreak 所有权时立即停止；同一根因最多一次证据驱动修复和一次针对性复验。
 
-## 验证矩阵与验收门禁
+## Automation 与用户验收
 
-### Main 静态门禁
-
-- 精确扫描旧 Ability 全局 `ExecutionMontage` 读取，确认只保留武器字段和活动快照路径。
-- 核对 resolver 在 `CanActivateAbility()`、`ActivateAbility()`、`CommitAbility()` 的单源使用、快照清理、live identity 复核和 `ExecutionSnapDistance` 快照读取。
-- 核对没有新增 Tag/Input/Build.cs/装备组件逻辑；运行 `git diff --check`。
-- Rider 可用时对全部变更 C++ 文件执行 `lint_files` 或 `get_file_problems`；当前基线不把 Rider 不可用写成通过。
-- CodeGraph 只做批准符号的一跳调用复核；`code-review-graph` 当前索引基于旧 SHA `55dc530`，只能记录为 stale-coverage fallback，不能作为运行时证据。
-
-### Focused Automation
-
-- Front/Backstab 使用不同 synthetic Montage 时分别选择正确字段；单方向缺失只拒绝对应 Ability。
-- 缺失 Montage 时 `CanActivateAbility()` 与 `ActivateAbility()` 均不 Commit、不握手、不进入 Hit，并能回退普通 Primary。
-- 强制 Commit 失败不建立 reservation；快照不完整或 live 武器/Montage 身份不一致时 fail-closed。
-- 激活后修改 transient 武器字段不会切换活动 Montage；现有事件 OptionalObject/动画身份断言继续以激活快照为准。
-- Ability 活跃期间直接 `EquipWeapon()` 和 `TryEquipWorldPickup()` 被拒绝，结束后标签、快照、reservation 和测试字段均清理。
-- 保持现有 Front/Backstab 的目标快照、VictimStart/Hit/Release、单次伤害和生命周期回归断言。
-
-### 用户门禁
-
-- 用户在 Editor 中为实际候选武器 DataAsset 读取/作者化两个方向字段，并确认 Montage、统一 Hit Notify、Slot 与 AnimBP 关系；本阶段不预设资产路径，不自动迁移或保存未批准资产。
-- 用户手动编译 `PolyQuestEditor (Development Editor)`。
-- 用户运行 `FrontExecution`、`Backstab`、`ExecutionLockIn`、`ExecutionLethalRecovery`、`ExecutionReleaseOutcomes`、`ExecutionVictimPresentation`、`ExecutionHitNotify` 及相关装备交易回归。
-- 用户在 Scene01 PIE 验证候选武器的方向选择、缺失方向回退、换装阻断、命中、Release 和结束清理。
+- BackstabExecutionAutomationTests 保留现有外部 Stunned 负例（S=0,C=1，当前 10.2），并新增 active StanceBreak 正例（S=1,C=1，建议 10.3）：Backstab 激活、Victim 接受、无 Primary fallback。
+- 覆盖 StanceBreak 加额外 Stunned、StanceBreak/Tag 计数不一致和多个 active StanceBreak 的拒绝；若现有夹具无法构造某一行，不得新增生产接口，需报告并由 Main 决定 test-only fixture。
+- ExecutionVictimPresentationAutomationTests 覆盖 Backstab handoff=true 但 Pending/Active Montage 为 Backstab Montage；Front handoff 与 Front Montage 保持原行为。
+- 正常 Release、取消、Montage 中断后，存活目标 Poise 为 Max、移动为 MOVE_Walking、AI 锁解除，且恢复只执行一次；死亡/销毁路径不恢复。
+- 保持 VictimStart -> Hit -> Release、唯一伤害、重复事件、目标销毁、UnPossess/Teardown 和已有 Front/Backstab 回归断言。
+- 用户必须确认真实资产组合、Development Editor 编译、相关 Execution Automation、Scene01 PIE 的 Backstab-after-StanceBreak、Front 回归、命中、Release、清理和换装阻断。
 - 静态检查、CodeGraph、Gemini 自审和 Automation 不替代编译、Editor readback 或 PIE 证据。
-- 同一根因最多允许一次证据驱动修复和一次针对性复验；根因复现即停止，不轮询、不扩大范围。
 
-## D2B 实施与 Main 收口记录
+## 静态门禁、债务与提交边界
 
-### 实际变更
-
-- Gemini 按冻结范围完成 7/7 个批准 Source/Test 文件：`MeleeWeaponDefinition.h`、Front/Backstab Ability 各自的 `.h/.cpp`，以及 Front/Backstab Execution Automation 测试；未扩展到 `MeleeWeaponDefinition.cpp`、装备组件、Config、Tag/Input、Blueprint、Montage、地图或 `Content/**`。
-- `UMeleeWeaponDefinition` 现在提供可选 `FrontExecutionMontage` 与 `BackstabExecutionMontage`。两个 Ability 通过同形状 resolver 从当前主手近战定义读取方向字段，激活前后使用 `Transient` 武器/Montage 快照；缺失方向 fail-closed，不回退到 Unarmed 或 Ability CDO。
-- `CommitAbility()` 按测试强制失败、快照有效性、live 主手/Montage 指针身份、基类 Commit 的顺序执行；Commit 后 Montage、动画身份、D2A Snap 距离和停止逻辑均使用快照。既有 `State.Action.Attacking`/`CanSwapNow()` 换装闸门、VictimStart/Hit/Release、唯一 Resolver 和清理合同未改动。
-- 测试适配器改为写入当前测试玩家 transient 主手武器字段；每个 Section 显式清理两个方向字段并覆盖方向缺失回退、快照固定、身份漂移、换装拒绝、Commit 失败和 EndAbility 清理。
-
-### 验证证据分层
-
-- 用户直接确认：Front/Backstab Focused Automation 通过，Scene01 PIE 中方向 Montage 选择、缺失方向回退普通 Primary、执行期间换装阻断、命中/Release 与结束清理通过。
-- Gemini 回交报告：列出 Visual Studio `PolyQuestEditor (Development Editor)` 编译、Rider `get_file_problems`（7 个批准 C++ 文件零 errors）和执行资产配置/readback 已通过。Main 未重复执行这些用户-owned 门禁，故该报告不改写为 Main 独立编译/readback 收据。
-- Main 静态门禁：批准差异与一跳调用关系已审查；旧 Ability 全局 `ExecutionMontage` 残留扫描、快照/Commit 顺序核对和 `git diff --check` 已通过。`code-review-graph` 索引基于旧 SHA `55dc530`，按规则记为 stale-coverage fallback；未用其作运行时证明。
-
-### Main Fresh Review 结论
-
-- 按 `ue-strict-review` 完成两批、有界、缺陷优先审查；第二批后硬停止，未进行第三批漫游或重复测试。
-- 当前批准范围内未发现可证实的 P0、P1 或 P2 缺陷；未发现 Ability 生命周期、快照身份、Exactly-Once、换装闸门或测试隔离的行为回归。Gemini 的实施自审不计作 Main Fresh Review。
-
-### 剩余债务与收口边界
-
-- D2B 没有单独归档的 Main/用户手动编译与执行 Weapon/GA/Montage readback 收据；保留为非阻塞 authored-validation debt。Gemini 回交报告可作为来源标注的辅助证据，但不能支持干净 authored baseline 或 packaging 声明。
-- `D2A-VERTICAL-SURFACE` 仍覆盖坡地、台阶和较大高度差的 Ground Alignment；`Debt-REC-05A1-03-RET-Teardown` 仍覆盖强制中断、销毁、UnPossess、Teardown 的 PIE 收据。D2A 的独立编译/readback 债务也继续保留。
-- 本次 Main 只同步阶段文档，不暂存、不提交；所有用户-owned `Content/**`、Config 和其他 WIP 原样排除。下一执行切片为 `TODO-05A1-E`，D2C/D2D 仍需各自产品/证据触发条件。
-
-## 风险、债务与文档边界
-
-- 删除 Ability 全局 `ExecutionMontage` 不保留 deprecated alias 或 fallback；若历史 GA 资产出现加载警告或仍需迁移，另立资产清单、Reference/readback 和迁移阶段。
-- 未配置方向 Montage 的武器仍可合法装备，但对应执行路线必须拒绝；Unarmed 不作为隐式执行动画来源。
-- D2A 的独立编译/readback 收据、`D2A-VERTICAL-SURFACE` 和 `Debt-REC-05A1-03-RET-Teardown` 继续保留，不因 D2B 关闭。
-- Main 已在验证与 Fresh Review 后同步 `ROADMAP.md`、`ARCHITECTURE.md`、`README.md` 和 `ROADMAP-archive.md`；文档同步不等于 staging 或 commit approval。
-- 不提交任何内容，直到用户明确批准；所有未列入批准路径的现有 WIP 原样排除。
+- Main 检查两份 helper 同构、Victim 自身 contribution 扣除、handoff 捕获早于 CancelAbilities()、请求方向与恢复语义分离，以及无第二伤害路径。
+- 对批准 C++ 文件运行 Rider lint_files/get_file_problems（不可用则如实记录），执行 git diff --check；本次 code-review-graph 基于 `3254c10` 且与审查基线匹配，仅作影响导航。
+- D2A/D2B 独立编译/readback、D2A-VERTICAL-SURFACE、Debt-REC-05A1-03-RET-Teardown 继续保留为非阻塞债务。
+- 本阶段不提前修改 ROADMAP.md 或 ARCHITECTURE.md；通过用户门禁和 Main Review 后，由 Main 更新 D2C 状态、债务闭环和历史归档。
+- 最终提交只允许冻结的 Source/Test 与经 Main 收口批准的文档；所有用户-owned WIP 原样排除，等待显式 commit approval。
 
 ## Gemini Handoff Prompt
 
-```
-你是 PolyQuest 的 TODO-05A1-D2B Implementation Executor。
+~~~text
+你是 PolyQuest 的 TODO-05A1-D2C Implementation Executor。
 
-仓库：E:\GameDevelop\PolyQuest
-基线：main @ 5cba1e2f42146082b7fee26d488ac1feec7e6d36
-活动计划：E:\GameDevelop\PolyQuest\plan.md
-路线：Outer=ue-stage-workflow；Primary=ue5-cpp-gameplay；Support=ue5-debug-validation
-执行方式：manual/out-of-band Gemini
-Contract owner：Main/Codex；Implementation writer：Gemini
+仓库：
+E:\GameDevelop\PolyQuest
 
-只允许修改以下 7 个 Source/Test 文件：
-- E:\GameDevelop\PolyQuest\Source\PolyQuest\Public\Combat\Equipment\MeleeWeaponDefinition.h
-- E:\GameDevelop\PolyQuest\Source\PolyQuest\Public\AbilitySystem\Abilities\PlayerFrontExecutionAbility.h
-- E:\GameDevelop\PolyQuest\Source\PolyQuest\Private\AbilitySystem\Abilities\PlayerFrontExecutionAbility.cpp
+基线：
+main @ 3254c10
+当前活动计划：
+E:\GameDevelop\PolyQuest\plan.md
+
+路线：
+Outer=ue-stage-workflow
+Primary=ue5-cpp-gameplay
+Support=ue5-debug-validation
+Execution route=manual/out-of-band Gemini
+Contract owner=Main/Codex
+Implementation writer=Gemini
+
+在开始写 Source 前必须等待 Main/user 提供真实 Editor readback：
+- 当前 StanceBreak Montage
+- Backstab Victim Montage
+- 骨架、AnimBP、Slot
+- 统一 Player Execution Hit Notify
+本次不创建、迁移、保存或修改任何 .uasset/.umap；组合不兼容、资产路径不明确或需要新增资产时立即停止并回报。
+
+只允许修改以下 6 个文件：
 - E:\GameDevelop\PolyQuest\Source\PolyQuest\Public\AbilitySystem\Abilities\PlayerBackstabExecutionAbility.h
 - E:\GameDevelop\PolyQuest\Source\PolyQuest\Private\AbilitySystem\Abilities\PlayerBackstabExecutionAbility.cpp
-- E:\GameDevelop\PolyQuest\Source\PolyQuest\Private\Tests\FrontExecutionAutomationTests.cpp
+- E:\GameDevelop\PolyQuest\Source\PolyQuest\Public\AbilitySystem\Abilities\EnemyVictimExecutionAbility.h
+- E:\GameDevelop\PolyQuest\Source\PolyQuest\Private\AbilitySystem\Abilities\EnemyVictimExecutionAbility.cpp
 - E:\GameDevelop\PolyQuest\Source\PolyQuest\Private\Tests\BackstabExecutionAutomationTests.cpp
+- E:\GameDevelop\PolyQuest\Source\PolyQuest\Private\Tests\ExecutionVictimPresentationAutomationTests.cpp
 
-冻结合同：
-1. 在 UMeleeWeaponDefinition 增加可选 FrontExecutionMontage 和 BackstabExecutionMontage，默认 nullptr；缺失方向只拒绝该路线，不回退到 Unarmed 或 Ability CDO Montage。
-2. 两个 Ability 各自实现同形状的 TryResolveExecutionMontage(ActorInfo, OutWeaponDef, OutMontage)，统一使用 GetEquippedMainHandMelee()。
-3. 两个 Ability 各自加入 UPROPERTY(Transient) TObjectPtr<const UMeleeWeaponDefinition> ActiveExecutionWeaponDefinition 和 UPROPERTY(Transient) TObjectPtr<UAnimMontage> ActiveExecutionMontage。
-4. CanActivateAbility、ActivateAbility、CommitAbility 共享 resolver；Commit 顺序必须是测试强制失败桩、快照有效性、live 主手/Montage 身份比较、Super::CommitAbility。
-5. Commit 后所有 Montage 播放、动画身份校验、EndAbility 停止和 D2A Snap 距离读取只用快照，不重新选择 live Montage。
-6. 保持 InstancedPerActor、ServerOnly、ExecutionLockContext、Activation Token、VictimStart -> Hit -> Release、FMeleeHitResolver、exactly-once、formal Release 和既有清理合同；换装继续依赖 State.Action.Attacking/CanSwapNow，不新增锁 Tag 或服务。
-7. SetTestExecutionMontage() 保留名称但改为写入当前测试玩家 transient 武器的对应方向字段；CDO/无 Avatar/无装备/无主手时静默返回。每个测试 Section 在 Ability/Handle 清理后把两个方向字段恢复 nullptr。
+允许的函数/区域：
+- Player：匿名命名空间状态 helper、ValidateTargetPrerequisites() 及其 CanActivateAbility()/ActivateAbility() 调用点。
+- Victim：私有 ValidateExecutionRequest() 输出参数、ActivateAbility() 的 handoff 捕获和请求方向 Montage 选择、EndAbility() 的既有恢复分支。
+- Tests：Backstab 的 Stunned/active-StanceBreak 矩阵与 Presentation 的 Montage/Poise/Movement/AI 生命周期断言。
+- 现有 HasTestHandoffFromStanceBreak() 已存在，直接使用，不新增重复 accessor。
 
-执行顺序：先改 DataAsset/Header 与 resolver/快照，再改两个 Ability CPP 的生命周期引用，最后更新 Front/Backstab Automation。不要修改 MeleeWeaponDefinition.cpp、PlayerCharacter、WeaponEquipmentComponent、CombatAutomationFixture、EnemyVictimExecutionAbility、Config、Build.cs、Gameplay Tags、Input、Blueprint、AnimBP、Montage、地图或 Content。
+冻结状态合同：
+S = active UEnemyStanceBreakAbility spec 数量；
+C = Victim 激活前 State.Status.Stunned 总 contribution 数量。
+只允许：
+  S=0,C=0 -> 普通 Backstab，handoff=false
+  S=1,C=1 -> 允许 Backstab，handoff=true
+其他组合全部拒绝。
 
-验证与回交：
-- 做精确旧 ExecutionMontage 残留扫描、快照/Commit 顺序检查和 git diff --check；Rider 可用时运行 lint_files/get_file_problems。
-- 覆盖不同 Front/Backstab Montage、缺失方向普通 Primary 回退、强制 Commit 失败、live 身份不一致、激活后字段变更、换装拒绝与 Section 隔离。
-- 不新增同步 Commit 竞态注入测试接口。
-- 完成后只回交 changed paths、静态检查结果、未运行的用户编译/Editor/Automation/PIE 门禁、自审 findings 和剩余风险。
-- 首次交付优先使用 1 个无历史污染只读子代理完成严格实施自审；不要把该自审称为 Main Fresh Review。
-- 不提交、不修改计划/路线图/架构文档、不扩大范围；若需要未列出的文件、公共 API、Tag、Input、Config、资产或生命周期规则，立即停止并把证据返回 Main。
-```
+在 PlayerBackstabExecutionAbility.cpp 和 EnemyVictimExecutionAbility.cpp 的匿名命名空间中各实现同构纯函数：
+bool EvaluateStanceBreakCompatibility(
+    int32 ActiveStanceBreakCount,
+    int32 PreActivationStunnedContribution,
+    bool& bOutHandoff);
+先清零输出并拒绝负数。Player 传入原始目标计数；Victim 在确认自身 ActivationOwnedTags 含恰好一份 Stunned 且总数至少一后，先减一再调用 helper。
+
+Front 合同不变：
+- Front 仍要求 Poise=0 且存在 active StanceBreak。
+- Front 输出 handoff=true。
+- 不给 Front 引入新的 Stunned 计数门禁，不修改 PlayerFrontExecutionAbility 或 FrontExecutionAutomationTests。
+
+时序要求：
+- Victim ValidateExecutionRequest() 得到 handoff 输出后，必须在 CharacterASC->CancelAbilities(...) 之前保存 bHandoffFromStanceBreak。
+- VictimLocked 继续让 StanceBreak 跳过自身移动/Poise 恢复。
+- PendingVictimMontage 必须按请求 Event Tag 选择：Front -> FrontExecutionVictimMontage，Backstab -> BackstabExecutionVictimMontage；handoff 不能参与方向选择。
+- Victim EndAbility() 是存活目标恢复移动、Poise、AI 锁的唯一所有者，并保证 exactly-once。
+
+绝对非目标：
+- 不改 D2A Snap 几何、D2B Montage resolver/快照、统一 Hit Notify、FMeleeHitResolver、VictimStart/Hit/Release、Front 优先级或普通攻击。
+- 不改 EnemyStanceBreakAbility.*、Gameplay Tags、Input、Config、Build.cs、装备组件、ExecutionLockContext、Blueprint、AnimBP、Montage、地图、Content 或任何未列文件。
+- 不新增公共运行时 API、通用处决基类、第二条伤害路径或生产测试 seam。
+
+必须更新/保留的测试：
+- 保留现有外部 Stunned 负例 S=0,C=1。
+- 新增 active StanceBreak 单贡献正例 S=1,C=1，断言 Backstab 激活且不回退 Primary。
+- 覆盖 active StanceBreak + 额外 Stunned、状态计数不一致和可构造的多 active StanceBreak 负例。
+- Presentation 测试断言 Backstab handoff 使用 Backstab Victim Montage，Release/取消/中断后 Poise=Max、Movement=Walking、AI unlock 且只恢复一次。
+- 保持 VictimStart -> Hit -> Release、Exactly-Once、Front 回归和清理断言。
+
+停止条件：
+- 需要未列文件、资产保存、Tag/Input/Config、公共 API、StanceBreak 所有权改变或新的生命周期规则。
+- 现有夹具无法构造所需状态且必须新增生产接口。
+- 发现 PreActivate/ActivationOwnedTags、VictimLocked 或现有 Release/EndAbility 合同与计划冲突。
+遇到任一条件只回报证据，不绕过范围。
+
+交付前自审：
+- 按 PolyQuest 规则，首次切片优先派发一个无历史污染的只读严格自审代理；后续修复由你单兵复核。
+- 运行适用的静态检查和 git diff --check；不要运行 UBT、Build.bat、Editor 写入、打包或提交。
+- 回交必须列出：改动路径、函数、状态表覆盖、静态检查结果、未运行的用户-owned 编译/Editor/Automation/PIE 门禁、自审 findings、剩余风险。
+- 不得修改 plan.md、ROADMAP.md、README.md、ARCHITECTURE.md，不得 staging 或 commit。
+~~~
+
+## Main Closeout（2026-09-04）
+
+- 阶段结果：D2C 已按冻结的 `S/C` 状态表落地；普通/外部 Stunned、额外 contribution、多个 active StanceBreak 和计数不一致均 fail-closed；单一 active `UEnemyStanceBreakAbility` 的单一 Stunned contribution 可进入 Backstab。
+- 用户证据：用户确认 `PolyQuest.Combat.Backstab`、`PolyQuest.Combat.FrontExecution`、`PolyQuest.Combat.ExecutionVictimPresentation` 通过，并确认 Scene01 PIE 的 StanceBreak-after-Backstab、Backstab Victim Montage、Release/Cancel 状态恢复与 Front 回归通过。
+- Main 静态/复核证据：批准路径 `git diff --check` 退出码为 0；code-review-graph 基线匹配；一次定向 CodeGraph 核对 handoff、Montage 方向和 StanceBreak/Victim 恢复所有权；最终 Fresh Review 无 P0/P1/P2 blocker。
+- 执行者报告：Gemini 报告 Rider 零 Error、手动 `PolyQuestEditor` 编译和资产 readback；这些结果保留为执行者证据，不改写为 Main 独立收据。
+- Main 修复：仅在 `BackstabExecutionAutomationTests.cpp` 增加真实 StanceBreak 激活正例夹具；异常计数行明确标注为合成 fail-closed 边界，不宣称覆盖所有真实 contribution 生命周期。
+- 文档影响：本阶段同步 `ARCHITECTURE.md`、`ROADMAP.md` 与 `ROADMAP-archive.md`；`plan.md` 保留为当前最近阶段记录。
+- 非阻塞债务：D2C 独立 Main/user 编译与执行资产 Editor readback 收据仍未归档；合成异常计数矩阵、D2A 垂直面限制、D2A/D2B compile/readback 与 `Debt-REC-05A1-03-RET-Teardown` 继续按各自关闭条件保留。
+- 提交边界：仅包含本阶段五个 Source/Test 改动及四份 Main 文档；所有 `Content/**`、用户 Config/Blueprint/地图和其他 WIP 排除。下一执行切片为 `TODO-05A1-E`；D2D 仍为独立条件分支。
