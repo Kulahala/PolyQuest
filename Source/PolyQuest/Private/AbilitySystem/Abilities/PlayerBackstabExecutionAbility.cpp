@@ -23,7 +23,7 @@
 
 namespace
 {
-	bool EvaluateStanceBreakCompatibility(
+	bool EvaluateBackstabStanceBreakCompatibility(
 		int32 ActiveStanceBreakCount,
 		int32 PreActivationStunnedContribution,
 		bool& bOutHandoff)
@@ -358,7 +358,7 @@ bool UPlayerBackstabExecutionAbility::ValidateTargetPrerequisites(
 	const int32 StunnedContribution = StunnedTag.IsValid() ? TargetASC->GetTagCount(StunnedTag) : 0;
 
 	bool bHandoff = false;
-	if (!EvaluateStanceBreakCompatibility(ActiveStanceBreakCount, StunnedContribution, bHandoff))
+	if (!EvaluateBackstabStanceBreakCompatibility(ActiveStanceBreakCount, StunnedContribution, bHandoff))
 	{
 		return false;
 	}
