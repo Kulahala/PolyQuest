@@ -40,6 +40,9 @@ UEnemyCombatFeedbackDataAsset::UEnemyCombatFeedbackDataAsset()
 
 	LaunchTier.ImpactHitStopDurationSeconds = 0.05f;
 	LaunchTier.ImpactHitStopTimeDilation = 0.05f;
+
+	Execution.ImpactHitStopDurationSeconds = 0.05f;
+	Execution.ImpactHitStopTimeDilation = 0.03f;
 }
 
 const FEnemyCombatFeedbackTierSettings* UEnemyCombatFeedbackDataAsset::GetTierSettings(const EHitReactionTier Tier) const

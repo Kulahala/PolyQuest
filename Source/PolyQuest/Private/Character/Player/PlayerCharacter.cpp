@@ -618,6 +618,29 @@ void APlayerCharacter::TriggerAttackerImpactCameraShake(const EHitReactionTier R
 	StartHitFeedbackCameraShakeInstance(ResolvedClass);
 }
 
+void APlayerCharacter::TriggerExecutionImpactCameraShake()
+{
+	if (!HasAuthority() || IsActorBeingDestroyed())
+	{
+		return;
+	}
+
+	const UAbilitySystemComponent* CharacterASC = GetAbilitySystemComponent();
+	if (!CharacterASC)
+	{
+		return;
+	}
+
+	const bool bIsDead = DeadStateTag.IsValid() && CharacterASC->HasMatchingGameplayTag(DeadStateTag);
+	if (bIsDead)
+	{
+		return;
+	}
+
+	const TSubclassOf<UCameraShakeBase> ResolvedClass = ResolveExecutionImpactCameraShakeClass();
+	StartHitFeedbackCameraShakeInstance(ResolvedClass);
+}
+
 UPlayerParryAbility* APlayerCharacter::FindActiveParryAbility() const
 {
 	const UAbilitySystemComponent* CharacterASC = GetAbilitySystemComponent();
@@ -2503,6 +2526,17 @@ TSubclassOf<UCameraShakeBase> APlayerCharacter::ResolveAttackerImpactCameraShake
 
 	const FPlayerCombatFeedbackTierSettings* TierSettings = FeedbackData->GetTierSettings(ReactionTier);
 	return TierSettings ? TierSettings->AttackerImpactCameraShakeClass : nullptr;
+}
+
+TSubclassOf<UCameraShakeBase> APlayerCharacter::ResolveExecutionImpactCameraShakeClass()
+{
+	const UPlayerCombatFeedbackDataAsset* FeedbackData = GetPlayerCombatFeedbackData();
+	if (!FeedbackData)
+	{
+		return nullptr;
+	}
+
+	return FeedbackData->Execution.AttackerImpactCameraShakeClass;
 }
 
 void APlayerCharacter::StartHitFeedbackCameraShakeInstance(const TSubclassOf<UCameraShakeBase> ResolvedClass)

@@ -120,45 +120,60 @@ bool FMeleeHitResolver::TryResolveHit(const FMeleeHitRequest& Request)
 	}
 
 	UExecutionLockContext* ExecContext = const_cast<UExecutionLockContext*>(Request.ExecutionContext);
-	TOptional<FExecutionHitScopeGuard> HitScopeGuard;
-	if (ExecContext)
+	bool bAppliedSuccessfully = false;
 	{
-		HitScopeGuard.Emplace(
-			ExecContext,
-			Request.SourceObject,
-			Request.SourceActor,
-			Request.SourceAbilitySystemComponent,
-			TargetActor,
-			TargetAbilitySystemComponent);
-		if (!HitScopeGuard->IsScopeValid())
+		TOptional<FExecutionHitScopeGuard> HitScopeGuard;
+		if (ExecContext)
 		{
-			return false;
+			HitScopeGuard.Emplace(
+				ExecContext,
+				Request.SourceObject,
+				Request.SourceActor,
+				Request.SourceAbilitySystemComponent,
+				TargetActor,
+				TargetAbilitySystemComponent);
+			if (!HitScopeGuard->IsScopeValid())
+			{
+				return false;
+			}
+		}
+
+		const FActiveGameplayEffectHandle AppliedHandle = TargetAbilitySystemComponent->ApplyGameplayEffectSpecToSelf(*DamageSpecHandle.Data.Get());
+		bAppliedSuccessfully = AppliedHandle.WasSuccessfullyApplied();
+
+		if (HitScopeGuard.IsSet())
+		{
+			HitScopeGuard->SetGESuccess(bAppliedSuccessfully);
+			if (bAppliedSuccessfully)
+			{
+				const float RemainingHealth = TargetAbilitySystemComponent->GetNumericAttribute(UCharacterAttributeSet::GetHealthAttribute());
+				const bool bLethal = (RemainingHealth <= 0.0f);
+				AEnemyCharacter* TargetEnemy = Cast<AEnemyCharacter>(TargetActor);
+				const bool bPendingConfirmed = (TargetEnemy && TargetEnemy->IsDeathPending()) || (ExecContext && ExecContext->IsDeathPending());
+				HitScopeGuard->SetLethal(bLethal);
+				HitScopeGuard->SetPendingConfirmed(bPendingConfirmed);
+
+				if (bLethal && !bPendingConfirmed)
+				{
+					if (TargetEnemy && !TargetEnemy->IsDead())
+					{
+						TargetEnemy->SetDeadState();
+					}
+					HitScopeGuard->SetGESuccess(false);
+					return false;
+				}
+			}
 		}
 	}
 
-	const FActiveGameplayEffectHandle AppliedHandle = TargetAbilitySystemComponent->ApplyGameplayEffectSpecToSelf(*DamageSpecHandle.Data.Get());
-	const bool bAppliedSuccessfully = AppliedHandle.WasSuccessfullyApplied();
-
-	if (HitScopeGuard.IsSet())
+	if (bAppliedSuccessfully && ExecContext)
 	{
-		HitScopeGuard->SetGESuccess(bAppliedSuccessfully);
-		if (bAppliedSuccessfully)
+		const EExecutionSessionHitState HitState = ExecContext->GetHitState();
+		if (HitState == EExecutionSessionHitState::NonLethal || HitState == EExecutionSessionHitState::DeathPending)
 		{
-			const float RemainingHealth = TargetAbilitySystemComponent->GetNumericAttribute(UCharacterAttributeSet::GetHealthAttribute());
-			const bool bLethal = (RemainingHealth <= 0.0f);
-			AEnemyCharacter* TargetEnemy = Cast<AEnemyCharacter>(TargetActor);
-			const bool bPendingConfirmed = (TargetEnemy && TargetEnemy->IsDeathPending()) || (ExecContext && ExecContext->IsDeathPending());
-			HitScopeGuard->SetLethal(bLethal);
-			HitScopeGuard->SetPendingConfirmed(bPendingConfirmed);
-
-			if (bLethal && !bPendingConfirmed)
+			if (AEnemyCharacter* TargetEnemy = Cast<AEnemyCharacter>(TargetActor))
 			{
-				if (TargetEnemy && !TargetEnemy->IsDead())
-				{
-					TargetEnemy->SetDeadState();
-				}
-				HitScopeGuard->SetGESuccess(false);
-				return false;
+				TargetEnemy->HandleExecutionImpactFeedback(ExecContext, Request.SourceActor, Request.HitResult);
 			}
 		}
 	}

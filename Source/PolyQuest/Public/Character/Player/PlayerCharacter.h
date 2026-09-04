@@ -210,6 +210,9 @@ public:
 	/** Triggers attacker-side camera shake feedback when this Player inflicts Small/Big/Launch damage on an enemy. */
 	void TriggerAttackerImpactCameraShake(EHitReactionTier ReactionTier);
 
+	/** Triggers attacker-side camera shake feedback when this Player inflicts execution impact on an enemy. */
+	void TriggerExecutionImpactCameraShake();
+
 	/** Cancels a live Parry after an external airborne transition; it never clears Guard resume eligibility. */
 	void CancelActiveParry();
 
@@ -496,6 +499,7 @@ private:
 	void TriggerReceivedHitSound(const FGameplayEffectSpec& EffectSpec);
 	TSubclassOf<UCameraShakeBase> ResolveHitFeedbackCameraShakeClass(EHitReactionTier ReactionTier);
 	TSubclassOf<UCameraShakeBase> ResolveAttackerImpactCameraShakeClass(EHitReactionTier ReactionTier);
+	TSubclassOf<UCameraShakeBase> ResolveExecutionImpactCameraShakeClass();
 	void StartHitFeedbackCameraShakeInstance(TSubclassOf<UCameraShakeBase> ResolvedClass);
 	void ClearActiveHitFeedbackCameraShake();
 	void BindExhaustionStateEvents();

@@ -928,6 +928,13 @@ void UPlayerBackstabExecutionAbility::HandleHitEventReceived(FGameplayEventData 
 	HitRequest.HitResult.Location = TargetActor->GetActorLocation();
 	HitRequest.HitResult.ImpactPoint = TargetActor->GetActorLocation();
 
+	const FVector TargetToAttacker =
+		PlayerCharacter->GetActorLocation() - TargetActor->GetActorLocation();
+	HitRequest.HitResult.ImpactNormal =
+		TargetToAttacker.IsNearlyZero()
+			? FVector::ZeroVector
+			: TargetToAttacker.GetSafeNormal();
+
 	if (FMeleeHitResolver::TryResolveHit(HitRequest))
 	{
 		bDamageEventConsumed = true;

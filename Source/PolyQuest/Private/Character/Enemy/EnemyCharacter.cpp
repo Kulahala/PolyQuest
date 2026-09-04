@@ -370,10 +370,15 @@ void AEnemyCharacter::OnHealthAttributeChanged(const FOnAttributeChangeData& Cha
 				// Keep lethal feedback at one dispatch per Spec, matching the nonlethal path.
 				if (EffectSpec.GetModifiedAttribute(UCharacterAttributeSet::GetHealthAttribute()) == nullptr)
 				{
-					FGameplayTagContainer AssetTags;
-					EffectSpec.GetAllAssetTags(AssetTags);
-					const EHitReactionTier ReactionTier = FHitReactionClassifier::ClassifyReactionTier(AssetTags);
-					HandleCombatImpactFeedback(EffectSpec, ReactionTier);
+					const bool bInExecutionHitScope = ActiveVictimExecutionAbility.IsValid()
+						&& ActiveVictimExecutionAbility->IsInAuthorizedHitScope();
+					if (!bInExecutionHitScope)
+					{
+						FGameplayTagContainer AssetTags;
+						EffectSpec.GetAllAssetTags(AssetTags);
+						const EHitReactionTier ReactionTier = FHitReactionClassifier::ClassifyReactionTier(AssetTags);
+						HandleCombatImpactFeedback(EffectSpec, ReactionTier);
+					}
 				}
 			}
 
@@ -424,7 +429,12 @@ void AEnemyCharacter::OnHealthAttributeChanged(const FOnAttributeChangeData& Cha
 
 	const EHitReactionTier ReactionTier = FHitReactionClassifier::ClassifyReactionTier(AssetTags);
 
-	HandleCombatImpactFeedback(EffectSpec, ReactionTier);
+	const bool bInExecutionHitScope = ActiveVictimExecutionAbility.IsValid()
+		&& ActiveVictimExecutionAbility->IsInAuthorizedHitScope();
+	if (!bInExecutionHitScope)
+	{
+		HandleCombatImpactFeedback(EffectSpec, ReactionTier);
+	}
 
 	const bool bIsStunned = StunnedStateTag.IsValid() && CharacterASC->HasMatchingGameplayTag(StunnedStateTag);
 	if (bIsStunned)
@@ -513,6 +523,99 @@ UEnemyCombatFeedbackDataAsset* AEnemyCharacter::GetEnemyCombatFeedbackData() con
 	return EnemyProfile;
 }
 
+void AEnemyCharacter::DispatchImpactHitStop(float DurationSeconds, float TimeDilation)
+{
+	if (FMath::IsFinite(DurationSeconds) && DurationSeconds > 0.0f
+		&& FMath::IsFinite(TimeDilation) && TimeDilation > 0.0f && TimeDilation <= 1.0f)
+	{
+		if (UWorld* World = GetWorld())
+		{
+			if (APolyQuestPlayerController* PC = Cast<APolyQuestPlayerController>(World->GetFirstPlayerController()))
+			{
+				PC->RequestCombatImpactHitStop(DurationSeconds, TimeDilation);
+#if WITH_DEV_AUTOMATION_TESTS
+				TestCombatImpactHitStopRequestCount++;
+				TestLastImpactHitStopDuration = DurationSeconds;
+				TestLastImpactHitStopTimeDilation = TimeDilation;
+#endif
+			}
+		}
+	}
+}
+
+void AEnemyCharacter::DispatchImpactSound(const UEnemyCombatFeedbackDataAsset* FeedbackData, const FHitResult* HitResult)
+{
+	if (!FeedbackData)
+	{
+		return;
+	}
+
+	FVector SoundLocation = GetActorLocation();
+	if (HitResult
+		&& FMath::IsFinite(HitResult->ImpactPoint.X)
+		&& FMath::IsFinite(HitResult->ImpactPoint.Y)
+		&& FMath::IsFinite(HitResult->ImpactPoint.Z))
+	{
+		SoundLocation = HitResult->ImpactPoint;
+	}
+
+#if WITH_DEV_AUTOMATION_TESTS
+	TestImpactSoundDispatchCount++;
+	TestLastImpactSoundLocation = SoundLocation;
+#endif
+
+	if (USoundBase* ImpactSound = FeedbackData->ImpactSound.Get())
+	{
+		UGameplayStatics::PlaySoundAtLocation(GetWorld(), ImpactSound, SoundLocation);
+	}
+}
+
+void AEnemyCharacter::DispatchImpactBlood(const UEnemyCombatFeedbackDataAsset* FeedbackData, const FHitResult* HitResult)
+{
+	if (!FeedbackData)
+	{
+		return;
+	}
+
+	if (HitResult
+		&& HitResult->GetActor() == this
+		&& FMath::IsFinite(HitResult->ImpactPoint.X)
+		&& FMath::IsFinite(HitResult->ImpactPoint.Y)
+		&& FMath::IsFinite(HitResult->ImpactPoint.Z)
+		&& FMath::IsFinite(HitResult->ImpactNormal.X)
+		&& FMath::IsFinite(HitResult->ImpactNormal.Y)
+		&& FMath::IsFinite(HitResult->ImpactNormal.Z)
+		&& !HitResult->ImpactNormal.IsNearlyZero())
+	{
+		const FVector NormalizedNormal = HitResult->ImpactNormal.GetSafeNormal();
+		if (!NormalizedNormal.IsNearlyZero())
+		{
+			const FRotator BloodRotation = FRotationMatrix::MakeFromZ(NormalizedNormal).Rotator();
+
+#if WITH_DEV_AUTOMATION_TESTS
+			TestImpactBloodDispatchCount++;
+			TestLastImpactBloodLocation = HitResult->ImpactPoint;
+			TestLastImpactBloodNormal = NormalizedNormal;
+			TestLastImpactBloodRotation = BloodRotation;
+#endif
+
+			if (UNiagaraSystem* ImpactBloodSystem = FeedbackData->ImpactBloodSystem.Get())
+			{
+				UNiagaraFunctionLibrary::SpawnSystemAtLocation(
+					GetWorld(),
+					ImpactBloodSystem,
+					HitResult->ImpactPoint,
+					BloodRotation,
+					FVector(1.0f),
+					true,
+					true,
+					ENCPoolMethod::None,
+					true);
+			}
+		}
+	}
+}
+
 void AEnemyCharacter::HandleCombatImpactFeedback(const FGameplayEffectSpec& EffectSpec, EHitReactionTier ReactionTier)
 {
 	const FGameplayEffectContextHandle ContextHandle = EffectSpec.GetContext();
@@ -554,84 +657,115 @@ void AEnemyCharacter::HandleCombatImpactFeedback(const FGameplayEffectSpec& Effe
 
 	if (TierSettings)
 	{
-		const float HitStopDuration = TierSettings->ImpactHitStopDurationSeconds;
-		const float HitStopTimeDilation = TierSettings->ImpactHitStopTimeDilation;
-
-		if (FMath::IsFinite(HitStopDuration) && HitStopDuration > 0.0f
-			&& FMath::IsFinite(HitStopTimeDilation) && HitStopTimeDilation > 0.0f && HitStopTimeDilation <= 1.0f)
-		{
-			if (UWorld* World = GetWorld())
-			{
-				if (APolyQuestPlayerController* PC = Cast<APolyQuestPlayerController>(World->GetFirstPlayerController()))
-				{
-					PC->RequestCombatImpactHitStop(HitStopDuration, HitStopTimeDilation);
-#if WITH_DEV_AUTOMATION_TESTS
-					TestCombatImpactHitStopRequestCount++;
-					TestLastImpactHitStopDuration = HitStopDuration;
-					TestLastImpactHitStopTimeDilation = HitStopTimeDilation;
-#endif
-				}
-			}
-		}
+		DispatchImpactHitStop(TierSettings->ImpactHitStopDurationSeconds, TierSettings->ImpactHitStopTimeDilation);
 	}
 
 	const FHitResult* ContextHitResult = ContextHandle.GetHitResult();
-	FVector SoundLocation = GetActorLocation();
-	if (ContextHitResult
-		&& FMath::IsFinite(ContextHitResult->ImpactPoint.X)
-		&& FMath::IsFinite(ContextHitResult->ImpactPoint.Y)
-		&& FMath::IsFinite(ContextHitResult->ImpactPoint.Z))
+	DispatchImpactSound(FeedbackData, ContextHitResult);
+	DispatchImpactBlood(FeedbackData, ContextHitResult);
+}
+
+void AEnemyCharacter::HandleExecutionImpactFeedback(
+	UExecutionLockContext* ExecutionContext,
+	AActor* SourceActor,
+	const FHitResult& HitResult)
+{
+	if (!HasAuthority() || IsActorBeingDestroyed())
 	{
-		SoundLocation = ContextHitResult->ImpactPoint;
+		return;
 	}
 
-#if WITH_DEV_AUTOMATION_TESTS
-	TestImpactSoundDispatchCount++;
-	TestLastImpactSoundLocation = SoundLocation;
-#endif
-
-	if (USoundBase* ImpactSound = FeedbackData->ImpactSound.Get())
+	if (!ExecutionContext || !ExecutionContext->IsActive() || !ExecutionContext->IsVictimAccepted())
 	{
-		UGameplayStatics::PlaySoundAtLocation(GetWorld(), ImpactSound, SoundLocation);
+		return;
 	}
 
-	if (ContextHitResult
-		&& ContextHitResult->GetActor() == this
-		&& FMath::IsFinite(ContextHitResult->ImpactPoint.X)
-		&& FMath::IsFinite(ContextHitResult->ImpactPoint.Y)
-		&& FMath::IsFinite(ContextHitResult->ImpactPoint.Z)
-		&& FMath::IsFinite(ContextHitResult->ImpactNormal.X)
-		&& FMath::IsFinite(ContextHitResult->ImpactNormal.Y)
-		&& FMath::IsFinite(ContextHitResult->ImpactNormal.Z)
-		&& !ContextHitResult->ImpactNormal.IsNearlyZero())
+	const EExecutionSessionHitState HitState = ExecutionContext->GetHitState();
+	if (HitState != EExecutionSessionHitState::NonLethal && HitState != EExecutionSessionHitState::DeathPending)
 	{
-		const FVector NormalizedNormal = ContextHitResult->ImpactNormal.GetSafeNormal();
-		if (!NormalizedNormal.IsNearlyZero())
+		return;
+	}
+
+	UAbilitySystemComponent* TargetASC = GetAbilitySystemComponent();
+	if (!SourceActor || !TargetASC)
+	{
+		return;
+	}
+
+	if (ExecutionContext->GetSourceActor() != SourceActor || ExecutionContext->GetTargetActor() != this)
+	{
+		return;
+	}
+
+	UAbilitySystemComponent* SourceASC = ExecutionContext->GetSourceASC();
+	if (!SourceASC || ExecutionContext->GetVictimASC() != TargetASC)
+	{
+		return;
+	}
+
+	if (SourceActor->GetWorld() != GetWorld())
+	{
+		return;
+	}
+
+	APlayerCharacter* PlayerCharacter = Cast<APlayerCharacter>(SourceActor);
+	if (!PlayerCharacter || PlayerCharacter->GetAbilitySystemComponent() != SourceASC)
+	{
+		return;
+	}
+
+	if (!PlayerCharacter->GetClass()->ImplementsInterface(UCombatTeamAgent::StaticClass()))
+	{
+		return;
+	}
+
+	const FGameplayTag SourceTeamTag = ICombatTeamAgent::Execute_GetCombatTeamTag(PlayerCharacter);
+	static const FGameplayTag PlayerTeamTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Team.Player")), false);
+	if (!SourceTeamTag.IsValid() || !PlayerTeamTag.IsValid() || !SourceTeamTag.MatchesTagExact(PlayerTeamTag))
+	{
+		return;
+	}
+
+	static const FGameplayTag DeadTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Status.Dead")), false);
+	if (DeadTag.IsValid() && SourceASC->HasMatchingGameplayTag(DeadTag))
+	{
+		return;
+	}
+
+	if (IsDead())
+	{
+		return;
+	}
+
+	if (HitState == EExecutionSessionHitState::DeathPending)
+	{
+		if (!IsDeathPending())
 		{
-			const FRotator BloodRotation = FRotationMatrix::MakeFromZ(NormalizedNormal).Rotator();
-
-#if WITH_DEV_AUTOMATION_TESTS
-			TestImpactBloodDispatchCount++;
-			TestLastImpactBloodLocation = ContextHitResult->ImpactPoint;
-			TestLastImpactBloodNormal = NormalizedNormal;
-			TestLastImpactBloodRotation = BloodRotation;
-#endif
-
-			if (UNiagaraSystem* ImpactBloodSystem = FeedbackData->ImpactBloodSystem.Get())
-			{
-				UNiagaraFunctionLibrary::SpawnSystemAtLocation(
-					GetWorld(),
-					ImpactBloodSystem,
-					ContextHitResult->ImpactPoint,
-					BloodRotation,
-					FVector(1.0f),
-					true,
-					true,
-					ENCPoolMethod::None,
-					true);
-			}
+			return;
 		}
 	}
+	else // NonLethal
+	{
+		if (IsDeathPending())
+		{
+			return;
+		}
+	}
+
+	PlayerCharacter->TriggerExecutionImpactCameraShake();
+
+	const UEnemyCombatFeedbackDataAsset* FeedbackData = GetEnemyCombatFeedbackData();
+	if (!FeedbackData)
+	{
+		return;
+	}
+
+	DispatchImpactHitStop(
+		FeedbackData->Execution.ImpactHitStopDurationSeconds,
+		FeedbackData->Execution.ImpactHitStopTimeDilation);
+
+	DispatchImpactSound(FeedbackData, &HitResult);
+	DispatchImpactBlood(FeedbackData, &HitResult);
 }
 
 void AEnemyCharacter::BeginLaunchStanceBreakDeferral()

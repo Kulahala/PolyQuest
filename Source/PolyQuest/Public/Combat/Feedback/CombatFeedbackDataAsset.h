@@ -72,6 +72,36 @@ struct POLYQUEST_API FPlayerCombatFeedbackDefenseSettings
 };
 
 /**
+ * Execution feedback settings (attacker impact camera shake) owned by Player.
+ */
+USTRUCT(BlueprintType)
+struct POLYQUEST_API FPlayerCombatFeedbackExecutionSettings
+{
+	GENERATED_BODY()
+
+	/** Local camera shake played on the attacking player character upon successful execution impact. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Execution", meta = (ToolTip = "玩家处决命中成功时作为攻击方触发的摄像机震屏效果类。"))
+	TSubclassOf<UCameraShakeBase> AttackerImpactCameraShakeClass;
+};
+
+/**
+ * Execution feedback settings (impact hit-stop) for Enemy.
+ */
+USTRUCT(BlueprintType)
+struct POLYQUEST_API FEnemyCombatFeedbackExecutionSettings
+{
+	GENERATED_BODY()
+
+	/** Global hit-stop duration in seconds for execution impact. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Execution", meta = (ClampMin = "0.0", Units = "Seconds", ToolTip = "处决命中顿帧持续时间（秒）。"))
+	float ImpactHitStopDurationSeconds = 0.05f;
+
+	/** Global time dilation applied during execution hit-stop ((0.0, 1.0]). */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Execution", meta = (ClampMin = "0.001", ClampMax = "1.0", ToolTip = "处决命中顿帧期间的时间膨胀比例（(0.0, 1.0]）。"))
+	float ImpactHitStopTimeDilation = 0.03f;
+};
+
+/**
  * Common base profile consolidating shared hit-feedback assets and parameters (overlay flash).
  * Abstract root data asset for typed Player and Enemy feedback profiles.
  */
@@ -123,6 +153,10 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Defense", meta = (ToolTip = "玩家格挡与弹反防御反馈配置。"))
 	FPlayerCombatFeedbackDefenseSettings Defense;
 
+	/** Feedback settings for player execution impact (attacker camera shake). */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Execution", meta = (ToolTip = "玩家处决命中攻击方震屏配置。"))
+	FPlayerCombatFeedbackExecutionSettings Execution;
+
 	/** Returns a pointer to the player tier settings for the specified reaction tier, or nullptr if None/Invalid. */
 	const FPlayerCombatFeedbackTierSettings* GetTierSettings(EHitReactionTier Tier) const;
 };
@@ -157,6 +191,10 @@ public:
 	/** Feedback settings for Launch reaction tier. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Tiers", meta = (ToolTip = "击飞受击（Launch Tier）命中顿帧配置。"))
 	FEnemyCombatFeedbackTierSettings LaunchTier;
+
+	/** Feedback settings for enemy execution impact (hit-stop). */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Execution", meta = (ToolTip = "敌人受处决命中顿帧配置。"))
+	FEnemyCombatFeedbackExecutionSettings Execution;
 
 	/** Returns a pointer to the enemy tier settings for the specified reaction tier, or nullptr if None/Invalid. */
 	const FEnemyCombatFeedbackTierSettings* GetTierSettings(EHitReactionTier Tier) const;

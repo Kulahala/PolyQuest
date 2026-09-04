@@ -110,6 +110,12 @@ public:
 	/** Sets the Dead state tag directly, initiating canonical death handling. */
 	void SetDeadState();
 
+	/** Handles execution impact feedback (player camera shake, enemy hit-stop, shared sound & blood) upon authorized hit resolution. */
+	void HandleExecutionImpactFeedback(
+		UExecutionLockContext* ExecutionContext,
+		AActor* SourceActor,
+		const FHitResult& HitResult);
+
 	UFUNCTION(BlueprintPure, Category = "Combat|Enemy|Poise")
 	bool IsPoiseBroken() const;
 
@@ -149,6 +155,9 @@ private:
 	void RefreshEnemyHealthBar();
 	void HideEnemyHealthBar();
 	void HandleCombatImpactFeedback(const FGameplayEffectSpec& EffectSpec, EHitReactionTier ReactionTier);
+	void DispatchImpactHitStop(float DurationSeconds, float TimeDilation);
+	void DispatchImpactSound(const UEnemyCombatFeedbackDataAsset* FeedbackData, const FHitResult* HitResult);
+	void DispatchImpactBlood(const UEnemyCombatFeedbackDataAsset* FeedbackData, const FHitResult* HitResult);
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "UI|Enemy", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<UWidgetComponent> EnemyHealthBarWidgetComponent;

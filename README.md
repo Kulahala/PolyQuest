@@ -78,6 +78,8 @@ PolyQuest has completed its native first-enemy combat loop and weapon/AI combat 
 
 `TODO-03A3E` completes the local world-pickup interaction prompt. A Player-owned event-driven candidate snapshot drives both the passive prompt and `E` interaction; invalid snapshots fail closed without an input-time rescan, while `UWeaponEquipmentComponent::TryEquipWorldPickup` remains the only equipment mutation. The user confirmed focused Scene01 PIE and manually selected all current PolyQuest Automation suites (25/25 Success); UMG authoring remains local `Content/**` WIP, and this closeout does not claim a separate Development Editor compile log.
 
+`TODO-05A1-E` completes Execution Impact Feedback v1. After an authorized execution Hit is successfully settled, the Player uses a dedicated Execution Camera Shake and the Enemy dispatches its typed Execution Hit-Stop plus the existing impact sound/blood channels exactly once; ordinary Health feedback is suppressed inside the authorized Hit scope, while the existing damage and Release paths remain unchanged. The user confirmed focused Automation (`PolyQuest.Combat.ExecutionImpactFeedback`) and Scene01 PIE; executor-reported compile/readback evidence remains separately classified, and authored feedback assets remain local `Content/**` WIP.
+
 ## Technology
 
 - Unreal Engine 5.8
@@ -132,9 +134,11 @@ PolyQuest 是一个以 UE 5.8、C++ 与 GAS 为核心的单机低多边形动作
 
 `TODO-05A1-D2A` 已完成执行握手的一次性 Snap 对齐：Front/Backstab 在握手成功、玩家 Montage 启动前，读取武器 `ExecutionSnapDistance`，对受害者前/后方做带临时自身碰撞忽略的 Sweep；阻挡时恢复原始 Transform 并清速，再沿既有 formal Release 清理。最终位置/Yaw 使用有限容差与回绕安全比较，输出高度保留玩家当前 `Z`，解决已发现的玩家/目标高度差导致背刺下陷的问题；复杂坡地和台阶贴地仍未覆盖。D2D 完成后，`UMeleeWeaponDefinition` 同时作者化 `MinExecutionDistance`、`MaxExecutionDistance` 与 `ExecutionSnapDistance`，统一校验 `0 <= Min <= Snap <= Max <= 250 cm`，激活后的 Snap/几何/命中继续使用三值快照；执行专用旧 Motion-Warp 字段按产品决定删除，普通攻击的 Motion-Warp 仍由各自 Ability 拥有。用户已确认相关 Automation 与 Scene01 PIE；独立编译/readback 收据和 authored baseline 仍按本地 WIP 债务记录。
 
-`TODO-05A1-D2B` 已完成武器专属 Execution Montage 选择：`UMeleeWeaponDefinition` 提供可选 `FrontExecutionMontage`/`BackstabExecutionMontage`，Front/Backstab Ability 统一从当前主手 resolver 读取并在激活时锁定武器/Montage 快照；缺失方向 fail-closed，不回退到 Unarmed 或 Ability CDO。既有 VictimStart/Hit/Release、唯一 Resolver、Exactly-Once 与 `State.Action.Attacking`/`CanSwapNow()` 换装闸门保持不变。用户已确认两项 Focused Automation 与 Scene01 PIE；Gemini 回交的编译、Rider 与资产 readback 仅作为执行者报告记录，独立收据和 authored baseline 仍未归档。下一阶段为 `TODO-05A1-E`。
+`TODO-05A1-D2B` 已完成武器专属 Execution Montage 选择：`UMeleeWeaponDefinition` 提供可选 `FrontExecutionMontage`/`BackstabExecutionMontage`，Front/Backstab Ability 统一从当前主手 resolver 读取并在激活时锁定武器/Montage 快照；缺失方向 fail-closed，不回退到 Unarmed 或 Ability CDO。既有 VictimStart/Hit/Release、唯一 Resolver、Exactly-Once 与 `State.Action.Attacking`/`CanSwapNow()` 换装闸门保持不变。用户已确认两项 Focused Automation 与 Scene01 PIE；Gemini 回交的编译、Rider 与资产 readback 仅作为执行者报告记录，独立收据和 authored baseline 仍未归档；随后进入的 `TODO-05A1-E` 已完成。
 
-`TODO-05A1-D2D` 已完成武器作者化处决距离契约：真实 manifest 证实轻剑/重剑的 `ExecutionSnapDistance` 分别为 `140/170 cm`；三项距离现由同一 `UMeleeWeaponDefinition` 作者化，Native helper 负责有限值、闭区间关系与 `250 cm` hard cap，Front/Backstab 在 Commit 前后分别使用 live 值与激活快照。用户已确认 Focused Automation 与 Scene01 PIE；Gemini 的编译、Rider 和资产 readback 保留为执行者证据，作者化资产仍是本地 `Content/**` WIP。下一阶段为 `TODO-05A1-E`。
+`TODO-05A1-D2D` 已完成武器作者化处决距离契约：真实 manifest 证实轻剑/重剑的 `ExecutionSnapDistance` 分别为 `140/170 cm`；三项距离现由同一 `UMeleeWeaponDefinition` 作者化，Native helper 负责有限值、闭区间关系与 `250 cm` hard cap，Front/Backstab 在 Commit 前后分别使用 live 值与激活快照。用户已确认 Focused Automation 与 Scene01 PIE；Gemini 的编译、Rider 和资产 readback 保留为执行者证据，作者化资产仍是本地 `Content/**` WIP；随后进入的 `TODO-05A1-E` 已完成。
+
+`TODO-05A1-E` 已完成执行命中反馈收口：授权 `Hit` 在 `NonLethal`/`DeathPending` 成功结算后由 typed Player/Enemy profile 驱动独立 Execution Camera Shake、Execution Hit-Stop 与既有冲击音/血液通道，普通 Health 反馈在授权 scope 内不重复触发；唯一伤害路径、Release 结果和 Ability cleanup 保持不变。用户已确认 `PolyQuest.Combat.ExecutionImpactFeedback` Automation 与 Scene01 PIE；Gemini 的编译、Rider 和反馈 DataAsset readback 仅作为执行者证据记录，作者化反馈资产仍是本地 `Content/**` WIP。下一阶段为独立的 `TODO-03C`。
 
 `TODO-07B2` 已完成由精确 Trace Window 生命周期驱动的 Player/Enemy Niagara 近战武器拖尾，既有 Sweep/Resolver 伤害路径不变。用户已确认聚焦 `Scene01` PIE 视觉验收，以及包含 `PolyQuest.Melee.WeaponTrail` 的十三套 Unreal Editor Automation 全部通过；Niagara 资产和 Blueprint 绑定仍是本地 `Content/**` WIP，不作为干净检出的复现证据。
 
