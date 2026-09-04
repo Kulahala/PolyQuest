@@ -226,6 +226,21 @@ bool FExecutionLethalRecoveryAutomationTest::RunTest(const FString& Parameters)
 	const FGameplayTag TagInvulnerable = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Status.Invulnerable")), false);
 	const FGameplayTag TagStunned = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Status.Stunned")), false);
 
+	auto ResetWeaponExecutionMontages = [&](APlayerCharacter* InPlayer)
+	{
+		if (UWeaponEquipmentComponent* EquipComp = InPlayer ? InPlayer->FindComponentByClass<UWeaponEquipmentComponent>() : nullptr)
+		{
+			if (UMeleeWeaponDefinition* WeaponDef = EquipComp->GetEquippedMainHandMelee())
+			{
+				WeaponDef->MinExecutionDistance = 0.0f;
+				WeaponDef->MaxExecutionDistance = 250.0f;
+				WeaponDef->ExecutionSnapDistance = 190.0f;
+				WeaponDef->FrontExecutionMontage = nullptr;
+				WeaponDef->BackstabExecutionMontage = nullptr;
+			}
+		}
+	};
+
 	// =========================================================================
 	// 4. Production Front Execution Lethal Chain: Health=0 -> DeathPending -> Release -> Dead
 	// =========================================================================
@@ -330,6 +345,7 @@ bool FExecutionLethalRecoveryAutomationTest::RunTest(const FString& Parameters)
 			PlayerASC->ClearAbility(FrontHandle);
 			EnemyASC->ClearAbility(VictimHandle);
 			EnemyASC->ClearAbility(StanceBreakHandle);
+			ResetWeaponExecutionMontages(Player);
 		}
 	}
 
@@ -411,6 +427,7 @@ bool FExecutionLethalRecoveryAutomationTest::RunTest(const FString& Parameters)
 			PlayerASC->ClearAbility(BackstabHandle);
 			Enemy2ASC->ClearAbility(VictimHandle);
 			Enemy2->Destroy();
+			ResetWeaponExecutionMontages(Player);
 		}
 	}
 
@@ -733,6 +750,7 @@ bool FExecutionLethalRecoveryAutomationTest::RunTest(const FString& Parameters)
 			ReleaseTestASC->ClearAbility(VictimHandle);
 			ReleaseTestASC->ClearAbility(StanceBreakHandle);
 			EnemyReleaseTest->Destroy();
+			ResetWeaponExecutionMontages(Player);
 		}
 	}
 
@@ -808,6 +826,7 @@ bool FExecutionLethalRecoveryAutomationTest::RunTest(const FString& Parameters)
 			UnconfirmedASC->ClearAbility(VictimHandle);
 			UnconfirmedASC->ClearAbility(StanceBreakHandle);
 			EnemyUnconfirmed->Destroy();
+			ResetWeaponExecutionMontages(Player);
 		}
 	}
 
@@ -855,6 +874,7 @@ bool FExecutionLethalRecoveryAutomationTest::RunTest(const FString& Parameters)
 		PlayerASC->ClearAbility(BackstabHandle);
 		PendingASC->ClearAbility(VictimHandle);
 		EnemyPending->Destroy();
+		ResetWeaponExecutionMontages(Player);
 	}
 
 	return true;

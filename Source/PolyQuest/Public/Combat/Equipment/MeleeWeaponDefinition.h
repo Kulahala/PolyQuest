@@ -92,6 +92,14 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Trace", meta = (ClampMin = "1", ClampMax = "8", ToolTip = "刀刃根部到尖端之间的球扫掠采样插值段数。"))
 	int32 BladeSubdivisions = 4;
 
+	/** Minimum 2D horizontal distance allowed to trigger execution (cm). Inclusive. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Execution", meta = (ClampMin = "0.0", Units = "Centimeters", ToolTip = "允许触发处决的最小水平中心距离（厘米），包含边界。"))
+	float MinExecutionDistance = 0.0f;
+
+	/** Maximum 2D horizontal distance allowed to trigger execution (cm). Inclusive. Bound by 250cm native hard cap. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Execution", meta = (ClampMin = "0.0", ClampMax = "250.0", Units = "Centimeters", ToolTip = "允许触发处决的最大水平中心距离（厘米），包含边界；受 250cm Native 硬上限限制。"))
+	float MaxExecutionDistance = 250.0f;
+
 	/** Target snap displacement distance used by front/backstab execution alignment (cm). */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Execution", meta = (ClampMin = "1.0", Units = "Centimeters", ToolTip = "处决对齐目标锚点位移距离（厘米）。"))
 	float ExecutionSnapDistance = 190.0f;

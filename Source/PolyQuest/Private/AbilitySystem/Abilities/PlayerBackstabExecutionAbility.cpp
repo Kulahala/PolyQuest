@@ -145,9 +145,6 @@ UPlayerBackstabExecutionAbility::UPlayerBackstabExecutionAbility()
 	InstancingPolicy = EGameplayAbilityInstancingPolicy::InstancedPerActor;
 	NetExecutionPolicy = EGameplayAbilityNetExecutionPolicy::ServerOnly;
 
-	MinExecutionDistance = 0.0f;
-	MaxExecutionDistance = 250.0f;
-
 	const FGameplayTag ExecutionBackstabAbilityTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Action.Execution.Backstab")), false);
 	const FGameplayTag TeardownOnUnpossessTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Action.Teardown.OnUnpossess")), false);
 
@@ -243,8 +240,10 @@ bool UPlayerBackstabExecutionAbility::CanActivateAbility(
 		return false;
 	}
 
-	if (!FMath::IsFinite(MinExecutionDistance) || !FMath::IsFinite(MaxExecutionDistance)
-		|| MinExecutionDistance < 0.0f || MaxExecutionDistance <= MinExecutionDistance)
+	if (!ResolvedWeapon || !FExecutionSnapAlignment::IsExecutionDistanceRangeValid(
+			ResolvedWeapon->MinExecutionDistance,
+			ResolvedWeapon->MaxExecutionDistance,
+			ResolvedWeapon->ExecutionSnapDistance))
 	{
 		return false;
 	}
@@ -268,7 +267,7 @@ bool UPlayerBackstabExecutionAbility::CanActivateAbility(
 
 	float Dist2D = 0.0f;
 	float AngleDegrees = 0.0f;
-	if (!CheckBackstabGeometry(PlayerCharacter, TargetActor, Dist2D, AngleDegrees))
+	if (!CheckBackstabGeometry(PlayerCharacter, TargetActor, ResolvedWeapon->MinExecutionDistance, ResolvedWeapon->MaxExecutionDistance, Dist2D, AngleDegrees))
 	{
 		return false;
 	}
@@ -292,10 +291,10 @@ bool UPlayerBackstabExecutionAbility::ValidateTargetPrerequisites(
 		return false;
 	}
 
-	const float SnapDistance = MeleeWeapon->ExecutionSnapDistance;
-	if (!FExecutionSnapAlignment::IsSnapDistanceValid(SnapDistance)
-		|| SnapDistance < MinExecutionDistance
-		|| SnapDistance > MaxExecutionDistance)
+	if (!FExecutionSnapAlignment::IsExecutionDistanceRangeValid(
+			MeleeWeapon->MinExecutionDistance,
+			MeleeWeapon->MaxExecutionDistance,
+			MeleeWeapon->ExecutionSnapDistance))
 	{
 		return false;
 	}
@@ -369,6 +368,8 @@ bool UPlayerBackstabExecutionAbility::ValidateTargetPrerequisites(
 bool UPlayerBackstabExecutionAbility::CheckBackstabGeometry(
 	const APlayerCharacter* PlayerCharacter,
 	const AEnemyCharacter* TargetActor,
+	const float MinDist,
+	const float MaxDist,
 	float& OutDist2D,
 	float& OutAngleDegrees) const
 {
@@ -384,8 +385,8 @@ bool UPlayerBackstabExecutionAbility::CheckBackstabGeometry(
 		PlayerCharacter->GetActorLocation(),
 		TargetActor->GetActorLocation(),
 		TargetActor->GetActorForwardVector(),
-		MinExecutionDistance,
-		MaxExecutionDistance,
+		MinDist,
+		MaxDist,
 		MaxBackAngleDegrees,
 		OutDist2D,
 		OutAngleDegrees);
@@ -460,7 +461,7 @@ bool UPlayerBackstabExecutionAbility::TryApplyExecutionSnap(
 		return false;
 	}
 
-	if (!ActiveExecutionWeaponDefinition || !FExecutionSnapAlignment::IsSnapDistanceValid(ActiveExecutionWeaponDefinition->ExecutionSnapDistance))
+	if (!bHasActiveExecutionDistanceSnapshot || !FExecutionSnapAlignment::IsSnapDistanceValid(ActiveExecutionSnapDistance))
 	{
 		return false;
 	}
@@ -473,7 +474,7 @@ bool UPlayerBackstabExecutionAbility::TryApplyExecutionSnap(
 		OriginalLocation,
 		TargetActor->GetActorLocation(),
 		TargetForwardSnapshot,
-		ActiveExecutionWeaponDefinition->ExecutionSnapDistance,
+		ActiveExecutionSnapDistance,
 		EExecutionSnapSide::Backstab,
 		TargetTransform))
 	{
@@ -540,7 +541,11 @@ bool UPlayerBackstabExecutionAbility::TestEvaluateBackstabGeometry(
 	float& OutDist2D,
 	float& OutAngleDegrees) const
 {
-	return CheckBackstabGeometry(Player, Target, OutDist2D, OutAngleDegrees);
+	const UWeaponEquipmentComponent* Equip = Player ? Player->FindComponentByClass<UWeaponEquipmentComponent>() : nullptr;
+	const UMeleeWeaponDefinition* Weapon = Equip ? Equip->GetEquippedMainHandMelee() : nullptr;
+	const float MinDist = Weapon ? Weapon->MinExecutionDistance : 0.0f;
+	const float MaxDist = Weapon ? Weapon->MaxExecutionDistance : 250.0f;
+	return CheckBackstabGeometry(Player, Target, MinDist, MaxDist, OutDist2D, OutAngleDegrees);
 }
 
 void UPlayerBackstabExecutionAbility::TestTriggerHitEvent(const FGameplayEventData& Payload)
@@ -562,7 +567,7 @@ bool UPlayerBackstabExecutionAbility::CommitAbility(
 	}
 #endif
 
-	if (!ActiveExecutionWeaponDefinition || !ActiveExecutionMontage)
+	if (!ActiveExecutionWeaponDefinition || !ActiveExecutionMontage || !bHasActiveExecutionDistanceSnapshot)
 	{
 		return false;
 	}
@@ -575,6 +580,13 @@ bool UPlayerBackstabExecutionAbility::CommitAbility(
 	}
 
 	if (LiveWeaponDef != ActiveExecutionWeaponDefinition || LiveMontage != ActiveExecutionMontage)
+	{
+		return false;
+	}
+
+	if (LiveWeaponDef->MinExecutionDistance != ActiveMinExecutionDistance
+		|| LiveWeaponDef->MaxExecutionDistance != ActiveMaxExecutionDistance
+		|| LiveWeaponDef->ExecutionSnapDistance != ActiveExecutionSnapDistance)
 	{
 		return false;
 	}
@@ -599,6 +611,30 @@ void UPlayerBackstabExecutionAbility::ActivateAbility(
 		return;
 	}
 
+	const UMeleeWeaponDefinition* ResolvedWeapon = nullptr;
+	UAnimMontage* ResolvedMontage = nullptr;
+	if (!TryResolveExecutionMontage(ActorInfo, ResolvedWeapon, ResolvedMontage))
+	{
+		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
+		return;
+	}
+
+	if (!ResolvedWeapon || !FExecutionSnapAlignment::IsExecutionDistanceRangeValid(
+			ResolvedWeapon->MinExecutionDistance,
+			ResolvedWeapon->MaxExecutionDistance,
+			ResolvedWeapon->ExecutionSnapDistance))
+	{
+		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
+		return;
+	}
+
+	ActiveExecutionWeaponDefinition = ResolvedWeapon;
+	ActiveExecutionMontage = ResolvedMontage;
+	ActiveMinExecutionDistance = ResolvedWeapon->MinExecutionDistance;
+	ActiveMaxExecutionDistance = ResolvedWeapon->MaxExecutionDistance;
+	ActiveExecutionSnapDistance = ResolvedWeapon->ExecutionSnapDistance;
+	bHasActiveExecutionDistanceSnapshot = true;
+
 	AEnemyCharacter* TargetActor = PlayerCharacter->GetLockedTarget();
 	if (!ValidateTargetPrerequisites(PlayerCharacter, TargetActor))
 	{
@@ -608,7 +644,7 @@ void UPlayerBackstabExecutionAbility::ActivateAbility(
 
 	float Dist2D = 0.0f;
 	float AngleDegrees = 0.0f;
-	if (!CheckBackstabGeometry(PlayerCharacter, TargetActor, Dist2D, AngleDegrees))
+	if (!CheckBackstabGeometry(PlayerCharacter, TargetActor, ActiveMinExecutionDistance, ActiveMaxExecutionDistance, Dist2D, AngleDegrees))
 	{
 		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
 		return;
@@ -631,17 +667,6 @@ void UPlayerBackstabExecutionAbility::ActivateAbility(
 		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
 		return;
 	}
-
-	const UMeleeWeaponDefinition* ResolvedWeapon = nullptr;
-	UAnimMontage* ResolvedMontage = nullptr;
-	if (!TryResolveExecutionMontage(ActorInfo, ResolvedWeapon, ResolvedMontage))
-	{
-		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
-		return;
-	}
-
-	ActiveExecutionWeaponDefinition = ResolvedWeapon;
-	ActiveExecutionMontage = ResolvedMontage;
 
 	// 1. Commit Ability BEFORE victim handshake. Failure must never cancel victim actions or establish lock.
 	if (!CommitAbility(Handle, ActorInfo, ActivationInfo))
@@ -880,7 +905,7 @@ void UPlayerBackstabExecutionAbility::HandleHitEventReceived(FGameplayEventData 
 	}
 
 	const float Distance = FVector::Dist2D(PlayerCharacter->GetActorLocation(), TargetActor->GetActorLocation());
-	if (Distance < MinExecutionDistance || Distance > MaxExecutionDistance)
+	if (Distance < ActiveMinExecutionDistance || Distance > ActiveMaxExecutionDistance)
 	{
 		return;
 	}
@@ -1267,6 +1292,10 @@ void UPlayerBackstabExecutionAbility::EndAbility(
 	bReleaseRequestLatched = false;
 	bVictimReleaseExpected = false;
 	bVictimStartForwarded = false;
+	ActiveMinExecutionDistance = 0.0f;
+	ActiveMaxExecutionDistance = 0.0f;
+	ActiveExecutionSnapDistance = 0.0f;
+	bHasActiveExecutionDistanceSnapshot = false;
 	ActiveExecutionWeaponDefinition = nullptr;
 	ActiveExecutionMontage = nullptr;
 
@@ -1287,6 +1316,22 @@ void UPlayerBackstabExecutionAbility::SetTestExecutionMontage(UAnimMontage* Mont
 	if (UMeleeWeaponDefinition* MeleeWeapon = EquipComp ? EquipComp->GetEquippedMainHandMelee() : nullptr)
 	{
 		MeleeWeapon->BackstabExecutionMontage = Montage;
+	}
+}
+
+void UPlayerBackstabExecutionAbility::SetTestExecutionDistances(float InMin, float InMax)
+{
+	APlayerCharacter* Player = Cast<APlayerCharacter>(GetAvatarActorFromActorInfo());
+	if (!Player || Player->IsActorBeingDestroyed())
+	{
+		return;
+	}
+
+	UWeaponEquipmentComponent* EquipComp = Player->FindComponentByClass<UWeaponEquipmentComponent>();
+	if (UMeleeWeaponDefinition* MeleeWeapon = EquipComp ? EquipComp->GetEquippedMainHandMelee() : nullptr)
+	{
+		MeleeWeapon->MinExecutionDistance = InMin;
+		MeleeWeapon->MaxExecutionDistance = InMax;
 	}
 }
 

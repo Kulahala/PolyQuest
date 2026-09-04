@@ -187,8 +187,24 @@ bool FExecutionHitNotifyAutomationTest::RunTest(const FString& Parameters)
 		}
 	};
 
+	auto ResetWeaponExecutionMontages = [&](APlayerCharacter* InPlayer)
+	{
+		if (UWeaponEquipmentComponent* EquipComp = InPlayer ? InPlayer->FindComponentByClass<UWeaponEquipmentComponent>() : nullptr)
+		{
+			if (UMeleeWeaponDefinition* WeaponDef = EquipComp->GetEquippedMainHandMelee())
+			{
+				WeaponDef->MinExecutionDistance = 0.0f;
+				WeaponDef->MaxExecutionDistance = 250.0f;
+				WeaponDef->ExecutionSnapDistance = 190.0f;
+				WeaponDef->FrontExecutionMontage = nullptr;
+				WeaponDef->BackstabExecutionMontage = nullptr;
+			}
+		}
+	};
+
 	auto GrantAndConfigureFrontAbility = [&](APlayerCharacter* InPlayer, UAnimMontage* Montage, TSubclassOf<UGameplayEffect> DamageClass) -> TPair<FGameplayAbilitySpecHandle, UPlayerFrontExecutionAbility*>
 	{
+		ResetWeaponExecutionMontages(InPlayer);
 		UAbilitySystemComponent* ASC = InPlayer->GetAbilitySystemComponent();
 		FGameplayAbilitySpec Spec(UPlayerFrontExecutionAbility::StaticClass(), 1, INDEX_NONE, InPlayer);
 		const FGameplayAbilitySpecHandle Handle = ASC->GiveAbility(Spec);
@@ -207,6 +223,7 @@ bool FExecutionHitNotifyAutomationTest::RunTest(const FString& Parameters)
 
 	auto GrantAndConfigureBackstabAbility = [&](APlayerCharacter* InPlayer, UAnimMontage* Montage, TSubclassOf<UGameplayEffect> DamageClass) -> TPair<FGameplayAbilitySpecHandle, UPlayerBackstabExecutionAbility*>
 	{
+		ResetWeaponExecutionMontages(InPlayer);
 		UAbilitySystemComponent* ASC = InPlayer->GetAbilitySystemComponent();
 		FGameplayAbilitySpec Spec(UPlayerBackstabExecutionAbility::StaticClass(), 1, INDEX_NONE, InPlayer);
 		const FGameplayAbilitySpecHandle Handle = ASC->GiveAbility(Spec);
@@ -486,6 +503,7 @@ bool FExecutionHitNotifyAutomationTest::RunTest(const FString& Parameters)
 		}
 	}
 
+	ResetWeaponExecutionMontages(Player);
 	EnemyASC->ClearAbility(VictimSpecHandle);
 
 	return true;

@@ -18,6 +18,17 @@ struct POLYQUEST_API FExecutionSnapAlignment
 	static bool IsSnapDistanceValid(const float SnapDistance);
 
 	/**
+	 * Stateless pure range validator for execution distance parameters.
+	 * Checks in order: finite values, Min >= 0, Max > Min, Snap > 0, Min <= Snap <= Max, Max <= 250cm (Native hard cap).
+	 * If OutFailureReason is non-null, clears it first and reports the first failure reason encountered.
+	 */
+	static bool IsExecutionDistanceRangeValid(
+		float MinDist,
+		float MaxDist,
+		float SnapDist,
+		FString* OutFailureReason = nullptr);
+
+	/**
 	 * Builds the snap transform for the player relative to the target.
 	 * Returns false and clears OutTransform to Identity if any input is NaN/Inf,
 	 * distance is invalid, target forward XY is zero, or side is unrecognized.

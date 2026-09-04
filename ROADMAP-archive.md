@@ -1324,3 +1324,17 @@ TODO-03A3E World Pickup Interaction Prompt v1
 - **执行者与 Main 证据**：Gemini 报告 Rider 零 Error、手动 `PolyQuestEditor (Development Editor)` 编译和资产 readback；这些保留为执行者报告。Main 对批准 diff 完成两批有界 Fresh Review，code-review-graph 基线与 `3254c10` 匹配，定向 CodeGraph 核对一跳生命周期/所有权，未发现 P0/P1/P2 blocker；`git diff --check` 退出码为 0。
 - **剩余债务**：D2C 独立 Main/user 编译与执行资产 Editor readback 收据未单独归档，继续作为非阻塞 authored-validation debt；`Debt-05A1-D2C-OwnershipMatrix` 记录合成异常矩阵的证据边界。D2A 垂直面限制、D2A/D2B compile/readback 与 `Debt-REC-05A1-03-RET-Teardown` 继续按原关闭条件保留。
 - **提交边界与后续指针**：阶段提交候选仅含上述 5 个 Source/Test 文件及 Main 的 `plan.md`、`ROADMAP.md`、`ROADMAP-archive.md`、`ARCHITECTURE.md`；排除全部 `Content/**`、用户 Config/Blueprint/地图和其他 WIP。下一执行切片为 `TODO-05A1-E`，`TODO-05A1-D2D` 仍是独立条件分支。
+
+## TODO-05A1-D2D Weapon-Authored Execution Range Contract v1 Closeout (2026-09-05; parent HEAD `29a06cd`, working-tree snapshot not clean)
+
+> 本节记录 TODO-05A1-D2D 的武器作者化处决距离三元组、激活快照和统一校验收口。快照基于 D2D 实施前 parent HEAD `29a06cd393c672ceefa48c80b177ff3378b54d39`；该 parent 是前一提交的独立 Unity Build 符号重定义修复，不含 D2D 代码。工作树同时含用户-owned `Content/**`、Config、`AGENTS.md`、`ROADMAP.md` 及其他 WIP，因此不是干净 HEAD 快照。本节只作历史追溯，不替代当前 Source、配置或 Unreal Editor 资产作为运行时权威。
+
+- **触发门证据**：用户 Editor 只读 manifest 证实 `DA_Weapon_LightSword` 的 `ExecutionSnapDistance = 140 cm`、`DA_Weapon_HeavySword` 为 `170 cm`；旧 Front/Backstab GA 窗口均为 `0..250 cm`，同一武器无方向分裂，满足真实多武器采用门槛。
+- **范围与实际结果**：严格修改计划批准的 16 个 Source/Test 文件，未修改 `Content/**`、`.uasset`、`.umap`、Gameplay Tags、Input、Config、Build.cs 或未列 Source。`UMeleeWeaponDefinition` 统一持有 `MinExecutionDistance`、`MaxExecutionDistance`、`ExecutionSnapDistance`，默认 `0 / 250 / 190 cm`；`FExecutionSnapAlignment::IsExecutionDistanceRangeValid()` 统一执行 finite、关系闭包和 `Max <= 250 cm` hard cap 校验，非法值不夹紧并返回首个失败原因。
+- **Ability 合同**：Front/Backstab 删除 Ability-owned Min/Max；预激活读取 live 武器三值，激活时保存非反射三值快照；`CommitAbility()` 对 live 武器、Montage 和三值做精确 `==` 抗漂移比较；Snap、几何和命中复核读取快照，`EndAbility()` 清除快照。既有 D2A Snap、D2B Montage resolver、D2C StanceBreak 兼容、统一 Hit Notify、`FMeleeHitResolver`、`VictimStart -> Hit -> Release` 和唯一伤害路径保持不变。
+- **测试与 P0 修复**：`SetTestExecutionDistances()` 改为写测试 transient 主手 DataAsset，所有相关夹具恢复 `0 / 250 / 190`。`ExecutionReleaseOutcomesAutomationTests.cpp` 原 `(50.0f, 300.0f)` 已修正为 `(50.0f, 250.0f)`；`ExecutionSnapAlignment` 补齐边界、finite、关系、hard cap 与原因输出矩阵，既有命中/Release/锁定/清理回归保持在批准路径内。
+- **用户验证证据**：用户确认 D2D Focused Automation 与 Scene01 PIE 通过；执行者回交列出 15 个 Combat Automation suite 为 `Success`，并报告轻剑/重剑窗口、Snap、处决全流程及换装阻断正常。该证据不扩展为网络、包装或干净 authored baseline 证明。
+- **执行者证据**：Gemini 报告 Visual Studio `PolyQuestEditor (Development Editor)` 编译、Rider `get_file_problems` 零 Error 和真实资产 readback 通过；这些保留为执行者报告，未改写为 Main 独立收据。
+- **Main Fresh Review**：Main 按 `ue-strict-review` 完成两批有界、缺陷优先审查；`code-review-graph` 以当前 HEAD `29a06cd` 建图并对 D2D 变更做影响导航，定向 CodeGraph 核对 live/snapshot 调用链。实际 diff 与批准路径一致，`git diff --check` 通过，未发现 P0/P1/P2 blocker。此前基线差异已核实为独立的 `29a06cd` Unity Build 修复，D2D review parent 已统一记录。
+- **剩余债务**：D2D 独立 Main/user 编译与执行 Weapon/GA/Montage/DataAsset readback 收据尚未单独归档；当前只保留 Gemini 回交证据，按非阻塞 authored-validation debt 处理。`Content/**` 及 Blueprint/AnimBP/Montage/地图仍为用户-owned WIP；`D2A-VERTICAL-SURFACE`、`Debt-REC-05A1-03-RET-Teardown` 与 D2A/D2B/D2C 既有 readback 债务按原关闭条件保留。
+- **提交边界与后续指针**：阶段候选提交仅含 16 个 D2D Source/Test 文件及 Main 收口批准的文档；用户 WIP 原样排除，等待显式 commit approval。D2D 完成后下一执行切片为 `TODO-05A1-E`。

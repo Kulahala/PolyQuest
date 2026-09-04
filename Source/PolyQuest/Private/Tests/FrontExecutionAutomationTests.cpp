@@ -182,6 +182,9 @@ bool FFrontExecutionAutomationTest::RunTest(const FString& Parameters)
 		{
 			if (UMeleeWeaponDefinition* WeaponDef = EquipComp->GetEquippedMainHandMelee())
 			{
+				WeaponDef->MinExecutionDistance = 0.0f;
+				WeaponDef->MaxExecutionDistance = 250.0f;
+				WeaponDef->ExecutionSnapDistance = 190.0f;
 				WeaponDef->FrontExecutionMontage = nullptr;
 				WeaponDef->BackstabExecutionMontage = nullptr;
 			}
@@ -457,9 +460,20 @@ bool FFrontExecutionAutomationTest::RunTest(const FString& Parameters)
 		if (UMeleeWeaponDefinition* WeaponDef = PlayerEquip ? PlayerEquip->GetEquippedMainHandMelee() : nullptr)
 		{
 			WeaponDef->FrontExecutionMontage = MutatedMontage;
+			WeaponDef->MinExecutionDistance = 30.0f;
+			WeaponDef->MaxExecutionDistance = 220.0f;
+			WeaponDef->ExecutionSnapDistance = 160.0f;
 		}
 		TestEqual(TEXT("Active execution montage snapshot remains stable after weapon definition mutation"),
 			ExecAbility->GetTestActiveExecutionMontage(), SyntheticMontage);
+		TestEqual(TEXT("Active execution min distance snapshot remains stable after weapon definition mutation"),
+			ExecAbility->GetTestActiveMinExecutionDistance(), 50.0f);
+		TestEqual(TEXT("Active execution max distance snapshot remains stable after weapon definition mutation"),
+			ExecAbility->GetTestActiveMaxExecutionDistance(), 250.0f);
+		TestEqual(TEXT("Active execution snap distance snapshot remains stable after weapon definition mutation"),
+			ExecAbility->GetTestActiveExecutionSnapDistance(), 190.0f);
+		TestTrue(TEXT("Active execution distance snapshot flag is set"),
+			ExecAbility->HasTestActiveExecutionDistanceSnapshot());
 
 		// Equipment swap gating: EquipWeapon and TryEquipWorldPickup must be refused while ability is active
 		UMeleeWeaponDefinition* SecondaryWeapon = NewObject<UMeleeWeaponDefinition>(Player, NAME_None, RF_Transient);
@@ -909,6 +923,7 @@ bool FFrontExecutionAutomationTest::RunTest(const FString& Parameters)
 			TestNull(TEXT("No reservation created when Commit fails"), ExecAbility->GetTestReservedTarget());
 			TestNull(TEXT("Active montage snapshot cleared on commit failure abort"), ExecAbility->GetTestActiveExecutionMontage());
 			TestNull(TEXT("Active weapon snapshot cleared on commit failure abort"), ExecAbility->GetTestActiveExecutionWeaponDefinition());
+			TestFalse(TEXT("Active distance snapshot flag cleared on commit failure abort"), ExecAbility->HasTestActiveExecutionDistanceSnapshot());
 
 			if (UCharacterMovementComponent* EnemyMove = Enemy->GetCharacterMovement())
 			{
@@ -916,6 +931,47 @@ bool FFrontExecutionAutomationTest::RunTest(const FString& Parameters)
 			}
 
 			ExecAbility->SetTestForceCommitAbilityFailure(false);
+			PlayerASC->ClearAbility(ExecHandle);
+			EnemyASC->ClearAbility(StanceBreakHandle);
+			EnemyASC->RemoveLooseGameplayTag(TagStunned);
+			ResetWeaponExecutionMontages(Player);
+		}
+
+		// 12.3 Invalid Weapon Execution Distance Range (Fail-Closed Gate): Rejects activation before reservation or lock
+		{
+			UAnimMontage* SyntheticMontage = NewObject<UAnimMontage>();
+			TSubclassOf<UGameplayEffect> DamageGEClass = UTestProjectileDamageGE::StaticClass();
+
+			auto [ExecHandle, ExecAbility] = GrantAndConfigureExecAbility(Player, SyntheticMontage, DamageGEClass, 0.0f, 250.0f, 60.0f);
+
+			// Corrupt weapon distance range: Max > 250cm violates project hard cap
+			if (UWeaponEquipmentComponent* EquipComp = Player->FindComponentByClass<UWeaponEquipmentComponent>())
+			{
+				if (UMeleeWeaponDefinition* WeaponDef = EquipComp->GetEquippedMainHandMelee())
+				{
+					WeaponDef->MaxExecutionDistance = 300.0f;
+				}
+			}
+
+			EnemyASC->AddLooseGameplayTag(TagStunned);
+			if (UCharacterAttributeSet* EnemyAttribs = const_cast<UCharacterAttributeSet*>(EnemyASC->GetSet<UCharacterAttributeSet>()))
+			{
+				EnemyAttribs->SetPoise(0.0f);
+			}
+			const FGameplayAbilitySpecHandle StanceBreakHandle = GrantEnemyStanceBreakAbility(Enemy);
+			Player->SetTestLockedTarget(Enemy);
+
+			Player->TriggerTestRequestAbilityForInputIntent(FGameplayTag::RequestGameplayTag(FName(TEXT("Input.PrimaryAttack")), false));
+
+			TestFalse(TEXT("Front execution does not activate when weapon distance range is invalid"), ExecAbility->IsActive());
+			TestNull(TEXT("No target reservation when weapon distance range is invalid"), ExecAbility->GetTestReservedTarget());
+			TestFalse(TEXT("No active distance snapshot when weapon distance range is invalid"), ExecAbility->HasTestActiveExecutionDistanceSnapshot());
+
+			if (UCharacterMovementComponent* EnemyMove = Enemy->GetCharacterMovement())
+			{
+				TestTrue(TEXT("Enemy movement mode is NOT MOVE_None when distance range invalid"), EnemyMove->MovementMode != MOVE_None);
+			}
+
 			PlayerASC->ClearAbility(ExecHandle);
 			EnemyASC->ClearAbility(StanceBreakHandle);
 			EnemyASC->RemoveLooseGameplayTag(TagStunned);

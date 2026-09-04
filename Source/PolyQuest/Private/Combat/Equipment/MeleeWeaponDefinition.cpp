@@ -239,9 +239,8 @@ bool UMeleeWeaponDefinition::IsValidWeaponDefinition(FString& OutReason) const
 		return false;
 	}
 
-	if (!FExecutionSnapAlignment::IsSnapDistanceValid(ExecutionSnapDistance))
+	if (!FExecutionSnapAlignment::IsExecutionDistanceRangeValid(MinExecutionDistance, MaxExecutionDistance, ExecutionSnapDistance, &OutReason))
 	{
-		OutReason = TEXT("ExecutionSnapDistance must be positive and finite.");
 		return false;
 	}
 

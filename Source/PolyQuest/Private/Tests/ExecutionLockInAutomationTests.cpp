@@ -218,6 +218,21 @@ bool FExecutionLockInAutomationTest::RunTest(const FString& Parameters)
 	Player->SetTestCombatTeamTag(TagTeamPlayer);
 	Enemy->SetTestCombatTeamTag(TagTeamEnemy);
 
+	auto ResetWeaponExecutionMontages = [&](APlayerCharacter* InPlayer)
+	{
+		if (UWeaponEquipmentComponent* EquipComp = InPlayer ? InPlayer->FindComponentByClass<UWeaponEquipmentComponent>() : nullptr)
+		{
+			if (UMeleeWeaponDefinition* WeaponDef = EquipComp->GetEquippedMainHandMelee())
+			{
+				WeaponDef->MinExecutionDistance = 0.0f;
+				WeaponDef->MaxExecutionDistance = 250.0f;
+				WeaponDef->ExecutionSnapDistance = 190.0f;
+				WeaponDef->FrontExecutionMontage = nullptr;
+				WeaponDef->BackstabExecutionMontage = nullptr;
+			}
+		}
+	};
+
 	// =========================================================================
 	// 4. MeleeHitResolver Authorization Tests
 	// =========================================================================
@@ -317,6 +332,7 @@ bool FExecutionLockInAutomationTest::RunTest(const FString& Parameters)
 
 			EnemyASC->ClearAbility(StanceBreakHandle);
 			PlayerASC->ClearAbility(FrontHandle);
+			ResetWeaponExecutionMontages(Player);
 		}
 	}
 
@@ -358,6 +374,7 @@ bool FExecutionLockInAutomationTest::RunTest(const FString& Parameters)
 			TestFalse(TEXT("Enemy released VictimLocked after Backstab"), EnemyASC->HasMatchingGameplayTag(TagVictimLocked));
 
 			PlayerASC->ClearAbility(BackstabHandle);
+			ResetWeaponExecutionMontages(Player);
 		}
 	}
 
@@ -424,6 +441,7 @@ bool FExecutionLockInAutomationTest::RunTest(const FString& Parameters)
 
 				EnemyASC->ClearAbility(StanceBreakHandle);
 				PlayerASC->ClearAbility(FrontHandle);
+				ResetWeaponExecutionMontages(Player);
 			}
 		}
 
@@ -601,6 +619,7 @@ bool FExecutionLockInAutomationTest::RunTest(const FString& Parameters)
 
 			EnemyASC->ClearAbility(StanceBreakHandle);
 			PlayerASC->ClearAbility(FrontHandle);
+			ResetWeaponExecutionMontages(Player);
 		}
 
 		EnemyASC->ClearAbility(VictimHandle);
@@ -677,6 +696,7 @@ bool FExecutionLockInAutomationTest::RunTest(const FString& Parameters)
 			FrontInstance->TestEndAbility(false);
 			EnemyASC->ClearAbility(StanceBreakHandle);
 			PlayerASC->ClearAbility(FrontHandle);
+			ResetWeaponExecutionMontages(Player);
 		}
 
 		EnemyASC->ClearAbility(VictimHandle);
@@ -709,6 +729,7 @@ bool FExecutionLockInAutomationTest::RunTest(const FString& Parameters)
 		}
 	}
 
+	ResetWeaponExecutionMontages(Player);
 	return true;
 }
 

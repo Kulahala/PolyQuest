@@ -82,8 +82,12 @@ public:
 	void SetTestExecutionMontage(UAnimMontage* Montage);
 	UAnimMontage* GetTestActiveExecutionMontage() const { return ActiveExecutionMontage; }
 	const UMeleeWeaponDefinition* GetTestActiveExecutionWeaponDefinition() const { return ActiveExecutionWeaponDefinition; }
+	float GetTestActiveMinExecutionDistance() const { return ActiveMinExecutionDistance; }
+	float GetTestActiveMaxExecutionDistance() const { return ActiveMaxExecutionDistance; }
+	float GetTestActiveExecutionSnapDistance() const { return ActiveExecutionSnapDistance; }
+	bool HasTestActiveExecutionDistanceSnapshot() const { return bHasActiveExecutionDistanceSnapshot; }
 	void SetTestDamageGameplayEffectClass(TSubclassOf<UGameplayEffect> InClass) { DamageGameplayEffectClass = InClass; }
-	void SetTestExecutionDistances(float InMin, float InMax) { MinExecutionDistance = InMin; MaxExecutionDistance = InMax; }
+	void SetTestExecutionDistances(float InMin, float InMax);
 	void SetTestMaxFrontAngleDegrees(float InAngle) { MaxFrontAngleDegrees = InAngle; }
 	bool TestEvaluateFrontGeometry(const APlayerCharacter* Player, const AEnemyCharacter* Target, float& OutDist2D, float& OutAngleDegrees) const;
 	static bool TestEvaluateFrontGeometryVectors(
@@ -159,12 +163,6 @@ protected:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Execution", meta = (ToolTip = "处决命中时通过 FMeleeHitResolver 应用的伤害 GameplayEffect 类。"))
 	TSubclassOf<UGameplayEffect> DamageGameplayEffectClass;
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Execution", meta = (ClampMin = "0.0", Units = "Centimeters", ToolTip = "允许触发正面处决的最小水平距离（cm）。"))
-	float MinExecutionDistance = 0.0f;
-
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Execution", meta = (ClampMin = "0.0", Units = "Centimeters", ToolTip = "允许触发正面处决的最大水平距离（cm）。默认250cm。"))
-	float MaxExecutionDistance = 250.0f;
-
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Execution", meta = (ClampMin = "0.0", ClampMax = "90.0", Units = "Degrees", ToolTip = "允许触发正面处决的目标正前方最大夹角（度）。"))
 	float MaxFrontAngleDegrees = 60.0f;
 
@@ -175,10 +173,21 @@ private:
 		UAnimMontage*& OutMontage) const;
 
 	bool ValidateTargetPrerequisites(const APlayerCharacter* PlayerCharacter, const AEnemyCharacter* TargetActor) const;
-	bool CheckFrontGeometry(const APlayerCharacter* PlayerCharacter, const AEnemyCharacter* TargetActor, float& OutDist2D, float& OutAngleDegrees) const;
+	bool CheckFrontGeometry(
+		const APlayerCharacter* PlayerCharacter,
+		const AEnemyCharacter* TargetActor,
+		float MinDist,
+		float MaxDist,
+		float& OutDist2D,
+		float& OutAngleDegrees) const;
 	bool TryApplyExecutionSnap(APlayerCharacter* PlayerCharacter, AEnemyCharacter* TargetActor, const FVector& TargetForwardSnapshot);
 	void BindTargetDelegates(AEnemyCharacter* TargetActor, uint32 InToken);
 	void UnbindTargetDelegates();
+
+	float ActiveMinExecutionDistance = 0.0f;
+	float ActiveMaxExecutionDistance = 0.0f;
+	float ActiveExecutionSnapDistance = 0.0f;
+	bool bHasActiveExecutionDistanceSnapshot = false;
 
 	UPROPERTY(Transient)
 	TObjectPtr<const UMeleeWeaponDefinition> ActiveExecutionWeaponDefinition;

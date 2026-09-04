@@ -344,11 +344,27 @@ bool FExecutionVictimPresentationAutomationTest::RunTest(const FString& Paramete
 		return MakeTuple(BackstabHandle, BackstabAbility, VictimHandle, VictimAbility);
 	};
 
+	auto ResetWeaponExecutionMontages = [&](APlayerCharacter* InPlayer)
+	{
+		if (UWeaponEquipmentComponent* EquipComp = InPlayer ? InPlayer->FindComponentByClass<UWeaponEquipmentComponent>() : nullptr)
+		{
+			if (UMeleeWeaponDefinition* WeaponDef = EquipComp->GetEquippedMainHandMelee())
+			{
+				WeaponDef->MinExecutionDistance = 0.0f;
+				WeaponDef->MaxExecutionDistance = 250.0f;
+				WeaponDef->ExecutionSnapDistance = 190.0f;
+				WeaponDef->FrontExecutionMontage = nullptr;
+				WeaponDef->BackstabExecutionMontage = nullptr;
+			}
+		}
+	};
+
 	auto CleanupExec = [&](FGameplayAbilitySpecHandle PlayerHandle, FGameplayAbilitySpecHandle VictimHandle)
 	{
 		PlayerASC->ClearAbility(PlayerHandle);
 		EnemyASC->ClearAbility(VictimHandle);
 		Player->SetTestLockedTarget(nullptr);
+		ResetWeaponExecutionMontages(Player);
 	};
 
 	// =========================================================================

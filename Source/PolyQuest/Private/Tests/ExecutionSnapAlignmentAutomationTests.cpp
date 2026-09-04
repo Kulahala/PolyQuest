@@ -115,7 +115,8 @@ bool FExecutionSnapAlignmentAutomationTest::RunTest(const FString& Parameters)
 			OutTransformFront);
 
 		TestTrue(TEXT("Diagonal forward front snap succeeds"), bFrontOk);
-		TestEqual(TEXT("Front location along +Y"), OutTransformFront.GetLocation(), FVector(0.0f, 100.0f, 20.0f));
+		// Output Z must anchor to PlayerLoc.Z (0.0f), preserving player grounded height
+		TestEqual(TEXT("Front location along +Y"), OutTransformFront.GetLocation(), FVector(0.0f, 100.0f, 0.0f));
 		// Facing -Y -> Yaw = -90
 		TestTrue(TEXT("Front facing -Y has Yaw -90"), FMath::IsNearlyEqual(OutTransformFront.Rotator().Yaw, -90.0f, 0.01f));
 
@@ -129,7 +130,8 @@ bool FExecutionSnapAlignmentAutomationTest::RunTest(const FString& Parameters)
 			OutTransformBackstab);
 
 		TestTrue(TEXT("Diagonal forward backstab snap succeeds"), bBackOk);
-		TestEqual(TEXT("Backstab location along -Y"), OutTransformBackstab.GetLocation(), FVector(0.0f, -100.0f, 20.0f));
+		// Output Z must anchor to PlayerLoc.Z (0.0f), preserving player grounded height
+		TestEqual(TEXT("Backstab location along -Y"), OutTransformBackstab.GetLocation(), FVector(0.0f, -100.0f, 0.0f));
 		// Facing +Y -> Yaw = +90
 		TestTrue(TEXT("Backstab facing +Y has Yaw +90"), FMath::IsNearlyEqual(OutTransformBackstab.Rotator().Yaw, 90.0f, 0.01f));
 	}
@@ -175,7 +177,81 @@ bool FExecutionSnapAlignmentAutomationTest::RunTest(const FString& Parameters)
 	}
 
 	// =========================================================================
-	// 7. MeleeWeaponDefinition IsValidWeaponDefinition Validation
+	// 7. IsExecutionDistanceRangeValid Pure Validation Matrix
+	// =========================================================================
+	{
+		FString Reason;
+
+		// 7.1 Default values: 0 / 250 / 190 is valid
+		TestTrue(TEXT("Default 0 / 250 / 190 is valid"),
+			FExecutionSnapAlignment::IsExecutionDistanceRangeValid(0.0f, 250.0f, 190.0f, &Reason));
+		TestTrue(TEXT("Reason is empty on success"), Reason.IsEmpty());
+
+		// 7.2 Boundary inclusive: Snap == Min
+		TestTrue(TEXT("Snap == Min is valid (inclusive)"),
+			FExecutionSnapAlignment::IsExecutionDistanceRangeValid(100.0f, 200.0f, 100.0f, &Reason));
+
+		// 7.3 Boundary inclusive: Snap == Max
+		TestTrue(TEXT("Snap == Max is valid (inclusive)"),
+			FExecutionSnapAlignment::IsExecutionDistanceRangeValid(100.0f, 200.0f, 200.0f, &Reason));
+
+		// 7.4 Non-finite values rejected (order 1)
+		TestFalse(TEXT("NaN Min is rejected"),
+			FExecutionSnapAlignment::IsExecutionDistanceRangeValid(NAN, 250.0f, 190.0f, &Reason));
+		TestEqual(TEXT("NaN Min failure reason"), Reason, FString(TEXT("Execution distance values must be finite numbers.")));
+
+		TestFalse(TEXT("Inf Max is rejected"),
+			FExecutionSnapAlignment::IsExecutionDistanceRangeValid(0.0f, INFINITY, 190.0f, &Reason));
+		TestEqual(TEXT("Inf Max failure reason"), Reason, FString(TEXT("Execution distance values must be finite numbers.")));
+
+		TestFalse(TEXT("NaN Snap is rejected"),
+			FExecutionSnapAlignment::IsExecutionDistanceRangeValid(0.0f, 250.0f, NAN, &Reason));
+		TestEqual(TEXT("NaN Snap failure reason"), Reason, FString(TEXT("Execution distance values must be finite numbers.")));
+
+		// 7.5 Negative Min rejected (order 2)
+		TestFalse(TEXT("Negative Min is rejected"),
+			FExecutionSnapAlignment::IsExecutionDistanceRangeValid(-1.0f, 250.0f, 190.0f, &Reason));
+		TestEqual(TEXT("Negative Min failure reason"), Reason, FString(TEXT("MinExecutionDistance must be non-negative.")));
+
+		// 7.6 Max <= Min rejected (order 3)
+		TestFalse(TEXT("Max == Min is rejected"),
+			FExecutionSnapAlignment::IsExecutionDistanceRangeValid(100.0f, 100.0f, 100.0f, &Reason));
+		TestEqual(TEXT("Max == Min failure reason"), Reason, FString(TEXT("MaxExecutionDistance must be strictly greater than MinExecutionDistance.")));
+
+		TestFalse(TEXT("Max < Min is rejected"),
+			FExecutionSnapAlignment::IsExecutionDistanceRangeValid(150.0f, 100.0f, 120.0f, &Reason));
+		TestEqual(TEXT("Max < Min failure reason"), Reason, FString(TEXT("MaxExecutionDistance must be strictly greater than MinExecutionDistance.")));
+
+		// 7.7 Snap <= 0 rejected (order 4)
+		TestFalse(TEXT("Snap == 0 is rejected"),
+			FExecutionSnapAlignment::IsExecutionDistanceRangeValid(0.0f, 250.0f, 0.0f, &Reason));
+		TestEqual(TEXT("Snap == 0 failure reason"), Reason, FString(TEXT("ExecutionSnapDistance must be strictly positive.")));
+
+		TestFalse(TEXT("Negative Snap is rejected"),
+			FExecutionSnapAlignment::IsExecutionDistanceRangeValid(0.0f, 250.0f, -10.0f, &Reason));
+		TestEqual(TEXT("Negative Snap failure reason"), Reason, FString(TEXT("ExecutionSnapDistance must be strictly positive.")));
+
+		// 7.8 Snap out of [Min, Max] rejected (order 5)
+		TestFalse(TEXT("Snap < Min is rejected"),
+			FExecutionSnapAlignment::IsExecutionDistanceRangeValid(50.0f, 200.0f, 40.0f, &Reason));
+		TestEqual(TEXT("Snap < Min failure reason"), Reason, FString(TEXT("ExecutionSnapDistance must be within [MinExecutionDistance, MaxExecutionDistance].")));
+
+		TestFalse(TEXT("Snap > Max is rejected"),
+			FExecutionSnapAlignment::IsExecutionDistanceRangeValid(50.0f, 200.0f, 210.0f, &Reason));
+		TestEqual(TEXT("Snap > Max failure reason"), Reason, FString(TEXT("ExecutionSnapDistance must be within [MinExecutionDistance, MaxExecutionDistance].")));
+
+		// 7.9 Max > 250 Native Hard Cap rejected (order 6)
+		TestFalse(TEXT("Max 250.1f exceeds 250cm hard cap"),
+			FExecutionSnapAlignment::IsExecutionDistanceRangeValid(0.0f, 250.1f, 190.0f, &Reason));
+		TestEqual(TEXT("Max > 250cm failure reason"), Reason, FString(TEXT("MaxExecutionDistance exceeds native hard cap of 250cm.")));
+
+		TestFalse(TEXT("Max 300.0f exceeds 250cm hard cap"),
+			FExecutionSnapAlignment::IsExecutionDistanceRangeValid(0.0f, 300.0f, 190.0f, &Reason));
+		TestEqual(TEXT("Max 300cm failure reason"), Reason, FString(TEXT("MaxExecutionDistance exceeds native hard cap of 250cm.")));
+	}
+
+	// =========================================================================
+	// 8. MeleeWeaponDefinition IsValidWeaponDefinition Range Validation
 	// =========================================================================
 	{
 		UMeleeWeaponDefinition* MeleeDef = NewObject<UMeleeWeaponDefinition>(GetTransientPackage());
@@ -190,21 +266,34 @@ bool FExecutionSnapAlignmentAutomationTest::RunTest(const FString& Parameters)
 		MeleeDef->PrimaryAttackAbilityTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Attack.Primary")), false);
 
 		FString Reason;
-		// Default 190.0f is valid
-		TestTrue(FString::Printf(TEXT("Default ExecutionSnapDistance 190.0f is valid (Reason: %s)"), *Reason), MeleeDef->IsValidWeaponDefinition(Reason));
+		// Default 0 / 250 / 190 is valid
+		TestTrue(FString::Printf(TEXT("Default execution range passes (Reason: %s)"), *Reason), MeleeDef->IsValidWeaponDefinition(Reason));
+		TestEqual(TEXT("Default MinExecutionDistance is 0.0f"), MeleeDef->MinExecutionDistance, 0.0f);
+		TestEqual(TEXT("Default MaxExecutionDistance is 250.0f"), MeleeDef->MaxExecutionDistance, 250.0f);
+		TestEqual(TEXT("Default ExecutionSnapDistance is 190.0f"), MeleeDef->ExecutionSnapDistance, 190.0f);
 
-		// Test <= 0 fails
-		MeleeDef->ExecutionSnapDistance = 0.0f;
-		TestFalse(TEXT("ExecutionSnapDistance 0.0f fails validation"), MeleeDef->IsValidWeaponDefinition(Reason));
+		// Negative MinExecutionDistance fails
+		MeleeDef->MinExecutionDistance = -5.0f;
+		TestFalse(TEXT("Negative MinExecutionDistance fails validation"), MeleeDef->IsValidWeaponDefinition(Reason));
+		TestEqual(TEXT("Negative Min failure reason"), Reason, FString(TEXT("MinExecutionDistance must be non-negative.")));
+		MeleeDef->MinExecutionDistance = 0.0f;
 
-		MeleeDef->ExecutionSnapDistance = -50.0f;
-		TestFalse(TEXT("ExecutionSnapDistance -50.0f fails validation"), MeleeDef->IsValidWeaponDefinition(Reason));
+		// MaxExecutionDistance > 250cm hard cap fails
+		MeleeDef->MaxExecutionDistance = 300.0f;
+		TestFalse(TEXT("MaxExecutionDistance 300.0f fails validation"), MeleeDef->IsValidWeaponDefinition(Reason));
+		TestEqual(TEXT("Max > 250 failure reason"), Reason, FString(TEXT("MaxExecutionDistance exceeds native hard cap of 250cm.")));
+		MeleeDef->MaxExecutionDistance = 250.0f;
 
-		// Test NaN fails
-		MeleeDef->ExecutionSnapDistance = NAN;
-		TestFalse(TEXT("ExecutionSnapDistance NaN fails validation"), MeleeDef->IsValidWeaponDefinition(Reason));
+		// Snap outside [Min, Max] fails
+		MeleeDef->MinExecutionDistance = 100.0f;
+		MeleeDef->MaxExecutionDistance = 150.0f;
+		MeleeDef->ExecutionSnapDistance = 190.0f; // 190 > 150
+		TestFalse(TEXT("ExecutionSnapDistance out of range fails validation"), MeleeDef->IsValidWeaponDefinition(Reason));
+		TestEqual(TEXT("Snap out of range failure reason"), Reason, FString(TEXT("ExecutionSnapDistance must be within [MinExecutionDistance, MaxExecutionDistance].")));
 
 		// Restore valid
+		MeleeDef->MinExecutionDistance = 0.0f;
+		MeleeDef->MaxExecutionDistance = 250.0f;
 		MeleeDef->ExecutionSnapDistance = 190.0f;
 		TestTrue(FString::Printf(TEXT("Restored ExecutionSnapDistance passes (Reason: %s)"), *Reason), MeleeDef->IsValidWeaponDefinition(Reason));
 	}

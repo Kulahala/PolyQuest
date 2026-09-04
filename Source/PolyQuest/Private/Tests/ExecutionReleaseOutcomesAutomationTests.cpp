@@ -307,6 +307,18 @@ bool FExecutionReleaseOutcomesAutomationTest::RunTest(const FString& Parameters)
 		EnemyASC->RemoveLooseGameplayTag(StunnedTag);
 		PlayerASC->ClearAbility(FrontHandle);
 		EnemyASC->ClearAbility(VictimHandle);
+
+		if (UWeaponEquipmentComponent* EquipComp = Player->FindComponentByClass<UWeaponEquipmentComponent>())
+		{
+			if (UMeleeWeaponDefinition* WeaponDef = EquipComp->GetEquippedMainHandMelee())
+			{
+				WeaponDef->MinExecutionDistance = 0.0f;
+				WeaponDef->MaxExecutionDistance = 250.0f;
+				WeaponDef->ExecutionSnapDistance = 190.0f;
+				WeaponDef->FrontExecutionMontage = nullptr;
+				WeaponDef->BackstabExecutionMontage = nullptr;
+			}
+		}
 	};
 
 	// =========================================================================
@@ -584,7 +596,7 @@ bool FExecutionReleaseOutcomesAutomationTest::RunTest(const FString& Parameters)
 
 		BackstabAbility->SetTestExecutionMontage(PlayerExecutionMontage);
 		BackstabAbility->SetTestDamageGameplayEffectClass(UTestProjectileDamageGE::StaticClass());
-		BackstabAbility->SetTestExecutionDistances(50.0f, 300.0f);
+		BackstabAbility->SetTestExecutionDistances(50.0f, 250.0f);
 		BackstabAbility->SetTestMaxBackAngleDegrees(90.0f);
 		BackstabAbility->SetTestSkipMontageTaskActivation(true);
 
@@ -632,6 +644,18 @@ bool FExecutionReleaseOutcomesAutomationTest::RunTest(const FString& Parameters)
 		Player->TestClearLockedTarget();
 		PlayerASC->ClearAbility(BackstabHandle);
 		BackstabEnemyASC->ClearAbility(VictimHandle);
+
+		if (UWeaponEquipmentComponent* EquipComp = Player->FindComponentByClass<UWeaponEquipmentComponent>())
+		{
+			if (UMeleeWeaponDefinition* WeaponDef = EquipComp->GetEquippedMainHandMelee())
+			{
+				WeaponDef->MinExecutionDistance = 0.0f;
+				WeaponDef->MaxExecutionDistance = 250.0f;
+				WeaponDef->ExecutionSnapDistance = 190.0f;
+				WeaponDef->FrontExecutionMontage = nullptr;
+				WeaponDef->BackstabExecutionMontage = nullptr;
+			}
+		}
 	}
 
 	// =========================================================================
