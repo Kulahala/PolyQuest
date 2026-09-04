@@ -1,5 +1,7 @@
 # PolyQuest
 
+![PolyQuest Cover](docs/images/cover.jpg)
+
 UE 5.8 C++/GAS-first single-player low-poly action RPG with a fixed elevated oblique perspective and deliberate, readable combat.
 
 ## Demo Video
