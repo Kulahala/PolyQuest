@@ -159,6 +159,38 @@ UPlayerFrontExecutionAbility::UPlayerFrontExecutionAbility()
 	ActivationBlockedTags.AddTag(VictimLockedStateTag);
 }
 
+bool UPlayerFrontExecutionAbility::TryResolveExecutionMontage(
+	const FGameplayAbilityActorInfo* ActorInfo,
+	const UMeleeWeaponDefinition*& OutWeaponDef,
+	UAnimMontage*& OutMontage) const
+{
+	OutWeaponDef = nullptr;
+	OutMontage = nullptr;
+
+	const APlayerCharacter* PlayerCharacter = Cast<APlayerCharacter>(ActorInfo ? ActorInfo->AvatarActor.Get() : nullptr);
+	if (!PlayerCharacter || PlayerCharacter->IsActorBeingDestroyed())
+	{
+		return false;
+	}
+
+	const UWeaponEquipmentComponent* Equipment = PlayerCharacter->FindComponentByClass<UWeaponEquipmentComponent>();
+	const UMeleeWeaponDefinition* MeleeWeapon = Equipment ? Equipment->GetEquippedMainHandMelee() : nullptr;
+	if (!MeleeWeapon)
+	{
+		return false;
+	}
+
+	UAnimMontage* Montage = MeleeWeapon->FrontExecutionMontage;
+	if (!Montage)
+	{
+		return false;
+	}
+
+	OutWeaponDef = MeleeWeapon;
+	OutMontage = Montage;
+	return true;
+}
+
 bool UPlayerFrontExecutionAbility::CanActivateAbility(
 	const FGameplayAbilitySpecHandle Handle,
 	const FGameplayAbilityActorInfo* ActorInfo,
@@ -171,7 +203,14 @@ bool UPlayerFrontExecutionAbility::CanActivateAbility(
 		return false;
 	}
 
-	if (!ExecutionMontage || !DamageGameplayEffectClass)
+	if (!DamageGameplayEffectClass)
+	{
+		return false;
+	}
+
+	const UMeleeWeaponDefinition* ResolvedWeapon = nullptr;
+	UAnimMontage* ResolvedMontage = nullptr;
+	if (!TryResolveExecutionMontage(ActorInfo, ResolvedWeapon, ResolvedMontage))
 	{
 		return false;
 	}
@@ -219,7 +258,7 @@ bool UPlayerFrontExecutionAbility::ValidateTargetPrerequisites(
 	}
 
 	const UWeaponEquipmentComponent* Equipment = PlayerCharacter->FindComponentByClass<UWeaponEquipmentComponent>();
-	const UMeleeWeaponDefinition* MeleeWeapon = Equipment ? Cast<UMeleeWeaponDefinition>(Equipment->GetCurrentMainHandWeapon()) : nullptr;
+	const UMeleeWeaponDefinition* MeleeWeapon = Equipment ? Equipment->GetEquippedMainHandMelee() : nullptr;
 	if (!MeleeWeapon)
 	{
 		return false;
@@ -379,9 +418,7 @@ bool UPlayerFrontExecutionAbility::TryApplyExecutionSnap(
 		return false;
 	}
 
-	const UWeaponEquipmentComponent* Equipment = PlayerCharacter->FindComponentByClass<UWeaponEquipmentComponent>();
-	const UMeleeWeaponDefinition* MeleeWeapon = Equipment ? Cast<UMeleeWeaponDefinition>(Equipment->GetCurrentMainHandWeapon()) : nullptr;
-	if (!MeleeWeapon || !FExecutionSnapAlignment::IsSnapDistanceValid(MeleeWeapon->ExecutionSnapDistance))
+	if (!ActiveExecutionWeaponDefinition || !FExecutionSnapAlignment::IsSnapDistanceValid(ActiveExecutionWeaponDefinition->ExecutionSnapDistance))
 	{
 		return false;
 	}
@@ -394,7 +431,7 @@ bool UPlayerFrontExecutionAbility::TryApplyExecutionSnap(
 		OriginalLocation,
 		TargetActor->GetActorLocation(),
 		TargetForwardSnapshot,
-		MeleeWeapon->ExecutionSnapDistance,
+		ActiveExecutionWeaponDefinition->ExecutionSnapDistance,
 		EExecutionSnapSide::Front,
 		TargetTransform))
 	{
@@ -482,6 +519,24 @@ bool UPlayerFrontExecutionAbility::CommitAbility(
 		return false;
 	}
 #endif
+
+	if (!ActiveExecutionWeaponDefinition || !ActiveExecutionMontage)
+	{
+		return false;
+	}
+
+	const UMeleeWeaponDefinition* LiveWeaponDef = nullptr;
+	UAnimMontage* LiveMontage = nullptr;
+	if (!TryResolveExecutionMontage(ActorInfo, LiveWeaponDef, LiveMontage))
+	{
+		return false;
+	}
+
+	if (LiveWeaponDef != ActiveExecutionWeaponDefinition || LiveMontage != ActiveExecutionMontage)
+	{
+		return false;
+	}
+
 	return Super::CommitAbility(Handle, ActorInfo, ActivationInfo, OptionalRelevantTags);
 }
 
@@ -529,11 +584,22 @@ void UPlayerFrontExecutionAbility::ActivateAbility(
 	const FGameplayTag HitEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Action.Execution.Hit")), false);
 	const FGameplayTag ReleaseRequestTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Action.Execution.Request.Release")), false);
 	const FGameplayTag VictimStartTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Action.Execution.Request.VictimStart")), false);
-	if (!HitEventTag.IsValid() || !ReleaseRequestTag.IsValid() || !VictimStartTag.IsValid() || !ExecutionMontage)
+	if (!HitEventTag.IsValid() || !ReleaseRequestTag.IsValid() || !VictimStartTag.IsValid())
 	{
 		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
 		return;
 	}
+
+	const UMeleeWeaponDefinition* ResolvedWeapon = nullptr;
+	UAnimMontage* ResolvedMontage = nullptr;
+	if (!TryResolveExecutionMontage(ActorInfo, ResolvedWeapon, ResolvedMontage))
+	{
+		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
+		return;
+	}
+
+	ActiveExecutionWeaponDefinition = ResolvedWeapon;
+	ActiveExecutionMontage = ResolvedMontage;
 
 	// 1. Commit Ability BEFORE victim handshake. Failure must never cancel victim actions or establish lock.
 	if (!CommitAbility(Handle, ActorInfo, ActivationInfo))
@@ -586,7 +652,7 @@ void UPlayerFrontExecutionAbility::ActivateAbility(
 	WaitVictimStartEventTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, VictimStartTag, nullptr, false, false);
 	WaitHitEventTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, HitEventTag, nullptr, false, true);
 	WaitReleaseRequestEventTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, ReleaseRequestTag, nullptr, false, false);
-	MontageTask = UAbilityTask_PlayMontageAndWait::CreatePlayMontageAndWaitProxy(this, NAME_None, ExecutionMontage, 1.0f);
+	MontageTask = UAbilityTask_PlayMontageAndWait::CreatePlayMontageAndWaitProxy(this, NAME_None, ActiveExecutionMontage, 1.0f);
 
 	if (!WaitVictimStartEventTask || !WaitHitEventTask || !WaitReleaseRequestEventTask || !MontageTask)
 	{
@@ -688,7 +754,7 @@ void UPlayerFrontExecutionAbility::ActivateAbility(
 	}
 
 	UAnimInstance* AnimInstance = PlayerCharacter->GetMesh() ? PlayerCharacter->GetMesh()->GetAnimInstance() : nullptr;
-	const bool bMontageActive = AnimInstance && AnimInstance->Montage_IsActive(ExecutionMontage);
+	const bool bMontageActive = AnimInstance && AnimInstance->Montage_IsActive(ActiveExecutionMontage);
 	if (!bMontageActive)
 	{
 		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
@@ -758,7 +824,7 @@ void UPlayerFrontExecutionAbility::HandleHitEventReceived(FGameplayEventData Pay
 		return;
 	}
 
-	if (!IsFrontExecutionAnimationFromMontage(ExecutionMontage, Payload.OptionalObject.Get()))
+	if (!IsFrontExecutionAnimationFromMontage(ActiveExecutionMontage, Payload.OptionalObject.Get()))
 	{
 		return;
 	}
@@ -829,7 +895,7 @@ void UPlayerFrontExecutionAbility::HandleReleaseRequestEventReceived(FGameplayEv
 		return;
 	}
 
-	if (!IsFrontExecutionAnimationFromMontage(ExecutionMontage, Payload.OptionalObject.Get()))
+	if (!IsFrontExecutionAnimationFromMontage(ActiveExecutionMontage, Payload.OptionalObject.Get()))
 	{
 		return;
 	}
@@ -872,7 +938,7 @@ void UPlayerFrontExecutionAbility::HandleVictimStartEventReceived(FGameplayEvent
 		return;
 	}
 
-	if (!IsFrontExecutionAnimationFromMontage(ExecutionMontage, Payload.OptionalObject.Get()))
+	if (!IsFrontExecutionAnimationFromMontage(ActiveExecutionMontage, Payload.OptionalObject.Get()))
 	{
 		return;
 	}
@@ -1167,9 +1233,9 @@ void UPlayerFrontExecutionAbility::EndAbility(
 	{
 		if (UAnimInstance* AnimInstance = PlayerCharacter->GetMesh() ? PlayerCharacter->GetMesh()->GetAnimInstance() : nullptr)
 		{
-			if (ExecutionMontage && AnimInstance->Montage_IsActive(ExecutionMontage))
+			if (ActiveExecutionMontage && AnimInstance->Montage_IsActive(ActiveExecutionMontage))
 			{
-				AnimInstance->Montage_Stop(0.2f, ExecutionMontage);
+				AnimInstance->Montage_Stop(0.2f, ActiveExecutionMontage);
 			}
 		}
 	}
@@ -1179,12 +1245,29 @@ void UPlayerFrontExecutionAbility::EndAbility(
 	bReleaseRequestLatched = false;
 	bVictimReleaseExpected = false;
 	bVictimStartForwarded = false;
+	ActiveExecutionWeaponDefinition = nullptr;
+	ActiveExecutionMontage = nullptr;
 
 	Super::EndAbility(Handle, ActorInfo, ActivationInfo, bReplicateEndAbility, bWasCancelled);
 	bEndAbilityInProgress = false;
 }
 
 #if WITH_DEV_AUTOMATION_TESTS
+void UPlayerFrontExecutionAbility::SetTestExecutionMontage(UAnimMontage* Montage)
+{
+	APlayerCharacter* Player = Cast<APlayerCharacter>(GetAvatarActorFromActorInfo());
+	if (!Player || Player->IsActorBeingDestroyed())
+	{
+		return;
+	}
+
+	UWeaponEquipmentComponent* EquipComp = Player->FindComponentByClass<UWeaponEquipmentComponent>();
+	if (UMeleeWeaponDefinition* MeleeWeapon = EquipComp ? EquipComp->GetEquippedMainHandMelee() : nullptr)
+	{
+		MeleeWeapon->FrontExecutionMontage = Montage;
+	}
+}
+
 void UPlayerFrontExecutionAbility::TestTriggerReleaseRequestEvent(const FGameplayEventData& Payload)
 {
 	HandleReleaseRequestEventReceived(Payload, CurrentActivationToken);

@@ -178,8 +178,21 @@ bool FBackstabExecutionAutomationTest::RunTest(const FString& Parameters)
 	FGameplayAbilitySpec VictimSpec(UEnemyVictimExecutionAbility::StaticClass(), 1, INDEX_NONE, Enemy);
 	EnemyASC->GiveAbility(VictimSpec);
 
+	auto ResetWeaponExecutionMontages = [&](APlayerCharacter* InPlayer)
+	{
+		if (UWeaponEquipmentComponent* EquipComp = InPlayer ? InPlayer->FindComponentByClass<UWeaponEquipmentComponent>() : nullptr)
+		{
+			if (UMeleeWeaponDefinition* WeaponDef = EquipComp->GetEquippedMainHandMelee())
+			{
+				WeaponDef->FrontExecutionMontage = nullptr;
+				WeaponDef->BackstabExecutionMontage = nullptr;
+			}
+		}
+	};
+
 	auto GrantAndConfigureBackstabAbility = [&](APlayerCharacter* InPlayer, UAnimMontage* Montage, TSubclassOf<UGameplayEffect> DamageClass, float MinDist, float MaxDist, float MaxAngle) -> TPair<FGameplayAbilitySpecHandle, UPlayerBackstabExecutionAbility*>
 	{
+		ResetWeaponExecutionMontages(InPlayer);
 		UAbilitySystemComponent* ASC = InPlayer->GetAbilitySystemComponent();
 		FGameplayAbilitySpec Spec(UPlayerBackstabExecutionAbility::StaticClass(), 1, INDEX_NONE, InPlayer);
 		const FGameplayAbilitySpecHandle Handle = ASC->GiveAbility(Spec);
@@ -302,6 +315,7 @@ bool FBackstabExecutionAutomationTest::RunTest(const FString& Parameters)
 			Enemy->SetActorRotation(FRotator(0.0f, 0.0f, 0.0f));
 		}
 		PlayerASC->ClearAbility(BackstabHandle);
+		ResetWeaponExecutionMontages(Player);
 	}
 
 	// =========================================================================
@@ -364,8 +378,33 @@ bool FBackstabExecutionAutomationTest::RunTest(const FString& Parameters)
 			}
 		}
 
+		// 5.6 Weapon Execution Montage Gate: Missing BackstabExecutionMontage rejects CanActivateAbility
+		{
+			ResetWeaponExecutionMontages(Player);
+			TestFalse(TEXT("CanActivateAbility fails when BackstabExecutionMontage is null"),
+				BackstabAbility->CanActivateAbility(BackstabHandle, &ActorInfo));
+
+			// Even if FrontExecutionMontage is set, Backstab execution must reject it
+			UAnimMontage* FrontOnlyMontage = NewObject<UAnimMontage>();
+			if (UWeaponEquipmentComponent* EquipComp = Player->FindComponentByClass<UWeaponEquipmentComponent>())
+			{
+				if (UMeleeWeaponDefinition* WeaponDef = EquipComp->GetEquippedMainHandMelee())
+				{
+					WeaponDef->FrontExecutionMontage = FrontOnlyMontage;
+				}
+			}
+			TestFalse(TEXT("Backstab CanActivateAbility fails when only FrontExecutionMontage is configured"),
+				BackstabAbility->CanActivateAbility(BackstabHandle, &ActorInfo));
+
+			// Restore BackstabExecutionMontage
+			BackstabAbility->SetTestExecutionMontage(SyntheticMontage);
+			TestTrue(TEXT("CanActivateAbility succeeds after restoring BackstabExecutionMontage"),
+				BackstabAbility->CanActivateAbility(BackstabHandle, &ActorInfo));
+		}
+
 		// Cleanup
 		PlayerASC->ClearAbility(BackstabHandle);
+		ResetWeaponExecutionMontages(Player);
 	}
 
 	// =========================================================================
@@ -387,6 +426,33 @@ bool FBackstabExecutionAutomationTest::RunTest(const FString& Parameters)
 		TestEqual(TEXT("Reserved target is indeed Enemy"),
 			BackstabAbility->GetTestReservedTarget(), Enemy);
 
+		TestTrue(TEXT("Backstab ability is active"), BackstabAbility->IsActive());
+		TestEqual(TEXT("Active execution montage snapshot matches SyntheticMontage"),
+			BackstabAbility->GetTestActiveExecutionMontage(), SyntheticMontage);
+		UWeaponEquipmentComponent* PlayerEquip = Player->FindComponentByClass<UWeaponEquipmentComponent>();
+		const UMeleeWeaponDefinition* ExpectedWeapon = PlayerEquip ? PlayerEquip->GetEquippedMainHandMelee() : nullptr;
+		TestEqual(TEXT("Active execution weapon definition snapshot matches equipped melee"),
+			BackstabAbility->GetTestActiveExecutionWeaponDefinition(), ExpectedWeapon);
+
+		// Post-activation weapon mutation does NOT alter active snapshot
+		UAnimMontage* MutatedMontage = NewObject<UAnimMontage>();
+		if (UMeleeWeaponDefinition* WeaponDef = PlayerEquip ? PlayerEquip->GetEquippedMainHandMelee() : nullptr)
+		{
+			WeaponDef->BackstabExecutionMontage = MutatedMontage;
+		}
+		TestEqual(TEXT("Active execution montage snapshot remains stable after weapon definition mutation"),
+			BackstabAbility->GetTestActiveExecutionMontage(), SyntheticMontage);
+
+		// Equipment swap gating: EquipWeapon and TryEquipWorldPickup must be refused while ability is active
+		UMeleeWeaponDefinition* SecondaryWeapon = NewObject<UMeleeWeaponDefinition>(Player, NAME_None, RF_Transient);
+		SecondaryWeapon->HandSlot = EWeaponHandSlot::MainHandOneHanded;
+		SecondaryWeapon->AttachSocketName = FName(TEXT("Weapon_R"));
+		SecondaryWeapon->bUseOwnerMeshSocketForTrace = true;
+		TestFalse(TEXT("EquipWeapon refused while backstab execution is active"),
+			PlayerEquip->EquipWeapon(SecondaryWeapon));
+		TestFalse(TEXT("TryEquipWorldPickup refused while backstab execution is active"),
+			PlayerEquip->TryEquipWorldPickup(nullptr));
+
 		// Verify Backstab Snap Transform: Enemy is at (150, 0, 0) facing (+1, 0, 0), Distance is 190
 		// Expected Player Location: (150 - 190, 0, 0) = (-40, 0, 0)
 		// Expected Player Facing: +Forward = (+1, 0, 0) -> Yaw = 0 deg
@@ -407,6 +473,10 @@ bool FBackstabExecutionAutomationTest::RunTest(const FString& Parameters)
 		BackstabAbility->TestEndAbility();
 		TestNull(TEXT("Target reservation cleared on EndAbility"),
 			BackstabAbility->GetTestReservedTarget());
+		TestNull(TEXT("Active execution montage snapshot cleared on EndAbility"),
+			BackstabAbility->GetTestActiveExecutionMontage());
+		TestNull(TEXT("Active execution weapon definition snapshot cleared on EndAbility"),
+			BackstabAbility->GetTestActiveExecutionWeaponDefinition());
 
 		// Verify Enemy restored to MOVE_Walking after release
 		if (UCharacterMovementComponent* EnemyMove = Enemy->GetCharacterMovement())
@@ -420,6 +490,7 @@ bool FBackstabExecutionAutomationTest::RunTest(const FString& Parameters)
 		Player->SetActorRotation(FRotator::ZeroRotator);
 
 		PlayerASC->ClearAbility(BackstabHandle);
+		ResetWeaponExecutionMontages(Player);
 	}
 
 	// =========================================================================
@@ -534,6 +605,7 @@ bool FBackstabExecutionAutomationTest::RunTest(const FString& Parameters)
 
 			Enemy->SetTestCombatTeamTag(OriginalEnemyTeam);
 			PlayerASC->ClearAbility(FailedHandle);
+			ResetWeaponExecutionMontages(Player);
 		}
 	}
 
@@ -584,6 +656,7 @@ bool FBackstabExecutionAutomationTest::RunTest(const FString& Parameters)
 		Enemy->SetActorRotation(FRotator(0.0f, 0.0f, 0.0f));
 		BackstabAbility->TestEndAbility();
 		PlayerASC->ClearAbility(BackstabHandle);
+		ResetWeaponExecutionMontages(Player);
 	}
 
 	// =========================================================================
@@ -609,6 +682,7 @@ bool FBackstabExecutionAutomationTest::RunTest(const FString& Parameters)
 				BackstabAbility->GetTestReservedTarget());
 
 			PlayerASC->ClearAbility(BackstabHandle);
+			ResetWeaponExecutionMontages(Player);
 		}
 
 		// Case 9.2: Target escapes distance range before hit event -> Hit rejected without damage
@@ -646,6 +720,7 @@ bool FBackstabExecutionAutomationTest::RunTest(const FString& Parameters)
 			Enemy->SetActorLocation(FVector(150.0f, 0.0f, 0.0f));
 			BackstabAbility->TestEndAbility();
 			PlayerASC->ClearAbility(BackstabHandle);
+			ResetWeaponExecutionMontages(Player);
 		}
 	}
 
@@ -659,6 +734,8 @@ bool FBackstabExecutionAutomationTest::RunTest(const FString& Parameters)
 
 		// 10.1 Front Execution takes precedence over Backstab when target is Stunned in Front
 		{
+			auto [BackstabHandle, BackstabAbility] = GrantAndConfigureBackstabAbility(Player, SyntheticMontage, DamageGEClass, 50.0f, 250.0f, 60.0f);
+
 			// Grant both Front Execution and Backstab Execution
 			FGameplayAbilitySpec FrontSpec(UPlayerFrontExecutionAbility::StaticClass(), 1, INDEX_NONE, Player);
 			const FGameplayAbilitySpecHandle FrontHandle = PlayerASC->GiveAbility(FrontSpec);
@@ -672,8 +749,6 @@ bool FBackstabExecutionAutomationTest::RunTest(const FString& Parameters)
 				FrontInstance->SetTestExecutionDistances(50.0f, 250.0f);
 				FrontInstance->SetTestMaxFrontAngleDegrees(60.0f);
 			}
-
-			auto [BackstabHandle, BackstabAbility] = GrantAndConfigureBackstabAbility(Player, SyntheticMontage, DamageGEClass, 50.0f, 250.0f, 60.0f);
 
 			// Target facing Player (180 deg) and Stunned with Poise=0 and active StanceBreak
 			Player->SetActorLocation(FVector(0.0f, 0.0f, 0.0f));
@@ -705,13 +780,22 @@ bool FBackstabExecutionAutomationTest::RunTest(const FString& Parameters)
 			PlayerASC->ClearAbility(BackstabHandle);
 			EnemyASC->ClearAbility(EnemySBHandle);
 			EnemyASC->RemoveLooseGameplayTag(TagStunned);
+			ResetWeaponExecutionMontages(Player);
 		}
 
 		// 10.2 Stunned target attacked from behind -> Front & Backstab both reject -> smoothly falls back to direct Primary!
 		{
+			auto [BackstabHandle, BackstabAbility] = GrantAndConfigureBackstabAbility(Player, SyntheticMontage, DamageGEClass, 50.0f, 250.0f, 60.0f);
+
 			FGameplayAbilitySpec FrontSpec(UPlayerFrontExecutionAbility::StaticClass(), 1, INDEX_NONE, Player);
 			const FGameplayAbilitySpecHandle FrontHandle = PlayerASC->GiveAbility(FrontSpec);
-			auto [BackstabHandle, BackstabAbility] = GrantAndConfigureBackstabAbility(Player, SyntheticMontage, DamageGEClass, 50.0f, 250.0f, 60.0f);
+			FGameplayAbilitySpec* FoundFrontSpec = PlayerASC->FindAbilitySpecFromHandle(FrontHandle);
+			UPlayerFrontExecutionAbility* FrontInstance = FoundFrontSpec ? Cast<UPlayerFrontExecutionAbility>(FoundFrontSpec->GetPrimaryInstance()) : nullptr;
+			if (FrontInstance)
+			{
+				FrontInstance->SetTestSkipMontageTaskActivation(true);
+				FrontInstance->SetTestExecutionMontage(SyntheticMontage);
+			}
 
 			// Enemy facing away (Yaw 0), Player at (0,0,0) (Player is behind Enemy), Enemy is Stunned
 			Player->SetActorLocation(FVector(0.0f, 0.0f, 0.0f));
@@ -723,9 +807,6 @@ bool FBackstabExecutionAutomationTest::RunTest(const FString& Parameters)
 
 			// Establish held-input prerequisite and trigger input handling
 			Player->TriggerTestHandleCombatInputStarted(PrimaryAttackInputTag);
-
-			FGameplayAbilitySpec* FoundFrontSpec = PlayerASC->FindAbilitySpecFromHandle(FrontHandle);
-			UPlayerFrontExecutionAbility* FrontInstance = FoundFrontSpec ? Cast<UPlayerFrontExecutionAbility>(FoundFrontSpec->GetPrimaryInstance()) : nullptr;
 
 			TestFalse(TEXT("Front execution rejected for behind geometry on Stunned target"), FrontInstance ? FrontInstance->IsActive() : false);
 			TestFalse(TEXT("Backstab rejected because target is Stunned"), BackstabAbility->IsActive());
@@ -751,21 +832,27 @@ bool FBackstabExecutionAutomationTest::RunTest(const FString& Parameters)
 			PlayerASC->ClearAbility(FrontHandle);
 			PlayerASC->ClearAbility(BackstabHandle);
 			EnemyASC->RemoveLooseGameplayTag(TagStunned);
+			ResetWeaponExecutionMontages(Player);
 		}
 
 		// 10.3 No target locked -> Front & Backstab both reject -> fallback to direct Primary
 		{
+			auto [BackstabHandle, BackstabAbility] = GrantAndConfigureBackstabAbility(Player, SyntheticMontage, DamageGEClass, 50.0f, 250.0f, 60.0f);
+
 			FGameplayAbilitySpec FrontSpec(UPlayerFrontExecutionAbility::StaticClass(), 1, INDEX_NONE, Player);
 			const FGameplayAbilitySpecHandle FrontHandle = PlayerASC->GiveAbility(FrontSpec);
-			auto [BackstabHandle, BackstabAbility] = GrantAndConfigureBackstabAbility(Player, SyntheticMontage, DamageGEClass, 50.0f, 250.0f, 60.0f);
+			FGameplayAbilitySpec* FoundFrontSpec = PlayerASC->FindAbilitySpecFromHandle(FrontHandle);
+			UPlayerFrontExecutionAbility* FrontInstance = FoundFrontSpec ? Cast<UPlayerFrontExecutionAbility>(FoundFrontSpec->GetPrimaryInstance()) : nullptr;
+			if (FrontInstance)
+			{
+				FrontInstance->SetTestSkipMontageTaskActivation(true);
+				FrontInstance->SetTestExecutionMontage(SyntheticMontage);
+			}
 
 			Player->TestClearLockedTarget();
 
 			// Establish held-input prerequisite and trigger input handling
 			Player->TriggerTestHandleCombatInputStarted(PrimaryAttackInputTag);
-
-			FGameplayAbilitySpec* FoundFrontSpec = PlayerASC->FindAbilitySpecFromHandle(FrontHandle);
-			UPlayerFrontExecutionAbility* FrontInstance = FoundFrontSpec ? Cast<UPlayerFrontExecutionAbility>(FoundFrontSpec->GetPrimaryInstance()) : nullptr;
 
 			TestFalse(TEXT("Front execution rejected when no target locked"), FrontInstance ? FrontInstance->IsActive() : false);
 			TestFalse(TEXT("Backstab rejected when no target locked"), BackstabAbility->IsActive());
@@ -790,6 +877,7 @@ bool FBackstabExecutionAutomationTest::RunTest(const FString& Parameters)
 
 			PlayerASC->ClearAbility(FrontHandle);
 			PlayerASC->ClearAbility(BackstabHandle);
+			ResetWeaponExecutionMontages(Player);
 		}
 	}
 
@@ -883,6 +971,7 @@ bool FBackstabExecutionAutomationTest::RunTest(const FString& Parameters)
 
 		EnemyASC->RemoveLooseGameplayTag(TagStunned);
 		PlayerASC->ClearAbility(BackstabHandle);
+		ResetWeaponExecutionMontages(Player);
 	}
 
 	// =========================================================================
@@ -913,6 +1002,7 @@ bool FBackstabExecutionAutomationTest::RunTest(const FString& Parameters)
 		}
 
 		PlayerASC->ClearAbility(FailureHandle);
+		ResetWeaponExecutionMontages(Player);
 	}
 
 	// =========================================================================
@@ -947,6 +1037,7 @@ bool FBackstabExecutionAutomationTest::RunTest(const FString& Parameters)
 
 		ReentryAbility->TestEndAbility();
 		PlayerASC->ClearAbility(ReentryHandle);
+		ResetWeaponExecutionMontages(Player);
 	}
 
 	// =========================================================================
@@ -1000,6 +1091,7 @@ bool FBackstabExecutionAutomationTest::RunTest(const FString& Parameters)
 		}
 
 		PlayerASC->ClearAbility(BlockExecHandle);
+		ResetWeaponExecutionMontages(Player);
 	}
 
 	// =========================================================================
@@ -1037,6 +1129,7 @@ bool FBackstabExecutionAutomationTest::RunTest(const FString& Parameters)
 		// Cleanup
 		Player->ClearMeleeMotionWarpTargets();
 		PlayerASC->ClearAbility(ExecHandle);
+		ResetWeaponExecutionMontages(Player);
 	}
 
 	// =========================================================================
@@ -1072,6 +1165,84 @@ bool FBackstabExecutionAutomationTest::RunTest(const FString& Parameters)
 
 		ExecAbility->TestEndAbility();
 		PlayerASC->ClearAbility(ExecHandle);
+		ResetWeaponExecutionMontages(Player);
+	}
+
+	// =========================================================================
+	// 17. Weapon Execution Montage Gate & Commit Failure (Fail-Closed Gate)
+	// =========================================================================
+	{
+		// 17.1 Missing BackstabExecutionMontage: Input does not activate Backstab, does not establish lock
+		{
+			ResetWeaponExecutionMontages(Player);
+			Player->SetActorLocation(FVector(0.0f, 0.0f, 0.0f));
+			Enemy->SetActorLocation(FVector(150.0f, 0.0f, 0.0f));
+			Enemy->SetActorRotation(FRotator(0.0f, 0.0f, 0.0f)); // Enemy facing away (Player is behind Enemy)
+			Player->SetTestLockedTarget(Enemy);
+
+			// Weapon has NO BackstabExecutionMontage (only FrontExecutionMontage configured)
+			UAnimMontage* FrontOnlyMontage = NewObject<UAnimMontage>();
+			if (UWeaponEquipmentComponent* EquipComp = Player->FindComponentByClass<UWeaponEquipmentComponent>())
+			{
+				if (UMeleeWeaponDefinition* WeaponDef = EquipComp->GetEquippedMainHandMelee())
+				{
+					WeaponDef->FrontExecutionMontage = FrontOnlyMontage;
+				}
+			}
+
+			FGameplayAbilitySpec Spec(UPlayerBackstabExecutionAbility::StaticClass(), 1, INDEX_NONE, Player);
+			const FGameplayAbilitySpecHandle ExecHandle = PlayerASC->GiveAbility(Spec);
+
+			// Trigger PrimaryAttack input intent
+			Player->TriggerTestRequestAbilityForInputIntent(FGameplayTag::RequestGameplayTag(FName(TEXT("Input.PrimaryAttack")), false));
+
+			FGameplayAbilitySpec* FoundSpec = PlayerASC->FindAbilitySpecFromHandle(ExecHandle);
+			UPlayerBackstabExecutionAbility* ExecAbility = FoundSpec ? Cast<UPlayerBackstabExecutionAbility>(FoundSpec->GetPrimaryInstance()) : nullptr;
+			if (ExecAbility)
+			{
+				TestFalse(TEXT("Backstab execution does not activate when BackstabExecutionMontage is missing"), ExecAbility->IsActive());
+				TestNull(TEXT("No target reservation when BackstabExecutionMontage is missing"), ExecAbility->GetTestReservedTarget());
+			}
+
+			if (UCharacterMovementComponent* EnemyMove = Enemy->GetCharacterMovement())
+			{
+				TestTrue(TEXT("Enemy movement mode is NOT MOVE_None when backstab execution rejected"), EnemyMove->MovementMode != MOVE_None);
+			}
+
+			PlayerASC->ClearAbility(ExecHandle);
+			ResetWeaponExecutionMontages(Player);
+		}
+
+		// 17.2 Force Commit Failure (Fail-Closed Gate): Aborts immediately without establishing reservation or victim lock
+		{
+			UAnimMontage* SyntheticMontage = NewObject<UAnimMontage>();
+			TSubclassOf<UGameplayEffect> DamageGEClass = UTestProjectileDamageGE::StaticClass();
+
+			auto [ExecHandle, ExecAbility] = GrantAndConfigureBackstabAbility(Player, SyntheticMontage, DamageGEClass, 50.0f, 250.0f, 60.0f);
+
+			Player->SetActorLocation(FVector(0.0f, 0.0f, 0.0f));
+			Enemy->SetActorLocation(FVector(150.0f, 0.0f, 0.0f));
+			Enemy->SetActorRotation(FRotator(0.0f, 0.0f, 0.0f)); // Enemy facing away
+			Player->SetTestLockedTarget(Enemy);
+
+			ExecAbility->SetTestForceCommitAbilityFailure(true);
+
+			Player->TriggerTestRequestAbilityForInputIntent(FGameplayTag::RequestGameplayTag(FName(TEXT("Input.PrimaryAttack")), false));
+
+			TestFalse(TEXT("Ability aborted when Commit fails"), ExecAbility->IsActive());
+			TestNull(TEXT("No reservation created when Commit fails"), ExecAbility->GetTestReservedTarget());
+			TestNull(TEXT("Active montage snapshot cleared on commit failure abort"), ExecAbility->GetTestActiveExecutionMontage());
+			TestNull(TEXT("Active weapon snapshot cleared on commit failure abort"), ExecAbility->GetTestActiveExecutionWeaponDefinition());
+
+			if (UCharacterMovementComponent* EnemyMove = Enemy->GetCharacterMovement())
+			{
+				TestTrue(TEXT("Enemy movement mode is NOT MOVE_None on commit failure"), EnemyMove->MovementMode != MOVE_None);
+			}
+
+			ExecAbility->SetTestForceCommitAbilityFailure(false);
+			PlayerASC->ClearAbility(ExecHandle);
+			ResetWeaponExecutionMontages(Player);
+		}
 	}
 
 	return true;

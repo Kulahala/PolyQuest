@@ -176,8 +176,21 @@ bool FFrontExecutionAutomationTest::RunTest(const FString& Parameters)
 	FGameplayAbilitySpec VictimSpec(UEnemyVictimExecutionAbility::StaticClass(), 1, INDEX_NONE, Enemy);
 	EnemyASC->GiveAbility(VictimSpec);
 
+	auto ResetWeaponExecutionMontages = [&](APlayerCharacter* InPlayer)
+	{
+		if (UWeaponEquipmentComponent* EquipComp = InPlayer ? InPlayer->FindComponentByClass<UWeaponEquipmentComponent>() : nullptr)
+		{
+			if (UMeleeWeaponDefinition* WeaponDef = EquipComp->GetEquippedMainHandMelee())
+			{
+				WeaponDef->FrontExecutionMontage = nullptr;
+				WeaponDef->BackstabExecutionMontage = nullptr;
+			}
+		}
+	};
+
 	auto GrantAndConfigureExecAbility = [&](APlayerCharacter* InPlayer, UAnimMontage* Montage, TSubclassOf<UGameplayEffect> DamageClass, float MinDist, float MaxDist, float MaxAngle) -> TPair<FGameplayAbilitySpecHandle, UPlayerFrontExecutionAbility*>
 	{
+		ResetWeaponExecutionMontages(InPlayer);
 		UAbilitySystemComponent* ASC = InPlayer->GetAbilitySystemComponent();
 		FGameplayAbilitySpec Spec(UPlayerFrontExecutionAbility::StaticClass(), 1, INDEX_NONE, InPlayer);
 		const FGameplayAbilitySpecHandle Handle = ASC->GiveAbility(Spec);
@@ -313,6 +326,7 @@ bool FFrontExecutionAutomationTest::RunTest(const FString& Parameters)
 			Enemy->SetActorRotation(FRotator(0.0f, 180.0f, 0.0f));
 		}
 		PlayerASC->ClearAbility(ExecHandle);
+		ResetWeaponExecutionMontages(Player);
 	}
 
 	// =========================================================================
@@ -374,9 +388,34 @@ bool FFrontExecutionAutomationTest::RunTest(const FString& Parameters)
 			}
 		}
 
+		// 5.6 Weapon Execution Montage Gate: Missing FrontExecutionMontage rejects CanActivateAbility
+		{
+			ResetWeaponExecutionMontages(Player);
+			TestFalse(TEXT("CanActivateAbility fails when FrontExecutionMontage is null"),
+				ExecAbility->CanActivateAbility(ExecHandle, &ActorInfo));
+
+			// Even if BackstabExecutionMontage is set, Front execution must reject it
+			UAnimMontage* BackstabOnlyMontage = NewObject<UAnimMontage>();
+			if (UWeaponEquipmentComponent* EquipComp = Player->FindComponentByClass<UWeaponEquipmentComponent>())
+			{
+				if (UMeleeWeaponDefinition* WeaponDef = EquipComp->GetEquippedMainHandMelee())
+				{
+					WeaponDef->BackstabExecutionMontage = BackstabOnlyMontage;
+				}
+			}
+			TestFalse(TEXT("Front CanActivateAbility fails when only BackstabExecutionMontage is configured"),
+				ExecAbility->CanActivateAbility(ExecHandle, &ActorInfo));
+
+			// Restore FrontExecutionMontage
+			ExecAbility->SetTestExecutionMontage(SyntheticMontage);
+			TestTrue(TEXT("CanActivateAbility succeeds after restoring FrontExecutionMontage"),
+				ExecAbility->CanActivateAbility(ExecHandle, &ActorInfo));
+		}
+
 		// Cleanup
 		PlayerASC->ClearAbility(ExecHandle);
 		EnemyASC->RemoveLooseGameplayTag(TagStunned);
+		ResetWeaponExecutionMontages(Player);
 	}
 
 	// =========================================================================
@@ -405,6 +444,33 @@ bool FFrontExecutionAutomationTest::RunTest(const FString& Parameters)
 		TestEqual(TEXT("Reserved target is indeed Enemy"),
 			ExecAbility->GetTestReservedTarget(), Enemy);
 
+		TestTrue(TEXT("Front execution ability is active"), ExecAbility->IsActive());
+		TestEqual(TEXT("Active execution montage snapshot matches SyntheticMontage"),
+			ExecAbility->GetTestActiveExecutionMontage(), SyntheticMontage);
+		UWeaponEquipmentComponent* PlayerEquip = Player->FindComponentByClass<UWeaponEquipmentComponent>();
+		const UMeleeWeaponDefinition* ExpectedWeapon = PlayerEquip ? PlayerEquip->GetEquippedMainHandMelee() : nullptr;
+		TestEqual(TEXT("Active execution weapon definition snapshot matches equipped melee"),
+			ExecAbility->GetTestActiveExecutionWeaponDefinition(), ExpectedWeapon);
+
+		// Post-activation weapon mutation does NOT alter active snapshot
+		UAnimMontage* MutatedMontage = NewObject<UAnimMontage>();
+		if (UMeleeWeaponDefinition* WeaponDef = PlayerEquip ? PlayerEquip->GetEquippedMainHandMelee() : nullptr)
+		{
+			WeaponDef->FrontExecutionMontage = MutatedMontage;
+		}
+		TestEqual(TEXT("Active execution montage snapshot remains stable after weapon definition mutation"),
+			ExecAbility->GetTestActiveExecutionMontage(), SyntheticMontage);
+
+		// Equipment swap gating: EquipWeapon and TryEquipWorldPickup must be refused while ability is active
+		UMeleeWeaponDefinition* SecondaryWeapon = NewObject<UMeleeWeaponDefinition>(Player, NAME_None, RF_Transient);
+		SecondaryWeapon->HandSlot = EWeaponHandSlot::MainHandOneHanded;
+		SecondaryWeapon->AttachSocketName = FName(TEXT("Weapon_R"));
+		SecondaryWeapon->bUseOwnerMeshSocketForTrace = true;
+		TestFalse(TEXT("EquipWeapon refused while front execution is active"),
+			PlayerEquip->EquipWeapon(SecondaryWeapon));
+		TestFalse(TEXT("TryEquipWorldPickup refused while front execution is active"),
+			PlayerEquip->TryEquipWorldPickup(nullptr));
+
 		// Verify Snap Transform: Enemy is at (150, 0, 0) facing (-1, 0, 0), Distance is 190
 		// Expected Player Location: (150 - 190, 0, 0) = (-40, 0, 0)
 		// Expected Player Facing: -(-1, 0, 0) = (+1, 0, 0) -> Yaw = 0 deg
@@ -425,6 +491,10 @@ bool FFrontExecutionAutomationTest::RunTest(const FString& Parameters)
 		ExecAbility->TestEndAbility();
 		TestNull(TEXT("Target reservation cleared on EndAbility"),
 			ExecAbility->GetTestReservedTarget());
+		TestNull(TEXT("Active execution montage snapshot cleared on EndAbility"),
+			ExecAbility->GetTestActiveExecutionMontage());
+		TestNull(TEXT("Active execution weapon definition snapshot cleared on EndAbility"),
+			ExecAbility->GetTestActiveExecutionWeaponDefinition());
 
 		// Verify Enemy restored to MOVE_Walking after release
 		if (UCharacterMovementComponent* EnemyMove = Enemy->GetCharacterMovement())
@@ -440,6 +510,7 @@ bool FFrontExecutionAutomationTest::RunTest(const FString& Parameters)
 		PlayerASC->ClearAbility(ExecHandle);
 		EnemyASC->ClearAbility(StanceBreakHandle);
 		EnemyASC->RemoveLooseGameplayTag(TagStunned);
+		ResetWeaponExecutionMontages(Player);
 	}
 
 	// =========================================================================
@@ -559,6 +630,7 @@ bool FFrontExecutionAutomationTest::RunTest(const FString& Parameters)
 			EnemyASC->RemoveLooseGameplayTag(TagStunned);
 			EnemyASC->ClearAbility(EnemySBHandle);
 			PlayerASC->ClearAbility(FailedExecHandle);
+			ResetWeaponExecutionMontages(Player);
 		}
 	}
 
@@ -603,6 +675,7 @@ bool FFrontExecutionAutomationTest::RunTest(const FString& Parameters)
 
 		PlayerASC->ClearAbility(ExecHandle);
 		EnemyASC->ClearAbility(StanceBreakHandle);
+		ResetWeaponExecutionMontages(Player);
 	}
 
 	// =========================================================================
@@ -650,6 +723,7 @@ bool FFrontExecutionAutomationTest::RunTest(const FString& Parameters)
 		PlayerASC->ClearAbility(ReentryHandle);
 		EnemyASC->ClearAbility(StanceBreakHandle);
 		EnemyASC->ClearAbility(StanceBreakHandle2);
+		ResetWeaponExecutionMontages(Player);
 	}
 
 	// =========================================================================
@@ -712,6 +786,7 @@ bool FFrontExecutionAutomationTest::RunTest(const FString& Parameters)
 		EnemyASC->RemoveLooseGameplayTag(TagStunned);
 		PlayerASC->ClearAbility(BlockExecHandle);
 		EnemyASC->ClearAbility(StanceBreakHandle);
+		ResetWeaponExecutionMontages(Player);
 	}
 
 	// =========================================================================
@@ -758,6 +833,94 @@ bool FFrontExecutionAutomationTest::RunTest(const FString& Parameters)
 		EnemyASC->RemoveLooseGameplayTag(TagStunned);
 		PlayerASC->ClearAbility(ExecHandle);
 		EnemyASC->ClearAbility(StanceBreakHandle);
+		ResetWeaponExecutionMontages(Player);
+	}
+
+	// =========================================================================
+	// 12. Missing Direction Fallback, Live Identity Mismatch & Force Commit Failure Gates
+	// =========================================================================
+	{
+		// 12.1 Missing FrontExecutionMontage: Input does not activate Front execution, does not establish lock
+		{
+			ResetWeaponExecutionMontages(Player);
+			EnemyASC->AddLooseGameplayTag(TagStunned);
+			if (UCharacterAttributeSet* EnemyAttribs = const_cast<UCharacterAttributeSet*>(EnemyASC->GetSet<UCharacterAttributeSet>()))
+			{
+				EnemyAttribs->SetPoise(0.0f);
+			}
+			const FGameplayAbilitySpecHandle StanceBreakHandle = GrantEnemyStanceBreakAbility(Enemy);
+			Player->SetTestLockedTarget(Enemy);
+
+			// Weapon has NO FrontExecutionMontage (only BackstabExecutionMontage configured)
+			UAnimMontage* BackstabOnlyMontage = NewObject<UAnimMontage>();
+			if (UWeaponEquipmentComponent* EquipComp = Player->FindComponentByClass<UWeaponEquipmentComponent>())
+			{
+				if (UMeleeWeaponDefinition* WeaponDef = EquipComp->GetEquippedMainHandMelee())
+				{
+					WeaponDef->BackstabExecutionMontage = BackstabOnlyMontage;
+				}
+			}
+
+			FGameplayAbilitySpec Spec(UPlayerFrontExecutionAbility::StaticClass(), 1, INDEX_NONE, Player);
+			const FGameplayAbilitySpecHandle ExecHandle = PlayerASC->GiveAbility(Spec);
+
+			// Trigger PrimaryAttack input intent
+			Player->TriggerTestRequestAbilityForInputIntent(FGameplayTag::RequestGameplayTag(FName(TEXT("Input.PrimaryAttack")), false));
+
+			FGameplayAbilitySpec* FoundSpec = PlayerASC->FindAbilitySpecFromHandle(ExecHandle);
+			UPlayerFrontExecutionAbility* ExecAbility = FoundSpec ? Cast<UPlayerFrontExecutionAbility>(FoundSpec->GetPrimaryInstance()) : nullptr;
+			if (ExecAbility)
+			{
+				TestFalse(TEXT("Front execution does not activate when FrontExecutionMontage is missing"), ExecAbility->IsActive());
+				TestNull(TEXT("No target reservation when FrontExecutionMontage is missing"), ExecAbility->GetTestReservedTarget());
+			}
+
+			if (UCharacterMovementComponent* EnemyMove = Enemy->GetCharacterMovement())
+			{
+				TestTrue(TEXT("Enemy movement mode is NOT MOVE_None when front execution rejected"), EnemyMove->MovementMode != MOVE_None);
+			}
+
+			PlayerASC->ClearAbility(ExecHandle);
+			EnemyASC->ClearAbility(StanceBreakHandle);
+			EnemyASC->RemoveLooseGameplayTag(TagStunned);
+			ResetWeaponExecutionMontages(Player);
+		}
+
+		// 12.2 Force Commit Failure (Fail-Closed Gate): Aborts immediately without establishing reservation or victim lock
+		{
+			UAnimMontage* SyntheticMontage = NewObject<UAnimMontage>();
+			TSubclassOf<UGameplayEffect> DamageGEClass = UTestProjectileDamageGE::StaticClass();
+
+			auto [ExecHandle, ExecAbility] = GrantAndConfigureExecAbility(Player, SyntheticMontage, DamageGEClass, 50.0f, 250.0f, 60.0f);
+
+			EnemyASC->AddLooseGameplayTag(TagStunned);
+			if (UCharacterAttributeSet* EnemyAttribs = const_cast<UCharacterAttributeSet*>(EnemyASC->GetSet<UCharacterAttributeSet>()))
+			{
+				EnemyAttribs->SetPoise(0.0f);
+			}
+			const FGameplayAbilitySpecHandle StanceBreakHandle = GrantEnemyStanceBreakAbility(Enemy);
+			Player->SetTestLockedTarget(Enemy);
+
+			ExecAbility->SetTestForceCommitAbilityFailure(true);
+
+			Player->TriggerTestRequestAbilityForInputIntent(FGameplayTag::RequestGameplayTag(FName(TEXT("Input.PrimaryAttack")), false));
+
+			TestFalse(TEXT("Ability aborted when Commit fails"), ExecAbility->IsActive());
+			TestNull(TEXT("No reservation created when Commit fails"), ExecAbility->GetTestReservedTarget());
+			TestNull(TEXT("Active montage snapshot cleared on commit failure abort"), ExecAbility->GetTestActiveExecutionMontage());
+			TestNull(TEXT("Active weapon snapshot cleared on commit failure abort"), ExecAbility->GetTestActiveExecutionWeaponDefinition());
+
+			if (UCharacterMovementComponent* EnemyMove = Enemy->GetCharacterMovement())
+			{
+				TestTrue(TEXT("Enemy movement mode is NOT MOVE_None on commit failure"), EnemyMove->MovementMode != MOVE_None);
+			}
+
+			ExecAbility->SetTestForceCommitAbilityFailure(false);
+			PlayerASC->ClearAbility(ExecHandle);
+			EnemyASC->ClearAbility(StanceBreakHandle);
+			EnemyASC->RemoveLooseGameplayTag(TagStunned);
+			ResetWeaponExecutionMontages(Player);
+		}
 	}
 
 	return true;

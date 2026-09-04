@@ -13,6 +13,7 @@ class UAbilityTask_WaitGameplayEvent;
 class UAnimMontage;
 class UExecutionLockContext;
 class UGameplayEffect;
+class UMeleeWeaponDefinition;
 class UPlayerFrontExecutionAbility;
 
 /**
@@ -78,7 +79,9 @@ public:
 	const FGameplayTagContainer& GetTestActivationOwnedTags() const { return ActivationOwnedTags; }
 	const FGameplayTagContainer& GetTestActivationBlockedTags() const { return ActivationBlockedTags; }
 	const FGameplayTagContainer& GetTestAbilityTags() const { return AbilityTags; }
-	void SetTestExecutionMontage(UAnimMontage* Montage) { ExecutionMontage = Montage; }
+	void SetTestExecutionMontage(UAnimMontage* Montage);
+	UAnimMontage* GetTestActiveExecutionMontage() const { return ActiveExecutionMontage; }
+	const UMeleeWeaponDefinition* GetTestActiveExecutionWeaponDefinition() const { return ActiveExecutionWeaponDefinition; }
 	void SetTestDamageGameplayEffectClass(TSubclassOf<UGameplayEffect> InClass) { DamageGameplayEffectClass = InClass; }
 	void SetTestExecutionDistances(float InMin, float InMax) { MinExecutionDistance = InMin; MaxExecutionDistance = InMax; }
 	void SetTestMaxFrontAngleDegrees(float InAngle) { MaxFrontAngleDegrees = InAngle; }
@@ -153,9 +156,6 @@ protected:
 		bool bReplicateEndAbility,
 		bool bWasCancelled) override;
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Execution", meta = (ToolTip = "正面处决播放的玩家动画 Montage。"))
-	TObjectPtr<UAnimMontage> ExecutionMontage;
-
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Execution", meta = (ToolTip = "处决命中时通过 FMeleeHitResolver 应用的伤害 GameplayEffect 类。"))
 	TSubclassOf<UGameplayEffect> DamageGameplayEffectClass;
 
@@ -168,13 +168,23 @@ protected:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Execution", meta = (ClampMin = "0.0", ClampMax = "90.0", Units = "Degrees", ToolTip = "允许触发正面处决的目标正前方最大夹角（度）。"))
 	float MaxFrontAngleDegrees = 60.0f;
 
-
 private:
+	bool TryResolveExecutionMontage(
+		const FGameplayAbilityActorInfo* ActorInfo,
+		const UMeleeWeaponDefinition*& OutWeaponDef,
+		UAnimMontage*& OutMontage) const;
+
 	bool ValidateTargetPrerequisites(const APlayerCharacter* PlayerCharacter, const AEnemyCharacter* TargetActor) const;
 	bool CheckFrontGeometry(const APlayerCharacter* PlayerCharacter, const AEnemyCharacter* TargetActor, float& OutDist2D, float& OutAngleDegrees) const;
 	bool TryApplyExecutionSnap(APlayerCharacter* PlayerCharacter, AEnemyCharacter* TargetActor, const FVector& TargetForwardSnapshot);
 	void BindTargetDelegates(AEnemyCharacter* TargetActor, uint32 InToken);
 	void UnbindTargetDelegates();
+
+	UPROPERTY(Transient)
+	TObjectPtr<const UMeleeWeaponDefinition> ActiveExecutionWeaponDefinition;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UAnimMontage> ActiveExecutionMontage;
 
 	UPROPERTY(Transient)
 	TObjectPtr<UExecutionLockContext> ActiveExecutionContext;

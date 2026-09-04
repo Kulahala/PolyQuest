@@ -22,6 +22,8 @@ struct POLYQUEST_API FOwnerMeshMeleeTraceSource
 	FVector BladeTipMarkerRelativeLocation = FVector::ZeroVector;
 };
 
+class UAnimMontage;
+
 /**
  * The compatible melee subclass of UWeaponDefinition: blade trace markers in
  * weapon-mesh or owner-socket local space, sweep shape, and the BaseGrantedActions
@@ -93,4 +95,12 @@ public:
 	/** Target snap displacement distance used by front/backstab execution alignment (cm). */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Execution", meta = (ClampMin = "1.0", Units = "Centimeters", ToolTip = "处决对齐目标锚点位移距离（厘米）。"))
 	float ExecutionSnapDistance = 190.0f;
+
+	/** Player execution montage played during front execution. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Execution", meta = (ToolTip = "正面处决播放的玩家动画 Montage。若未配置则拒绝正面处决。"))
+	TObjectPtr<UAnimMontage> FrontExecutionMontage = nullptr;
+
+	/** Player execution montage played during backstab execution. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Execution", meta = (ToolTip = "背刺处决播放的玩家动画 Montage。若未配置则拒绝背刺处决。"))
+	TObjectPtr<UAnimMontage> BackstabExecutionMontage = nullptr;
 };
