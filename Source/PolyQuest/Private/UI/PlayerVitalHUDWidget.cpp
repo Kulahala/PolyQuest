@@ -3,6 +3,7 @@
 #include "UI/PlayerVitalHUDWidget.h"
 #include "Components/ProgressBar.h"
 #include "Components/TextBlock.h"
+#include "Components/Widget.h"
 #include "Internationalization/Text.h"
 #include "Math/UnrealMathUtility.h"
 
@@ -130,6 +131,14 @@ void UPlayerVitalHUDWidget::SetStamina(float Current, float Max)
 	}
 }
 
+void UPlayerVitalHUDWidget::SetExhausted(const bool bIsExhausted)
+{
+	if (StaminaExhaustedOverlay)
+	{
+		StaminaExhaustedOverlay->SetVisibility(bIsExhausted ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
+	}
+}
+
 #if WITH_DEV_AUTOMATION_TESTS
 void UPlayerVitalHUDWidget::SetTestHealthWidgets(UProgressBar* InBar, UTextBlock* InCurr, UTextBlock* InMax)
 {
@@ -193,6 +202,21 @@ float UPlayerVitalHUDWidget::GetTestBufferDelayTimer() const
 float UPlayerVitalHUDWidget::GetTestCurrentBufferPercent() const
 {
 	return CurrentBufferPercent;
+}
+
+void UPlayerVitalHUDWidget::SetTestStaminaExhaustedOverlay(UWidget* InWidget)
+{
+	StaminaExhaustedOverlay = InWidget;
+}
+
+UWidget* UPlayerVitalHUDWidget::GetTestStaminaExhaustedOverlay() const
+{
+	return StaminaExhaustedOverlay;
+}
+
+bool UPlayerVitalHUDWidget::IsTestExhaustedOverlayVisible() const
+{
+	return StaminaExhaustedOverlay && StaminaExhaustedOverlay->GetVisibility() == ESlateVisibility::HitTestInvisible;
 }
 
 void UPlayerVitalHUDWidget::SimulateTickForTesting(float InDeltaTime)

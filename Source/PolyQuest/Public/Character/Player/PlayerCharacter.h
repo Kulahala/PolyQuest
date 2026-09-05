@@ -131,6 +131,10 @@ protected:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Equipment", meta = (AllowPrivateAccess = "true", ToolTip = "玩家 BeginPlay 时默认装备的武器定义资产（MeleeWeaponDefinition）。"))
 	TObjectPtr<UMeleeWeaponDefinition> DefaultEquippedWeapon;
 
+	/** Minimum duration in seconds before exhaustion recovery can clear the exhausted state. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Stamina", meta = (ClampMin = "0.0"))
+	float ExhaustionMinimumDurationSeconds = 3.0f;
+
 	/** 更新摄像机到角色的视线遮挡状态，并动态驱动 MPC_PlayerGlobals（PlayerPosition 与平滑 TunnelRadius） */
 	void UpdateSeeThroughOcclusion(float DeltaSeconds);
 
@@ -355,6 +359,9 @@ public:
 
 	/** Returns the player follow camera. */
 	FORCEINLINE UCameraComponent* GetFollowCamera() const { return FollowCamera; }
+
+	float GetExhaustionMinimumDurationSeconds() const { return ExhaustionMinimumDurationSeconds; }
+	void SetExhaustionMinimumDurationSeconds(float InDuration) { ExhaustionMinimumDurationSeconds = FMath::Max(0.0f, InDuration); }
 
 #if WITH_DEV_AUTOMATION_TESTS
 	/** Configures all authored startup inputs as one pre-BeginPlay native fixture operation. */

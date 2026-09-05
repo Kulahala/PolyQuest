@@ -200,6 +200,22 @@ bool FVitalHudAutomationTest::RunTest(const FString&)
 			TestEqual(TEXT("After healing, Buffer percent snaps immediately to 0.8"), BufferBar->GetPercent(), 0.8f);
 			TestEqual(TEXT("After healing, Buffer delay timer is 0.0"), BufferWidget->GetTestBufferDelayTimer(), 0.0f);
 		}
+
+		// 1.5 PlayerVitalHUDWidget StaminaExhaustedOverlay Assertions
+		{
+			UPlayerVitalHUDWidget* ExhaustionWidget = NewObject<UPlayerVitalHUDWidget>(GetTransientPackage());
+			UProgressBar* ExhaustionOverlay = NewObject<UProgressBar>(ExhaustionWidget);
+			ExhaustionOverlay->SetVisibility(ESlateVisibility::Collapsed);
+			ExhaustionWidget->SetTestStaminaExhaustedOverlay(ExhaustionOverlay);
+
+			TestFalse(TEXT("Exhaustion overlay initially collapsed"), ExhaustionWidget->IsTestExhaustedOverlayVisible());
+
+			ExhaustionWidget->SetExhausted(true);
+			TestTrue(TEXT("SetExhausted(true) makes overlay visible"), ExhaustionWidget->IsTestExhaustedOverlayVisible());
+
+			ExhaustionWidget->SetExhausted(false);
+			TestFalse(TEXT("SetExhausted(false) collapses overlay"), ExhaustionWidget->IsTestExhaustedOverlayVisible());
+		}
 	}
 
 	// -------------------------------------------------------------------------
@@ -354,10 +370,15 @@ bool FVitalHudAutomationTest::RunTest(const FString&)
 			HUDInstance1->SetTestHealthWidgets(HUD_HPBar, HUD_HPCurr, HUD_HPMax);
 			HUDInstance1->SetTestStaminaWidgets(HUD_SPBar, HUD_SPCurr, HUD_SPMax);
 
+			UProgressBar* HUD_ExhaustionOverlay = NewObject<UProgressBar>(HUDInstance1);
+			HUD_ExhaustionOverlay->SetVisibility(ESlateVisibility::Collapsed);
+			HUDInstance1->SetTestStaminaExhaustedOverlay(HUD_ExhaustionOverlay);
+
 			// Bind to Pawn 1
 			PC->TriggerTestBindToPawn(PlayerPawn1);
 			TestEqual(TEXT("PC bound to PlayerPawn1 ASC"), PC->GetTestBoundAbilitySystemComponent(), PlayerPawn1->GetAbilitySystemComponent());
 			TestTrue(TEXT("PC has all 4 bound attribute delegates for Pawn 1"), PC->HasBoundAttributeDelegates());
+			TestTrue(TEXT("PC has bound Exhausted tag delegate for Pawn 1"), PC->HasBoundExhaustedTagDelegate());
 
 			// Attribute change on Pawn 1 triggers observable HUD refresh
 			UAbilitySystemComponent* ASC1 = PlayerPawn1->GetAbilitySystemComponent();
@@ -380,12 +401,21 @@ bool FVitalHudAutomationTest::RunTest(const FString&)
 				TestEqual(TEXT("HUD Health current text refreshes to '100' after an upward ASC change"), HUD_HPCurr->GetText().ToString(), TEXT("100"));
 				TestEqual(TEXT("HUD Stamina percent refreshes to 1.0 after an upward ASC change"), HUD_SPBar->GetPercent(), 1.0f);
 				TestEqual(TEXT("HUD Stamina current text refreshes to '100' after an upward ASC change"), HUD_SPCurr->GetText().ToString(), TEXT("100"));
+
+				// Exhausted tag dynamic dispatch directly updates overlay visibility
+				const FGameplayTag ExhaustedTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Status.Exhausted")), false);
+				ASC1->AddLooseGameplayTag(ExhaustedTag);
+				TestTrue(TEXT("Adding Exhausted tag to ASC updates HUD overlay to visible"), HUDInstance1->IsTestExhaustedOverlayVisible());
+
+				ASC1->RemoveLooseGameplayTag(ExhaustedTag);
+				TestFalse(TEXT("Removing Exhausted tag from ASC updates HUD overlay to collapsed"), HUDInstance1->IsTestExhaustedOverlayVisible());
 			}
 
 			// Re-bind to Pawn 2 (simulating respawn / re-possess)
 			PC->TriggerTestBindToPawn(PlayerPawn2);
 			TestEqual(TEXT("PC bound to PlayerPawn2 ASC"), PC->GetTestBoundAbilitySystemComponent(), PlayerPawn2->GetAbilitySystemComponent());
 			TestTrue(TEXT("PC has all 4 bound attribute delegates for Pawn 2"), PC->HasBoundAttributeDelegates());
+			TestTrue(TEXT("PC has bound Exhausted tag delegate for Pawn 2"), PC->HasBoundExhaustedTagDelegate());
 
 			// Immediately reflects Pawn 2 initial attributes (100 / 100)
 			TestEqual(TEXT("HUD Health percent reflects Pawn 2 initial state (1.0)"), HUD_HPBar->GetPercent(), 1.0f);
@@ -413,6 +443,7 @@ bool FVitalHudAutomationTest::RunTest(const FString&)
 			PC->TriggerTestUnbindCurrentPawn();
 			TestNull(TEXT("PC bound ASC is cleared after UnbindCurrentPawn"), PC->GetTestBoundAbilitySystemComponent());
 			TestFalse(TEXT("PC delegate handles are all cleared after UnbindCurrentPawn"), PC->HasBoundAttributeDelegates());
+			TestFalse(TEXT("PC Exhausted tag delegate is cleared after UnbindCurrentPawn"), PC->HasBoundExhaustedTagDelegate());
 
 			// Clean up actors
 			PC->Destroy();

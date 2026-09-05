@@ -8,6 +8,7 @@
 
 class UProgressBar;
 class UTextBlock;
+class UWidget;
 
 /**
  * Native C++ base widget for the player vital HUD (Health and Stamina).
@@ -25,10 +26,14 @@ public:
 	/** Updates displayed stamina progress bar and numeric text. */
 	void SetStamina(float Current, float Max);
 
+	/** Updates displayed stamina exhaustion overlay visibility. */
+	void SetExhausted(bool bIsExhausted);
+
 #if WITH_DEV_AUTOMATION_TESTS
 	void SetTestHealthWidgets(UProgressBar* InBar, UTextBlock* InCurr, UTextBlock* InMax);
 	void SetTestHealthBufferProgressBar(UProgressBar* InBar);
 	void SetTestStaminaWidgets(UProgressBar* InBar, UTextBlock* InCurr, UTextBlock* InMax);
+	void SetTestStaminaExhaustedOverlay(UWidget* InWidget);
 	UProgressBar* GetTestHealthProgressBar() const;
 	UProgressBar* GetTestHealthBufferProgressBar() const;
 	UTextBlock* GetTestHealthCurrentText() const;
@@ -36,6 +41,8 @@ public:
 	UProgressBar* GetTestStaminaProgressBar() const;
 	UTextBlock* GetTestStaminaCurrentText() const;
 	UTextBlock* GetTestStaminaMaxText() const;
+	UWidget* GetTestStaminaExhaustedOverlay() const;
+	bool IsTestExhaustedOverlayVisible() const;
 	float GetTestBufferDelayTimer() const;
 	float GetTestCurrentBufferPercent() const;
 	void SimulateTickForTesting(float InDeltaTime);
@@ -67,6 +74,9 @@ protected:
 
 	UPROPERTY(meta = (BindWidget))
 	TObjectPtr<UProgressBar> StaminaProgressBar;
+
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UWidget> StaminaExhaustedOverlay;
 
 	UPROPERTY(meta = (BindWidget))
 	TObjectPtr<UTextBlock> StaminaCurrentText;

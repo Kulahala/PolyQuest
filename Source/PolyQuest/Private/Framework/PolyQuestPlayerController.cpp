@@ -276,6 +276,13 @@ void APolyQuestPlayerController::BindToPawn(APawn* InPawn)
 	MaxStaminaChangedHandle = ASC->GetGameplayAttributeValueChangeDelegate(UCharacterAttributeSet::GetMaxStaminaAttribute())
 		.AddUObject(this, &APolyQuestPlayerController::OnAttributeChanged);
 
+	const FGameplayTag ExhaustedTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Status.Exhausted")), false);
+	if (ExhaustedTag.IsValid())
+	{
+		ExhaustedTagChangedHandle = ASC->RegisterGameplayTagEvent(ExhaustedTag, EGameplayTagEventType::NewOrRemoved)
+			.AddUObject(this, &APolyQuestPlayerController::OnExhaustedTagChanged);
+	}
+
 	RefreshVitalHUD();
 }
 
@@ -299,12 +306,18 @@ void APolyQuestPlayerController::UnbindCurrentPawn()
 		{
 			BoundASC->GetGameplayAttributeValueChangeDelegate(UCharacterAttributeSet::GetMaxStaminaAttribute()).Remove(MaxStaminaChangedHandle);
 		}
+		const FGameplayTag ExhaustedTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Status.Exhausted")), false);
+		if (ExhaustedTagChangedHandle.IsValid() && ExhaustedTag.IsValid())
+		{
+			BoundASC->RegisterGameplayTagEvent(ExhaustedTag, EGameplayTagEventType::NewOrRemoved).Remove(ExhaustedTagChangedHandle);
+		}
 	}
 
 	HealthChangedHandle.Reset();
 	MaxHealthChangedHandle.Reset();
 	StaminaChangedHandle.Reset();
 	MaxStaminaChangedHandle.Reset();
+	ExhaustedTagChangedHandle.Reset();
 
 	BoundPlayerCharacter.Reset();
 	BoundAbilitySystemComponent.Reset();
@@ -335,13 +348,25 @@ void APolyQuestPlayerController::RefreshVitalHUD()
 	bool bFoundMaxStamina = false;
 	const float MaxStamina = ASC->GetGameplayAttributeValue(UCharacterAttributeSet::GetMaxStaminaAttribute(), bFoundMaxStamina);
 
+	const FGameplayTag ExhaustedTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Status.Exhausted")), false);
+	const bool bIsExhausted = ExhaustedTag.IsValid() && ASC->HasMatchingGameplayTag(ExhaustedTag);
+
 	PlayerVitalHUDInstance->SetHealth(bFoundHealth ? CurrentHealth : 0.0f, bFoundMaxHealth ? MaxHealth : 0.0f);
 	PlayerVitalHUDInstance->SetStamina(bFoundStamina ? CurrentStamina : 0.0f, bFoundMaxStamina ? MaxStamina : 0.0f);
+	PlayerVitalHUDInstance->SetExhausted(bIsExhausted);
 }
 
 void APolyQuestPlayerController::OnAttributeChanged(const FOnAttributeChangeData&)
 {
 	RefreshVitalHUD();
+}
+
+void APolyQuestPlayerController::OnExhaustedTagChanged(const FGameplayTag, const int32 NewCount)
+{
+	if (PlayerVitalHUDInstance)
+	{
+		PlayerVitalHUDInstance->SetExhausted(NewCount > 0);
+	}
 }
 
 void APolyQuestPlayerController::RequestCombatImpactHitStop(float DurationSeconds, float TimeDilation)

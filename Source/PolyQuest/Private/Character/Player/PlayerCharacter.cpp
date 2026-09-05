@@ -48,7 +48,6 @@
 
 namespace
 {
-	constexpr float ExhaustionMinimumDurationSeconds = 3.0f;
 	constexpr float LockOnRetentionMarginRatio = 0.15f;
 }
 

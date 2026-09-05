@@ -3,6 +3,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "GameplayTagContainer.h"
 #include "GameFramework/PlayerController.h"
 #include "PolyQuestPlayerController.generated.h"
 
@@ -55,6 +56,7 @@ public:
 			&& StaminaChangedHandle.IsValid()
 			&& MaxStaminaChangedHandle.IsValid();
 	}
+	bool HasBoundExhaustedTagDelegate() const { return ExhaustedTagChangedHandle.IsValid(); }
 	void TriggerTestEnsureHUDCreated() { EnsureHUDCreated(); }
 	void TriggerTestBindToPawn(APawn* InPawn) { BindToPawn(InPawn); }
 	void TriggerTestUnbindCurrentPawn() { UnbindCurrentPawn(); }
@@ -105,6 +107,7 @@ private:
 	void UnbindCurrentPawn();
 	void RefreshVitalHUD();
 	void OnAttributeChanged(const FOnAttributeChangeData& ChangeData);
+	void OnExhaustedTagChanged(const FGameplayTag Tag, int32 NewCount);
 	void UpdateCombatImpactHitStop();
 	void RestoreCombatImpactHitStop();
 
@@ -112,6 +115,7 @@ private:
 	FDelegateHandle MaxHealthChangedHandle;
 	FDelegateHandle StaminaChangedHandle;
 	FDelegateHandle MaxStaminaChangedHandle;
+	FDelegateHandle ExhaustedTagChangedHandle;
 
 	TWeakObjectPtr<APlayerCharacter> BoundPlayerCharacter;
 	TWeakObjectPtr<UAbilitySystemComponent> BoundAbilitySystemComponent;
