@@ -9,6 +9,7 @@
 #include "AbilitySystem/CharacterAttributeSet.h"
 #include "Character/Enemy/EnemyCharacter.h"
 #include "Character/Player/PlayerCharacter.h"
+#include "Components/Image.h"
 #include "Components/ProgressBar.h"
 #include "Components/TextBlock.h"
 #include "Components/WidgetComponent.h"
@@ -215,6 +216,77 @@ bool FVitalHudAutomationTest::RunTest(const FString&)
 
 			ExhaustionWidget->SetExhausted(false);
 			TestFalse(TEXT("SetExhausted(false) collapses overlay"), ExhaustionWidget->IsTestExhaustedOverlayVisible());
+		}
+
+		// 1.6 PlayerVitalHUDWidget Low Health Vignette Pulse & Damage Flash Assertions
+		{
+			UPlayerVitalHUDWidget* VignetteWidget = NewObject<UPlayerVitalHUDWidget>(GetTransientPackage());
+			UImage* VignetteImage = NewObject<UImage>(VignetteWidget);
+			VignetteImage->SetVisibility(ESlateVisibility::Collapsed);
+			VignetteWidget->SetTestLowHealthVignetteImage(VignetteImage);
+
+			// Initial full health: not low health, no flash, overlay collapsed
+			VignetteWidget->SetHealth(100.0f, 100.0f);
+			VignetteWidget->SimulateTickForTesting(0.016f);
+			TestFalse(TEXT("Initial full health vignette is collapsed"), VignetteWidget->IsTestLowHealthVignetteVisible());
+			TestEqual(TEXT("Initial vignette alpha is 0.0"), VignetteWidget->GetTestCurrentVignetteAlpha(), 0.0f);
+			TestEqual(TEXT("Initial pulse weight is 0.0"), VignetteWidget->GetTestLowHealthPulseWeight(), 0.0f);
+			TestEqual(TEXT("Initial damage flash timer is 0.0"), VignetteWidget->GetTestDamageFlashTimer(), 0.0f);
+
+			// Non-critical damage: 100 -> 80 (80% > 25% threshold)
+			VignetteWidget->SetHealth(80.0f, 100.0f);
+			TestTrue(TEXT("Damage triggers flash timer > 0"), VignetteWidget->GetTestDamageFlashTimer() > 0.0f);
+
+			// Simulate 1 frame: Flash is active, image becomes visible
+			VignetteWidget->SimulateTickForTesting(0.016f);
+			TestTrue(TEXT("Damage flash makes vignette visible"), VignetteWidget->IsTestLowHealthVignetteVisible());
+			TestTrue(TEXT("Damage flash alpha is positive"), VignetteWidget->GetTestCurrentVignetteAlpha() > 0.0f);
+			TestTrue(TEXT("Damage flash alpha does not exceed 0.45 clamp"), VignetteWidget->GetTestCurrentVignetteAlpha() <= 0.45f);
+			TestEqual(TEXT("Above-threshold damage does not activate low health pulse weight"), VignetteWidget->GetTestLowHealthPulseWeight(), 0.0f);
+
+			// Advance beyond flash duration (~0.14s)
+			VignetteWidget->SimulateTickForTesting(0.15f);
+			TestEqual(TEXT("Flash timer expires to 0.0"), VignetteWidget->GetTestDamageFlashTimer(), 0.0f);
+			TestEqual(TEXT("Flash alpha returns to 0.0"), VignetteWidget->GetTestCurrentVignetteAlpha(), 0.0f);
+			TestFalse(TEXT("Vignette collapses after flash expires"), VignetteWidget->IsTestLowHealthVignetteVisible());
+
+			// Critical damage entering low health: 80 -> 20 (20% <= 25% threshold)
+			VignetteWidget->SetHealth(20.0f, 100.0f);
+			TestTrue(TEXT("Critical hit triggers damage flash timer"), VignetteWidget->GetTestDamageFlashTimer() > 0.0f);
+
+			// Simulate 0.25s: Flash has decayed (0.25s > 0.14s), pulse weight has fully faded in to 1.0
+			VignetteWidget->SimulateTickForTesting(0.25f);
+			TestTrue(TEXT("Low health pulse is visible"), VignetteWidget->IsTestLowHealthVignetteVisible());
+			TestEqual(TEXT("Low health pulse weight ramps up to 1.0"), VignetteWidget->GetTestLowHealthPulseWeight(), 1.0f);
+			TestTrue(TEXT("Low health pulse alpha is within safe visual bounds (>=0.05 and <=0.45)"),
+				VignetteWidget->GetTestCurrentVignetteAlpha() >= 0.05f && VignetteWidget->GetTestCurrentVignetteAlpha() <= 0.45f);
+
+			// Record pulse alpha, advance half a period (~0.55s), and verify oscillation
+			const float InitialPulseAlpha = VignetteWidget->GetTestCurrentVignetteAlpha();
+			VignetteWidget->SimulateTickForTesting(0.55f);
+			TestTrue(TEXT("Pulse oscillates over time (alpha differs across half period)"),
+				!FMath::IsNearlyEqual(InitialPulseAlpha, VignetteWidget->GetTestCurrentVignetteAlpha(), 0.02f));
+			TestTrue(TEXT("Oscillating alpha stays clamped within max allowed ceiling 0.45"),
+				VignetteWidget->GetTestCurrentVignetteAlpha() <= 0.45f);
+
+			// Healing recovery: 20 -> 50 (50% > 25% threshold)
+			VignetteWidget->SetHealth(50.0f, 100.0f);
+			// Smooth exit transition: after 0.2s (< 0.5s fade out), weight is still fading out (>0) and vignette still visible
+			VignetteWidget->SimulateTickForTesting(0.20f);
+			TestTrue(TEXT("During recovery fade-out window, pulse weight is still transitioning (>0.0)"),
+				VignetteWidget->GetTestLowHealthPulseWeight() > 0.0f);
+			TestTrue(TEXT("Vignette remains visible during smooth fade-out"), VignetteWidget->IsTestLowHealthVignetteVisible());
+
+			// Advance remaining fade-out duration (additional 0.35s, total 0.55s > 0.5s)
+			VignetteWidget->SimulateTickForTesting(0.35f);
+			TestEqual(TEXT("After full fade-out duration, pulse weight is 0.0"), VignetteWidget->GetTestLowHealthPulseWeight(), 0.0f);
+			TestEqual(TEXT("After full fade-out duration, vignette alpha is 0.0"), VignetteWidget->GetTestCurrentVignetteAlpha(), 0.0f);
+			TestFalse(TEXT("Vignette collapses after fade-out completes"), VignetteWidget->IsTestLowHealthVignetteVisible());
+
+			// Boundary condition: exactly at 25% threshold (25.0 / 100.0)
+			VignetteWidget->SetHealth(25.0f, 100.0f);
+			VignetteWidget->SimulateTickForTesting(0.25f);
+			TestTrue(TEXT("Exact 25% threshold activates low health pulse"), VignetteWidget->GetTestLowHealthPulseWeight() > 0.0f);
 		}
 	}
 
