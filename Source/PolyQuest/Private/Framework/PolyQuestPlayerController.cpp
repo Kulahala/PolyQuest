@@ -243,6 +243,14 @@ void APolyQuestPlayerController::HideInteractionPrompt()
 	}
 }
 
+void APolyQuestPlayerController::NotifyStaminaActionRejected()
+{
+	if (PlayerVitalHUDInstance)
+	{
+		PlayerVitalHUDInstance->PlayStaminaRejectionShake();
+	}
+}
+
 void APolyQuestPlayerController::BindToPawn(APawn* InPawn)
 {
 	UnbindCurrentPawn();

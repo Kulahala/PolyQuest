@@ -30,20 +30,32 @@ public:
 	/** Updates displayed stamina exhaustion overlay visibility. */
 	void SetExhausted(bool bIsExhausted);
 
+	/** Triggers a micro-shake jolt on the health bar (e.g. on hit impact). */
+	UFUNCTION(BlueprintCallable, Category = "Vital|Shake")
+	void PlayHealthShake();
+
+	/** Triggers a micro-shake rejection nudge on the stamina bar (e.g. when stamina is depleted or action rejected). */
+	UFUNCTION(BlueprintCallable, Category = "Vital|Shake")
+	void PlayStaminaRejectionShake();
+
 #if WITH_DEV_AUTOMATION_TESTS
 	void SetTestHealthWidgets(UProgressBar* InBar, UTextBlock* InCurr, UTextBlock* InMax);
 	void SetTestHealthBufferProgressBar(UProgressBar* InBar);
+	void SetTestHealthBarOverlay(UWidget* InWidget);
 	void SetTestStaminaWidgets(UProgressBar* InBar, UTextBlock* InCurr, UTextBlock* InMax);
 	void SetTestStaminaExhaustedOverlay(UWidget* InWidget);
+	void SetTestStaminaBarOverlay(UWidget* InWidget);
 	void SetTestLowHealthVignetteImage(UImage* InImage);
 	UProgressBar* GetTestHealthProgressBar() const;
 	UProgressBar* GetTestHealthBufferProgressBar() const;
+	UWidget* GetTestHealthBarOverlay() const;
 	UTextBlock* GetTestHealthCurrentText() const;
 	UTextBlock* GetTestHealthMaxText() const;
 	UProgressBar* GetTestStaminaProgressBar() const;
 	UTextBlock* GetTestStaminaCurrentText() const;
 	UTextBlock* GetTestStaminaMaxText() const;
 	UWidget* GetTestStaminaExhaustedOverlay() const;
+	UWidget* GetTestStaminaBarOverlay() const;
 	UImage* GetTestLowHealthVignetteImage() const;
 	bool IsTestExhaustedOverlayVisible() const;
 	bool IsTestLowHealthVignetteVisible() const;
@@ -52,6 +64,10 @@ public:
 	float GetTestCurrentVignetteAlpha() const;
 	float GetTestLowHealthPulseWeight() const;
 	float GetTestDamageFlashTimer() const;
+	float GetTestHealthShakeTimer() const;
+	float GetTestStaminaShakeTimer() const;
+	float GetTestHealthTranslationY() const;
+	float GetTestStaminaTranslationY() const;
 	void SimulateTickForTesting(float InDeltaTime);
 #endif
 
@@ -59,6 +75,11 @@ protected:
 	virtual void NativeTick(const FGeometry& MyGeometry, float InDeltaTime) override;
 	void UpdateBufferHealth(float InDeltaTime);
 	void UpdateVignette(float InDeltaTime);
+	void UpdateShake(float InDeltaTime);
+	float CalculateShakeOffset(float RemainingTimer) const;
+
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UWidget> HealthBarOverlay;
 
 	UPROPERTY(meta = (BindWidget))
 	TObjectPtr<UProgressBar> HealthProgressBar;
@@ -73,6 +94,21 @@ protected:
 	/** Speed of buffer catch up interpolation. */
 	UPROPERTY(EditDefaultsOnly, Category = "Vital|Buffer", meta = (ClampMin = "0.1"))
 	float BufferCatchUpSpeed = 4.0f;
+
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UWidget> StaminaBarOverlay;
+
+	/** Max vertical displacement in pixels for hit and rejection micro-shake. */
+	UPROPERTY(EditDefaultsOnly, Category = "Vital|Shake", meta = (ClampMin = "0.0"))
+	float ShakeMaxDisplacement = 4.0f;
+
+	/** Duration in seconds for micro-shake. */
+	UPROPERTY(EditDefaultsOnly, Category = "Vital|Shake", meta = (ClampMin = "0.01"))
+	float ShakeDuration = 0.16f;
+
+	/** Frequency of oscillation for micro-shake in Hz. */
+	UPROPERTY(EditDefaultsOnly, Category = "Vital|Shake", meta = (ClampMin = "1.0"))
+	float ShakeFrequency = 25.0f;
 
 	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<UImage> LowHealthVignetteImage;
@@ -135,5 +171,8 @@ private:
 	float LowHealthPulseTimer = 0.0f;
 	float DamageFlashTimer = 0.0f;
 	float CurrentVignetteAlpha = 0.0f;
+	float HealthShakeTimer = 0.0f;
+	float StaminaShakeTimer = 0.0f;
 	bool bIsHealthInitialized = false;
+	bool bWasExhausted = false;
 };

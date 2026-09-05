@@ -45,10 +45,11 @@ void UPlayerVitalHUDWidget::SetHealth(float Current, float Max)
 	}
 	else if (DisplayPercent < TargetHealthPercent)
 	{
-		// Strictly damage: start delay timer before catch-up begins, and trigger hit flash
+		// Strictly damage: start delay timer before catch-up begins, trigger hit flash and health shake
 		TargetHealthPercent = DisplayPercent;
 		BufferDelayTimer = BufferCatchUpDelay;
 		DamageFlashTimer = DamageFlashDuration;
+		PlayHealthShake();
 	}
 	// If DisplayPercent == TargetHealthPercent, health did not change (e.g. stamina regen trigger).
 	// Preserve ongoing buffer delay and interpolation without any disturbance.
@@ -76,6 +77,7 @@ void UPlayerVitalHUDWidget::NativeTick(const FGeometry& MyGeometry, float InDelt
 	Super::NativeTick(MyGeometry, InDeltaTime);
 	UpdateBufferHealth(InDeltaTime);
 	UpdateVignette(InDeltaTime);
+	UpdateShake(InDeltaTime);
 }
 
 void UPlayerVitalHUDWidget::UpdateBufferHealth(float InDeltaTime)
@@ -241,6 +243,65 @@ void UPlayerVitalHUDWidget::SetExhausted(const bool bIsExhausted)
 	{
 		StaminaExhaustedOverlay->SetVisibility(bIsExhausted ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
 	}
+
+	// Trigger immediate micro-shake rejection nudge when newly entering exhausted state
+	if (bIsExhausted && !bWasExhausted)
+	{
+		PlayStaminaRejectionShake();
+	}
+	bWasExhausted = bIsExhausted;
+}
+
+void UPlayerVitalHUDWidget::PlayHealthShake()
+{
+	HealthShakeTimer = ShakeDuration;
+}
+
+void UPlayerVitalHUDWidget::PlayStaminaRejectionShake()
+{
+	StaminaShakeTimer = ShakeDuration;
+}
+
+float UPlayerVitalHUDWidget::CalculateShakeOffset(const float RemainingTimer) const
+{
+	if (RemainingTimer <= 0.0f || ShakeDuration <= 0.0f)
+	{
+		return 0.0f;
+	}
+
+	const float NormalizedRemaining = FMath::Clamp(RemainingTimer / ShakeDuration, 0.0f, 1.0f);
+	const float Elapsed = ShakeDuration - RemainingTimer;
+	// Damped amplitude (quadratic decay)
+	const float Amplitude = ShakeMaxDisplacement * FMath::Square(NormalizedRemaining);
+	// High-frequency sine oscillation
+	return Amplitude * FMath::Sin(Elapsed * ShakeFrequency * 2.0f * UE_PI);
+}
+
+void UPlayerVitalHUDWidget::UpdateShake(const float InDeltaTime)
+{
+	// 1. Health Bar Micro-Shake (vertical up-down impact)
+	if (HealthShakeTimer > 0.0f)
+	{
+		HealthShakeTimer = FMath::Max(0.0f, HealthShakeTimer - InDeltaTime);
+		const float OffsetY = CalculateShakeOffset(HealthShakeTimer);
+		UWidget* TargetWidget = HealthBarOverlay ? HealthBarOverlay.Get() : HealthProgressBar.Get();
+		if (TargetWidget)
+		{
+			TargetWidget->SetRenderTranslation(FVector2D(0.0f, OffsetY));
+		}
+	}
+
+	// 2. Stamina Bar Micro-Shake (vertical up-down rejection)
+	if (StaminaShakeTimer > 0.0f)
+	{
+		StaminaShakeTimer = FMath::Max(0.0f, StaminaShakeTimer - InDeltaTime);
+		const float OffsetY = CalculateShakeOffset(StaminaShakeTimer);
+		UWidget* TargetWidget = StaminaBarOverlay ? StaminaBarOverlay.Get() : StaminaProgressBar.Get();
+		if (TargetWidget)
+		{
+			TargetWidget->SetRenderTranslation(FVector2D(0.0f, OffsetY));
+		}
+	}
 }
 
 #if WITH_DEV_AUTOMATION_TESTS
@@ -353,9 +414,52 @@ float UPlayerVitalHUDWidget::GetTestDamageFlashTimer() const
 	return DamageFlashTimer;
 }
 
+void UPlayerVitalHUDWidget::SetTestHealthBarOverlay(UWidget* InWidget)
+{
+	HealthBarOverlay = InWidget;
+}
+
+UWidget* UPlayerVitalHUDWidget::GetTestHealthBarOverlay() const
+{
+	return HealthBarOverlay;
+}
+
+void UPlayerVitalHUDWidget::SetTestStaminaBarOverlay(UWidget* InWidget)
+{
+	StaminaBarOverlay = InWidget;
+}
+
+UWidget* UPlayerVitalHUDWidget::GetTestStaminaBarOverlay() const
+{
+	return StaminaBarOverlay;
+}
+
+float UPlayerVitalHUDWidget::GetTestHealthShakeTimer() const
+{
+	return HealthShakeTimer;
+}
+
+float UPlayerVitalHUDWidget::GetTestStaminaShakeTimer() const
+{
+	return StaminaShakeTimer;
+}
+
+float UPlayerVitalHUDWidget::GetTestHealthTranslationY() const
+{
+	UWidget* TargetWidget = HealthBarOverlay ? HealthBarOverlay.Get() : HealthProgressBar.Get();
+	return TargetWidget ? TargetWidget->GetRenderTransform().Translation.Y : 0.0f;
+}
+
+float UPlayerVitalHUDWidget::GetTestStaminaTranslationY() const
+{
+	UWidget* TargetWidget = StaminaBarOverlay ? StaminaBarOverlay.Get() : StaminaProgressBar.Get();
+	return TargetWidget ? TargetWidget->GetRenderTransform().Translation.Y : 0.0f;
+}
+
 void UPlayerVitalHUDWidget::SimulateTickForTesting(float InDeltaTime)
 {
 	UpdateBufferHealth(InDeltaTime);
 	UpdateVignette(InDeltaTime);
+	UpdateShake(InDeltaTime);
 }
 #endif

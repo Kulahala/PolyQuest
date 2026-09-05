@@ -38,6 +38,9 @@ public:
 	/** Hides the interaction prompt without destroying the widget. */
 	void HideInteractionPrompt();
 
+	/** Notifies the HUD that a stamina-consuming action was rejected (e.g. attempted while exhausted). */
+	void NotifyStaminaActionRejected();
+
 #if WITH_DEV_AUTOMATION_TESTS
 	UPlayerVitalHUDWidget* GetTestPlayerVitalHUDInstance() const { return PlayerVitalHUDInstance; }
 	void SetTestPlayerVitalHUDInstance(UPlayerVitalHUDWidget* InInstance) { PlayerVitalHUDInstance = InInstance; }

@@ -668,6 +668,14 @@ void APlayerCharacter::TriggerExecutionImpactCameraShake()
 	StartHitFeedbackCameraShakeInstance(ResolvedClass);
 }
 
+void APlayerCharacter::NotifyStaminaActionRejected()
+{
+	if (APolyQuestPlayerController* PC = Cast<APolyQuestPlayerController>(GetController()))
+	{
+		PC->NotifyStaminaActionRejected();
+	}
+}
+
 UPlayerParryAbility* APlayerCharacter::FindActiveParryAbility() const
 {
 	const UAbilitySystemComponent* CharacterASC = GetAbilitySystemComponent();
@@ -948,6 +956,16 @@ void APlayerCharacter::HandleDodgeSprintThresholdElapsed()
 
 	bDodgeSprintResolvedToSprint = true;
 	bSprintInputHeld = true;
+
+	if (UAbilitySystemComponent* CharacterASC = GetAbilitySystemComponent())
+	{
+		if (CharacterASC->HasMatchingGameplayTag(ExhaustedStateTag) || CharacterASC->GetNumericAttribute(UCharacterAttributeSet::GetStaminaAttribute()) <= 0.0f)
+		{
+			NotifyStaminaActionRejected();
+			return;
+		}
+	}
+
 	TryStartSprint();
 }
 
@@ -1024,7 +1042,15 @@ void APlayerCharacter::RequestAbilityForInputIntent(const FGameplayTag& InputInt
 		{
 			if (WeaponEquipment)
 			{
-				WeaponEquipment->TryActivatePreparedSlot(SlotIndex);
+				const bool bActivated = WeaponEquipment->TryActivatePreparedSlot(SlotIndex);
+				if (!bActivated)
+				{
+					UAbilitySystemComponent* CharacterASC = GetAbilitySystemComponent();
+					if (CharacterASC && (CharacterASC->HasMatchingGameplayTag(ExhaustedStateTag) || CharacterASC->GetNumericAttribute(UCharacterAttributeSet::GetStaminaAttribute()) <= 0.0f))
+					{
+						NotifyStaminaActionRejected();
+					}
+				}
 			}
 			return;
 		}
@@ -1045,6 +1071,11 @@ void APlayerCharacter::RequestAbilityForInputIntent(const FGameplayTag& InputInt
 				if (CharacterASC->TryActivateAbilitiesByTag(SprintAttackAbilityTags))
 				{
 					UE_LOG(LogPolyQuest, Verbose, TEXT("CombatInput: owner='%s', intent='%s', ability='%s', activationRequested=true."), *GetNameSafe(this), *InputIntentTag.ToString(), *SprintAttackAbilityTag.ToString());
+					return;
+				}
+				else if (CharacterASC->HasMatchingGameplayTag(ExhaustedStateTag) || CharacterASC->GetNumericAttribute(UCharacterAttributeSet::GetStaminaAttribute()) <= 0.0f)
+				{
+					NotifyStaminaActionRejected();
 					return;
 				}
 			}
@@ -1103,6 +1134,10 @@ void APlayerCharacter::RequestAbilityForInputIntent(const FGameplayTag& InputInt
 	FGameplayTagContainer AbilityTags;
 	AbilityTags.AddTag(AbilityTag);
 	const bool bActivated = CharacterASC->TryActivateAbilitiesByTag(AbilityTags);
+	if (!bActivated && (CharacterASC->HasMatchingGameplayTag(ExhaustedStateTag) || CharacterASC->GetNumericAttribute(UCharacterAttributeSet::GetStaminaAttribute()) <= 0.0f))
+	{
+		NotifyStaminaActionRejected();
+	}
 	UE_LOG(LogPolyQuest, Verbose, TEXT("CombatInput: owner='%s', intent='%s', ability='%s', activationRequested=%s."), *GetNameSafe(this), *InputIntentTag.ToString(), *AbilityTag.ToString(), bActivated ? TEXT("true") : TEXT("false"));
 }
 
@@ -1129,7 +1164,11 @@ void APlayerCharacter::RequestDodgeAbility()
 
 	FGameplayTagContainer AbilityTags;
 	AbilityTags.AddTag(DodgeTag);
-	CharacterASC->TryActivateAbilitiesByTag(AbilityTags);
+	const bool bActivated = CharacterASC->TryActivateAbilitiesByTag(AbilityTags);
+	if (!bActivated && (CharacterASC->HasMatchingGameplayTag(ExhaustedStateTag) || CharacterASC->GetNumericAttribute(UCharacterAttributeSet::GetStaminaAttribute()) <= 0.0f))
+	{
+		NotifyStaminaActionRejected();
+	}
 }
 
 void APlayerCharacter::ResumeGuardAfterAttack()

@@ -255,6 +255,9 @@ public:
 	/** Triggers attacker-side camera shake feedback when this Player inflicts execution impact on an enemy. */
 	void TriggerExecutionImpactCameraShake();
 
+	/** Notifies controller that a combat action was rejected due to stamina exhaustion. */
+	void NotifyStaminaActionRejected();
+
 	/** Cancels a live Parry after an external airborne transition; it never clears Guard resume eligibility. */
 	void CancelActiveParry();
 

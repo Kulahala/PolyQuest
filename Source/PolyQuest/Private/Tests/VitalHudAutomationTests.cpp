@@ -288,6 +288,112 @@ bool FVitalHudAutomationTest::RunTest(const FString&)
 			VignetteWidget->SimulateTickForTesting(0.25f);
 			TestTrue(TEXT("Exact 25% threshold activates low health pulse"), VignetteWidget->GetTestLowHealthPulseWeight() > 0.0f);
 		}
+
+		// 1.7 PlayerVitalHUDWidget Micro-Shake Physics Assertions (Hit & Stamina Rejection)
+		{
+			UPlayerVitalHUDWidget* ShakeWidget = NewObject<UPlayerVitalHUDWidget>(GetTransientPackage());
+			UProgressBar* HPBar = NewObject<UProgressBar>(ShakeWidget);
+			UProgressBar* SPBar = NewObject<UProgressBar>(ShakeWidget);
+			UWidget* HPOverlay = NewObject<UProgressBar>(ShakeWidget);
+			UWidget* SPOverlay = NewObject<UProgressBar>(ShakeWidget);
+
+			ShakeWidget->SetTestHealthWidgets(HPBar, nullptr, nullptr);
+			ShakeWidget->SetTestStaminaWidgets(SPBar, nullptr, nullptr);
+			ShakeWidget->SetTestHealthBarOverlay(HPOverlay);
+			ShakeWidget->SetTestStaminaBarOverlay(SPOverlay);
+
+			// Initial state: no shake timers, translation is zero
+			TestEqual(TEXT("Initial HealthShakeTimer is 0.0"), ShakeWidget->GetTestHealthShakeTimer(), 0.0f);
+			TestEqual(TEXT("Initial StaminaShakeTimer is 0.0"), ShakeWidget->GetTestStaminaShakeTimer(), 0.0f);
+			TestEqual(TEXT("Initial Health translation Y is 0.0"), ShakeWidget->GetTestHealthTranslationY(), 0.0f);
+			TestEqual(TEXT("Initial Stamina translation Y is 0.0"), ShakeWidget->GetTestStaminaTranslationY(), 0.0f);
+
+			// Hit damage triggers Health Shake: 100 -> 80
+			ShakeWidget->SetHealth(100.0f, 100.0f);
+			ShakeWidget->SetHealth(80.0f, 100.0f);
+			TestTrue(TEXT("Damage triggers HealthShakeTimer > 0"), ShakeWidget->GetTestHealthShakeTimer() > 0.0f);
+
+			// Advance 1 frame (~0.016s): shake is actively translating container vertically
+			ShakeWidget->SimulateTickForTesting(0.016f);
+			TestTrue(TEXT("Active health shake produces non-zero Y translation"), ShakeWidget->GetTestHealthTranslationY() != 0.0f);
+			TestTrue(TEXT("Health shake displacement does not exceed max 4.0px"),
+				FMath::Abs(ShakeWidget->GetTestHealthTranslationY()) <= 4.0f);
+
+			// Advance beyond shake duration (0.16s + 0.05s)
+			ShakeWidget->SimulateTickForTesting(0.20f);
+			TestEqual(TEXT("Health shake timer expires to 0.0"), ShakeWidget->GetTestHealthShakeTimer(), 0.0f);
+			TestEqual(TEXT("Health shake translation cleanly resets to 0.0 (no residual drift)"),
+				ShakeWidget->GetTestHealthTranslationY(), 0.0f);
+
+			// Stamina newly exhausted triggers Stamina Rejection Shake
+			ShakeWidget->SetExhausted(true);
+			TestTrue(TEXT("Newly entering exhausted state triggers StaminaShakeTimer > 0"),
+				ShakeWidget->GetTestStaminaShakeTimer() > 0.0f);
+
+			// Advance 1 frame
+			ShakeWidget->SimulateTickForTesting(0.016f);
+			TestTrue(TEXT("Active stamina shake produces non-zero Y translation"), ShakeWidget->GetTestStaminaTranslationY() != 0.0f);
+			TestTrue(TEXT("Stamina shake displacement does not exceed max 4.0px"),
+				FMath::Abs(ShakeWidget->GetTestStaminaTranslationY()) <= 4.0f);
+
+			// Redundant SetExhausted(true) while already exhausted should NOT retrigger
+			const float CurrentRemainingTimer = ShakeWidget->GetTestStaminaShakeTimer();
+			ShakeWidget->SetExhausted(true);
+			TestEqual(TEXT("Redundant SetExhausted(true) does not clobber ongoing shake"),
+				ShakeWidget->GetTestStaminaShakeTimer(), CurrentRemainingTimer);
+
+			// Advance to completion
+			ShakeWidget->SimulateTickForTesting(0.20f);
+			TestEqual(TEXT("Stamina shake timer expires to 0.0"), ShakeWidget->GetTestStaminaShakeTimer(), 0.0f);
+			TestEqual(TEXT("Stamina shake translation cleanly resets to 0.0"),
+				ShakeWidget->GetTestStaminaTranslationY(), 0.0f);
+
+			// Direct PlayStaminaRejectionShake() invocation (e.g. for action blocked by low stamina)
+			ShakeWidget->PlayStaminaRejectionShake();
+			TestTrue(TEXT("Direct PlayStaminaRejectionShake arms timer"), ShakeWidget->GetTestStaminaShakeTimer() > 0.0f);
+		}
+
+		// 1.8 EnemyHealthBarWidget Hit Micro-Shake Assertions
+		{
+			UEnemyHealthBarWidget* EnemyShakeWidget = NewObject<UEnemyHealthBarWidget>(GetTransientPackage());
+			UProgressBar* HPBar = NewObject<UProgressBar>(EnemyShakeWidget);
+			UWidget* HPOverlay = NewObject<UProgressBar>(EnemyShakeWidget);
+
+			EnemyShakeWidget->SetTestHealthProgressBar(HPBar);
+			EnemyShakeWidget->SetTestHealthBarOverlay(HPOverlay);
+
+			// Initial state: timer is zero, translation is zero
+			TestEqual(TEXT("Initial Enemy HitShakeTimer is 0.0"), EnemyShakeWidget->GetTestHitShakeTimer(), 0.0f);
+			TestEqual(TEXT("Initial Enemy Health translation Y is 0.0"), EnemyShakeWidget->GetTestHealthTranslationY(), 0.0f);
+
+			// Initial SetHealth (spawn/init) does not trigger hit shake
+			EnemyShakeWidget->SetHealth(100.0f, 100.0f);
+			TestEqual(TEXT("Initial SetHealth does not trigger HitShakeTimer"), EnemyShakeWidget->GetTestHitShakeTimer(), 0.0f);
+
+			// Damage triggers Hit Shake: 100 -> 70
+			EnemyShakeWidget->SetHealth(70.0f, 100.0f);
+			TestTrue(TEXT("Enemy damage triggers HitShakeTimer > 0"), EnemyShakeWidget->GetTestHitShakeTimer() > 0.0f);
+
+			// Advance 1 frame (~0.016s)
+			EnemyShakeWidget->SimulateTickForTesting(0.016f);
+			TestTrue(TEXT("Active enemy hit shake produces non-zero Y translation"), EnemyShakeWidget->GetTestHealthTranslationY() != 0.0f);
+			TestTrue(TEXT("Enemy shake displacement does not exceed max 3.0px"),
+				FMath::Abs(EnemyShakeWidget->GetTestHealthTranslationY()) <= 3.0f);
+
+			// Advance beyond shake duration (0.12s + 0.05s)
+			EnemyShakeWidget->SimulateTickForTesting(0.15f);
+			TestEqual(TEXT("Enemy shake timer expires to 0.0"), EnemyShakeWidget->GetTestHitShakeTimer(), 0.0f);
+			TestEqual(TEXT("Enemy shake translation cleanly resets to 0.0 (no residual drift)"),
+				EnemyShakeWidget->GetTestHealthTranslationY(), 0.0f);
+
+			// Healing (70 -> 100) does NOT trigger hit shake
+			EnemyShakeWidget->SetHealth(100.0f, 100.0f);
+			TestEqual(TEXT("Enemy healing does not trigger hit shake"), EnemyShakeWidget->GetTestHitShakeTimer(), 0.0f);
+
+			// Direct PlayHitShake invocation
+			EnemyShakeWidget->PlayHitShake();
+			TestTrue(TEXT("Direct PlayHitShake arms timer"), EnemyShakeWidget->GetTestHitShakeTimer() > 0.0f);
+		}
 	}
 
 	// -------------------------------------------------------------------------
@@ -510,6 +616,10 @@ bool FVitalHudAutomationTest::RunTest(const FString&)
 				TestEqual(TEXT("New Pawn 2 change updates HUD Health percent to 0.45"), HUD_HPBar->GetPercent(), 0.45f);
 				TestEqual(TEXT("New Pawn 2 change updates HUD Health current text to '45'"), HUD_HPCurr->GetText().ToString(), TEXT("45"));
 			}
+
+			// Stamina action rejection forwarded through Controller to HUD
+			PC->NotifyStaminaActionRejected();
+			TestTrue(TEXT("PC NotifyStaminaActionRejected triggers HUD stamina shake timer"), HUDInstance2->GetTestStaminaShakeTimer() > 0.0f);
 
 			// Unbind and verify clean state
 			PC->TriggerTestUnbindCurrentPawn();
