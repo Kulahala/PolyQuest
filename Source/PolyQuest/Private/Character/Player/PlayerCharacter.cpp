@@ -28,6 +28,9 @@
 #include "DrawDebugHelpers.h"
 #include "Kismet/GameplayStatics.h"
 #include "TimerManager.h"
+#include "Materials/MaterialParameterCollection.h"
+#include "Kismet/KismetMaterialLibrary.h"
+#include "UObject/ConstructorHelpers.h"
 
 #include "AbilitySystem/Abilities/PlayerGuardAbility.h"
 #include "AbilitySystem/Abilities/PlayerParryAbility.h"
@@ -112,6 +115,7 @@ APlayerCharacter::APlayerCharacter()
 	CameraBoom->bUseCameraLagSubstepping = true;
 	CameraBoom->CameraLagMaxTimeStep = 1.0f / 60.0f;
 	CameraBoom->bEnableCameraRotationLag = false;
+	CameraBoom->bDoCollisionTest = false;
 
 	FollowCamera = CreateDefaultSubobject<UCameraComponent>(TEXT("FollowCamera"));
 	FollowCamera->SetupAttachment(CameraBoom, USpringArmComponent::SocketName);
@@ -122,11 +126,26 @@ APlayerCharacter::APlayerCharacter()
 	MotionWarpingComponent = CreateDefaultSubobject<UMotionWarpingComponent>(TEXT("MotionWarpingComponent"));
 	MotionWarpingComponent->bSearchForWindowsInAnimsWithinMontages = false;
 	WeaponEquipment = CreateDefaultSubobject<UWeaponEquipmentComponent>(TEXT("WeaponEquipment"));
+
+	static ConstructorHelpers::FObjectFinder<UMaterialParameterCollection> PlayerGlobalsMPCObj(TEXT("/Game/_Materials/SeeThrough/MPC_PlayerGlobals.MPC_PlayerGlobals"));
+	if (PlayerGlobalsMPCObj.Succeeded())
+	{
+		PlayerGlobalsMPC = PlayerGlobalsMPCObj.Object;
+	}
 }
 
 void APlayerCharacter::BeginPlay()
 {
 	Super::BeginPlay();
+
+	if (PlayerGlobalsMPC)
+	{
+		if (UWorld* World = GetWorld())
+		{
+			UKismetMaterialLibrary::SetScalarParameterValue(World, PlayerGlobalsMPC, FName(TEXT("CeilingRadius")), MaxCeilingRadius);
+		}
+	}
+
 	BindSprintStateEvents();
 	BindHealthEvents();
 	BindExhaustionStateEvents();
@@ -272,6 +291,15 @@ void APlayerCharacter::EndPlay(const EEndPlayReason::Type EndPlayReason)
 	ActiveBowAimRequester = nullptr;
 	bHasValidBowAimDirection = false;
 	LastValidBowAimDirection = FVector::ZeroVector;
+
+	if (PlayerGlobalsMPC)
+	{
+		if (UWorld* World = GetWorld())
+		{
+			UKismetMaterialLibrary::SetScalarParameterValue(World, PlayerGlobalsMPC, FName(TEXT("TunnelRadius")), 0.0f);
+			UKismetMaterialLibrary::SetScalarParameterValue(World, PlayerGlobalsMPC, FName(TEXT("CeilingRadius")), 0.0f);
+		}
+	}
 
 	Super::EndPlay(EndPlayReason);
 }
@@ -1183,6 +1211,7 @@ void APlayerCharacter::ApplyDodgeFacing()
 void APlayerCharacter::Tick(float DeltaSeconds)
 {
 	Super::Tick(DeltaSeconds);
+	UpdateSeeThroughOcclusion(DeltaSeconds);
 
 	if (LockedTarget.IsValid())
 	{
@@ -1792,6 +1821,64 @@ bool APlayerCharacter::CalculateRayPlaneIntersection(
 
 	OutIntersectionPoint = WorldOrigin + WorldDirection * T;
 	return !OutIntersectionPoint.ContainsNaN();
+}
+
+void APlayerCharacter::UpdateSeeThroughOcclusion(float DeltaSeconds)
+{
+	UWorld* World = GetWorld();
+	if (!World || !PlayerGlobalsMPC)
+	{
+		return;
+	}
+
+	const FVector PlayerChestLoc = GetActorLocation() + FVector(0.f, 0.f, SeeThroughChestZOffset);
+
+	FVector CameraLoc = FVector::ZeroVector;
+	if (FollowCamera)
+	{
+		CameraLoc = FollowCamera->GetComponentLocation();
+	}
+	else if (const APlayerController* PC = Cast<APlayerController>(GetController()))
+	{
+		if (const APlayerCameraManager* CamManager = PC->PlayerCameraManager)
+		{
+			CameraLoc = CamManager->GetCameraLocation();
+		}
+	}
+
+	const FVector CameraToChest = PlayerChestLoc - CameraLoc;
+	const float TotalDist = CameraToChest.Size();
+	const FVector TraceDir = TotalDist > KINDA_SMALL_NUMBER ? (CameraToChest / TotalDist) : FVector::ForwardVector;
+	const float SafeOffset = FMath::Min(SeeThroughNearClipOffset, FMath::Max(0.0f, TotalDist - 100.0f));
+	const FVector SweepStartLoc = CameraLoc + TraceDir * SafeOffset;
+
+	FCollisionQueryParams QueryParams(SCENE_QUERY_STAT(SeeThroughOcclusionTrace), false, this);
+	QueryParams.AddIgnoredActor(this);
+	TArray<AActor*> AttachedActors;
+	GetAttachedActors(AttachedActors);
+	QueryParams.AddIgnoredActors(AttachedActors);
+
+	FHitResult HitResult;
+	const FCollisionShape SweepShape = FCollisionShape::MakeSphere(SeeThroughSweepRadius);
+	const bool bHit = World->SweepSingleByChannel(
+		HitResult,
+		SweepStartLoc,
+		PlayerChestLoc,
+		FQuat::Identity,
+		SeeThroughTraceChannel,
+		SweepShape,
+		QueryParams
+	);
+
+	const bool bIsOccluded = bHit && HitResult.GetActor() && (HitResult.GetActor() != this);
+	const float TargetRadius = bIsOccluded ? MaxTunnelRadius : 0.0f;
+	const float ActiveInterpSpeed = bIsOccluded ? TunnelRadiusOpenInterpSpeed : TunnelRadiusCloseInterpSpeed;
+
+	CurrentTunnelRadius = FMath::FInterpTo(CurrentTunnelRadius, TargetRadius, DeltaSeconds, ActiveInterpSpeed);
+
+	UKismetMaterialLibrary::SetVectorParameterValue(World, PlayerGlobalsMPC, FName(TEXT("PlayerPosition")), FLinearColor(PlayerChestLoc));
+	UKismetMaterialLibrary::SetScalarParameterValue(World, PlayerGlobalsMPC, FName(TEXT("TunnelRadius")), CurrentTunnelRadius);
+	UKismetMaterialLibrary::SetScalarParameterValue(World, PlayerGlobalsMPC, FName(TEXT("CeilingRadius")), MaxCeilingRadius);
 }
 
 bool APlayerCharacter::TryCalculateMousePlaneIntersection(FVector& OutIntersectionPoint) const

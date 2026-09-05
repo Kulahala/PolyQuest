@@ -31,6 +31,7 @@ class APlayerCameraManager;
 class APlayerController;
 class USoundBase;
 class UPlayerCombatFeedbackDataAsset;
+class UMaterialParameterCollection;
 enum class EHitReactionTier : uint8;
 struct FGameplayEffectSpec;
 struct FInputActionValue;
@@ -129,6 +130,43 @@ protected:
 	/** Required default weapon equipped once at BeginPlay; missing is a fail-visible configuration error. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Equipment", meta = (AllowPrivateAccess = "true", ToolTip = "玩家 BeginPlay 时默认装备的武器定义资产（MeleeWeaponDefinition）。"))
 	TObjectPtr<UMeleeWeaponDefinition> DefaultEquippedWeapon;
+
+	/** 更新摄像机到角色的视线遮挡状态，并动态驱动 MPC_PlayerGlobals（PlayerPosition 与平滑 TunnelRadius） */
+	void UpdateSeeThroughOcclusion(float DeltaSeconds);
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Rendering|SeeThrough")
+	TObjectPtr<UMaterialParameterCollection> PlayerGlobalsMPC;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Rendering|SeeThrough")
+	float MaxTunnelRadius = 280.0f;
+
+	/** 遮挡发生时透视开孔展开插值速度（默认 20.0f，极速响应视野） */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Rendering|SeeThrough")
+	float TunnelRadiusOpenInterpSpeed = 20.0f;
+
+	/** 遮挡解除时透视孔洞收拢插值速度（默认 6.0f，从容淡出杜绝抽搐） */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Rendering|SeeThrough")
+	float TunnelRadiusCloseInterpSpeed = 6.0f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Rendering|SeeThrough")
+	float SeeThroughChestZOffset = 90.0f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Rendering|SeeThrough")
+	TEnumAsByte<ECollisionChannel> SeeThroughTraceChannel = ECC_Visibility;
+
+	/** 视线遮挡检测扫掠球体半径（模拟角色体宽，默认 25cm） */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Rendering|SeeThrough")
+	float SeeThroughSweepRadius = 25.0f;
+
+	/** 视线扫掠起点前推安全距离（避免误判镜头跟前近景结构，默认 150cm） */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Rendering|SeeThrough")
+	float SeeThroughNearClipOffset = 150.0f;
+
+	/** 天花板大范围消隐半径（默认 1500cm，游戏运行时动态推送到 MPC，保持编辑模式下实体可见便于地编） */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Rendering|SeeThrough")
+	float MaxCeilingRadius = 1500.0f;
+
+	float CurrentTunnelRadius = 0.0f;
 
 public:
 	APlayerCharacter();
