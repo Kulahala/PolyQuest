@@ -947,6 +947,11 @@ bool UWeaponEquipmentComponent::ApplyComposition(APlayerCharacter* PlayerCharact
 		DisplayComponent->SetRelativeLocation(Definition->DisplayLocationOffset);
 		DisplayComponent->SetRelativeRotation(Definition->DisplayRotationOffset);
 		DisplayComponent->SetRelativeScale3D(Definition->DisplayScale);
+		if (OwnerMesh)
+		{
+			DisplayComponent->SetRenderCustomDepth(OwnerMesh->bRenderCustomDepth);
+			DisplayComponent->SetCustomDepthStencilValue(OwnerMesh->CustomDepthStencilValue);
+		}
 		return DisplayComponent;
 	};
 
