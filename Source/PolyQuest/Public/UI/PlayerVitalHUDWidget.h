@@ -64,6 +64,13 @@ public:
 	float GetTestCurrentVignetteAlpha() const;
 	float GetTestLowHealthPulseWeight() const;
 	float GetTestDamageFlashTimer() const;
+	float GetTestBufferDamageFlashTimer() const;
+	FLinearColor GetTestBufferFillColor() const;
+	FLinearColor GetTestHealthBufferBaseColor() const;
+	float GetTestStaminaChargeFlashTimer() const;
+	FLinearColor GetTestStaminaFillColor() const;
+	FLinearColor GetTestStaminaBaseColor() const;
+	float GetTestLastStaminaPercent() const;
 	float GetTestHealthShakeTimer() const;
 	float GetTestStaminaShakeTimer() const;
 	float GetTestHealthTranslationY() const;
@@ -72,8 +79,11 @@ public:
 #endif
 
 protected:
+	virtual void NativeConstruct() override;
 	virtual void NativeTick(const FGeometry& MyGeometry, float InDeltaTime) override;
 	void UpdateBufferHealth(float InDeltaTime);
+	void UpdateBufferDamageFlash(float InDeltaTime);
+	void UpdateStaminaChargeFlash(float InDeltaTime);
 	void UpdateVignette(float InDeltaTime);
 	void UpdateShake(float InDeltaTime);
 	float CalculateShakeOffset(float RemainingTimer) const;
@@ -95,8 +105,28 @@ protected:
 	UPROPERTY(EditDefaultsOnly, Category = "Vital|Buffer", meta = (ClampMin = "0.1"))
 	float BufferCatchUpSpeed = 4.0f;
 
+	/** Base normal color for health buffer bar (dynamically captured from widget if valid, fallback #DDAA00). */
+	UPROPERTY(EditDefaultsOnly, Category = "Vital|Buffer")
+	FLinearColor HealthBufferBaseColor = FLinearColor(0.73f, 0.41f, 0.0f, 1.0f);
+
+	/** Duration in seconds of the white impact crest flash on buffer bar upon taking damage. */
+	UPROPERTY(EditDefaultsOnly, Category = "Vital|Buffer", meta = (ClampMin = "0.01"))
+	float BufferDamageFlashDuration = 0.15f;
+
 	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<UWidget> StaminaBarOverlay;
+
+	/** Base normal color for stamina bar (dynamically captured from widget if valid, fallback #2ECC71). */
+	UPROPERTY(EditDefaultsOnly, Category = "Vital|Stamina")
+	FLinearColor StaminaBaseColor = FLinearColor(0.18f, 0.80f, 0.44f, 1.0f);
+
+	/** Bright fluorescent white-green color for stamina full charge flash. */
+	UPROPERTY(EditDefaultsOnly, Category = "Vital|Stamina")
+	FLinearColor StaminaFullChargeFlashColor = FLinearColor(0.85f, 1.0f, 0.88f, 1.0f);
+
+	/** Duration in seconds of the stamina full charge flash fade-out. */
+	UPROPERTY(EditDefaultsOnly, Category = "Vital|Stamina", meta = (ClampMin = "0.01"))
+	float StaminaFullChargeFlashDuration = 0.20f;
 
 	/** Max vertical displacement in pixels for hit and rejection micro-shake. */
 	UPROPERTY(EditDefaultsOnly, Category = "Vital|Shake", meta = (ClampMin = "0.0"))
@@ -167,6 +197,9 @@ private:
 	float TargetHealthPercent = 0.0f;
 	float CurrentBufferPercent = 0.0f;
 	float BufferDelayTimer = 0.0f;
+	float BufferDamageFlashTimer = 0.0f;
+	float StaminaChargeFlashTimer = 0.0f;
+	float LastStaminaPercent = 1.0f;
 	float LowHealthPulseWeight = 0.0f;
 	float LowHealthPulseTimer = 0.0f;
 	float DamageFlashTimer = 0.0f;
@@ -174,5 +207,8 @@ private:
 	float HealthShakeTimer = 0.0f;
 	float StaminaShakeTimer = 0.0f;
 	bool bIsHealthInitialized = false;
+	bool bIsStaminaInitialized = false;
+	bool bHasCapturedBufferBaseColor = false;
+	bool bHasCapturedStaminaBaseColor = false;
 	bool bWasExhausted = false;
 };

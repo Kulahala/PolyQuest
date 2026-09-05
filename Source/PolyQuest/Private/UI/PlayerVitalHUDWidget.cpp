@@ -8,6 +8,23 @@
 #include "Internationalization/Text.h"
 #include "Math/UnrealMathUtility.h"
 
+void UPlayerVitalHUDWidget::NativeConstruct()
+{
+	Super::NativeConstruct();
+
+	if (HealthBufferProgressBar && !bHasCapturedBufferBaseColor)
+	{
+		HealthBufferBaseColor = HealthBufferProgressBar->GetFillColorAndOpacity();
+		bHasCapturedBufferBaseColor = true;
+	}
+
+	if (StaminaProgressBar && !bHasCapturedStaminaBaseColor)
+	{
+		StaminaBaseColor = StaminaProgressBar->GetFillColorAndOpacity();
+		bHasCapturedStaminaBaseColor = true;
+	}
+}
+
 void UPlayerVitalHUDWidget::SetHealth(float Current, float Max)
 {
 	float DisplayCurrent = 0.0f;
@@ -27,28 +44,46 @@ void UPlayerVitalHUDWidget::SetHealth(float Current, float Max)
 		TargetHealthPercent = DisplayPercent;
 		bIsHealthInitialized = true;
 		BufferDelayTimer = 0.0f;
+		BufferDamageFlashTimer = 0.0f;
 		if (HealthBufferProgressBar)
 		{
+			if (!bHasCapturedBufferBaseColor)
+			{
+				HealthBufferBaseColor = HealthBufferProgressBar->GetFillColorAndOpacity();
+				bHasCapturedBufferBaseColor = true;
+			}
 			HealthBufferProgressBar->SetPercent(CurrentBufferPercent);
 		}
 	}
 	else if (DisplayPercent > TargetHealthPercent)
 	{
-		// Strictly healing: buffer snaps up immediately with current health
+		// Strictly healing: buffer snaps up immediately with current health, cancel damage white flash
 		CurrentBufferPercent = DisplayPercent;
 		TargetHealthPercent = DisplayPercent;
 		BufferDelayTimer = 0.0f;
+		BufferDamageFlashTimer = 0.0f;
 		if (HealthBufferProgressBar)
 		{
 			HealthBufferProgressBar->SetPercent(CurrentBufferPercent);
+			HealthBufferProgressBar->SetFillColorAndOpacity(HealthBufferBaseColor);
 		}
 	}
 	else if (DisplayPercent < TargetHealthPercent)
 	{
-		// Strictly damage: start delay timer before catch-up begins, trigger hit flash and health shake
+		// Strictly damage: start delay timer before catch-up begins, trigger white impact crest and health shake
 		TargetHealthPercent = DisplayPercent;
 		BufferDelayTimer = BufferCatchUpDelay;
 		DamageFlashTimer = DamageFlashDuration;
+		BufferDamageFlashTimer = BufferDamageFlashDuration;
+		if (HealthBufferProgressBar)
+		{
+			if (!bHasCapturedBufferBaseColor)
+			{
+				HealthBufferBaseColor = HealthBufferProgressBar->GetFillColorAndOpacity();
+				bHasCapturedBufferBaseColor = true;
+			}
+			HealthBufferProgressBar->SetFillColorAndOpacity(FLinearColor(2.0f, 2.0f, 2.0f, HealthBufferBaseColor.A));
+		}
 		PlayHealthShake();
 	}
 	// If DisplayPercent == TargetHealthPercent, health did not change (e.g. stamina regen trigger).
@@ -76,6 +111,8 @@ void UPlayerVitalHUDWidget::NativeTick(const FGeometry& MyGeometry, float InDelt
 {
 	Super::NativeTick(MyGeometry, InDeltaTime);
 	UpdateBufferHealth(InDeltaTime);
+	UpdateBufferDamageFlash(InDeltaTime);
+	UpdateStaminaChargeFlash(InDeltaTime);
 	UpdateVignette(InDeltaTime);
 	UpdateShake(InDeltaTime);
 }
@@ -102,6 +139,42 @@ void UPlayerVitalHUDWidget::UpdateBufferHealth(float InDeltaTime)
 	{
 		CurrentBufferPercent = TargetHealthPercent;
 		HealthBufferProgressBar->SetPercent(CurrentBufferPercent);
+	}
+}
+
+void UPlayerVitalHUDWidget::UpdateBufferDamageFlash(float InDeltaTime)
+{
+	if (!HealthBufferProgressBar)
+	{
+		return;
+	}
+
+	if (BufferDamageFlashTimer > 0.0f)
+	{
+		BufferDamageFlashTimer = FMath::Max(0.0f, BufferDamageFlashTimer - InDeltaTime);
+		if (BufferDamageFlashDuration > 0.0f)
+		{
+			// Hold peak white for initial 0.03s (~2 frames at 60fps) before decaying
+			constexpr float PeakHoldDuration = 0.03f;
+			const float DecayDuration = BufferDamageFlashDuration - PeakHoldDuration;
+			const float Elapsed = BufferDamageFlashDuration - BufferDamageFlashTimer;
+
+			float Weight = 1.0f;
+			if (Elapsed > PeakHoldDuration && DecayDuration > 0.0f)
+			{
+				const float DecayRemaining = BufferDamageFlashTimer;
+				const float DecayRatio = FMath::Clamp(DecayRemaining / DecayDuration, 0.0f, 1.0f);
+				Weight = FMath::Square(DecayRatio);
+			}
+
+			const FLinearColor PeakColor = FLinearColor(2.0f, 2.0f, 2.0f, HealthBufferBaseColor.A);
+			const FLinearColor CrestColor = FMath::Lerp(HealthBufferBaseColor, PeakColor, Weight);
+			HealthBufferProgressBar->SetFillColorAndOpacity(CrestColor);
+		}
+		else
+		{
+			HealthBufferProgressBar->SetFillColorAndOpacity(HealthBufferBaseColor);
+		}
 	}
 }
 
@@ -219,6 +292,43 @@ void UPlayerVitalHUDWidget::SetStamina(float Current, float Max)
 		DisplayPercent = FMath::Clamp(DisplayCurrent / DisplayMax, 0.0f, 1.0f);
 	}
 
+	if (StaminaProgressBar && !bHasCapturedStaminaBaseColor)
+	{
+		StaminaBaseColor = StaminaProgressBar->GetFillColorAndOpacity();
+		bHasCapturedStaminaBaseColor = true;
+	}
+
+	if (!bIsStaminaInitialized)
+	{
+		bIsStaminaInitialized = true;
+		LastStaminaPercent = DisplayPercent;
+		StaminaChargeFlashTimer = 0.0f;
+	}
+	else
+	{
+		// Natural recovery reaching full stamina: from < 1.0 to >= 1.0
+		if (LastStaminaPercent < 0.999f && DisplayPercent >= 0.999f)
+		{
+			StaminaChargeFlashTimer = StaminaFullChargeFlashDuration;
+			if (StaminaProgressBar)
+			{
+				FLinearColor FlashColor = StaminaFullChargeFlashColor;
+				FlashColor.A = StaminaBaseColor.A;
+				StaminaProgressBar->SetFillColorAndOpacity(FlashColor);
+			}
+		}
+		else if (DisplayPercent < 0.999f && StaminaChargeFlashTimer > 0.0f)
+		{
+			// Stamina consumed while charge flash is active: cancel flash immediately
+			StaminaChargeFlashTimer = 0.0f;
+			if (StaminaProgressBar)
+			{
+				StaminaProgressBar->SetFillColorAndOpacity(StaminaBaseColor);
+			}
+		}
+		LastStaminaPercent = DisplayPercent;
+	}
+
 	if (StaminaProgressBar)
 	{
 		StaminaProgressBar->SetPercent(DisplayPercent);
@@ -234,6 +344,33 @@ void UPlayerVitalHUDWidget::SetStamina(float Current, float Max)
 	{
 		const int32 RoundedMax = FMath::RoundToInt(DisplayMax);
 		StaminaMaxText->SetText(FText::AsNumber(RoundedMax));
+	}
+}
+
+void UPlayerVitalHUDWidget::UpdateStaminaChargeFlash(float InDeltaTime)
+{
+	if (!StaminaProgressBar)
+	{
+		return;
+	}
+
+	if (StaminaChargeFlashTimer > 0.0f)
+	{
+		StaminaChargeFlashTimer = FMath::Max(0.0f, StaminaChargeFlashTimer - InDeltaTime);
+		if (StaminaFullChargeFlashDuration > 0.0f)
+		{
+			const float Ratio = StaminaChargeFlashTimer / StaminaFullChargeFlashDuration;
+			// Smooth ease-out fade (Ratio^2)
+			const float Weight = FMath::Square(Ratio);
+			FLinearColor TargetFlashColor = StaminaFullChargeFlashColor;
+			TargetFlashColor.A = StaminaBaseColor.A;
+			const FLinearColor CurrentColor = FMath::Lerp(StaminaBaseColor, TargetFlashColor, Weight);
+			StaminaProgressBar->SetFillColorAndOpacity(CurrentColor);
+		}
+		else
+		{
+			StaminaProgressBar->SetFillColorAndOpacity(StaminaBaseColor);
+		}
 	}
 }
 
@@ -414,6 +551,41 @@ float UPlayerVitalHUDWidget::GetTestDamageFlashTimer() const
 	return DamageFlashTimer;
 }
 
+float UPlayerVitalHUDWidget::GetTestBufferDamageFlashTimer() const
+{
+	return BufferDamageFlashTimer;
+}
+
+FLinearColor UPlayerVitalHUDWidget::GetTestBufferFillColor() const
+{
+	return HealthBufferProgressBar ? HealthBufferProgressBar->GetFillColorAndOpacity() : FLinearColor::Transparent;
+}
+
+FLinearColor UPlayerVitalHUDWidget::GetTestHealthBufferBaseColor() const
+{
+	return HealthBufferBaseColor;
+}
+
+float UPlayerVitalHUDWidget::GetTestStaminaChargeFlashTimer() const
+{
+	return StaminaChargeFlashTimer;
+}
+
+FLinearColor UPlayerVitalHUDWidget::GetTestStaminaFillColor() const
+{
+	return StaminaProgressBar ? StaminaProgressBar->GetFillColorAndOpacity() : FLinearColor::Transparent;
+}
+
+FLinearColor UPlayerVitalHUDWidget::GetTestStaminaBaseColor() const
+{
+	return StaminaBaseColor;
+}
+
+float UPlayerVitalHUDWidget::GetTestLastStaminaPercent() const
+{
+	return LastStaminaPercent;
+}
+
 void UPlayerVitalHUDWidget::SetTestHealthBarOverlay(UWidget* InWidget)
 {
 	HealthBarOverlay = InWidget;
@@ -459,6 +631,8 @@ float UPlayerVitalHUDWidget::GetTestStaminaTranslationY() const
 void UPlayerVitalHUDWidget::SimulateTickForTesting(float InDeltaTime)
 {
 	UpdateBufferHealth(InDeltaTime);
+	UpdateBufferDamageFlash(InDeltaTime);
+	UpdateStaminaChargeFlash(InDeltaTime);
 	UpdateVignette(InDeltaTime);
 	UpdateShake(InDeltaTime);
 }

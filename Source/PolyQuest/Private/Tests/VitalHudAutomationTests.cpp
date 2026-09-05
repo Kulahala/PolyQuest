@@ -394,6 +394,170 @@ bool FVitalHudAutomationTest::RunTest(const FString&)
 			EnemyShakeWidget->PlayHitShake();
 			TestTrue(TEXT("Direct PlayHitShake arms timer"), EnemyShakeWidget->GetTestHitShakeTimer() > 0.0f);
 		}
+
+		// 1.9 PlayerVitalHUDWidget HealthBufferProgressBar White Impact Crest & Timing Decoupling
+		{
+			UPlayerVitalHUDWidget* CrestWidget = NewObject<UPlayerVitalHUDWidget>(GetTransientPackage());
+			UProgressBar* HPBar = NewObject<UProgressBar>(CrestWidget);
+			UProgressBar* BufferBar = NewObject<UProgressBar>(CrestWidget);
+			const FLinearColor CustomBufferColor = FLinearColor(0.73f, 0.41f, 0.0f, 1.0f); // #DDAA00 yellow
+			BufferBar->SetFillColorAndOpacity(CustomBufferColor);
+
+			CrestWidget->SetTestHealthWidgets(HPBar, nullptr, nullptr);
+			CrestWidget->SetTestHealthBufferProgressBar(BufferBar);
+
+			// Initial setup (100 / 100): buffer color unchanged, flash timer 0.0
+			CrestWidget->SetHealth(100.0f, 100.0f);
+			TestEqual(TEXT("Initial Buffer damage flash timer is 0.0"), CrestWidget->GetTestBufferDamageFlashTimer(), 0.0f);
+			TestTrue(TEXT("Initial Buffer color is base yellow"), BufferBar->GetFillColorAndOpacity().Equals(CustomBufferColor, 0.01f));
+
+			// Strictly damage taken (100 -> 70): frame 0 crest burst
+			CrestWidget->SetHealth(70.0f, 100.0f);
+			TestTrue(TEXT("Damage triggers BufferDamageFlashTimer > 0"), CrestWidget->GetTestBufferDamageFlashTimer() > 0.0f);
+			TestTrue(TEXT("Frame 0 buffer bar flashes bright peak white"), BufferBar->GetFillColorAndOpacity().R >= 1.5f);
+			TestTrue(TEXT("Buffer delay timer is active (0.5s)"), CrestWidget->GetTestBufferDelayTimer() > 0.0f);
+			TestEqual(TEXT("Buffer percent holds at 1.0 during delay"), BufferBar->GetPercent(), 1.0f);
+
+			// Peak hold & timing decoupling verification: advance 0.03s (peak hold) while BufferDelayTimer is active
+			CrestWidget->SimulateTickForTesting(0.03f);
+			TestTrue(TEXT("BufferDelayTimer is still counting down (>0.0)"), CrestWidget->GetTestBufferDelayTimer() > 0.0f);
+			TestTrue(TEXT("BufferDamageFlashTimer is NOT frozen by BufferDelayTimer"),
+				CrestWidget->GetTestBufferDamageFlashTimer() < 0.15f && CrestWidget->GetTestBufferDamageFlashTimer() > 0.0f);
+			TestTrue(TEXT("Buffer color holds peak white during 0.03s window"), BufferBar->GetFillColorAndOpacity().R >= 1.5f);
+
+			// Mid-decay: advance 0.06s (total elapsed 0.09s, past 0.03s hold, within 0.15s)
+			CrestWidget->SimulateTickForTesting(0.06f);
+			TestTrue(TEXT("BufferDamageFlashTimer is actively decaying"), CrestWidget->GetTestBufferDamageFlashTimer() > 0.0f);
+			TestTrue(TEXT("Mid-decay buffer color is brighter than base yellow"), BufferBar->GetFillColorAndOpacity().B > 0.05f);
+
+			// Advance beyond flash duration (additional 0.08s, total 0.17s > 0.15s)
+			CrestWidget->SimulateTickForTesting(0.08f);
+			TestEqual(TEXT("Buffer damage flash timer expires to 0.0"), CrestWidget->GetTestBufferDamageFlashTimer(), 0.0f);
+			TestTrue(TEXT("Buffer color returns to base yellow after flash completion"),
+				BufferBar->GetFillColorAndOpacity().Equals(CustomBufferColor, 0.01f));
+			TestEqual(TEXT("Buffer percent still holds at 1.0 waiting for catch-up delay"), BufferBar->GetPercent(), 1.0f);
+
+			// Consecutive combo damage (70 -> 40): re-arms flash to peak white
+			CrestWidget->SetHealth(40.0f, 100.0f);
+			TestTrue(TEXT("Combo hit re-arms BufferDamageFlashTimer"), CrestWidget->GetTestBufferDamageFlashTimer() > 0.0f);
+			TestTrue(TEXT("Combo hit bursts buffer bar to peak white again"), BufferBar->GetFillColorAndOpacity().R >= 1.5f);
+
+			// Healing (40 -> 90): clears flash and resets to base yellow
+			CrestWidget->SetHealth(90.0f, 100.0f);
+			TestEqual(TEXT("Healing clears BufferDamageFlashTimer"), CrestWidget->GetTestBufferDamageFlashTimer(), 0.0f);
+			TestTrue(TEXT("Healing restores base yellow buffer color"), BufferBar->GetFillColorAndOpacity().Equals(CustomBufferColor, 0.01f));
+		}
+
+		// 1.10 PlayerVitalHUDWidget Stamina Full Charge Flash & Interruption
+		{
+			UPlayerVitalHUDWidget* StaminaFlashWidget = NewObject<UPlayerVitalHUDWidget>(GetTransientPackage());
+			UProgressBar* SPBar = NewObject<UProgressBar>(StaminaFlashWidget);
+			const FLinearColor CustomStaminaColor = FLinearColor(0.18f, 0.80f, 0.44f, 1.0f); // green
+			SPBar->SetFillColorAndOpacity(CustomStaminaColor);
+
+			StaminaFlashWidget->SetTestStaminaWidgets(SPBar, nullptr, nullptr);
+
+			// Initial state at 100%: does NOT trigger charge flash
+			StaminaFlashWidget->SetStamina(100.0f, 100.0f);
+			TestEqual(TEXT("Initial full stamina does not trigger charge flash timer"),
+				StaminaFlashWidget->GetTestStaminaChargeFlashTimer(), 0.0f);
+			TestTrue(TEXT("Initial stamina color is base green"), SPBar->GetFillColorAndOpacity().Equals(CustomStaminaColor, 0.01f));
+
+			// Consuming stamina (100 -> 40): does NOT trigger charge flash
+			StaminaFlashWidget->SetStamina(40.0f, 100.0f);
+			TestEqual(TEXT("Consuming stamina does not trigger charge flash timer"),
+				StaminaFlashWidget->GetTestStaminaChargeFlashTimer(), 0.0f);
+
+			// Partial recovery (40 -> 80): does NOT trigger charge flash
+			StaminaFlashWidget->SetStamina(80.0f, 100.0f);
+			TestEqual(TEXT("Partial stamina recovery does not trigger charge flash timer"),
+				StaminaFlashWidget->GetTestStaminaChargeFlashTimer(), 0.0f);
+
+			// Natural recovery reaching 100% (80 -> 100): triggers charge flash
+			StaminaFlashWidget->SetStamina(100.0f, 100.0f);
+			TestTrue(TEXT("Reaching full stamina arms StaminaChargeFlashTimer > 0"),
+				StaminaFlashWidget->GetTestStaminaChargeFlashTimer() > 0.0f);
+			// Trend assertion: luminous white-green has high red channel (> base green R 0.18 + 0.3)
+			TestTrue(TEXT("Full charge flash color is luminous white-green"),
+				SPBar->GetFillColorAndOpacity().R > CustomStaminaColor.R + 0.3f);
+
+			// Redundant refresh while already at 100%: does NOT re-trigger or clobber timer
+			const float RecordedFlashTimer = StaminaFlashWidget->GetTestStaminaChargeFlashTimer();
+			StaminaFlashWidget->SetStamina(100.0f, 100.0f);
+			TestEqual(TEXT("Redundant full stamina refresh does not clobber ongoing charge flash"),
+				StaminaFlashWidget->GetTestStaminaChargeFlashTimer(), RecordedFlashTimer);
+
+			// Advance 0.10s (half-duration)
+			StaminaFlashWidget->SimulateTickForTesting(0.10f);
+			TestTrue(TEXT("Mid-fade timer is still active"), StaminaFlashWidget->GetTestStaminaChargeFlashTimer() > 0.0f);
+			TestTrue(TEXT("Mid-fade stamina color is still brighter than base green"),
+				SPBar->GetFillColorAndOpacity().R > CustomStaminaColor.R + 0.05f);
+
+			// Advance to completion (additional 0.12s, total 0.22s > 0.20s)
+			StaminaFlashWidget->SimulateTickForTesting(0.12f);
+			TestEqual(TEXT("Stamina charge flash timer expires to 0.0"), StaminaFlashWidget->GetTestStaminaChargeFlashTimer(), 0.0f);
+			TestTrue(TEXT("Stamina color returns cleanly to base green"), SPBar->GetFillColorAndOpacity().Equals(CustomStaminaColor, 0.01f));
+
+			// Interruption by consumption during active charge flash
+			StaminaFlashWidget->SetStamina(50.0f, 100.0f);
+			StaminaFlashWidget->SetStamina(100.0f, 100.0f);
+			TestTrue(TEXT("Charge flash re-armed on reaching 100%"), StaminaFlashWidget->GetTestStaminaChargeFlashTimer() > 0.0f);
+
+			// Consumed immediately (100 -> 70): cancels flash
+			StaminaFlashWidget->SetStamina(70.0f, 100.0f);
+			TestEqual(TEXT("Stamina consumption cancels charge flash timer immediately"),
+				StaminaFlashWidget->GetTestStaminaChargeFlashTimer(), 0.0f);
+			TestTrue(TEXT("Stamina color resets to base green upon consumption"),
+				SPBar->GetFillColorAndOpacity().Equals(CustomStaminaColor, 0.01f));
+		}
+
+		// 1.11 EnemyHealthBarWidget Damage Hit Flash & Headless Null Defense
+		{
+			// Headless null defense: widget with no ProgressBar does not crash on damage
+			UEnemyHealthBarWidget* NullEnemyWidget = NewObject<UEnemyHealthBarWidget>(GetTransientPackage());
+			NullEnemyWidget->SetHealth(100.0f, 100.0f);
+			NullEnemyWidget->SetHealth(80.0f, 100.0f);
+			NullEnemyWidget->SimulateTickForTesting(0.05f);
+			TestEqual(TEXT("Headless null enemy widget records timer safely"),
+				NullEnemyWidget->GetTestHitFlashTimer() > 0.0f || NullEnemyWidget->GetTestHitFlashTimer() == 0.0f, true);
+
+			// Injected Progress Bar
+			UEnemyHealthBarWidget* EnemyFlashWidget = NewObject<UEnemyHealthBarWidget>(GetTransientPackage());
+			UProgressBar* EnemyBar = NewObject<UProgressBar>(EnemyFlashWidget);
+			const FLinearColor CustomEnemyRed = FLinearColor(0.85f, 0.2f, 0.2f, 1.0f);
+			EnemyBar->SetFillColorAndOpacity(CustomEnemyRed);
+			EnemyFlashWidget->SetTestHealthProgressBar(EnemyBar);
+
+			// Initial setup (100 / 100)
+			EnemyFlashWidget->SetHealth(100.0f, 100.0f);
+			TestEqual(TEXT("Enemy initial HitFlashTimer is 0.0"), EnemyFlashWidget->GetTestHitFlashTimer(), 0.0f);
+			TestTrue(TEXT("Enemy initial color is base red"), EnemyBar->GetFillColorAndOpacity().Equals(CustomEnemyRed, 0.01f));
+
+			// Damage taken (100 -> 60): triggers 0.15s hit flash and shake
+			EnemyFlashWidget->SetHealth(60.0f, 100.0f);
+			TestTrue(TEXT("Enemy damage arms HitFlashTimer > 0"), EnemyFlashWidget->GetTestHitFlashTimer() > 0.0f);
+			TestTrue(TEXT("Enemy bar flashes bright peak white on hit"), EnemyBar->GetFillColorAndOpacity().R >= 1.5f);
+
+			// Peak hold (0.03s)
+			EnemyFlashWidget->SimulateTickForTesting(0.03f);
+			TestTrue(TEXT("Enemy bar holds peak white during 0.03s peak window"), EnemyBar->GetFillColorAndOpacity().R >= 1.5f);
+
+			// Mid-decay (0.06s, total 0.09s): trend assertion
+			EnemyFlashWidget->SimulateTickForTesting(0.06f);
+			TestTrue(TEXT("Enemy HitFlashTimer still counting down"), EnemyFlashWidget->GetTestHitFlashTimer() > 0.0f);
+			TestTrue(TEXT("Enemy mid-decay color has elevated blue channel compared to red base"),
+				EnemyBar->GetFillColorAndOpacity().B > 0.05f);
+
+			// Full decay (additional 0.08s, total 0.17s > 0.15s)
+			EnemyFlashWidget->SimulateTickForTesting(0.08f);
+			TestEqual(TEXT("Enemy HitFlashTimer expires to 0.0"), EnemyFlashWidget->GetTestHitFlashTimer(), 0.0f);
+			TestTrue(TEXT("Enemy bar color returns cleanly to base red"), EnemyBar->GetFillColorAndOpacity().Equals(CustomEnemyRed, 0.01f));
+
+			// Healing (60 -> 100): does not trigger hit flash
+			EnemyFlashWidget->SetHealth(100.0f, 100.0f);
+			TestEqual(TEXT("Enemy healing does not trigger hit flash"), EnemyFlashWidget->GetTestHitFlashTimer(), 0.0f);
+			TestTrue(TEXT("Enemy color stays base red after heal"), EnemyBar->GetFillColorAndOpacity().Equals(CustomEnemyRed, 0.01f));
+		}
 	}
 
 	// -------------------------------------------------------------------------

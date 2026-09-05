@@ -37,13 +37,18 @@ public:
 	void SetTestHealthBarOverlay(UWidget* InWidget);
 	UWidget* GetTestHealthBarOverlay() const;
 	float GetTestHitShakeTimer() const;
+	float GetTestHitFlashTimer() const;
+	FLinearColor GetTestHealthFillColor() const;
+	FLinearColor GetTestHealthBaseColor() const;
 	float GetTestHealthTranslationY() const;
 	void SimulateTickForTesting(float InDeltaTime);
 #endif
 
 protected:
+	virtual void NativeConstruct() override;
 	virtual void NativeTick(const FGeometry& MyGeometry, float InDeltaTime) override;
 	void UpdateShake(float InDeltaTime);
+	void UpdateHitFlash(float InDeltaTime);
 	float CalculateShakeOffset(float RemainingTimer) const;
 
 	UPROPERTY(meta = (BindWidgetOptional))
@@ -54,6 +59,14 @@ protected:
 
 	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<UImage> TargetHighlightImage;
+
+	/** Base normal color for enemy health bar (dynamically captured from widget if valid, fallback #E74C3C). */
+	UPROPERTY(EditDefaultsOnly, Category = "Vital|Color")
+	FLinearColor HealthBaseColor = FLinearColor(0.85f, 0.2f, 0.2f, 1.0f);
+
+	/** Duration in seconds of the white hit flash upon taking damage. */
+	UPROPERTY(EditDefaultsOnly, Category = "Vital|Color", meta = (ClampMin = "0.01"))
+	float HitFlashDuration = 0.15f;
 
 	/** Max vertical displacement in pixels for hit impact micro-shake. */
 	UPROPERTY(EditDefaultsOnly, Category = "Vital|Shake", meta = (ClampMin = "0.0"))
@@ -69,6 +82,8 @@ protected:
 
 private:
 	float HitShakeTimer = 0.0f;
+	float HitFlashTimer = 0.0f;
 	float TargetHealthPercent = 1.0f;
 	bool bIsHealthInitialized = false;
+	bool bHasCapturedHealthBaseColor = false;
 };
