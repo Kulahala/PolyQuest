@@ -27,18 +27,37 @@ public:
 
 #if WITH_DEV_AUTOMATION_TESTS
 	void SetTestHealthWidgets(UProgressBar* InBar, UTextBlock* InCurr, UTextBlock* InMax);
+	void SetTestHealthBufferProgressBar(UProgressBar* InBar);
 	void SetTestStaminaWidgets(UProgressBar* InBar, UTextBlock* InCurr, UTextBlock* InMax);
 	UProgressBar* GetTestHealthProgressBar() const;
+	UProgressBar* GetTestHealthBufferProgressBar() const;
 	UTextBlock* GetTestHealthCurrentText() const;
 	UTextBlock* GetTestHealthMaxText() const;
 	UProgressBar* GetTestStaminaProgressBar() const;
 	UTextBlock* GetTestStaminaCurrentText() const;
 	UTextBlock* GetTestStaminaMaxText() const;
+	float GetTestBufferDelayTimer() const;
+	float GetTestCurrentBufferPercent() const;
+	void SimulateTickForTesting(float InDeltaTime);
 #endif
 
 protected:
+	virtual void NativeTick(const FGeometry& MyGeometry, float InDeltaTime) override;
+	void UpdateBufferHealth(float InDeltaTime);
+
 	UPROPERTY(meta = (BindWidget))
 	TObjectPtr<UProgressBar> HealthProgressBar;
+
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UProgressBar> HealthBufferProgressBar;
+
+	/** Delay in seconds before buffer health starts catching up after damage. */
+	UPROPERTY(EditDefaultsOnly, Category = "Vital|Buffer", meta = (ClampMin = "0.0"))
+	float BufferCatchUpDelay = 0.5f;
+
+	/** Speed of buffer catch up interpolation. */
+	UPROPERTY(EditDefaultsOnly, Category = "Vital|Buffer", meta = (ClampMin = "0.1"))
+	float BufferCatchUpSpeed = 4.0f;
 
 	UPROPERTY(meta = (BindWidget))
 	TObjectPtr<UTextBlock> HealthCurrentText;
@@ -53,5 +72,11 @@ protected:
 	TObjectPtr<UTextBlock> StaminaCurrentText;
 
 	UPROPERTY(meta = (BindWidget))
-TObjectPtr<UTextBlock> StaminaMaxText;
+	TObjectPtr<UTextBlock> StaminaMaxText;
+
+private:
+	float TargetHealthPercent = 0.0f;
+	float CurrentBufferPercent = 0.0f;
+	float BufferDelayTimer = 0.0f;
+	bool bIsHealthInitialized = false;
 };

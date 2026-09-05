@@ -19,6 +19,37 @@ void UPlayerVitalHUDWidget::SetHealth(float Current, float Max)
 		DisplayPercent = FMath::Clamp(DisplayCurrent / DisplayMax, 0.0f, 1.0f);
 	}
 
+	if (!bIsHealthInitialized)
+	{
+		CurrentBufferPercent = DisplayPercent;
+		TargetHealthPercent = DisplayPercent;
+		bIsHealthInitialized = true;
+		BufferDelayTimer = 0.0f;
+		if (HealthBufferProgressBar)
+		{
+			HealthBufferProgressBar->SetPercent(CurrentBufferPercent);
+		}
+	}
+	else if (DisplayPercent > TargetHealthPercent)
+	{
+		// Strictly healing: buffer snaps up immediately with current health
+		CurrentBufferPercent = DisplayPercent;
+		TargetHealthPercent = DisplayPercent;
+		BufferDelayTimer = 0.0f;
+		if (HealthBufferProgressBar)
+		{
+			HealthBufferProgressBar->SetPercent(CurrentBufferPercent);
+		}
+	}
+	else if (DisplayPercent < TargetHealthPercent)
+	{
+		// Strictly damage: start delay timer before catch-up begins
+		TargetHealthPercent = DisplayPercent;
+		BufferDelayTimer = BufferCatchUpDelay;
+	}
+	// If DisplayPercent == TargetHealthPercent, health did not change (e.g. stamina regen trigger).
+	// Preserve ongoing buffer delay and interpolation without any disturbance.
+
 	if (HealthProgressBar)
 	{
 		HealthProgressBar->SetPercent(DisplayPercent);
@@ -34,6 +65,37 @@ void UPlayerVitalHUDWidget::SetHealth(float Current, float Max)
 	{
 		const int32 RoundedMax = FMath::RoundToInt(DisplayMax);
 		HealthMaxText->SetText(FText::AsNumber(RoundedMax));
+	}
+}
+
+void UPlayerVitalHUDWidget::NativeTick(const FGeometry& MyGeometry, float InDeltaTime)
+{
+	Super::NativeTick(MyGeometry, InDeltaTime);
+	UpdateBufferHealth(InDeltaTime);
+}
+
+void UPlayerVitalHUDWidget::UpdateBufferHealth(float InDeltaTime)
+{
+	if (!HealthBufferProgressBar)
+	{
+		return;
+	}
+
+	if (BufferDelayTimer > 0.0f)
+	{
+		BufferDelayTimer -= InDeltaTime;
+		return;
+	}
+
+	if (!FMath::IsNearlyEqual(CurrentBufferPercent, TargetHealthPercent, 0.001f))
+	{
+		CurrentBufferPercent = FMath::FInterpTo(CurrentBufferPercent, TargetHealthPercent, InDeltaTime, BufferCatchUpSpeed);
+		HealthBufferProgressBar->SetPercent(CurrentBufferPercent);
+	}
+	else if (CurrentBufferPercent != TargetHealthPercent)
+	{
+		CurrentBufferPercent = TargetHealthPercent;
+		HealthBufferProgressBar->SetPercent(CurrentBufferPercent);
 	}
 }
 
@@ -111,5 +173,30 @@ UTextBlock* UPlayerVitalHUDWidget::GetTestStaminaCurrentText() const
 UTextBlock* UPlayerVitalHUDWidget::GetTestStaminaMaxText() const
 {
 	return StaminaMaxText;
+}
+
+void UPlayerVitalHUDWidget::SetTestHealthBufferProgressBar(UProgressBar* InBar)
+{
+	HealthBufferProgressBar = InBar;
+}
+
+UProgressBar* UPlayerVitalHUDWidget::GetTestHealthBufferProgressBar() const
+{
+	return HealthBufferProgressBar;
+}
+
+float UPlayerVitalHUDWidget::GetTestBufferDelayTimer() const
+{
+	return BufferDelayTimer;
+}
+
+float UPlayerVitalHUDWidget::GetTestCurrentBufferPercent() const
+{
+	return CurrentBufferPercent;
+}
+
+void UPlayerVitalHUDWidget::SimulateTickForTesting(float InDeltaTime)
+{
+	UpdateBufferHealth(InDeltaTime);
 }
 #endif

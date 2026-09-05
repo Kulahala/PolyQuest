@@ -161,6 +161,45 @@ bool FVitalHudAutomationTest::RunTest(const FString&)
 			EnemyWidget->SetHealth(50.0f, TestInf);
 			TestEqual(TEXT("Enemy Inf max health percent falls back to 0.0"), EnemyHPBar->GetPercent(), 0.0f);
 		}
+
+		// 1.4 PlayerVitalHUDWidget HealthBufferProgressBar Catch-up Assertions
+		{
+			UPlayerVitalHUDWidget* BufferWidget = NewObject<UPlayerVitalHUDWidget>(GetTransientPackage());
+			UProgressBar* HPBar = NewObject<UProgressBar>(BufferWidget);
+			UProgressBar* BufferBar = NewObject<UProgressBar>(BufferWidget);
+			UTextBlock* HPCurr = NewObject<UTextBlock>(BufferWidget);
+			UTextBlock* HPMax = NewObject<UTextBlock>(BufferWidget);
+
+			BufferWidget->SetTestHealthWidgets(HPBar, HPCurr, HPMax);
+			BufferWidget->SetTestHealthBufferProgressBar(BufferBar);
+
+			// Initial state: both bars snap to full
+			BufferWidget->SetHealth(100.0f, 100.0f);
+			TestEqual(TEXT("Initial HP percent is 1.0"), HPBar->GetPercent(), 1.0f);
+			TestEqual(TEXT("Initial Buffer percent is 1.0"), BufferBar->GetPercent(), 1.0f);
+			TestEqual(TEXT("Initial Buffer delay timer is 0.0"), BufferWidget->GetTestBufferDelayTimer(), 0.0f);
+
+			// Damage taken: HP bar drops instantly, buffer bar holds and delay starts
+			BufferWidget->SetHealth(60.0f, 100.0f);
+			TestEqual(TEXT("After damage, HP percent is 0.6"), HPBar->GetPercent(), 0.6f);
+			TestEqual(TEXT("After damage, Buffer percent holds at 1.0"), BufferBar->GetPercent(), 1.0f);
+			TestTrue(TEXT("After damage, Buffer delay timer is active (>0)"), BufferWidget->GetTestBufferDelayTimer() > 0.0f);
+
+			// Redundant refresh with unchanged health (e.g. stamina regen triggered RefreshVitalHUD)
+			BufferWidget->SetHealth(60.0f, 100.0f);
+			TestEqual(TEXT("Redundant unchanged health refresh does not clear Buffer"), BufferBar->GetPercent(), 1.0f);
+			TestTrue(TEXT("Redundant unchanged health refresh preserves delay timer"), BufferWidget->GetTestBufferDelayTimer() > 0.0f);
+
+			// Tick within delay (e.g. 0.2s): buffer should remain at 1.0
+			BufferWidget->SimulateTickForTesting(0.2f);
+			TestEqual(TEXT("During delay, Buffer percent still holds at 1.0"), BufferBar->GetPercent(), 1.0f);
+
+			// Healing received: buffer snaps up immediately with HP
+			BufferWidget->SetHealth(80.0f, 100.0f);
+			TestEqual(TEXT("After healing, HP percent snaps to 0.8"), HPBar->GetPercent(), 0.8f);
+			TestEqual(TEXT("After healing, Buffer percent snaps immediately to 0.8"), BufferBar->GetPercent(), 0.8f);
+			TestEqual(TEXT("After healing, Buffer delay timer is 0.0"), BufferWidget->GetTestBufferDelayTimer(), 0.0f);
+		}
 	}
 
 	// -------------------------------------------------------------------------

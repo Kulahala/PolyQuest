@@ -21,7 +21,8 @@ public class PolyQuest : ModuleRules
 			"GameplayTags",
 			"GameplayTasks",
 			"UMG",
-			"Slate"
+			"Slate",
+			"SlateCore"
 		});
 
 		PrivateDependencyModuleNames.AddRange(new string[] {
