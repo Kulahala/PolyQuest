@@ -82,6 +82,8 @@ PolyQuest has completed its native first-enemy combat loop and weapon/AI combat 
 
 `TODO-05A1-E` completes Execution Impact Feedback v1. After an authorized execution Hit is successfully settled, the Player uses a dedicated Execution Camera Shake and the Enemy dispatches its typed Execution Hit-Stop plus the existing impact sound/blood channels exactly once; ordinary Health feedback is suppressed inside the authorized Hit scope, while the existing damage and Release paths remain unchanged. The user confirmed focused Automation (`PolyQuest.Combat.ExecutionImpactFeedback`) and Scene01 PIE; executor-reported compile/readback evidence remains separately classified, and authored feedback assets remain local `Content/**` WIP.
 
+`TODO-07B9` completes Dungeon Multi-Floor Trigger & Visibility System v1. Spatial `AFloorVolume` instances auto-gather contained actors by bounds and categorize them into structural geometry and interior props. Inactive floors suppress rendering via `SetActorHiddenInGame(true)` while strictly preserving actor/component collisions to prevent upper-tier AI or physics props from dropping through. Structural geometry clips via MPC `FloorCutoffZ` DitherTemporalAA, interior props toggle instantaneously to cut draw calls with zero material overhead, and dual `AFloorTriggerVolume` actors provide staircase hysteresis to eliminate boundary flickering. The user confirmed 4/4 Automation suites and focused PIE.
+
 ## Technology
 
 - Unreal Engine 5.8

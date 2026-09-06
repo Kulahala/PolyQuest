@@ -153,8 +153,9 @@ protected:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Rendering|SeeThrough")
 	float TunnelRadiusCloseInterpSpeed = 6.0f;
 
+	/** 视线扫掠瞄准高度偏移（默认 0.0f，对准角色胶囊体几何中心/肚脐躯干，避免瞄向头顶导致贴墙视野盲区） */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Rendering|SeeThrough")
-	float SeeThroughChestZOffset = 90.0f;
+	float SeeThroughChestZOffset = 0.0f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Rendering|SeeThrough")
 	TEnumAsByte<ECollisionChannel> SeeThroughTraceChannel = ECC_Visibility;

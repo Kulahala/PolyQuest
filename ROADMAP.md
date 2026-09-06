@@ -177,8 +177,10 @@ For older completed stages, validation evidence, and exact historical wording, s
   - Validation requires focused Automation for empty/valid/stale slot bindings and cooldown start/remaining/expiry, user-owned `PolyQuestEditor` compile, curated Editor readback of the named HUD class/slot bindings, and Scene01 PIE for all four slots plus re-equip and cancellation/death teardown. Existing Health/Stamina HUD behavior and the `TODO-03C` enemy route must remain unchanged.
 
 - [ ] TODO-07B: Feedback, Presentation Retune, And Demo Polish v1
-- TODO-07B1/07B1A, TODO-07B2, TODO-07B3, TODO-07B4, TODO-07B5, TODO-07B6, and TODO-07B7 are delivered; `TODO-03I4` has separately removed the legacy Loadout compatibility surface. The post-E baseline deltas are tracked under this umbrella. The umbrella owns focused presentation work, not new combat ownership.
+- TODO-07B1/07B1A, TODO-07B2, TODO-07B3, TODO-07B4, TODO-07B5, TODO-07B6, TODO-07B7, and TODO-07B9 are delivered; `TODO-03I4` has separately removed the legacy Loadout compatibility surface. The post-E baseline deltas are tracked under this umbrella. The umbrella owns focused presentation work, not new combat ownership.
   - Re-author final Montage composition and Notify timing only after the selected animation set is stable. Reuse the proven TODO-02F rate lifecycle; do not add overlapping playback-rate systems or use Motion Warping for locomotion.
+  - `TODO-07B9: Dungeon Multi-Floor Trigger & Visibility System v1` is delivered. Spatial `AFloorVolume` auto-collects contained actors and toggles interior visibility while strictly preserving physics collisions; structural geometry clips via MPC `FloorCutoffZ` DitherTemporalAA; dual `AFloorTriggerVolume` components provide jitter-free floor hysteresis across staircases. Verified via 4 focused Automation suites and Scene01/Demonstration PIE.
+
 
 
 ## Recommendations
@@ -261,7 +263,7 @@ For older completed stages, validation evidence, and exact historical wording, s
 - Dedicated Sprint Loop presentation remains deferred until the selected locomotion set and MoveSpeed cadence are stable; validate foot sliding, Root Motion isolation, and transitions in focused PIE.
 - `REC-CAMERA-SEE-THROUGH-COMBAT-EXPANSION`: 战斗锁定/近身交火开孔半径自适应放大（条件性推荐）。在未来引入大体型 Boss 或多目标近战且实测出现明显视线遮挡盲区时，才按需在锁定状态下平滑扩展 `MaxTunnelRadius`（例如 280cm -> 350cm）；当前单兵近战原型阶段不提前引入全局战斗状态管理器或过度复杂化开孔数学。
 - `REC-ENEMY-AMBUSH-XRAY-GATE`: 敌人遮挡红色轮廓的常态/战斗感知门控（条件性推荐）。为保护伏击（Ambush）与转角杀悬念，非战斗/未察觉状态下敌人的 `bRenderCustomDepth` 应保持为 `false`，杜绝隔墙透视剧透；仅在敌人感知到玩家或受到伤害进入战斗状态（Alert/Combat）后动态激活 `SetRenderCustomDepth(true)`。当项目未来建立统一的常态与战斗状态仲裁机制时再予接入。
-- `REC-CAMERA-THICK-ARCHITECTURE-FADE`: 超厚建筑与大型室内结构的层级/触发淡出（条件性推荐）。在未来地编引入 6 米以上厚墙、实心城堡或多层建筑时，不应单纯依赖 `MF_VisionTunnelFade` 局部挖洞（避免产生深凿矿洞般的内壁剖面感），应采用建筑层级拆分：将遮挡视线的南向大外墙、大屋顶拆为独立 Mesh，复用 `MF_CeilingWideFade` 广域淡出或由入口 `TriggerVolume` 驱动整体半透明淡出；`MF_VisionTunnelFade` 仅用于室内孤立立柱与局域矮墙的精准穿透。
+- `REC-CAMERA-THICK-ARCHITECTURE-FADE`: 超厚建筑与大型室内结构的层级/触发淡出（已由 TODO-07B9 激活并实体化为多层地牢触发与可见性系统）。
 
 ## Stage Completion Standard
 

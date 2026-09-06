@@ -1350,3 +1350,13 @@ TODO-03A3E World Pickup Interaction Prompt v1
 - **Main Fresh Review**：Main 按 `ue-strict-review` 完成两批有界、缺陷优先审查；第一批核对批准 diff/影响范围，第二批定向核对 Resolver scope 时序、Enemy 双分支拦截、三通道 helper、Execution dispatch、Player shake resolver、合成 `ImpactNormal` 和专项 Automation，第二批后硬停止。`code-review-graph` 基线与 `3dff750` 匹配，定向 CodeGraph 只作一跳导航；实际 diff 与批准路径一致，`git diff --check` 通过，未发现 P0/P1/P2 blocker。Gemini 实施自审不计作独立 Main Review。
 - **剩余债务**：D2A/D2B/D2C/D2D 的独立 Main/user compile/readback 收据、`D2A-VERTICAL-SURFACE`、`Debt-05A1-D2C-OwnershipMatrix` 与 `Debt-REC-05A1-03-RET-Teardown` 继续按各自关闭条件保留；E 的 authored feedback profile、音效、血液与 Camera Shake 资产仍是用户-owned WIP，不构成 clean-checkout fixture。当前不新增泛化健康审查 TODO；若后续优先清债，须另立有明确证据和关闭门禁的窄阶段。
 - **提交边界与后续指针**：本阶段提交仅包含上述 10 个 Source/Test 路径及 Main 的 `plan.md`、`ROADMAP.md`、`ROADMAP-archive.md`、`ARCHITECTURE.md`、`README.md`；明确排除 `AGENTS.md`、全部 `Content/**`、用户 Config、Blueprint、AnimBP、Montage、地图和其他 WIP。E 完成后下一执行切片为 `TODO-03C: Ranged Enemy v1`；它与执行表现路线独立，不把本阶段剩余验证债务伪装成硬前置。
+
+## Post-E Presentation Polish Baseline Realignment Closeout (2026-09-06; parent HEAD `9a6f42f`, working-tree snapshot not clean)
+
+> 本节记录 Post-E Presentation Polish 的基线重整与架构文档校准收口。快照基于 parent HEAD `9a6f42f`；工作树包含用户-owned `Content/**`、Config、Blueprint、地图和其他本地 WIP，因此不是干净 HEAD 快照。本节只作历史追溯，不替代当前 Source、配置或 Unreal Editor 资产作为运行时权威。
+
+- **阶段定位与范围**：基线重整与文档收口；梳理 `04a5197..b69dabe` 之间新增的 9 个已提交变更（涉及 18 个 Source/文档路径，约 `+2106/-22`），涵盖视线遮挡透视 C++ 收口、武器 CustomDepth 同步、HUD 重构、耐力耗尽表现、微震与全屏红晕、镜头 FOV Punch 与敌人血条三态渐隐。
+- **架构校准结果**：修正 ARCHITECTURE.md 中的血条字段（`AutoFadeDelay`、`FadeOutDuration`、`TargetHealthPercent`）、FOV Punch 休眠判定（`FMath::IsNearlyZero(CurrentPunchOffset, 0.005f)`）与 Modifier 查找（`FindCameraModifierByClass`），剔除宣传性修辞，保留客观状态与所有权边界。
+- **证据矩阵**：Git 提交历史与 diff 静态核对；`.code-review-graph` 与 `.codegraph` 定向导航；文档一致性通过 `git diff --check`。本阶段未执行编译、Automation 或 PIE 门禁。
+- **保留债务与关闭条件**：`APlayerCharacter::Tick()` 承载透视更新与多个 HUD Widget Tick 的生命周期/性能检查；`CameraBoom->bDoCollisionTest = false` 改变相机碰撞语义的确认；MPC 运行时状态重置证据；`PolyQuest.Build.cs` 与公开 Widget/Camera 签名的编译收据；相关资产在冻结 manifest 后的 Editor readback 与 Scene01 PIE 验证。
+- **提交边界**：已于 `9a6f42f` 完成文档校准提交。
