@@ -5,6 +5,7 @@
 #include "AbilitySystemComponent.h"
 #include "AbilitySystem/CharacterAttributeSet.h"
 #include "Camera/CameraShakeBase.h"
+#include "Camera/CameraModifier_FovPunch.h"
 #include "Character/Enemy/EnemyCharacter.h"
 #include "Character/Player/PlayerCharacter.h"
 #include "Combat/Feedback/CombatFeedbackDataAsset.h"
@@ -1025,6 +1026,125 @@ bool FCombatAttackerImpactCameraShakeAutomationTest::RunTest(const FString& Para
 	FreshEnemy->Destroy();
 	Enemy->Destroy();
 	Controller->Destroy();
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCombatCameraFovPunchAutomationTest, "PolyQuest.Combat.CameraFovPunch", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FCombatCameraFovPunchAutomationTest::RunTest(const FString& Parameters)
+{
+	// 1. Direct UCameraModifier_FovPunch Unit Testing
+	{
+		UCameraModifier_FovPunch* PunchMod = NewObject<UCameraModifier_FovPunch>(GetTransientPackage());
+		TestNotNull(TEXT("UCameraModifier_FovPunch constructed"), PunchMod);
+
+		FMinimalViewInfo ViewInfo;
+		ViewInfo.FOV = 60.0f;
+
+		// Initially idle: ModifyCamera returns false and leaves FOV untouched
+		TestFalse(TEXT("Inactive modifier ModifyCamera returns false"), PunchMod->ModifyCamera(0.016f, ViewInfo));
+		TestEqual(TEXT("Initial FOV unmodified at 60.0"), ViewInfo.FOV, 60.0f);
+		TestEqual(TEXT("Initial punch offset is 0.0"), PunchMod->GetCurrentPunchOffset(), 0.0f);
+		TestFalse(TEXT("Modifier is not active initially"), PunchMod->IsPunchActive());
+
+		// Trigger punch of 1.5 degrees
+		PunchMod->TriggerPunch(1.5f);
+		TestTrue(TEXT("Modifier becomes active on punch"), PunchMod->IsPunchActive());
+		TestEqual(TEXT("Punch offset set to -1.5"), PunchMod->GetCurrentPunchOffset(), -1.5f);
+
+		// Advance 1 frame (0.016s)
+		const float PreFov = ViewInfo.FOV;
+		PunchMod->ModifyCamera(0.016f, ViewInfo);
+		TestTrue(TEXT("Active ModifyCamera reduces FOV below base"), ViewInfo.FOV < PreFov);
+		TestTrue(TEXT("Punch offset recovers towards 0"), PunchMod->GetCurrentPunchOffset() > -1.5f);
+
+		// Multiple punches clamp to MaxPunchDegrees (-3.0f)
+		PunchMod->TriggerPunch(2.0f);
+		PunchMod->TriggerPunch(2.0f);
+		TestTrue(TEXT("Punch offset clamped to -3.0 max"), PunchMod->GetCurrentPunchOffset() >= -PunchMod->GetTestMaxPunchDegrees());
+		TestEqual(TEXT("Punch offset clamped exactly to -3.0"), PunchMod->GetCurrentPunchOffset(), -3.0f);
+
+		// Zero or negative punch is safely ignored
+		PunchMod->TriggerPunch(0.0f);
+		PunchMod->TriggerPunch(-1.0f);
+		TestEqual(TEXT("Invalid punch degrees ignored"), PunchMod->GetCurrentPunchOffset(), -3.0f);
+
+		// Advance time beyond recovery (0.35s > 0.1s recovery)
+		PunchMod->ModifyCamera(0.35f, ViewInfo);
+		TestEqual(TEXT("Punch offset recovers cleanly to 0.0"), PunchMod->GetCurrentPunchOffset(), 0.0f);
+		TestFalse(TEXT("Modifier enters idle after recovery"), PunchMod->IsPunchActive());
+
+		// 2. Base FOV Invariance (No Drift when Aiming/Sprint FOV changes externally)
+		ViewInfo.FOV = 40.0f; // Simulate external Aiming zoom
+		PunchMod->TriggerPunch(1.5f);
+		PunchMod->ModifyCamera(0.0f, ViewInfo); // 0 delta: applies full -1.5 punch
+		TestEqual(TEXT("Punch applies correctly on 40.0 base FOV (38.5)"), ViewInfo.FOV, 38.5f);
+
+		// External zoom cancel mid-punch (Aiming released -> 60.0)
+		ViewInfo.FOV = 60.0f;
+		PunchMod->ModifyCamera(0.35f, ViewInfo); // recover completely
+		TestEqual(TEXT("External FOV change does not suffer accumulated drift"), ViewInfo.FOV, 60.0f);
+		TestEqual(TEXT("Offset cleanly 0.0"), PunchMod->GetCurrentPunchOffset(), 0.0f);
+	}
+
+	// 2. Integration with Player Character and PlayerCameraManager
+	if (GEngine)
+	{
+		FWorldContext& WorldContext = GEngine->CreateNewWorldContext(EWorldType::Game);
+		UWorld* World = UWorld::CreateWorld(EWorldType::Game, false, TEXT("CameraFovPunchTestWorld"));
+		WorldContext.SetCurrentWorld(World);
+		FWorldCleanup Cleanup{ World };
+
+		if (World)
+		{
+			FURL WorldURL;
+			World->InitializeActorsForPlay(WorldURL);
+			World->BeginPlay();
+
+			APlayerCharacter* Player = FCombatAutomationFixture::SpawnPlayer(World, FTransform(FRotator::ZeroRotator, FVector::ZeroVector));
+			APolyQuestPlayerController* Controller = World->SpawnActor<APolyQuestPlayerController>();
+
+			if (Player && Controller)
+			{
+				Controller->DispatchBeginPlay();
+				Controller->SetAsLocalPlayerController();
+				Controller->Possess(Player);
+
+				// Initial state: modifier is not yet created
+				TestNull(TEXT("FovPunchModifier is null before first trigger"), Player->GetTestFovPunchModifier());
+
+				// Trigger punch on locally controlled player
+				Player->TriggerTestCameraFovPunch(1.5f);
+				UCameraModifier_FovPunch* CreatedMod = Player->GetTestFovPunchModifier();
+				TestNotNull(TEXT("FovPunchModifier lazily created on first punch"), CreatedMod);
+				if (CreatedMod)
+				{
+					TestTrue(TEXT("Created modifier is active"), CreatedMod->IsPunchActive());
+					TestEqual(TEXT("Created modifier has -1.5 offset"), CreatedMod->GetCurrentPunchOffset(), -1.5f);
+				}
+
+				// Deduplication: calling trigger again reuses existing modifier without duplicates
+				Player->TriggerTestCameraFovPunch(1.0f);
+				TestEqual(TEXT("Same modifier instance reused"), Player->GetTestFovPunchModifier(), CreatedMod);
+
+				// Verify Controller's PlayerCameraManager has exactly 1 modifier of this class via public API
+				if (Controller->PlayerCameraManager)
+				{
+					UCameraModifier* FoundMod = Controller->PlayerCameraManager->FindCameraModifierByClass(UCameraModifier_FovPunch::StaticClass());
+					TestEqual(TEXT("PlayerCameraManager finds the created modifier"), FoundMod, Cast<UCameraModifier>(CreatedMod));
+
+					// Removing this single instance leaves none in PlayerCameraManager (proving no duplicate was added)
+					Controller->PlayerCameraManager->RemoveCameraModifier(FoundMod);
+					TestNull(TEXT("Removing modifier leaves zero instances in PlayerCameraManager"),
+						Controller->PlayerCameraManager->FindCameraModifierByClass(UCameraModifier_FovPunch::StaticClass()));
+				}
+
+				Player->Destroy();
+				Controller->Destroy();
+			}
+		}
+	}
+
 	return true;
 }
 

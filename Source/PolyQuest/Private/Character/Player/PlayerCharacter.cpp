@@ -8,6 +8,7 @@
 #include "ActiveGameplayEffectHandle.h"
 #include "Camera/CameraComponent.h"
 #include "Camera/CameraShakeBase.h"
+#include "Camera/CameraModifier_FovPunch.h"
 #include "Camera/PlayerCameraManager.h"
 #include "Character/Enemy/EnemyCharacter.h"
 #include "Character/Player/PlayerLockOnTargeting.h"
@@ -620,6 +621,7 @@ bool APlayerCharacter::TryResolveIncomingDefense(
 void APlayerCharacter::TriggerParrySuccessCameraShake()
 {
 	TriggerHitFeedbackCameraShake(EHitReactionTier::Big);
+	TriggerCameraFovPunch(1.8f);
 }
 
 void APlayerCharacter::TriggerAttackerImpactCameraShake(const EHitReactionTier ReactionTier)
@@ -643,6 +645,9 @@ void APlayerCharacter::TriggerAttackerImpactCameraShake(const EHitReactionTier R
 
 	const TSubclassOf<UCameraShakeBase> ResolvedClass = ResolveAttackerImpactCameraShakeClass(ReactionTier);
 	StartHitFeedbackCameraShakeInstance(ResolvedClass);
+
+	const float PunchDegrees = (ReactionTier == EHitReactionTier::Big || ReactionTier == EHitReactionTier::Launch) ? 1.5f : 0.0f;
+	TriggerCameraFovPunch(PunchDegrees);
 }
 
 void APlayerCharacter::TriggerExecutionImpactCameraShake()
@@ -666,6 +671,8 @@ void APlayerCharacter::TriggerExecutionImpactCameraShake()
 
 	const TSubclassOf<UCameraShakeBase> ResolvedClass = ResolveExecutionImpactCameraShakeClass();
 	StartHitFeedbackCameraShakeInstance(ResolvedClass);
+
+	TriggerCameraFovPunch(2.0f);
 }
 
 void APlayerCharacter::NotifyStaminaActionRejected()
@@ -2532,6 +2539,9 @@ void APlayerCharacter::OnHealthAttributeChanged(const FOnAttributeChangeData& Ch
 	const EHitReactionTier ReactionTier = FHitReactionClassifier::ClassifyReactionTier(AssetTags);
 	TriggerHitFeedbackCameraShake(ReactionTier);
 
+	const float PunchDegrees = (ReactionTier == EHitReactionTier::Big || ReactionTier == EHitReactionTier::Launch) ? 1.5f : 0.0f;
+	TriggerCameraFovPunch(PunchDegrees);
+
 	const bool bIsFirstHealthModifierInSpec = (ChangeData.GEModData->EffectSpec.GetModifiedAttribute(UCharacterAttributeSet::GetHealthAttribute()) == nullptr);
 	if (bIsFirstHealthModifierInSpec)
 	{
@@ -2725,6 +2735,35 @@ void APlayerCharacter::ClearActiveHitFeedbackCameraShake()
 	ActiveHitFeedbackCameraManager = nullptr;
 	ActiveHitFeedbackCameraShake = nullptr;
 	ActiveHitFeedbackCameraShakeClass = nullptr;
+}
+
+void APlayerCharacter::TriggerCameraFovPunch(const float PunchDegrees)
+{
+	if (!IsLocallyControlled() || PunchDegrees <= 0.0f)
+	{
+		return;
+	}
+
+	if (!FovPunchModifier.IsValid())
+	{
+		if (APlayerController* PC = Cast<APlayerController>(GetController()))
+		{
+			if (PC->PlayerCameraManager)
+			{
+				UCameraModifier* ExistingMod = PC->PlayerCameraManager->FindCameraModifierByClass(UCameraModifier_FovPunch::StaticClass());
+				if (!ExistingMod)
+				{
+					ExistingMod = PC->PlayerCameraManager->AddNewCameraModifier(UCameraModifier_FovPunch::StaticClass());
+				}
+				FovPunchModifier = Cast<UCameraModifier_FovPunch>(ExistingMod);
+			}
+		}
+	}
+
+	if (FovPunchModifier.IsValid())
+	{
+		FovPunchModifier->TriggerPunch(PunchDegrees);
+	}
 }
 
 void APlayerCharacter::TriggerReceivedHitSound(const FGameplayEffectSpec& EffectSpec)

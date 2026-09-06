@@ -558,6 +558,107 @@ bool FVitalHudAutomationTest::RunTest(const FString&)
 			TestEqual(TEXT("Enemy healing does not trigger hit flash"), EnemyFlashWidget->GetTestHitFlashTimer(), 0.0f);
 			TestTrue(TEXT("Enemy color stays base red after heal"), EnemyBar->GetFillColorAndOpacity().Equals(CustomEnemyRed, 0.01f));
 		}
+
+		// 1.12 EnemyHealthBarWidget Auto-Hide, Keep-Alive, Tri-State Unlock & Smooth Fade-Out
+		{
+			// Headless null defense: widget with no children handles auto-fade safely
+			UEnemyHealthBarWidget* NullEnemyFadeWidget = NewObject<UEnemyHealthBarWidget>(GetTransientPackage());
+			NullEnemyFadeWidget->SetHealth(100.0f, 100.0f);
+			NullEnemyFadeWidget->SetHealth(60.0f, 100.0f);
+			NullEnemyFadeWidget->SimulateTickForTesting(1.0f);
+			TestEqual(TEXT("Headless null enemy widget records opacity safely"), NullEnemyFadeWidget->GetTestRenderOpacity(), 1.0f);
+
+			// Test Instance
+			UEnemyHealthBarWidget* AutoFadeWidget = NewObject<UEnemyHealthBarWidget>(GetTransientPackage());
+			UProgressBar* HPBar = NewObject<UProgressBar>(AutoFadeWidget);
+			AutoFadeWidget->SetTestHealthProgressBar(HPBar);
+
+			// Case A: Initial spawn at full health -> starts hidden (RenderOpacity == 0.0f)
+			AutoFadeWidget->SetHealth(100.0f, 100.0f);
+			TestEqual(TEXT("Enemy bar at full health spawns hidden with 0.0 opacity"),
+				AutoFadeWidget->GetTestRenderOpacity(), 0.0f);
+			TestEqual(TEXT("Enemy bar AutoFadeTimer is initially 0.0"),
+				AutoFadeWidget->GetTestAutoFadeTimer(), 0.0f);
+
+			// Idle gate verification: ticking when fully faded does not alter opacity
+			AutoFadeWidget->SimulateTickForTesting(1.0f);
+			TestEqual(TEXT("Idle gate keeps opacity at 0.0 during tick"),
+				AutoFadeWidget->GetTestRenderOpacity(), 0.0f);
+
+			// Case B: Taking damage (100 -> 70) -> awakens to 1.0 opacity, arms 4.0s keep-alive
+			AutoFadeWidget->SetHealth(70.0f, 100.0f);
+			TestEqual(TEXT("Enemy taking damage sets opacity to 1.0"),
+				AutoFadeWidget->GetTestRenderOpacity(), 1.0f);
+			TestEqual(TEXT("Enemy taking damage arms AutoFadeTimer to 4.0s"),
+				AutoFadeWidget->GetTestAutoFadeTimer(), 4.0f);
+
+			// Advance 2.0s: still in combat keep-alive window
+			AutoFadeWidget->SimulateTickForTesting(2.0f);
+			TestEqual(TEXT("Halfway through keep-alive, opacity stays 1.0"),
+				AutoFadeWidget->GetTestRenderOpacity(), 1.0f);
+			TestTrue(TEXT("AutoFadeTimer decrements correctly"),
+				FMath::IsNearlyEqual(AutoFadeWidget->GetTestAutoFadeTimer(), 2.0f, 0.01f));
+
+			// Additional damage in combat (70 -> 50) resets keep-alive timer back to 4.0s
+			AutoFadeWidget->SetHealth(50.0f, 100.0f);
+			TestEqual(TEXT("Consecutive damage resets AutoFadeTimer to 4.0s"),
+				AutoFadeWidget->GetTestAutoFadeTimer(), 4.0f);
+			TestEqual(TEXT("Opacity remains 1.0 on consecutive damage"),
+				AutoFadeWidget->GetTestRenderOpacity(), 1.0f);
+
+			// Advance 4.0s to expire keep-alive
+			AutoFadeWidget->SimulateTickForTesting(4.0f);
+			TestEqual(TEXT("AutoFadeTimer expires to 0.0"),
+				AutoFadeWidget->GetTestAutoFadeTimer(), 0.0f);
+			TestEqual(TEXT("Opacity is still 1.0 at the exact moment timer expires"),
+				AutoFadeWidget->GetTestRenderOpacity(), 1.0f);
+
+			// Advance 0.25s (halfway through 0.5s fade out): linear interpolation drops opacity
+			AutoFadeWidget->SimulateTickForTesting(0.25f);
+			TestTrue(TEXT("Mid-fade opacity drops below 1.0"),
+				AutoFadeWidget->GetTestRenderOpacity() < 1.0f);
+			TestTrue(TEXT("Mid-fade opacity is above 0.0"),
+				AutoFadeWidget->GetTestRenderOpacity() > 0.0f);
+			TestTrue(TEXT("Mid-fade opacity is approximately 0.5"),
+				FMath::IsNearlyEqual(AutoFadeWidget->GetTestRenderOpacity(), 0.5f, 0.05f));
+
+			// Advance another 0.30s (total 0.55s > 0.5s fade out duration)
+			AutoFadeWidget->SimulateTickForTesting(0.30f);
+			TestEqual(TEXT("Opacity fades completely to 0.0"),
+				AutoFadeWidget->GetTestRenderOpacity(), 0.0f);
+
+			// Case C: Lock-on holds bar visible indefinitely
+			AutoFadeWidget->SetLockOnHighlighted(true);
+			TestEqual(TEXT("Lock-on immediately forces opacity to 1.0"),
+				AutoFadeWidget->GetTestRenderOpacity(), 1.0f);
+			AutoFadeWidget->SimulateTickForTesting(10.0f);
+			TestEqual(TEXT("Lock-on holds bar at 1.0 opacity even after 10s"),
+				AutoFadeWidget->GetTestRenderOpacity(), 1.0f);
+
+			// Case D: Injured enemy unlocked -> retains 4.0s combat keep-alive
+			AutoFadeWidget->SetLockOnHighlighted(false);
+			TestEqual(TEXT("Injured enemy unlocked keeps 4.0s AutoFadeTimer"),
+				AutoFadeWidget->GetTestAutoFadeTimer(), 4.0f);
+			TestEqual(TEXT("Injured enemy remains visible immediately after unlock"),
+				AutoFadeWidget->GetTestRenderOpacity(), 1.0f);
+
+			// Case E: Tri-state - Full-health enemy unlocked -> immediately starts fade out without 4.0s delay!
+			UEnemyHealthBarWidget* FullHpLockWidget = NewObject<UEnemyHealthBarWidget>(GetTransientPackage());
+			FullHpLockWidget->SetHealth(100.0f, 100.0f);
+			FullHpLockWidget->SetLockOnHighlighted(true);
+			TestEqual(TEXT("Full-HP enemy locked on becomes visible"),
+				FullHpLockWidget->GetTestRenderOpacity(), 1.0f);
+
+			// Unlock without ever taking damage
+			FullHpLockWidget->SetLockOnHighlighted(false);
+			TestEqual(TEXT("Tri-state: Full-HP unlock skips 4.0s delay (timer is 0.0)"),
+				FullHpLockWidget->GetTestAutoFadeTimer(), 0.0f);
+
+			// Advancing 0.55s immediately fades it out
+			FullHpLockWidget->SimulateTickForTesting(0.55f);
+			TestEqual(TEXT("Tri-state: Full-HP enemy completely fades to 0.0 quickly"),
+				FullHpLockWidget->GetTestRenderOpacity(), 0.0f);
+		}
 	}
 
 	// -------------------------------------------------------------------------

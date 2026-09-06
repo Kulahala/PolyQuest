@@ -42,6 +42,10 @@ public:
 	FLinearColor GetTestHealthBaseColor() const;
 	float GetTestHealthTranslationY() const;
 	void SimulateTickForTesting(float InDeltaTime);
+	float GetTestRenderOpacity() const { return CurrentRenderOpacity; }
+	float GetTestAutoFadeTimer() const { return AutoFadeTimer; }
+	bool IsTestAutoFadeActive() const { return AutoFadeTimer > 0.0f; }
+	void SetTestAutoFadeEnabled(const bool bEnabled) { bAutoFadeEnabled = bEnabled; }
 #endif
 
 protected:
@@ -49,6 +53,7 @@ protected:
 	virtual void NativeTick(const FGeometry& MyGeometry, float InDeltaTime) override;
 	void UpdateShake(float InDeltaTime);
 	void UpdateHitFlash(float InDeltaTime);
+	void UpdateAutoFade(float InDeltaTime);
 	float CalculateShakeOffset(float RemainingTimer) const;
 
 	UPROPERTY(meta = (BindWidgetOptional))
@@ -80,10 +85,25 @@ protected:
 	UPROPERTY(EditDefaultsOnly, Category = "Vital|Shake", meta = (ClampMin = "1.0"))
 	float ShakeFrequency = 28.0f;
 
+	/** Duration in seconds to keep the health bar fully visible after taking damage or exiting lock-on. */
+	UPROPERTY(EditDefaultsOnly, Category = "Vital|Fade", meta = (ClampMin = "0.0"))
+	float AutoFadeDelay = 4.0f;
+
+	/** Duration in seconds of the linear fade out transition when AutoFadeDelay expires. */
+	UPROPERTY(EditDefaultsOnly, Category = "Vital|Fade", meta = (ClampMin = "0.01"))
+	float FadeOutDuration = 0.5f;
+
+	/** Whether the enemy health bar should automatically hide when out of combat and at full health. */
+	UPROPERTY(EditDefaultsOnly, Category = "Vital|Fade")
+	bool bAutoFadeEnabled = true;
+
 private:
 	float HitShakeTimer = 0.0f;
 	float HitFlashTimer = 0.0f;
+	float AutoFadeTimer = 0.0f;
+	float CurrentRenderOpacity = 0.0f;
 	float TargetHealthPercent = 1.0f;
 	bool bIsHealthInitialized = false;
 	bool bHasCapturedHealthBaseColor = false;
+	bool bIsLockOnHighlighted = false;
 };

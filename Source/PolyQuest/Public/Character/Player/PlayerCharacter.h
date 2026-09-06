@@ -11,6 +11,7 @@
 #include "PlayerCharacter.generated.h"
 
 class UCameraComponent;
+class UCameraModifier_FovPunch;
 class UCameraShakeBase;
 class UGameplayEffect;
 class UInputAction;
@@ -531,6 +532,7 @@ private:
 	TWeakObjectPtr<APlayerCameraManager> ActiveHitFeedbackCameraManager;
 	TWeakObjectPtr<UCameraShakeBase> ActiveHitFeedbackCameraShake;
 	TSubclassOf<UCameraShakeBase> ActiveHitFeedbackCameraShakeClass;
+	TWeakObjectPtr<UCameraModifier_FovPunch> FovPunchModifier;
 
 #if WITH_DEV_AUTOMATION_TESTS
 	int32 TestHitFeedbackCameraShakeStartCount = 0;
@@ -544,6 +546,7 @@ private:
 	void UnbindHealthEvents();
 	void OnHealthAttributeChanged(const FOnAttributeChangeData& ChangeData);
 	void TriggerHitFeedbackCameraShake(EHitReactionTier ReactionTier);
+	void TriggerCameraFovPunch(float PunchDegrees);
 	void TriggerReceivedHitSound(const FGameplayEffectSpec& EffectSpec);
 	TSubclassOf<UCameraShakeBase> ResolveHitFeedbackCameraShakeClass(EHitReactionTier ReactionTier);
 	TSubclassOf<UCameraShakeBase> ResolveAttackerImpactCameraShakeClass(EHitReactionTier ReactionTier);
@@ -584,5 +587,7 @@ public:
 	void TriggerTestHandleCombatInputStarted(const FGameplayTag& InputIntentTag) { HandleCombatInputStarted(InputIntentTag); }
 	void TriggerTestHandleCombatInputEnded(const FGameplayTag& InputIntentTag, bool bWasCanceled = false) { HandleCombatInputEnded(InputIntentTag, bWasCanceled); }
 	void TestUnPossessed() { UnPossessed(); }
+	UCameraModifier_FovPunch* GetTestFovPunchModifier() const { return FovPunchModifier.Get(); }
+	void TriggerTestCameraFovPunch(const float PunchDegrees) { TriggerCameraFovPunch(PunchDegrees); }
 #endif
 };

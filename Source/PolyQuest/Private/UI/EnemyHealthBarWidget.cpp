@@ -14,6 +14,12 @@ void UEnemyHealthBarWidget::NativeConstruct()
 		HealthBaseColor = HealthProgressBar->GetFillColorAndOpacity();
 		bHasCapturedHealthBaseColor = true;
 	}
+
+	if (bAutoFadeEnabled)
+	{
+		CurrentRenderOpacity = 0.0f;
+		SetRenderOpacity(0.0f);
+	}
 }
 
 void UEnemyHealthBarWidget::SetHealth(float Current, float Max)
@@ -37,6 +43,21 @@ void UEnemyHealthBarWidget::SetHealth(float Current, float Max)
 		TargetHealthPercent = DisplayPercent;
 		bIsHealthInitialized = true;
 		HitFlashTimer = 0.0f;
+
+		if (bAutoFadeEnabled)
+		{
+			if (DisplayPercent >= 0.999f && !bIsLockOnHighlighted)
+			{
+				CurrentRenderOpacity = 0.0f;
+				AutoFadeTimer = 0.0f;
+			}
+			else
+			{
+				CurrentRenderOpacity = 1.0f;
+				AutoFadeTimer = AutoFadeDelay;
+			}
+			SetRenderOpacity(CurrentRenderOpacity);
+		}
 	}
 	else if (DisplayPercent < TargetHealthPercent)
 	{
@@ -48,6 +69,13 @@ void UEnemyHealthBarWidget::SetHealth(float Current, float Max)
 			HealthProgressBar->SetFillColorAndOpacity(FLinearColor(2.0f, 2.0f, 2.0f, HealthBaseColor.A));
 		}
 		PlayHitShake();
+
+		if (bAutoFadeEnabled)
+		{
+			AutoFadeTimer = AutoFadeDelay;
+			CurrentRenderOpacity = 1.0f;
+			SetRenderOpacity(1.0f);
+		}
 	}
 	else
 	{
@@ -68,9 +96,32 @@ void UEnemyHealthBarWidget::SetHealth(float Current, float Max)
 
 void UEnemyHealthBarWidget::SetLockOnHighlighted(const bool bHighlighted)
 {
+	bIsLockOnHighlighted = bHighlighted;
 	if (TargetHighlightImage)
 	{
 		TargetHighlightImage->SetVisibility(bHighlighted ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
+	}
+
+	if (bAutoFadeEnabled)
+	{
+		if (bHighlighted)
+		{
+			CurrentRenderOpacity = 1.0f;
+			SetRenderOpacity(1.0f);
+			AutoFadeTimer = AutoFadeDelay;
+		}
+		else
+		{
+			// Tri-state: full-health un-lock immediately fades out without 4.0s delay
+			if (TargetHealthPercent >= 0.999f)
+			{
+				AutoFadeTimer = 0.0f;
+			}
+			else
+			{
+				AutoFadeTimer = AutoFadeDelay;
+			}
+		}
 	}
 }
 
@@ -99,6 +150,54 @@ void UEnemyHealthBarWidget::NativeTick(const FGeometry& MyGeometry, float InDelt
 	Super::NativeTick(MyGeometry, InDeltaTime);
 	UpdateShake(InDeltaTime);
 	UpdateHitFlash(InDeltaTime);
+	UpdateAutoFade(InDeltaTime);
+}
+
+void UEnemyHealthBarWidget::UpdateAutoFade(const float InDeltaTime)
+{
+	if (!bAutoFadeEnabled)
+	{
+		return;
+	}
+
+	// Idle gate: completely invisible, no pending timer, and not locked-on -> instant return
+	if (CurrentRenderOpacity <= 0.0f && AutoFadeTimer <= 0.0f && !bIsLockOnHighlighted)
+	{
+		return;
+	}
+
+	if (bIsLockOnHighlighted)
+	{
+		AutoFadeTimer = AutoFadeDelay;
+		CurrentRenderOpacity = 1.0f;
+		SetRenderOpacity(1.0f);
+		return;
+	}
+
+	if (AutoFadeTimer > 0.0f)
+	{
+		AutoFadeTimer = FMath::Max(0.0f, AutoFadeTimer - InDeltaTime);
+		CurrentRenderOpacity = 1.0f;
+		SetRenderOpacity(1.0f);
+		return;
+	}
+
+	// AutoFadeTimer has expired: smoothly fade out
+	if (FadeOutDuration > 0.0f)
+	{
+		CurrentRenderOpacity = FMath::FInterpConstantTo(CurrentRenderOpacity, 0.0f, InDeltaTime, 1.0f / FadeOutDuration);
+	}
+	else
+	{
+		CurrentRenderOpacity = 0.0f;
+	}
+
+	if (CurrentRenderOpacity <= 0.005f)
+	{
+		CurrentRenderOpacity = 0.0f;
+	}
+
+	SetRenderOpacity(CurrentRenderOpacity);
 }
 
 void UEnemyHealthBarWidget::UpdateShake(const float InDeltaTime)
@@ -212,5 +311,6 @@ void UEnemyHealthBarWidget::SimulateTickForTesting(float InDeltaTime)
 {
 	UpdateShake(InDeltaTime);
 	UpdateHitFlash(InDeltaTime);
+	UpdateAutoFade(InDeltaTime);
 }
 #endif
