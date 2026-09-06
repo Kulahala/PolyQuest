@@ -140,7 +140,9 @@ PolyQuest 是一个以 UE 5.8、C++ 与 GAS 为核心的单机低多边形动作
 
 `TODO-05A1-D2D` 已完成武器作者化处决距离契约：真实 manifest 证实轻剑/重剑的 `ExecutionSnapDistance` 分别为 `140/170 cm`；三项距离现由同一 `UMeleeWeaponDefinition` 作者化，Native helper 负责有限值、闭区间关系与 `250 cm` hard cap，Front/Backstab 在 Commit 前后分别使用 live 值与激活快照。用户已确认 Focused Automation 与 Scene01 PIE；Gemini 的编译、Rider 和资产 readback 保留为执行者证据，作者化资产仍是本地 `Content/**` WIP；随后进入的 `TODO-05A1-E` 已完成。
 
-`TODO-05A1-E` 已完成执行命中反馈收口：授权 `Hit` 在 `NonLethal`/`DeathPending` 成功结算后由 typed Player/Enemy profile 驱动独立 Execution Camera Shake、Execution Hit-Stop 与既有冲击音/血液通道，普通 Health 反馈在授权 scope 内不重复触发；唯一伤害路径、Release 结果和 Ability cleanup 保持不变。用户已确认 `PolyQuest.Combat.ExecutionImpactFeedback` Automation 与 Scene01 PIE；Gemini 的编译、Rider 和反馈 DataAsset readback 仅作为执行者证据记录，作者化反馈资产仍是本地 `Content/**` WIP。下一阶段为独立的 `TODO-03C`。
+`TODO-05A1-E` 已完成执行命中反馈收口：授权 `Hit` 在 `NonLethal`/`DeathPending` 成功结算后由 typed Player/Enemy profile 驱动独立 Execution Camera Shake、Execution Hit-Stop 与既有冲击音/血液通道，普通 Health 反馈在授权 scope 内不重复触发；唯一伤害路径、Release 结果和 Ability cleanup 保持不变。用户已确认 `PolyQuest.Combat.ExecutionImpactFeedback` Automation 与 Scene01 PIE；Gemini 的编译、Rider 和反馈 DataAsset readback 仅作为执行者证据记录，作者化反馈资产仍是本地 `Content/**` WIP。下一 player-facing slice 为 `TODO-07A2-A`，`TODO-03C` 保持独立敌人路线。
+
+E 之后的 `b69dabe` 基线包含相机遮挡/MPC、FOV Punch、Player/Enemy/Controller HUD 反馈和武器 CustomDepth 同步等已提交表现改动；这些改动触及运行时 C++ 与公开 Widget/Camera 表面，不能视为纯材质变更。对应的独立编译、Editor readback、生命周期/性能和 Scene01 PIE 证据仍需按 `plan.md` 的关闭条件补齐。
 
 `TODO-07B2` 已完成由精确 Trace Window 生命周期驱动的 Player/Enemy Niagara 近战武器拖尾，既有 Sweep/Resolver 伤害路径不变。用户已确认聚焦 `Scene01` PIE 视觉验收，以及包含 `PolyQuest.Melee.WeaponTrail` 的十三套 Unreal Editor Automation 全部通过；Niagara 资产和 Blueprint 绑定仍是本地 `Content/**` WIP，不作为干净检出的复现证据。
 
