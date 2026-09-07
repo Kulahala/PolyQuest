@@ -2,115 +2,96 @@
 
 Guidance for coding agents working in PolyQuest.
 
-## Operating Style
+## 核心原则与工作风格 (Operating Style)
 
-- Respond in Chinese by default. Give direct conclusions and identify the exact uncertainty when evidence is incomplete.
-- Read the real repository, config, source, assets, and live-editor state before changing behavior or making architectural claims.
-- Preserve user changes. Before editing, state the intended change briefly; ask before destructive, high-risk, irreversible, or scope-expanding work.
-- Prefer the smallest change that satisfies the approved scope. Do not add speculative frameworks, generic systems, migration compatibility paths, or hidden refactors.
-- The main agent owns architecture, accepted plans, validation interpretation, review conclusions, documentation, staging, and commits. A child can implement only a bounded, approved slice and cannot change policy, scope, ownership, or architecture.
+- **中文直给**：默认中文沟通，直接输出技术结论与依据；不确定时明确指出具体不确定点，不敷衍。
+- **事实与权威第一**：真实代码、配置、资产和 Editor 状态高于文档。当文档冲突时：`Source/Assets/Config > ARCHITECTURE.md > plan.md > ROADMAP.md > README.md > AGENTS.md`。
+- **高低危决策分层（防无谓早停）**：
+  - **高危硬红线（High-Stakes，必须先确认）**：修改或删除清单外的 `.uasset`/`.umap`、执行 Git Commit、更改 GAS 核心架构权属（如绕过 ASC）、引入外部库或修改 `.Build.cs`、破坏性文件删除或回滚。
+  - **自主推进区（Low-Stakes，自主闭环）**：在已批准切片文件内，具体的 C++ 算法实现、私有辅助类型抽取、边界测试用例补充，Agent 应自主决策并完成交付，严禁因微小局部细节频繁停机请示。
+  - **澄清阈值**：仅当答案会改变批准范围、运行时契约、资产写入或验收结果时请求用户决策；其余常规细节按现有工程惯例推进。
+- **最小必要改动**：只改必须动的代码，严禁顺手大范围重构、增加单次使用的过度抽象或引入未要求的泛化框架。
 
-## Project And Build
+## 项目与引擎基线 (Project And Build)
 
-- PolyQuest is a Windows UE 5.8 C++ project. The runtime module is `PolyQuest`; use its module name and API macro rather than identifiers copied from the retired `Test` project.
-- **Engine Root & Source**：`D:\UE\UE_5.8`
+- **项目属性**：Windows 平台 UE 5.8 C++ 项目，运行时模块为 `PolyQuest`。单人风格化动作 RPG，GAS（Gameplay Ability System）是战斗运行时的唯一事实来源。
+- **引擎源码基准（权威依据）**：`D:\UE\UE_5.8`
   - 核心源码：`D:\UE\UE_5.8\Engine\Source\Runtime\`
   - GAS 插件源码：`D:\UE\UE_5.8\Engine\Plugins\Runtime\GameplayAbilities\`
-  - 当需确认 UE 5.8 原生虚函数签名、GAS 底层委托时序或宏定义时，直接查阅此处权威 Engine Headers，严禁凭记忆臆造 API。
-- **参考基线项目**：`E:\GameDevelop\Test`（旧版 UE 5.7 FSM 验证项目）。PolyQuest 是单人风格化动作 RPG，只选择性复用旧 Test 项目中已验证的战斗手感与玩家行为契约，底层架构已全面重构为 GAS 与新资产，严禁直接照搬旧项目的 FSM、存档结构或商城内容；GAS 始终是 PolyQuest 运行时唯一的事实来源。
-- PolyQuest originated from the UE 5.8 Third Person C++ template. The generated ThirdPerson and `Variant_Combat` / `Variant_Platforming` / `Variant_SideScrolling` closures are retired; do not reintroduce them as PolyQuest gameplay architecture.
-- `PolyQuest.Build.cs` links `GameplayAbilities`, `GameplayTags`, and `GameplayTasks`. `ABaseCharacter` owns the single-player ASC and `UCharacterAttributeSet`; `Config/Tags/PolyQuestGameplayTags.ini` owns the project's Gameplay Tag taxonomy.
-- The player combat foundation uses native GAS. Mutable authored GA/GE, Montage, AnimBP, player Blueprint, and input assets remain local authoring WIP by default; do not describe a source/config-only commit as a clean-checkout reproducible fixture or stage those assets without explicit approval of a stable closure.
-- The user owns Editor authoring, manual `PolyQuestEditor` compilation, PIE/visual validation, imported-asset decisions, packaging, and final commit approval unless they explicitly delegate one of those actions. Do not invoke UBT, `Build.bat`, packaging, or Rider build tools without explicit permission.
+  - 查阅原生虚函数签名、GAS 委托时序或宏定义时以该目录为唯一基准，严禁臆造。
+- **参考基线项目**：`E:\GameDevelop\Test`（旧版 UE 5.7 FSM 项目）。仅用于选择性参考战斗手感与玩家行为契约；PolyQuest 底层已全面重构为 GAS，严禁照搬旧项目的 FSM、存档或模板残留。
+- **源码与资产边界**：
+  - C++ 源码位于 `Source/PolyQuest/`，使用 forward declaration，生成的 `.generated.h` 必须置于末尾。
+  - **严禁手动编辑 `.uasset` 或 `.umap`**。二进制资产由用户在 Unreal Editor 中制作；MCP 工具仅限在用户明确授权后进行只读或受控写入，且写后必须做 readback 验证。
+  - `Content/Assets/` 为外部原生资源库，其中的文件非批准阶段严禁批量导入、移动或连入生产蓝图。
+  - 既有或未跟踪的用户 WIP（尤其 `Content/**` 与 Config）默认不属于当前切片；必须保留并排除，不能因其存在回滚、格式化、暂存或归因给本次交付。
+  - 必须使用 Git LFS 管理 `*.uasset` 与 `*.umap`。
+  - 仅在用户批准稳定资产收口时暂存 `.uasset`/`.umap`，并核验暂存内容为 LFS pointer。
 
-```powershell
-# Generate project files: right-click PolyQuest.uproject -> Generate Visual Studio project files
-# Compile manually: build PolyQuestEditor (Development Editor) in Visual Studio 2022
-# Launch editor: open PolyQuest.uproject
-```
+## 工具与 Editor 边界 (Tooling And Editor Boundaries)
 
-## Evidence, Scope, And Content Boundaries
+- 准备查询或操作 live Unreal Editor 时先应用 `unreal-mcp`；选定 Skill 或工具路线不构成写入授权。任何 Editor/资产写入仍须用户明确授权，保持单一写入者，写前聚焦读取、写后 readback。
+- VibeUE 是同一 Editor endpoint 的可选扩展，不是第二个服务器或写入者；仅在发现确认其 Toolset 存在且能实质减少当前操作时使用。
+- CodeGraph 用于有界 C++ 源码与调用路径导航；`code-review-graph` 仅在索引基线可用时补充变更影响与 Fresh Review。索引缺失、过期或不能覆盖资产/动态路径时，记录 coverage fallback 并回退到聚焦源码或 diff；图谱输出不是运行时证据。
+- Rider MCP 用于 IDE 诊断、重构和离线资产层级查询；live `unreal-mcp` 用于真实 Editor、蓝图图表、关卡与 PIE 交互。不要在普通项目切片中顺手修改全局 Skill；全局 Skill 维护需要单独的用户范围与验证。
 
-- Source, config, `.uproject`, `.Build.cs`, and authored assets are primary truth. When documents disagree, use: source/assets/config > `ARCHITECTURE.md` > `plan.md` > `ROADMAP.md` > `README.md` > `AGENTS.md`.
-- C++ belongs under `Source/PolyQuest/`. Keep engine includes before project includes; use forward declarations where practical; generated headers remain the final include.
-- Never manually patch `.uasset` or `.umap` files. The user authors these assets in Unreal Editor; Main may use the documented MCP route only for an explicit user-authorized live-Editor write and must read back the result.
-- Imported Marketplace/Fab assets are read-only unless the user explicitly authorizes edits. Do not import, delete, reparent, or retarget assets as incidental setup work.
-- `Content/Assets/` is the user-owned external resource reservoir for raw packages and source files. Its presence under `Content/` does not make a package an imported Unreal asset, PolyQuest product asset, or approved production baseline. Do not bulk import, move, duplicate, reparent, retarget, wire it into product Blueprints/AnimBPs/DataAssets, or stage raw resource files without a specific accepted stage and explicit user approval.
-- Generated folders remain untracked: `Binaries/`, `DerivedDataCache/`, `Intermediate/`, `Saved/`, `.vs/`, `.idea/`, solution files, and `.slnx` workspaces. Track `Config/`, `Content/`, `Source/`, `.uproject`, project docs, and project-owned plugins.
-- Git LFS is mandatory for `*.uasset` and `*.umap`. Before committing LFS-routed assets, verify at least one staged asset is an LFS pointer.
-- Formal review and closeout ignore user-owned `Content/*.uasset` changes by default unless the user explicitly asks to inspect or include them.
-- **Authored Asset Migration WIP Boundary：** 对资产迁移、引用清理和 Legacy 退役阶段，既有或未跟踪的 `Content/**` 及其他 authored WIP 默认不属于范围；`git status` 中的数量只是工作树快照，不是批准集合。首次保存前必须冻结明确的 package manifest，只有清单内资产可编辑或暂存；每次保存后若出现清单外路径变化，立即停止并返回 Main。`Saved/Autosaves/**`、未分类候选资产和 imported/read-only 资产默认排除，除非另有明确阶段批准。
-- **Authored Asset Evidence Boundary：** 目录扫描、磁盘字符串搜索、Asset Registry 或图谱结果只能作为候选线索；旧 Notify/Tag 已替换、引用为零或 package 已保存等结论，必须用 Editor readback/Reference Viewer 等对应资产证据逐项证明，不能用状态数量或源码兼容引用替代。
+## 双代理分工与阶段流转 (Stage Workflow & Role Split)
 
-## Stage Workflow And Delegation
+本项目严格采用 **Codex (Main 主控) + Antigravity / Gemini (Executor 执行副手)** 分工架构，通用阶段生命周期由 `ue-stage-workflow` 驱动，审查由 `ue-strict-review` 驱动：
 
-- Use `ue-stage-workflow` as the outer lifecycle for non-trivial UE C++, GAS, Blueprint, source-plus-asset, persistence, AI, combat, or staged documentation work. Local repository rules and an already accepted `plan.md` override generic routing.
-- For a new stage, inspect live project state, resolve material design decisions, write an implementation-ready `plan.md`, implement narrowly, let the user compile/validate, review, synchronize documents, and wait for explicit commit approval.
-- **责任分层：** `ue-stage-workflow` 负责通用阶段生命周期、工具路由和安全门槛；`ue-strict-review` 负责通用的 diff-first、证据短路、生命周期/范围/验证债务审查与 findings-first 输出；本文件负责 PolyQuest 专属的架构、所有权、资产/内容边界、Gemini 执行路线、审查例外和文档规则。两层不合并；本文件只在项目需要收窄或覆盖通用规则时增加项目条款，不得削弱通用安全门槛。
-- **Agent 身份映射与执行路线（PolyQuest）：** 本项目中 **Codex 担任 Main（主控）**，拥有架构决策、计划维护（`plan.md`/`ROADMAP.md`）、终审验收与提交把控所有权；**Antigravity / Gemini 担任 Implementation Executor（执行副手）**，负责具体代码实现、问题排查、技术答疑与代码自查，并在规划阶段可主动提供技术实现建议。两者通过明确的手动 handoff 沟通；分工模式下 Executor 在阶段切片首次完成交付时默认优先派发 1 个无历史污染的干净子代理进行严格实施自审（以消除作者确认偏差，后续微调/Bug修复回路则直接单兵复核），Main 则在验证后执行单轮常规 Fresh Review。
-- **Planning Scope Budget（PolyQuest）：** 沿用 workflow 的规划预算；本项目默认只查看目标功能、受影响符号的一跳直接 callers/callees，以及直接引用的 Tag、Config、测试和资产接口。锁定触发边界、所有权、复用字段、批准路径和验证入口后，立即在同一工作步定稿 `plan.md` 与 Gemini handoff；每次超出一跳的扩展都必须说明新增证据，若最小扩展后仍无法确定则记录风险或用户决策并停机，不得用重复探测替代决策。
-- **Plan 探索预算与落盘刹车：** 规划阶段默认不读取 `ROADMAP-archive.md`；只有当前 `ARCHITECTURE.md`、`ROADMAP.md` 和 `plan.md` 无法解决具体决策，或确实需要历史可追溯性时，才定向读取相关条目并记录原因。测试调查先看注册信息、夹具声明/API 和相似用例的相关区段；除非存在明确的跨测试、生命周期或共享夹具风险，不全量读取大型测试文件。`.codegraph/` 存在且索引有效时，先对明确符号、调用点和一跳关系做定向查询；索引缺失、过期或覆盖不足时，允许使用精确 `rg` 和局部源码读取。触发边界、所有权、直接调用关系、Tag/Config/测试/资产接口、批准路径和验证门禁确定后，立即写入 `plan.md`；剩余不确定性记录为风险或待决策，不用重复搜索代替决策。
-- **Standing stage role split:** Main owns architecture decisions, the accepted `plan.md`, scope changes, frozen runtime contracts, validation interpretation, final fresh review, documentation closeout, roadmap synchronization, staging, and commit preparation. The approved implementation executor (currently Gemini when assigned) writes only the explicit frozen source/test slice named in the accepted handoff and then performs a strict implementation self-review (may dispatch 1 fresh read-only subagent to eliminate author confirmation bias). It does not own contract decisions, scope changes, validation conclusions, documentation, staging, or commits. After accepted validation, Main performs one separate defect-first fresh review; an executor's self-review must not be labeled an independent fresh review. Main performs a strict two-pass/adversarial review or dispatches a Fresh Reviewer only when the user explicitly requests it. The user owns Editor authoring, manual compilation, PIE/visual validation, and final commit approval unless explicitly delegated otherwise.
-- **Documentation ownership:** The Main agent that formulates and owns the accepted stage plan is the sole maintainer of `plan.md`, `ROADMAP.md`, `README.md`, `ARCHITECTURE.md`, and stage closeout records. An executor supplies implementation evidence and may identify drift, but must not edit project documentation unless Main assigns one explicit documentation task after the relevant evidence is available.
-- **Single-file exception:** Main may implement and review a narrowly bounded single-file change directly when it has no public API or cross-module contract change, shared lifecycle/authority impact, architecture decision, asset migration, or broad behavior change (for example, a focused test or documentation repair). File count alone is not sufficient; higher-risk single-file changes still follow the executor route and strict review.
-- **Main narrow-fix exception:** During an approved stage's review or repair loop, Main may directly implement a small, reversible defect fix in already-approved paths, including a fix spanning a small number of files, only when it preserves the accepted public API, ownership, lifecycle/authority ordering, ASC/AttributeSet, Gameplay Tag/Input, Config/asset, module, and player-facing contracts; adds no new authority, architecture, migration, or broad behavior; and can be checked and revalidated within the current stage scope. Main must record the exact paths/functions and reason, run the applicable static and diff checks, re-review the final diff, and obtain the user-owned validation gate before closeout. A P0/P1/P2/P3 label only orders urgency; it does not grant implementation permission. If the fix crosses a contract, ownership boundary, approved path, or user asset/config gate, stop and return it to the executor/scope decision instead of self-authorizing expansion.
-- **Executor handoff requirement:** After Main finishes and accepts a stage plan, Main must provide the assigned executor with a concrete handoff prompt before implementation begins. The prompt must name the absolute repository cwd and baseline, the active `plan.md`, approved source/assets/document paths, selected `ue-stage-workflow` route plus the concrete implementation/support Skills (for example `ue5-cpp-gameplay`, `ue5-blueprint-workflow`, or `ue5-state-tree-ai`), execution order, non-goals, applicable user-owned Editor/readback, compile, Automation, or PIE gates, required evidence, strict self-review boundary, stop conditions, and the explicit prohibition on scope expansion, destructive changes, or committing. For every shared-contract file, name `Contract owner: Main`, `implementation writer: <executor>`, the exact allowed functions, and frozen public API / ASC / Tag / Input invariants. An executor that needs an unlisted file, header/public surface, Tag, Input route, Config/asset change, or lifecycle rule must stop and return evidence for a Main scope decision; it must not work around the gap. Its completion handoff must list changed paths, static checks, unrun user gates, strict self-review findings, and remaining risks. If no executor is assigned, Main records `Implementation executors: 0` in the plan instead.
-- Treat a large feature or migration as a sequence of bounded vertical slices. Split it when it contains multiple player-facing outcomes, independent lifecycle or authority contracts, or separate compile/PIE gates. Each slice must state one primary runtime question, prerequisites, owned files/assets, success criteria, validation gate, and commit boundary. Prefer dependency-ordered slices over file-by-file fragments, and do not start the next slice until the current slice has sufficient evidence. `ROADMAP.md` records the durable sequence; `plan.md` records only the active slice.
-- PolyQuest override: shared ASC, AttributeSet, Ability, Gameplay Tag, input, persistence, action-arbitration, and lifecycle contracts are Main-owned contract and integration-acceptance territory. An executor may write a Main-authorized frozen implementation in a named shared file, but may not independently alter its ownership, public surface, Tags, Input/config contract, lifecycle invariant, or scope; any such need returns to Main.
+1. **角色职责与所有权**：
+   - **Codex (Main)**：拥有架构决策、计划制定（`plan.md`）、里程碑排期（`ROADMAP.md`）、架构总账（`ARCHITECTURE.md`）、终审验收（Fresh Review）、文档归档与 Git 提交全权。
+   - **Gemini (Executor)**：负责已批准切片的具体 C++ / 测试代码实现、编译问题排查、技术答疑与实施自审。在切片首次交付时，优先派发 1 个干净的只读子代理进行严格实施自审以物理隔离作者偏差；后续微调/Bug修复回路直接在当前会话内单兵复核，严禁派发子代理。
+   - **用户**：拥有 Editor 制作、手动编译、PIE/视觉验证以及最终提交批准权。
+2. **例外通行规则**：
+   - **单文件窄改动例外**：对于无公开 API 变动、不影响共享生命周期/权属的窄单文件修复（如单独补写测试），Main 可直接实现并审查。
+   - **Main 狭窄修复例外**：在审查收口回路中，若发现微小已明确缺陷，Main 可直接在已批准路径内做窄行数修复，但不得擅自扩大路径或放宽契约。
+3. **垂直切片（Vertical Slice）原则**：
+   - 大型功能拆解为小步有界的垂直切片，每一片只解决一个核心运行时问题，并具备自包含的验证入口。
 
-## Implementation Ownership
+## 规划探索预算与目标完成态 (Planning & Completion Criteria)
 
-- For an approved PolyQuest stage, Main leads the scoped source/config/documentation work. Explain the runtime problem, ownership/lifecycle boundary, important call path, material tradeoff, and remaining verification only where it improves the current decision, Editor step, validation, or debugging. Detailed source-level/GAS-system decomposition is a separately requested learning pass that defaults to after project completion; user-led practice is limited to an explicitly requested slice.
-- A user request to inspect, review, explain, or teach remains read-only unless it also authorizes a mutation. A user may opt into a focused hands-on exercise for a specific file or system without changing the default implementation ownership for the rest of the stage.
+- **规划探索节食（防 Token 膨胀）**：围绕目标文件、直接依赖及相关 Tag、Config、测试和资产接口收集足够事实；不默认通读历史归档或大型测试。触发边界、所有权、批准路径和验证入口确定后立即落盘 `plan.md`；仅在共享契约、生命周期或资产风险有具体证据时扩展调查。函数调用链或 GAS 契约未被当前源码上下文明确时，优先以 CodeGraph 定向提取目标符号及直接关系，避免通读长篇实现或全库漫游；不可用时记录 coverage fallback 后进行精确源码读取。
+- **Plan 交付完成态标准（Plan Completion Criteria）**：
+  一份合格且可执行的 `plan.md` 必须具备：
+  1. 明确的 Target Objective 与 Deliberate Non-goals；
+  2. 封闭的 Approved Paths 清单（文件与符号级白名单）；
+  3. 冻结的 Runtime Contracts（GAS Tags、ASC 权属、生命周期时序）；
+  4. 明确的 Editor 操作清单与 Readback 要求（若涉及资产）；
+  5. 明确的验证矩阵（编译、Automation、PIE 门禁）；
+  6. 给 Executor 的自包含交付要求（明确不可越权的红线）。
 
-## Planning, Roadmap, And Documentation
+## 实施交付完成态 (Implementation Completion Criteria)
 
-- Read `ARCHITECTURE.md`, `ROADMAP.md`, and the header of `plan.md` before structural or gameplay work.
-- `README.md` is the public overview and evidence-conscious status summary.
-- `ARCHITECTURE.md` records stable, implemented ownership, state/data flow, source-of-truth rules, and durable asset topology. Update it only after the corresponding implementation has passed its relevant validation and review.
-- `ROADMAP.md` owns accepted future milestones, prerequisite order, adoption conditions, and known validation debt. A roadmap item is not permission to implement it.
-- `plan.md` is the current-or-most-recent-stage handoff and the detailed stage-baseline record. It contains the approved scope, source/assets/public contracts, execution order, validation, document impact, commit boundary, active feedback, worktree snapshot, and closeout detail until the next accepted stage replaces it.
-- **Documentation archive boundary:** `ARCHITECTURE.md` is the current stable contract and must not become a chronological TODO changelog. `ROADMAP.md` is the active milestone/dependency view; it records the durable route, open milestones, dependencies, adoption conditions, canonical debt triggers, and a compact pointer to the current/next stage. Detailed stage baselines, worktree snapshots, validation receipts, and closeout detail live in `plan.md`; historical stage closeouts move to the append-only `ROADMAP-archive.md`, which is non-authoritative and must never be used to infer current runtime behavior. A completed milestone may be mentioned only where it adds non-duplicative dependency context. The `Active Milestones` section lists open stages only; a completed stage must not remain there as a full `[x]` implementation/validation block, and may remain only as a short dependency pointer when that context is genuinely needed. Every archive header must state its date and whether it is a HEAD or working-tree snapshot; a snapshot containing pre-existing uncommitted edits must never be described as a clean HEAD snapshot. `plan.md` remains the current-or-most-recent stage record until a newly accepted plan replaces it; preserve the prior closeout in the archive before replacement when the record contains evidence needed for traceability. `README.md` remains the public status summary.
-- Put an accepted future requirement into `ROADMAP.md` by prerequisite and player-loop value. If a new fact materially changes an active plan, pause, explain the changed assumption, update the plan or roadmap deliberately, and obtain approval before proceeding.
-- After approved validation and review, update `ROADMAP.md` only when the route, milestone state, dependency, debt trigger, or compact current/next-stage pointer changes. Do not duplicate a stage's parent baseline, worktree snapshot, or validation receipt there; keep the detailed plan/closeout record in `plan.md` until the next accepted stage deliberately replaces it, then preserve historical evidence in `ROADMAP-archive.md`.
-- Before documentation approval or commit, perform a mandatory debt-handoff check: compare the active plan's review and validation record with `ROADMAP.md`. Every unresolved accepted risk, unpassed validation gate, or approved follow-up must have one canonical Roadmap entry, either under its owning milestone or `Known Risks And Validation Debt`, with current evidence and a concrete closure trigger. Saying only that something is "deferred" is insufficient. `plan.md` may retain a pointer, while `ARCHITECTURE.md` must not hold future TODOs or mutable tuning work.
-- Record a non-blocking risk only when it names the affected boundary, current evidence, player/technical impact, resolution condition, and owning stage or release gate. Blockers are fixed in the current stage; optional ideas remain Recommendations with adoption conditions.
+Executor 交付的代码切片必须达到以下完成态标准：
+1. **边界隔离**：修改路径 100% 封闭在 `plan.md` 的 Approved Paths 内，无清单外文件污染；
+2. **契约保全**：无未经批准的 Tag、Config 引入，不破坏既有类的生命周期与 ASC 权属；
+3. **静态健康**：在 Rider MCP 可用且适用于改动面时，无语法、类型与头文件错误；不可用时记录静态覆盖回退，且始终通过 `git diff --check`；
+4. **测试伴生**：关键执行路径与边界情况具备对应的自动化测试用例覆盖；
+5. **交付自审证明**：附带严格实施自审记录，清晰列出已做静态检查与留给用户的验证门禁；触及 GAS 异步委托或收敛清理路径时，显式核验回调对象/状态有效性、`ReadyForActivation()` 重入边界与单一 `EndAbility()` 清理出口。
 
-## Tooling And Editor Boundaries
+## 文档架构与生命周期 (Documentation Architecture)
 
-- Follow the detailed live-Editor, CodeGraph, code-review-graph, and auxiliary-tool protocols in `ue-stage-workflow`; this file records only PolyQuest-specific boundaries.
-- 只有准备实际调用 live Unreal Editor MCP 查询或操作时，先应用 `unreal-mcp` Skill，再按其连接检查、工具发现和串行调用流程执行；只有用户明确授权后才调用会写入 Editor 状态的工具。
-- **Editor Route Is Not Write Authorization：** 计划中的 `Primary`/`Support` Skill 或 `unreal-mcp` 只描述工具路线，不授予 live Editor 写权限；任何资产或 Editor 状态变更仍必须由用户明确授权，保持单一写入者，并在写入后完成 readback。
-- 优先使用配置的 `unreal-mcp` endpoint。VibeUE 是同一 endpoint 上的可选扩展，不是第二个服务器或写入者；只有常规发现确认存在 `VibeUE.*` Toolset 且它能实质减少多步操作时才使用。任何 Editor 写入前先完成一次聚焦读取；保持单一写入者，写后读回，多资产或难以撤销的操作先建立恢复点。
-- When `.codegraph/` exists and a C++ symbol or call path needs locating, use a targeted CodeGraph query before broad text search. For Fresh Review, follow the diff-first short-circuit above; if the graph is absent or stale, fall back to exact `rg` plus focused source reads and do not create or reindex it as incidental work.
-- When `.code-review-graph/` is available, use it as bounded supplemental change/impact evidence: for shared Source/contract/async/lifecycle changes, the Fresh Review should default to the single file-scoped radar allowed by `ue-strict-review` when the index baseline matches; docs-only or clearly local changes may record `skipped` with a reason. Review from an explicit baseline, keep unrelated WIP out of the query, and do not treat graph scores or labels as findings by themselves. If its built SHA differs from the review baseline, use an already-running daemon's normal update path when available; otherwise label graph output as a stale-coverage fallback and rely on direct diff/source reading rather than treating zero impact as coverage proof.
-- Use Rider MCP for proven IDE-level symbol models, semantic refactorings (`rename_refactoring`), offline Blueprint asset hierarchy and property default queries (`get_class_hierarchy`, `find_default_value_overrides`, `search_tags` without requiring Unreal Editor to be running), and IDE code inspections (`lint_files`, `get_file_problems`). Use live `unreal-mcp` (or its VibeUE extension) for real-time Editor runtime interactions, Blueprint graph editing, level-actor manipulation, and PIE operations. Use CodeGraph for scoped C++ source navigation, code-review-graph for Git-diff impact when needed, Context7 for version-sensitive external APIs, and the globally configured Chrome route for real browser behavior.
+- **`ARCHITECTURE.md`**：记录**当前代码库已验证的稳定事实（Current Truth）**。严禁作为待办或过程日志；仅在功能完成并经过验证和审查后更新。
+- **`ROADMAP.md`**：记录**未来里程碑路线、依赖顺序与已知技术债（Future Route）**。仅列出开放阶段与紧凑指针，不堆放已完成阶段的冗长细节。
+- **`plan.md`**：记录**当前活跃切片的法定交接凭据（Active Slice Handoff）**。新切片启动前需将上一阶段的核心沉淀归档至 `ROADMAP-archive.md`。
+- **`ROADMAP-archive.md`**：历史归档库，仅作为非权威的历史追溯凭证，严禁用于推断当前系统运行时行为。
+- **债务归口检查**：阶段收口前必须核对：每一个未通过门禁或接受的延期风险，必须在 `ROADMAP.md` 中有唯一确凿的记录与闭环触发条件。
 
-## UE Skill 时效与维护
+## GAS 与战斗架构红线 (GAS Guardrails)
 
-- 第三方或本地 UE Skill 只提供流程、解释和候选方案，不是当前 Engine/API、项目源码、配置或 live Editor 状态的权威。
-- 若版本敏感建议与当前项目源码、Engine Headers、官方文档、编译结果或 Editor 读回冲突，以当前事实修正本次任务，并明确记录过时断言、替代证据和受影响 Skill。
-- 不要在项目实现任务中顺手改全局 UE Skill。经用户批准后，单独开展 Skill maintenance：更新受影响 Skill、验证其结构和行为边界，并提交对应的 Skill 源仓库。
+- **GAS 唯一权威**：严禁在 GAS 之外维护平行的动作状态机（如 `EActionState`）。激活、打断、消耗、恢复与状态判定全部由 Ability、Effect、Tag、AttributeSet 与 AbilityTask 承载。
+- **异步与委托安全防护**：
+  - 定时器、AnimNotify、蒙太奇委托、碰撞回调及异步任务回调在修改 Gameplay 状态前，必须严格判空并校验当前状态与宿主对象有效性，防御在死亡、打断或销毁后延迟触发的悬空回调。
+  - 对于调用 `ReadyForActivation()` 的 AbilityTask，将返回点视为同步重入边界；若此时 `EndAbility()` 已触发，严禁还原旧 Task 或激活状态，仅允许在 Ability 仍处于 Active 时执行回滚。
+- **收敛清理路径**：自然完成、被动打断、Notify 提前退出等凡涉及状态恢复的路径，必须统一收敛到单一明确的 `EndAbility()` 或清理出口。
+- **克制扩展**：PolyQuest 当前为单人游戏，严禁为了“以后可能用到”而提前铺设网络复制、回滚机制或多余的抽象框架。
 
-## GAS And Gameplay Guardrails
+## 审查与 Git 规范 (Review & Commit Standards)
 
-- PolyQuest is a GAS learning project. Main-led implementation uses concise, connected explanations only where the current feature's problem, ownership, lifecycle, key call path, data contract, deliberate non-goals, or focused validation affects a decision or the next Editor step. Do not turn implementation into a compulsory file-by-file tutorial or wait for a teaching acknowledgement; reserve systematic high-level-to-detail GAS/source decomposition for an explicit learning request, normally after project completion. After implementation, label MCP/source confirmation as read-only/static evidence and never present it as compile or PIE proof.
-- For small, related implementation types—such as AnimNotify/AnimNotifyState classes, narrow ability helpers, effect adapters, or state/condition helpers—group source files by a coherent feature when several types are expected and the grouping improves findability. Keep every runtime behavior as its own reflected class or type, reuse classes across placements, and do not create a monolithic enum-plus-switch dispatcher. Use the narrowest appropriate base type, such as `UAnimNotifyState` for duration windows. Establish a feature group early when the roadmap already indicates several related types; otherwise avoid a file-only move with no current discoverability benefit.
-- Do not retain `EActionState`-style player action arbitration as a parallel source of truth beside GAS. Map activation, cancellation, cost, status, recovery, and async work deliberately to GameplayAbilities, GameplayEffects, GameplayTags, AttributeSets, and AbilityTasks.
-- When a new technical behavior and asset compatibility are both uncertain, validate it first with a controlled, known-good asset before broader stylized presentation integration. This separates GAS lifecycle failures from asset compatibility failures without reintroducing template content.
-- Keep gameplay authority in native C++/GAS and use Blueprint for authored data and presentation unless a stage explicitly assigns a Blueprint gameplay contract.
-- Timer callbacks, AnimNotifies, montage delegates, collision callbacks, perception callbacks, and async ability completions must check current state and object validity before mutating gameplay. They can fire after cancellation, death, interruption, teardown, or object destruction.
-- For an AbilityTask path that calls `ReadyForActivation()`, treat the return as a synchronous re-entry boundary: check the terminal/ability context and Task UObject validity before reading Task state (`IsActive()`/`IsFinished()`); if `EndAbility()` already ran, do not restore a previous Task or active identity, and only perform rollback while the Ability is still active.
-- Converge natural completion, interruption, Notify, and delegate paths that recover the same gameplay state through one explicit cleanup/EndAbility path. Missing mandatory configuration must warn or fail at the source; intentional fallbacks require a documented removal condition.
-- Do not add multiplayer replication, client authority, rollback, or a generic ability framework beyond GAS merely because it may be useful later. PolyQuest is currently single-player unless the roadmap deliberately changes that product boundary.
-
-## Review, Validation, Static Analysis, And Git
-
-- 详细的 Fresh Review 流程由 `ue-strict-review` 统一维护。普通收口由 Main 对批准范围做一次独立、缺陷优先审查；执行者自查不算独立 review。只有用户明确要求或更高层本地规则明确要求时，才增加对抗性、delta-only 或独立 Reviewer 轮次。若该 skill 不可用，停止收口并报告缺失技能，不以无边界漫游替代。
-- PolyQuest 的 review 必须保留本地所有权边界：Main 负责审查结论、契约闭环、文档和提交；用户负责手动编译、Editor readback、Automation、PIE/视觉验证。图工具按 `ue-strict-review` 的有界路由使用：满足索引与基线条件的共享改动默认在第一批执行一次限定文件范围的影响雷达，具体疑点再做一次定向 CodeGraph；“不作为开场扫描”仅禁止无目标的全库扫描，图工具本身不是结论或运行时证据。
-- Before requesting a user compile for a non-trivial C++ change, perform lightweight static review, `git diff --check`, and run Rider MCP static code inspection (`lint_files` or `get_file_problems`) on touched C++ files to catch syntax, type, header inclusion, and semantic errors before handoff. If Rider MCP reports issues, resolve them immediately before requesting compilation.
-- Do not claim compilation, PIE, visual verification, packaging, or deployment success without actual evidence or explicit user confirmation. Separate tool/static evidence, user-confirmed validation, and remaining gaps.
-- Do not use `git add -A` in a non-clean worktree. Stage only approved paths and wait for validation, review, document checks, and explicit approval before committing.
-- Feature 标题使用 `[Feature] 中文标题 (English Title)`；不要只写英文标题。非微小的 Feature/Chore 提交正文默认使用中文，只有类名、资产路径、模块名、Gameplay Ability System（GAS）等精确技术术语保留英文。
-- 非微小提交从 `## 核心改动` 开始，并按事实按需增加 `## 验证`、`## 复核`、`## 文档更新` 或 `## 范围说明`。每一条说明应以中文描述做了什么、为何重要或明确未包含什么；不要把英文句子、`Core Changes`、`Validation`、`Review`、`Scope` 等章节名当作默认模板。
-- 只记录真实验证：用户确认的编译或 PIE、已执行的静态检查、未能启动的独立 Reviewer 都要如实区分。没有实质信息的章节不创建，也不为了格式补写验证结论。
+- **收口审查（Fresh Review）**：由 Main 依据 `ue-strict-review` 在批准范围内执行缺陷优先审查；该 Skill 负责证据预算与查询顺序。证据足够即直出 Findings（P0~P3 带路径行号），严禁发散漫游。
+- **证据求真**：严禁在未经实际执行或用户确认的情况下声称已编译、已通过 PIE 或已验证。
+- **Git Commit 规范**：
+  - 非干净工作树严禁 `git add -A`，仅暂存批准清单内的改动；
+  - 标题格式：`[Feature/Fix/Docs/Chore] 中文标题 (English Title)`；
+  - 正文以中文为主，从 `## 核心改动` 开始，按需增加 `## 验证`、`## 复核`、`## 范围说明`。清晰列出包含项与刻意排除项。

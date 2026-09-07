@@ -210,10 +210,12 @@ bool UWeaponEquipmentComponent::EquipWeapon(UWeaponDefinition* Definition)
 		}
 
 		UE_LOG(LogPolyQuest, Error, TEXT("Weapon equipment on '%s' failed mid-apply and could not restore a previous composition; the player has no valid melee weapon. This is a fatal configuration error."), *GetNameSafe(GetOwner()));
+		BroadcastPreparedSlotsChanged();
 		return false;
 	}
 
 	bSwapRefusalWarningIssued = false;
+	BroadcastPreparedSlotsChanged();
 	return true;
 }
 
@@ -236,7 +238,7 @@ bool UWeaponEquipmentComponent::TryEquipWorldPickup(AWorldWeaponPickup* SourcePi
 	{
 		if (!bSwapRefusalWarningIssued)
 		{
-			UE_LOG(LogPolyQuest, Warning, TEXT("Weapon equipment on '%s' refused world pickup while a combat action is active."), *GetNameSafe(GetOwner()));
+			UE_LOG(LogPolyQuest, Warning, TEXT("Weapon equipment on '%s' refused a world pickup swap while a combat action is active."), *GetNameSafe(GetOwner()));
 			bSwapRefusalWarningIssued = true;
 		}
 		return false;
@@ -251,11 +253,10 @@ bool UWeaponEquipmentComponent::TryEquipWorldPickup(AWorldWeaponPickup* SourcePi
 		return false;
 	}
 
-	// Same-definition world pickup is a non-consuming no-op rejection.
-	const bool bIsSame = (Incoming->HandSlot == EWeaponHandSlot::OffHand)
-		? (CurrentOffHandWeapon == Incoming)
-		: (CurrentMainHandWeapon == Incoming);
-	if (bIsSame)
+	const bool bSameSlotDefinition = Incoming->HandSlot == EWeaponHandSlot::OffHand
+		? CurrentOffHandWeapon == NewOffHand
+		: CurrentMainHandWeapon == NewMainHand;
+	if (bSameSlotDefinition)
 	{
 		return false;
 	}
@@ -303,6 +304,7 @@ bool UWeaponEquipmentComponent::TryEquipWorldPickup(AWorldWeaponPickup* SourcePi
 		else
 		{
 			UE_LOG(LogPolyQuest, Error, TEXT("Weapon equipment on '%s' failed to apply world pickup composition and failed to restore the old composition; the player has no valid melee weapon. This is a fatal configuration error."), *GetNameSafe(GetOwner()));
+			BroadcastPreparedSlotsChanged();
 		}
 		return false;
 	}
@@ -340,6 +342,7 @@ bool UWeaponEquipmentComponent::TryEquipWorldPickup(AWorldWeaponPickup* SourcePi
 		else
 		{
 			UE_LOG(LogPolyQuest, Error, TEXT("Weapon equipment on '%s' failed to stage displaced drops and failed to restore the old composition; the player has no valid melee weapon. This is a fatal configuration error."), *GetNameSafe(GetOwner()));
+			BroadcastPreparedSlotsChanged();
 		}
 		return false;
 	}
@@ -357,6 +360,7 @@ bool UWeaponEquipmentComponent::TryEquipWorldPickup(AWorldWeaponPickup* SourcePi
 
 	SourcePickup->OnPickupConsumed();
 	SourcePickup->Destroy();
+	BroadcastPreparedSlotsChanged();
 	return true;
 }
 
@@ -570,13 +574,65 @@ bool UWeaponEquipmentComponent::TryActivatePreparedSlot(int32 SlotIndex)
 	}
 
 	const FGameplayAbilitySpec* SlotSpec = CharacterASC->FindAbilitySpecFromHandle(SlotHandle);
-	if (!SlotSpec || SlotSpec->Ability != SlotClass.GetDefaultObject())
+	if (!SlotSpec || !SlotSpec->Ability || SlotSpec->Ability->GetClass() != SlotClass)
 	{
 		UE_LOG(LogPolyQuest, Warning, TEXT("Weapon equipment on '%s' refused prepared slot %d: the granted ability no longer matches the slot's ability class."), *GetNameSafe(GetOwner()), SlotIndex + 1);
 		return false;
 	}
 
 	return CharacterASC->TryActivateAbility(SlotHandle);
+}
+
+bool UWeaponEquipmentComponent::IsPreparedSlotEmpty(const int32 SlotIndex) const
+{
+	if (SlotIndex < 0 || SlotIndex >= PreparedSlotCount ||
+		!PreparedSlotClasses.IsValidIndex(SlotIndex) || !PreparedSlotHandles.IsValidIndex(SlotIndex))
+	{
+		return false;
+	}
+
+	return !PreparedSlotClasses[SlotIndex] && !PreparedSlotHandles[SlotIndex].IsValid();
+}
+
+bool UWeaponEquipmentComponent::TryGetPreparedSlotBinding(int32 SlotIndex, TSubclassOf<UGameplayAbility>& OutClass, FGameplayAbilitySpecHandle& OutHandle) const
+{
+	OutClass = nullptr;
+	OutHandle = FGameplayAbilitySpecHandle();
+
+	if (SlotIndex < 0 || SlotIndex >= PreparedSlotCount)
+	{
+		return false;
+	}
+
+	if (!PreparedSlotClasses.IsValidIndex(SlotIndex) || !PreparedSlotClasses[SlotIndex] ||
+		!PreparedSlotHandles.IsValidIndex(SlotIndex) || !PreparedSlotHandles[SlotIndex].IsValid())
+	{
+		return false;
+	}
+
+	const TSubclassOf<UGameplayAbility> SlotClass = PreparedSlotClasses[SlotIndex];
+	const FGameplayAbilitySpecHandle SlotHandle = PreparedSlotHandles[SlotIndex];
+
+	const UAbilitySystemComponent* CharacterASC = GetOwner() ? GetOwner()->FindComponentByClass<UAbilitySystemComponent>() : nullptr;
+	if (!CharacterASC || !GrantedAbilitySpecHandles.Contains(SlotHandle))
+	{
+		return false;
+	}
+
+	const FGameplayAbilitySpec* SlotSpec = CharacterASC->FindAbilitySpecFromHandle(SlotHandle);
+	if (!SlotSpec || SlotSpec->PendingRemove || !SlotSpec->Ability || SlotSpec->Ability->GetClass() != SlotClass)
+	{
+		return false;
+	}
+
+	OutClass = SlotClass;
+	OutHandle = SlotHandle;
+	return true;
+}
+
+void UWeaponEquipmentComponent::BroadcastPreparedSlotsChanged()
+{
+	PreparedSlotsChangedDelegate.Broadcast();
 }
 
 void UWeaponEquipmentComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)

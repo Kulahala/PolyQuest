@@ -3,11 +3,13 @@
 #include "AbilitySystem/CharacterAttributeSet.h"
 #include "Blueprint/UserWidget.h"
 #include "Character/Player/PlayerCharacter.h"
+#include "Combat/Equipment/WeaponEquipmentComponent.h"
 #include "EnhancedInputSubsystems.h"
 #include "Engine/LocalPlayer.h"
 #include "InputMappingContext.h"
 #include "Kismet/GameplayStatics.h"
 #include "PolyQuest.h"
+#include "UI/PlayerSkillBarHUDWidget.h"
 #include "UI/PlayerVitalHUDWidget.h"
 #include "UI/WorldInteractionPromptWidget.h"
 
@@ -35,6 +37,7 @@ void APolyQuestPlayerController::BeginPlay()
 		SetInputMode(InputMode);
 
 		EnsureHUDCreated();
+		EnsureSkillBarHUDCreated();
 		EnsureInteractionPromptCreated();
 		BindToPawn(GetPawn());
 	}
@@ -53,6 +56,7 @@ void APolyQuestPlayerController::OnPossess(APawn* InPawn)
 	if (IsLocalPlayerController())
 	{
 		EnsureHUDCreated();
+		EnsureSkillBarHUDCreated();
 		EnsureInteractionPromptCreated();
 		BindToPawn(InPawn);
 	}
@@ -75,6 +79,12 @@ void APolyQuestPlayerController::EndPlay(const EEndPlayReason::Type EndPlayReaso
 	{
 		PlayerVitalHUDInstance->RemoveFromParent();
 		PlayerVitalHUDInstance = nullptr;
+	}
+
+	if (SkillBarHUDInstance)
+	{
+		SkillBarHUDInstance->RemoveFromParent();
+		SkillBarHUDInstance = nullptr;
 	}
 
 	if (InteractionPromptInstance)
@@ -167,6 +177,66 @@ void APolyQuestPlayerController::EnsureHUDCreated()
 	{
 		UE_LOG(LogPolyQuest, Warning, TEXT("APolyQuestPlayerController: Failed to create PlayerVitalHUDInstance from class '%s'."), *GetNameSafe(PlayerVitalHUDClass));
 		bHasLoggedMissingHUDClass = true;
+	}
+}
+
+void APolyQuestPlayerController::EnsureSkillBarHUDCreated()
+{
+#if !WITH_DEV_AUTOMATION_TESTS
+	if (!IsLocalPlayerController())
+	{
+		return;
+	}
+#endif
+
+	if (GetNetMode() == NM_DedicatedServer)
+	{
+		return;
+	}
+
+	if (SkillBarHUDInstance)
+	{
+		return;
+	}
+
+	if (!SkillBarHUDClass)
+	{
+		if (!bHasLoggedMissingSkillBarHUDClass)
+		{
+			UE_LOG(LogPolyQuest, Warning, TEXT("APolyQuestPlayerController: SkillBarHUDClass is not configured on '%s'."), *GetNameSafe(this));
+			bHasLoggedMissingSkillBarHUDClass = true;
+		}
+		return;
+	}
+
+	if (IsLocalPlayerController())
+	{
+		SkillBarHUDInstance = CreateWidget<UPlayerSkillBarHUDWidget>(this, SkillBarHUDClass);
+	}
+#if WITH_DEV_AUTOMATION_TESTS
+	else if (GetWorld())
+	{
+		SkillBarHUDInstance = CreateWidget<UPlayerSkillBarHUDWidget>(GetWorld(), SkillBarHUDClass);
+	}
+#endif
+
+	if (SkillBarHUDInstance)
+	{
+		if (IsLocalPlayerController())
+		{
+			SkillBarHUDInstance->AddToViewport(10);
+		}
+
+		if (APlayerCharacter* PlayerChar = BoundPlayerCharacter.Get())
+		{
+			UWeaponEquipmentComponent* EquipComp = PlayerChar->FindComponentByClass<UWeaponEquipmentComponent>();
+			SkillBarHUDInstance->BindToEquipmentAndASC(EquipComp, BoundAbilitySystemComponent.Get());
+		}
+	}
+	else if (!bHasLoggedMissingSkillBarHUDClass)
+	{
+		UE_LOG(LogPolyQuest, Warning, TEXT("APolyQuestPlayerController: Failed to create SkillBarHUDInstance from class '%s'."), *GetNameSafe(SkillBarHUDClass));
+		bHasLoggedMissingSkillBarHUDClass = true;
 	}
 }
 
@@ -292,10 +362,21 @@ void APolyQuestPlayerController::BindToPawn(APawn* InPawn)
 	}
 
 	RefreshVitalHUD();
+
+	if (SkillBarHUDInstance)
+	{
+		UWeaponEquipmentComponent* EquipComp = PlayerChar->FindComponentByClass<UWeaponEquipmentComponent>();
+		SkillBarHUDInstance->BindToEquipmentAndASC(EquipComp, ASC);
+	}
 }
 
 void APolyQuestPlayerController::UnbindCurrentPawn()
 {
+	if (SkillBarHUDInstance)
+	{
+		SkillBarHUDInstance->Unbind();
+	}
+
 	if (UAbilitySystemComponent* BoundASC = BoundAbilitySystemComponent.Get())
 	{
 		if (HealthChangedHandle.IsValid())

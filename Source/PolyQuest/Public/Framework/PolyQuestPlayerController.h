@@ -10,6 +10,7 @@
 class UAbilitySystemComponent;
 class UInputMappingContext;
 class UPlayerVitalHUDWidget;
+class UPlayerSkillBarHUDWidget;
 class UWorldInteractionPromptWidget;
 class APlayerCharacter;
 struct FOnAttributeChangeData;
@@ -61,9 +62,12 @@ public:
 	}
 	bool HasBoundExhaustedTagDelegate() const { return ExhaustedTagChangedHandle.IsValid(); }
 	void TriggerTestEnsureHUDCreated() { EnsureHUDCreated(); }
+	void TriggerTestEnsureSkillBarHUDCreated() { EnsureSkillBarHUDCreated(); }
 	void TriggerTestBindToPawn(APawn* InPawn) { BindToPawn(InPawn); }
 	void TriggerTestUnbindCurrentPawn() { UnbindCurrentPawn(); }
 	void TriggerTestRefreshVitalHUD() { RefreshVitalHUD(); }
+	void SetTestSkillBarHUDClass(TSubclassOf<UPlayerSkillBarHUDWidget> InClass) { SkillBarHUDClass = InClass; }
+	UPlayerSkillBarHUDWidget* GetTestSkillBarHUDInstance() const { return SkillBarHUDInstance; }
 	bool IsTestHitStopActive() const { return bHitStopActive; }
 	float GetTestPreHitStopGlobalTimeDilation() const { return PreHitStopGlobalTimeDilation; }
 	float GetTestCurrentAppliedTimeDilation() const { return CurrentAppliedTimeDilation; }
@@ -83,6 +87,14 @@ protected:
 	/** Created player vital HUD instance in the viewport. */
 	UPROPERTY(Transient)
 	TObjectPtr<UPlayerVitalHUDWidget> PlayerVitalHUDInstance;
+
+	/** Configured Player Skill Bar HUD Widget class for local player display. */
+	UPROPERTY(EditDefaultsOnly, Category = "UI")
+	TSubclassOf<UPlayerSkillBarHUDWidget> SkillBarHUDClass;
+
+	/** Created player skill bar HUD instance in the viewport. */
+	UPROPERTY(Transient)
+	TObjectPtr<UPlayerSkillBarHUDWidget> SkillBarHUDInstance;
 
 	/** Configured Interaction Prompt Widget class for local player display. */
 	UPROPERTY(EditDefaultsOnly, Category = "UI")
@@ -105,6 +117,7 @@ protected:
 
 private:
 	void EnsureHUDCreated();
+	void EnsureSkillBarHUDCreated();
 	void EnsureInteractionPromptCreated();
 	void BindToPawn(APawn* InPawn);
 	void UnbindCurrentPawn();
@@ -123,6 +136,7 @@ private:
 	TWeakObjectPtr<APlayerCharacter> BoundPlayerCharacter;
 	TWeakObjectPtr<UAbilitySystemComponent> BoundAbilitySystemComponent;
 	bool bHasLoggedMissingHUDClass = false;
+	bool bHasLoggedMissingSkillBarHUDClass = false;
 	bool bHasLoggedMissingInteractionPromptClass = false;
 
 	bool bHitStopActive = false;

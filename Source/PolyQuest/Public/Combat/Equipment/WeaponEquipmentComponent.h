@@ -16,12 +16,11 @@ class UAbilitySystemComponent;
 class APlayerCharacter;
 class AWorldWeaponPickup;
 
+DECLARE_MULTICAST_DELEGATE(FOnPreparedSlotsChanged);
+
 /**
- * Owns the player's equipped hand-slot weapons, their runtime-spawned display
- * and trace markers, every weapon-granted ability handle, the prepared 1-4
- * layout, and the single input-resolution path (Base Input Profile, Effective
- * Defense Profile, and exact-handle prepared activation). EquipWeapon is the
- * direct/debug route; TryEquipWorldPickup is the transactional world-pickup route.
+ * Single-player actor component managing weapon equipment composition,
+ * runtime input routing, and blade trace socket resolution.
  */
 UCLASS(ClassGroup = (Combat))
 class POLYQUEST_API UWeaponEquipmentComponent : public UActorComponent
@@ -87,6 +86,18 @@ public:
 
 	/** Activates a prepared slot through its exact spec handle after validating the binding is current. */
 	bool TryActivatePreparedSlot(int32 SlotIndex);
+
+	/** Returns true only when a valid slot index has no prepared class and no spec handle. */
+	bool IsPreparedSlotEmpty(int32 SlotIndex) const;
+
+	/**
+	 * Read-only query for a prepared slot binding (0..3). Validates slot range, grant set,
+	 * ASC spec existence and ability class match.
+	 */
+	bool TryGetPreparedSlotBinding(int32 SlotIndex, TSubclassOf<UGameplayAbility>& OutClass, FGameplayAbilitySpecHandle& OutHandle) const;
+
+	/** Notification delegate fired only after an equipment transaction has committed its final logical composition. */
+	FOnPreparedSlotsChanged& OnPreparedSlotsChanged() { return PreparedSlotsChangedDelegate; }
 
 	/** The explicit canonical Unarmed fallback definition used during TwoHanded->OffHand swaps. */
 	UMeleeWeaponDefinition* GetUnarmedFallbackDefinition() const { return UnarmedFallbackDefinition; }
@@ -171,4 +182,7 @@ private:
 	FGameplayTag DefaultGuardAbilityTag;
 	FGameplayTag DefaultParryAbilityTag;
 	bool bSwapRefusalWarningIssued = false;
+
+	FOnPreparedSlotsChanged PreparedSlotsChangedDelegate;
+	void BroadcastPreparedSlotsChanged();
 };

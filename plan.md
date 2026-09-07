@@ -1,105 +1,122 @@
-# TODO-07B9: Dungeon Multi-Floor Trigger & Visibility System v1 实施计划
+# TODO-07A2-A: Prepared Skill Readiness/Cooldown HUD v1 实施计划（修订版）
 
-## 阶段定位与基线
+## 1. 阶段定位与基线
 
-- **目标**：构建一套针对地牢多层立体结构的楼层触发与可见性分层管理系统，彻底解决 45° 俯视角固定相机下上层地板、外墙与拱梁对下层的视线大面积遮挡，同时杜绝物理穿模与 Overdraw 性能灾难。
-- **分支**：`main`；代码基线：`9a6f42f`。
-- **工作树状态**：非 clean，包含用户-owned `Content/**`、Config、Blueprint、地图及其他本地 WIP；全部严格保留。
-- **历史归档**：前一阶段 `Post-E Presentation Polish Baseline Realignment` 已完整归档至 `ROADMAP-archive.md:1355-1367`；Archive Preflight：PASS。
-- **职责划分**：Main 拥有架构决策、计划维护、终审验收与提交把控；执行者仅限在批准的 Source/Test 路径内实施，严禁越权修改非批准路径、资产或直接提交。
+- **目标**：为 Prepared Ability Slots `1-4` 提供只读的 `Empty / Ready / Cooldown / Invalid` 状态显示，解决固定俯视角战斗中的快捷技能可读性问题。
+- **基线**：`main @ 3915d7e`。
+- **工作树**：非 clean；保留全部用户-owned `Content/**`、Config、Blueprint、AnimBP、Montage、地图、插件和其他本地 WIP。本阶段不依据状态数量扩大范围。
+- **前置归档**：`TODO-07B9: Dungeon Multi-Floor Trigger & Visibility System v1` 已归档；本计划只承接新的 HUD 切片。
+- **技能路由**：
+  - Outer: `ue-stage-workflow`
+  - Primary: `ue5-ui-umg-slate`
+  - Support: `ue5-cpp-gameplay`
+- **执行路线**：`manual/out-of-band Gemini`。Codex/Main 保留架构、计划、范围、验证解释、Fresh Review、文档、暂存和提交所有权；Gemini 只能实施下列冻结源/test 切片。
 
-## 核心铁律与架构细节（吸纳两轮会话评审意见）
+## 2. 冻结的运行时契约与非目标
 
-1. **铁律 1（物理安全，严禁触碰 Collision）**：
-   - 隐藏非活动楼层的 Actor 时，**只调用 `SetActorHiddenInGame(true)` 切断渲染与 Draw Call，绝对禁止关闭静态与动态 Collision**！
-   - 二层巡逻 AI、NavMesh 寻路、可破坏物与战利品箱的物理摆放、以及弓箭与投射物的物理碰撞判定完全不受影响，坚决杜绝“上层怪物下饺子跌落”与“角色掉入虚空”。
-2. **铁律 2（动静分离与 `FloorCutoffZ` 高度切面，杜绝误伤一层结构）**：
-   - **MPC 参数采用高度标量 `FloorCutoffZ`**：
-     - 在 `MPC_PlayerGlobals` 中不存容易误伤全场景的“通用透明度”，而是存储**当前允许渲染的最大高度标量 `FloorCutoffZ`**。
-     - 玩家在 1 层时：`FloorCutoffZ` 平滑插值到二层地面高度（例如 `320.0f`）；
-     - 玩家在 2 层时：`FloorCutoffZ` 插值到屋顶高度（例如 `1000.0f`）；
-     - 材质中判定：凡是 `WorldPos.Z > FloorCutoffZ` 的像素才执行 Dither 消隐。1 层所有地面与大墙（$Z < 300$）在数学上天然免疫，绝无误伤可能。
-   - **大小件自愈分类准则**：
-     - **结构大件（`ManagedStructuralActors`）**：凡 StaticMesh 命名包含 `Wall / Floor / Arch / Ceiling / Roof`，或使用 `M_Tiling_Master` 材质资产的 Actor 自动归入大件，受 `FloorCutoffZ` 平滑 Dither 切面消隐控制；
-     - **内景道具小件（`ManagedInteriorActors`）**：默认所有其他扫描到的 Actor（桌椅、木桶、箱子、火把、吊灯等）全部归为 Interior，在切层时由空间容器直接一键硬切显隐（Collision 严格保留），0 材质侵入，保护 Early-Z 并切断无用 Draw Call。
-3. **铁律 3（空间聚合防漏，杜绝手动字符串 Tag）**：
-   - 在关卡中放置 `AFloorVolume`，在 `BeginPlay()` 中依据自身的 Box Bounds 自动搜集管辖空间内的所有 Actor，彻底消除手动打字符串 Tag 遗漏导致的“半空漂浮火把与孤立木桶”。
-4. **铁律 4（楼梯两端双 Trigger 防抖 + 既有 Vision Tunnel 兜底）**：
-   - 楼梯底端放置 `AFloorTriggerVolume (TargetFloorIndex = 1)`，顶端放置 `AFloorTriggerVolume (TargetFloorIndex = 2)`；中间楼梯段为状态滞后区间（Hysteresis），维持当前楼层状态不变，彻底根除单边界 Overlap 反复横跳。
-   - **下楼视线兜底**：下楼梯过程中若二楼门梁或拱门遮挡镜头，由既有的 `MF_VisionTunnelFade`（2D 深度 + 45° 锥角）负责即时视线开孔透视，确保下楼台阶与角色始终清晰可见。
-5. **铁律 5（架构极简，拒绝过度设计）**：
-   - 单人固定视角地牢场景不引入全局引擎级 Subsystem，状态由关卡内的 `AFloorVolume` 驱动并同步到已有的 `MPC_PlayerGlobals`。
+- GAS、`UWeaponEquipmentComponent` 和现有输入路线继续作为唯一事实来源；Widget 不维护本地倒计时、不推测动画时长、不修改 Ability、GameplayEffect、GameplayTag 或 Input。
+- 不新增 Input Action、技能图标迁移、背包/物品模型、技能树、拖拽换位、CommonUI、第二条 Ability 激活路径、全局 Subsystem 或网络复制契约。
+- 每个槽位始终显示固定编号和灰底：`Empty` 仅保留编号；`Ready` 隐藏遮罩和扫光；`Cooldown` 显示灰色遮罩和白色扇形扫光；`Invalid` 保留编号和灰底并显示不可用遮罩、隐藏扫光。
+- 玩家拥有 `State.Status.Dead` 时，技能栏保留在 Viewport，配置槽位进入 `Invalid`；空槽位仍为 `Empty`。移除 Dead 或重新 Possess 后立即重新读取 ASC 状态。
+- UE 5.8 的 `GetCooldownTimeRemainingAndDuration` 基类实现按 Ability 的 Cooldown Tags 查询活动 GameplayEffect，Handle 参数不保证按 Spec 隔离。共享 Granted Tag 沿用 ASC 的共享冷却语义，不在本阶段迁移资产；Editor readback 必须记录共享是否有意。
 
-## 批准修改的路径
+## 3. 批准修改路径与资产边界
 
-### 允许新增的 Source / Test 路径
-- `Source/PolyQuest/Public/Environment/FloorVolume.h`
-- `Source/PolyQuest/Private/Environment/FloorVolume.cpp`
-- `Source/PolyQuest/Public/Environment/FloorTriggerVolume.h`
-- `Source/PolyQuest/Private/Environment/FloorTriggerVolume.cpp`
-- `Source/PolyQuest/Tests/FloorVisibilityAutomationTests.cpp`
+### Native / Test / Documentation
 
-### 允许修改的头文件与文档路径
-- `Source/PolyQuest/Public/Character/Player/PlayerCharacter.h`（仅用于同步已存在的 `SeeThroughChestZOffset = 0.0f`）
-- `ARCHITECTURE.md`（同步多层楼层管理与动静分离可见性契约）
-- `plan.md`（本计划）
-- `ROADMAP.md`（同步切片指针）
+- 新增：
+  - `Source/PolyQuest/Public/UI/PlayerSkillSlotWidget.h`
+  - `Source/PolyQuest/Private/UI/PlayerSkillSlotWidget.cpp`
+  - `Source/PolyQuest/Public/UI/PlayerSkillBarHUDWidget.h`
+  - `Source/PolyQuest/Private/UI/PlayerSkillBarHUDWidget.cpp`
+  - `Source/PolyQuest/Private/Tests/SkillBarHudAutomationTests.cpp`
+  - `Source/PolyQuest/Private/Tests/TestPreparedSkillCooldownFixtures.h`
+  - `Source/PolyQuest/Private/Tests/TestPreparedSkillCooldownFixtures.cpp`
+- 修改：
+  - `Source/PolyQuest/Public/Combat/Equipment/WeaponEquipmentComponent.h`
+  - `Source/PolyQuest/Private/Combat/Equipment/WeaponEquipmentComponent.cpp`
+  - `Source/PolyQuest/Public/Framework/PolyQuestPlayerController.h`
+  - `Source/PolyQuest/Private/Framework/PolyQuestPlayerController.cpp`
+- 收口后由 Main 更新：`ARCHITECTURE.md`、`ROADMAP.md`、本 `plan.md` 的验证和 closeout 记录。
 
-### 明确排除的路径
-- 排除全部 `Content/**`（`.uasset`、`.umap` 等资产由用户在 Unreal Editor 内独立操作或验证）。
-- 排除 Config、GameplayTags、Input、Build.cs。
+### User-owned Editor manifest（不自动暂存）
 
-## 详细设计与实现细节
+首次保存前冻结并逐项 readback：
 
-### 1. `AFloorTriggerVolume`（两端防抖触发器）
-- 派生自 `AActor`，拥有 `UBoxComponent` 作为触发盒。
-- 关键属性：
-  - `UPROPERTY(EditInstanceOnly, Category="Floor") int32 TargetFloorIndex = 1;`
-  - `UPROPERTY(EditInstanceOnly, Category="Floor") TObjectPtr<AFloorVolume> TargetFloorVolume;`
-- Overlap 契约：
-  - 仅响应 `APlayerCharacter`。
-  - 触发时通知 `TargetFloorVolume->SetFloorActive(true)` 或将全局楼层状态提交给目标楼层。
+- `/Game/_UI/HUD/Skills/WBP_PlayerSkillBarHUD`
+- `/Game/_UI/HUD/Skills/WBP_PlayerSkillSlot`
+- `/Game/_UI/HUD/Skills/Materials/M_UI_SkillCooldownSweep`
+- `/Game/BP/Game/BP_PlayerController` 的 `SkillBarHUDClass` 默认值
 
-### 2. `AFloorVolume`（空间管理与可见性驱动容器）
-- 派生自 `AActor`，拥有 `UBoxComponent` 作为空间范围界定。
-- 关键属性：
-  - `UPROPERTY(EditInstanceOnly, Category="Floor") int32 FloorIndex = 2;`
-  - `UPROPERTY(EditDefaultsOnly, Category="Floor") float ActiveCutoffZ = 1000.0f;`（本楼层激活时允许可见的最高 Z，覆盖本层天花板）
-  - `UPROPERTY(EditDefaultsOnly, Category="Floor") float InactiveCutoffZ = 320.0f;`（本楼层未激活时切除高度，低于二层地板）
-  - `UPROPERTY(EditDefaultsOnly, Category="Floor") float FadeDuration = 0.25f;`
-  - `UPROPERTY(EditDefaultsOnly, Category="Rendering") TObjectPtr<UMaterialParameterCollection> PlayerGlobalsMPC;`
-  - `UPROPERTY(Transient) TArray<TWeakObjectPtr<AActor>> ManagedInteriorActors;`（内景小件：桌椅家具、箱桶、火把，硬切显隐，Collision 严格保留）
-  - `UPROPERTY(Transient) TArray<TWeakObjectPtr<AActor>> ManagedStructuralActors;`（结构大件：地面、大墙，由 `FloorCutoffZ` 平滑切面控制）
-- 逻辑契约：
-  - `BeginPlay()`：依据 Box Bounds 自动扫入内部 Actor。判断 Actor 包含 `Wall / Floor / Arch / Ceiling / Roof` 归为 Structural，其余全部归为 Interior；严格排除 Player 与全局 Actor。
-  - `SetFloorActive(bool bActive)`：
-    - `bActive == false`：所有 `ManagedInteriorActors` 立即 `SetActorHiddenInGame(true)`（Collision 绝不关闭）；开启平滑插值将 MPC `FloorCutoffZ` 平滑降至 `InactiveCutoffZ`。
-    - `bActive == true`：所有 `ManagedInteriorActors` 立即 `SetActorHiddenInGame(false)`；平滑插值将 MPC `FloorCutoffZ` 恢复至 `ActiveCutoffZ`。
+不得手工编辑 `.uasset/.umap`；上述资产属于用户-owned Content WIP，除非另行批准，不进入本阶段代码提交。
 
-## 验证计划
+## 4. Native 实现契约
 
-### 1. Focused Automation 单元测试
-- **空间自动搜集与分类测试**：验证 `AFloorVolume` 根据 Bounds 扫描包含 Actor，正确将 Wall/Floor 归入 Structural，小件归入 Interior，并排除 Player。
-- **碰撞保留核心测试**：**重点验证**当调用 `SetFloorActive(false)` 时，被隐藏的 Actor 其 `GetActorHiddenInGame()` 为 true，但 `GetCollisionEnabled()` 严格保持原样，物理阻挡依然生效。
-- **Trigger 防抖与去重测试**：验证重复进入相同目标楼层 Trigger 不产生重复切换。
+### `UWeaponEquipmentComponent`
 
-### 2. 用户 Scene01 PIE 手动验证
-- 在 Scene01 中为二层结构配置 `AFloorVolume`，并在一段代表性楼梯上下两端分别布置 `AFloorTriggerVolume`；
-- 验证角色在楼梯上行走时视野切换顺畅，二层巡逻怪与木桶不发生掉落穿模，一层地面大墙无误伤，无闪烁、无漂浮火把。
+- 增加只读 `TryGetPreparedSlotBinding(int32, TSubclassOf<UGameplayAbility>&, FGameplayAbilitySpecHandle&) const`。
+- 接口先清空输出，再校验槽位范围、数组索引、Class/Handle、所属 ASC、组件自己的 grant 集合、Spec 是否存在/`PendingRemove`、以及 `Spec->Ability` Class 是否与槽位 Class 一致；行为与现有 `TryActivatePreparedSlot` 三重校验一致。
+- 增加原生 `FOnPreparedSlotsChanged` 委托。只在 `EquipWeapon` 或 `TryEquipWorldPickup` 的逻辑事务最终提交后广播一次；不得在内部 `ApplyComposition`/`TeardownEquippedWeapons` 中广播中间空布局。失败并恢复旧组合不广播，最终恢复失败导致空组合时只广播一次清空状态；组件 `EndPlay` 不向已解绑 HUD 广播。
+- 不暴露私有 Prepared 数组，不保存 `FGameplayAbilitySpec*` 给 Widget。
 
-## 阶段实施收口与验证记录 (Closeout)
+### `UPlayerSkillSlotWidget`
 
-- **实施结果**：
-  - 新增 `FloorVolume.h/.cpp`：基于空间 Bounds 自动搜集管辖空间内 Actor，按命名或材质划分为结构大件（`ManagedStructuralActors`）与内景道具（`ManagedInteriorActors`）；未激活时严格只调用 `SetActorHiddenInGame(true)` 切断 Draw Call，**永久保留 Actor/Component 物理碰撞（Collision）**；支持根据 `bHideStructuralActorsWhenInactive` 联动隐藏大件并驱动 MPC `FloorCutoffZ` 平滑切面；Tick 动态按需休眠/唤醒，`EndPlay` 安全重置 MPC。
-  - 新增 `FloorTriggerVolume.h/.cpp`：楼梯两端双 Trigger 防抖，严格过滤 `APlayerCharacter`；支持显式指定目标楼层或自动就近匹配 `AFloorVolume`；楼梯中间段为滞后区间，彻底消除单边界横跳与闪烁。
-  - 新增 `FloorVisibilityAutomationTests.cpp`：4 套专项测试（`PolyQuest.Environment.FloorVisibility.ActorClassification`、`PlayerExclusion`、`CollisionPreservedWhenHidden`、`TriggerHysteresis`）全部通过。
-  - 关联优化：`PlayerCharacter.h` 将 `SeeThroughChestZOffset` 调整为 `0.0f`（对齐胶囊体中心，消除贴墙视野盲区）。
-  - 关卡视效与氛围：通过 MCP 实测并指导完成露天天空球清除与 `ExponentialHeightFog` 体积雾自发光/散射归零，彻底消除了露天蓝天，确立纯正暗黑地牢深渊氛围。
-- **实施自审 (Implementation Self-Review)**：由独立子代理完成实施自审，确认 4 大核心铁律（物理安全不碰 Collision、动静分离、空间聚合防漏、两端 Trigger 防抖）完全兑现，无空指针与生命周期隐患。
-- **验证结论**：
-  - Rider 代码静态检查 0 Errors / 0 Warnings。
-  - Focused Automation 4/4 全部通过（Success）。
-  - 用户编辑器视口与 PIE 运行验证确认：二层切层顺畅、物理碰撞稳定不掉落、露天黑幕氛围建立。
-- **提交边界**：
-  - 仅包含批准的 5 个 Source/Test 路径、1 个 Player 头文件以及文档（`plan.md`、`ROADMAP.md`、`ARCHITECTURE.md`、`README.md`）。
-  - 用户-owned `Content/**` 资产保留为本地 WIP，不纳入本次代码提交。
+- 使用 `UCLASS(Blueprintable)` 和内部 `EPlayerSkillSlotDisplayState` 四态；核心更新接口只接收状态和归一化 `CooldownPercent`，不接收或保存倒计时。
+- `CooldownPercent` 必须有限并 Clamp 到 `[0,1]`；`1` 为冷却开始满圆，`0` 为冷却结束。
+- 在 `NativeConstruct` 中对 `CooldownSweepImage` 只创建一次 MID；后续只更新已有 MID 的 `CooldownPercent`，缺材质/MID/控件时隐藏扫光并 fail-closed。
+- Headless test seam 仅放在 `WITH_DEV_AUTOMATION_TESTS` 下，用于注入可选控件、模拟更新和读取状态；不得成为生产 gameplay API。
+
+### `UPlayerSkillBarHUDWidget`
+
+- 持有 Equipment/ASC 弱引用、装备委托句柄和 `State.Status.Dead` 标签委托句柄；`BindToEquipmentAndASC` 先 `Unbind`，确认组件同属当前 Player 后注册委托并立即刷新。
+- `RefreshAllSlots` 对四个槽位逐一取得当前绑定，然后从 `BoundASC->AbilityActorInfo.Get()` 取得有效 ActorInfo，验证 ActorInfo 的 ASC、Owner、Avatar；短暂读取当前 Spec 的 `Ability` 并调用 `GetCooldownTimeRemainingAndDuration`，不保留 Spec 指针。
+- 状态映射固定为：有效绑定且 `Remaining > 0`/`Duration > 0` 为 `Cooldown`；有限且接近零为 `Ready`；无绑定、ActorInfo/Spec/Ability 无效、负 Duration、异常负 Remaining 或 NaN/Infinity 为 `Invalid`。`Duration <= 0` 不得显示 Cooldown。
+- `NativeTick` 在已绑定且可见时每帧最多查询四个槽位，以获得连续权威剩余时间；无绑定立即返回，不创建本地计时器。只在状态或比例变化时写 MID，不宣称零 Tick 开销。
+- `Unbind` 移除所有委托、清空弱引用/句柄并清理槽位；`NativeDestruct` 再次保证幂等清理。
+
+### `APolyQuestPlayerController`
+
+- 增加 `SkillBarHUDClass` 和瞬态 `SkillBarHUDInstance`，沿用现有 Vital HUD 的本地 Controller/非 Dedicated Server 防护。
+- `EnsureHUDCreated` 幂等创建并以固定 Z-order 加入 Viewport；`BindToPawn` 从 `APlayerCharacter` 取得 ASC 和 `UWeaponEquipmentComponent`；`UnbindCurrentPawn` 解除技能栏后再处理既有属性/标签委托。
+- `OnUnPossess`、`EndPlay`、`Destroyed` 移除技能栏、解除绑定并清空实例；重生/重新 Possess 必须复用同一实例并完整刷新。
+- HUD 根节点为 `HitTestInvisible`，不改变现有 `GameAndUI` 输入/焦点所有权。
+
+## 5. Editor 资产契约
+
+- `WBP_PlayerSkillBarHUD` 父类为 `UPlayerSkillBarHUDWidget`，包含名称严格为 `Slot_1` 至 `Slot_4` 的四个 `WBP_PlayerSkillSlot`。
+- `WBP_PlayerSkillSlot` 父类为 `UPlayerSkillSlotWidget`，绑定名称严格为 `BackgroundImage`、`SlotNumberText`、`CooldownOverlay`、`CooldownSweepImage`；四个控件同层覆盖，编号固定为 `1-4`。
+- 根部使用 `SafeZone`，默认底部居中；每槽 `64x64`、间距 `8`、技能栏 Z-order `10`，根节点 `HitTestInvisible`。`CooldownOverlay` 初始灰色半透明，建议初始不透明度 `0.55`。
+- `M_UI_SkillCooldownSweep` 为 UI 材质，标量参数固定为 `CooldownPercent`，从 12 点方向顺时针显示剩余扇区，白色输出；无材质或参数 readback 不得宣称视觉完成。
+- `BP_PlayerController` 使用真实资产路径 `/Game/BP/Game/BP_PlayerController`，不得写成不存在的 `BP_PolyQuestPlayerController`。
+
+## 6. 验证矩阵
+
+### Focused Automation
+
+- `PolyQuest.UI.SkillBarHUD.HeadlessDefense`：无 BindWidget、空弱引用、解绑和销毁后刷新不崩溃。
+- `PolyQuest.UI.SkillBarHUD.SlotStateTransitions`：四态、可见性、编号和扫光/MID 状态正确。
+- `PolyQuest.UI.SkillBarHUD.CooldownQueryStartRemainingExpiry`：使用 `TestPreparedSkillCooldownFixtures` 的真实 ASC/有限 Cooldown GE，验证开始满圆、中途比例、过期 Ready；覆盖共享 Tag 返回的 ASC 语义。
+- `PolyQuest.UI.SkillBarHUD.InvalidAndFiniteInputDefense`：失效 Handle/Class、PendingRemove、缺 ActorInfo、NaN/Infinity、零/负 Duration、异常 Remaining 全部进入 Invalid，不误报 Ready/Cooldown。
+- `PolyQuest.UI.SkillBarHUD.EquipmentTransactionAndLifecycle`：成功换装只收到一次最终通知；失败回滚无瞬态空布局通知；取消后 Cooldown 保留；Dead、UnPossess、重绑和最终清空无悬挂引用。
+
+### User-owned gates
+
+- Gemini 交付前：只做批准文件的静态检查、`git diff --check` 和实现自审，不编译、不写 Editor、不提交。
+- 用户手动编译 `PolyQuestEditor (Development Editor)`。
+- 用户按 manifest 完成 Blueprint/材质创建和 Editor readback，记录父类、绑定名、材质参数、`SkillBarHUDClass` 和共享 Cooldown Tag 语义。
+- Scene01 PIE：验证四槽位的 Empty/Ready/Cooldown 开始/进行/结束、换装、Ability 取消、Dead、UnPossess/重新 Possess；确认 Vital HUD、输入和 `TODO-03C` 无回归。
+- Main 在上述证据齐全后执行一轮有界 Fresh Review；将未完成的 compile/readback/资产证据按边界写入 `ROADMAP.md`，不得把静态证据写成 PIE 或视觉证据。
+
+## 7. 停止条件、文档与提交边界
+
+- 需要新增 Tag、Input、Config、Build.cs、未列出的源/资产、第二激活路径或改变 ASC/Equipment 所有权时立即停止并回报 Main。
+- `ARCHITECTURE.md` 只记录通过验证的稳定 HUD/ASC 只读契约；`ROADMAP.md` 只同步里程碑、依赖和验证债务；不要在实现前写完成结论。
+- 提交只允许批准的 Source/Test 和 Main 文档路径；排除所有用户-owned authored Content 与无关 WIP。不得使用 `git add -A`；必须等待用户明确提交批准。
+
+## 8. 收口记录（2026-09-07）
+
+- **实际交付**：批准的 11 个 Native/Test 文件已完成。`UWeaponEquipmentComponent` 提供最终组合通知、结构空槽查询与当前 Spec 查询；`UPlayerSkillSlotWidget` / `UPlayerSkillBarHUDWidget` 提供四态只读显示与权威冷却扫光；`APolyQuestPlayerController` 管理本地 HUD 创建、Pawn 重绑和 teardown；专项夹具与 `PolyQuest.UI.SkillBarHUD` 覆盖真实 ASC 冷却和 Equipment 生命周期。
+- **Main 审查与窄修复**：两批有界 Fresh Review 发现并收口了两项状态/绑定缺陷。结构为空才显示 `Empty`，失效 Handle、`PendingRemove`、Spec 或 Class 不匹配显示 `Invalid`；Prepared 查询与激活路径均以 Ability Class 对照槽位 Class，避免显示与激活的校验口径分裂。未引入 Tag、Input、Config、Build.cs、资产写入、第二激活路径或 ASC/Equipment 所有权变化。
+- **已确认验证证据**：用户确认当前 `PolyQuest.UI.SkillBarHUD` Focused Automation 为 `Success`，并确认 Scene01 PIE 通过。Main 对批准修复文件执行了 Rider 错误级检查（无诊断）及 tracked/untracked Source 的 whitespace 检查；Main 不把这些静态证据改述为编译、Editor readback 或视觉证明。
+- **未关闭但非阻塞的 authored evidence**：没有单独归档的用户 `PolyQuestEditor (Development Editor)` 编译与直接 Editor readback。计划 manifest 的 Widgets 位于 `/Game/_UI/HUD/Skills/...`，而执行者报告写为 `/Game/_UI/HUD/Vitals/...`；实际包路径、父类、BindWidget 名、`CooldownPercent`、`SkillBarHUDClass` 与共享 Cooldown Tag 语义须由一次可追溯 readback 统一，详见 `Debt-07A2-A-AuthoredReadback`。
+- **提交与归档边界**：候选提交仅包含本计划批准的 11 个 Source/Test 文件、Main 文档 `ARCHITECTURE.md`、`ROADMAP.md`、`plan.md`，以及用户明确批准的项目策略维护 `AGENTS.md`；明确排除全部 `Content/**`、Config、Blueprint、地图、导入资源和其他用户 WIP。当前 `plan.md` 保留为最近阶段交接；下一份正式计划替换它前再对 `ROADMAP-archive.md` 执行归档预检。
