@@ -132,6 +132,11 @@ APlayerCharacter::APlayerCharacter()
 	{
 		PlayerGlobalsMPC = PlayerGlobalsMPCObj.Object;
 	}
+
+	LockOnTraceChannel = ECC_Visibility;
+	LockOnOcclusionGraceDuration = 2.5f;
+	LockOnOcclusionTimer = 0.0f;
+	bIsCurrentLockedTargetOccluded = false;
 }
 
 void APlayerCharacter::BeginPlay()
@@ -1261,6 +1266,10 @@ void APlayerCharacter::Tick(float DeltaSeconds)
 	if (LockedTarget.IsValid())
 	{
 		ValidateCurrentLockedTarget();
+		if (LockedTarget.IsValid())
+		{
+			UpdateLockOnOcclusion(DeltaSeconds);
+		}
 #if !(UE_BUILD_SHIPPING || UE_BUILD_TEST)
 		if (GEngine && LockedTarget.IsValid())
 		{
@@ -1278,6 +1287,7 @@ void APlayerCharacter::Tick(float DeltaSeconds)
 		// A destroyed target can leave a stale weak pointer without a valid actor to unhighlight.
 		LockedTarget.Reset();
 		LastValidLockedTargetCandidate.Reset();
+		ResetLockOnOcclusionState();
 	}
 
 	if (ActiveBowAimRequester.IsValid())
@@ -1440,6 +1450,11 @@ bool APlayerCharacter::BuildLockOnCandidates(TArray<FPlayerLockOnCandidate>& Out
 
 		const float PlayerScreenDistanceSquared = FVector2D::DistSquared(CandidateScreenPosition, OutPlayerScreenPosition);
 		if (!FMath::IsFinite(PlayerScreenDistanceSquared))
+		{
+			continue;
+		}
+
+		if (!HasLineOfSightToTarget(CandidateActor))
 		{
 			continue;
 		}
@@ -1750,6 +1765,7 @@ void APlayerCharacter::SetLockedTarget(AEnemyCharacter* NewTarget, const FPlayer
 	}
 
 	LockedTarget = NewTarget;
+	ResetLockOnOcclusionState();
 	NewTarget->SetPlayerLockOnHighlighted(true);
 	if (Candidate && Candidate->TargetActor.Get() == NewTarget)
 	{
@@ -1773,6 +1789,7 @@ void APlayerCharacter::ClearLockedTarget()
 
 	LockedTarget.Reset();
 	LastValidLockedTargetCandidate.Reset();
+	ResetLockOnOcclusionState();
 	UpdateActionFacingRotationMode();
 }
 
@@ -1781,6 +1798,168 @@ void APlayerCharacter::ClearMeleeMotionWarpTargetsForInvalidatedTarget(const AEn
 	if (InvalidatedTarget && LockedTarget.Get() == InvalidatedTarget)
 	{
 		ClearMeleeMotionWarpTargets();
+	}
+}
+
+void APlayerCharacter::ResetLockOnOcclusionState()
+{
+	LockOnOcclusionTimer = 0.0f;
+	bIsCurrentLockedTargetOccluded = false;
+}
+
+FVector APlayerCharacter::ResolveLockOnTraceStart(const APlayerController* PlayerController) const
+{
+	if (PlayerController && PlayerController->PlayerCameraManager)
+	{
+		const FVector CameraLoc = PlayerController->PlayerCameraManager->GetCameraLocation();
+		if (FMath::IsFinite(CameraLoc.X) && FMath::IsFinite(CameraLoc.Y) && FMath::IsFinite(CameraLoc.Z) && !CameraLoc.IsNearlyZero())
+		{
+			return CameraLoc;
+		}
+	}
+
+	if (FollowCamera)
+	{
+		const FVector CamCompLoc = FollowCamera->GetComponentLocation();
+		if (FMath::IsFinite(CamCompLoc.X) && FMath::IsFinite(CamCompLoc.Y) && FMath::IsFinite(CamCompLoc.Z) && !CamCompLoc.IsNearlyZero())
+		{
+			return CamCompLoc;
+		}
+	}
+
+	return GetActorLocation() + FVector(0.0f, 0.0f, 50.0f);
+}
+
+bool APlayerCharacter::HasLineOfSightToTarget(const AActor* TargetActor) const
+{
+	if (!TargetActor || TargetActor->IsActorBeingDestroyed())
+	{
+		return false;
+	}
+
+	const UWorld* World = GetWorld();
+	if (!World)
+	{
+		return false;
+	}
+
+	const APlayerController* PlayerController = Cast<APlayerController>(GetController());
+	const FVector TraceStart = ResolveLockOnTraceStart(PlayerController);
+	const FVector TargetAimPoint = FCombatProjectileTargeting::GetTargetAimPoint(TargetActor);
+
+	if (!FMath::IsFinite(TraceStart.X) || !FMath::IsFinite(TraceStart.Y) || !FMath::IsFinite(TraceStart.Z)
+		|| !FMath::IsFinite(TargetAimPoint.X) || !FMath::IsFinite(TargetAimPoint.Y) || !FMath::IsFinite(TargetAimPoint.Z))
+	{
+		return false;
+	}
+
+#if WITH_DEV_AUTOMATION_TESTS
+	if (TestLockOnLOSHook)
+	{
+		return TestLockOnLOSHook(TargetActor, TraceStart, TargetAimPoint);
+	}
+#endif
+
+	FCollisionQueryParams QueryParams(SCENE_QUERY_STAT(PlayerLockOnLOS), false, this);
+	QueryParams.AddIgnoredActor(this);
+	QueryParams.AddIgnoredActor(TargetActor);
+
+	TArray<AActor*> AttachedActors;
+	GetAttachedActors(AttachedActors, true, true);
+	QueryParams.AddIgnoredActors(AttachedActors);
+
+	constexpr int32 MaxTraceAttempts = 8;
+	TSet<const AActor*> IgnoredHiddenActors;
+
+	for (int32 Attempt = 0; Attempt < MaxTraceAttempts; ++Attempt)
+	{
+		FHitResult HitResult;
+		const bool bHit = World->LineTraceSingleByChannel(
+			HitResult,
+			TraceStart,
+			TargetAimPoint,
+			LockOnTraceChannel,
+			QueryParams);
+
+		if (!bHit || !HitResult.bBlockingHit)
+		{
+			return true;
+		}
+
+		const AActor* HitActor = HitResult.GetActor();
+		if (!HitActor)
+		{
+			// Hit world static geometry without an owning actor (e.g. landscape / BSP); fail-closed
+			return false;
+		}
+
+		if (HitActor == TargetActor)
+		{
+			// Hit the target itself (e.g. target mesh or capsule); clear line of sight
+			return true;
+		}
+
+		if (HitActor == this || QueryParams.GetIgnoredSourceObjects().Contains(HitActor->GetUniqueID()))
+		{
+			// Hit self or an already-ignored actor; fail-closed
+			return false;
+		}
+
+		if (HitActor->IsHidden())
+		{
+			if (IgnoredHiddenActors.Contains(HitActor))
+			{
+				// Repeated hidden actor hit despite being in ignored set; fail-closed
+				return false;
+			}
+
+			IgnoredHiddenActors.Add(HitActor);
+			QueryParams.AddIgnoredActor(HitActor);
+			continue;
+		}
+
+		// Hit a visible blocking obstacle
+		return false;
+	}
+
+	// Exhausted MaxTraceAttempts; fail-closed
+	return false;
+}
+
+void APlayerCharacter::UpdateLockOnOcclusion(const float DeltaSeconds)
+{
+	AEnemyCharacter* CurrentTarget = LockedTarget.Get();
+	if (!CurrentTarget)
+	{
+		ResetLockOnOcclusionState();
+		return;
+	}
+
+	const UAbilitySystemComponent* SourceASC = GetAbilitySystemComponent();
+	if (CanRetainExecutionLockedTarget(CurrentTarget, SourceASC))
+	{
+		ResetLockOnOcclusionState();
+		return;
+	}
+
+	const bool bHasLOS = HasLineOfSightToTarget(CurrentTarget);
+	if (bHasLOS)
+	{
+		ResetLockOnOcclusionState();
+		return;
+	}
+
+	bIsCurrentLockedTargetOccluded = true;
+	const float EffectiveGraceDuration = (FMath::IsFinite(LockOnOcclusionGraceDuration) && LockOnOcclusionGraceDuration > 0.0f)
+		? LockOnOcclusionGraceDuration
+		: 0.0f;
+
+	const float SafeDelta = (FMath::IsFinite(DeltaSeconds) && DeltaSeconds > 0.0f) ? DeltaSeconds : 0.0f;
+	LockOnOcclusionTimer += SafeDelta;
+
+	if (LockOnOcclusionTimer >= EffectiveGraceDuration)
+	{
+		ClearLockedTarget();
 	}
 }
 
@@ -3092,3 +3271,10 @@ void APlayerCharacter::RefreshWorldPickupInteractionPrompt()
 			false);
 	}
 }
+
+#if WITH_DEV_AUTOMATION_TESTS
+void APlayerCharacter::TriggerTestHandleTargetCycle(const float AxisValue)
+{
+	HandleTargetCycleTriggered(FInputActionValue(AxisValue));
+}
+#endif

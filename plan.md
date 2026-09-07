@@ -1,122 +1,111 @@
-# TODO-07A2-A: Prepared Skill Readiness/Cooldown HUD v1 实施计划（修订版）
+# TODO-02B4: Lock-On Visibility Gate And Occlusion Grace v1 实施计划与收口记录
 
-## 1. 阶段定位与基线
+## 1. 阶段定位、基线与路由
 
-- **目标**：为 Prepared Ability Slots `1-4` 提供只读的 `Empty / Ready / Cooldown / Invalid` 状态显示，解决固定俯视角战斗中的快捷技能可读性问题。
-- **基线**：`main @ 3915d7e`。
-- **工作树**：非 clean；保留全部用户-owned `Content/**`、Config、Blueprint、AnimBP、Montage、地图、插件和其他本地 WIP。本阶段不依据状态数量扩大范围。
-- **前置归档**：`TODO-07B9: Dungeon Multi-Floor Trigger & Visibility System v1` 已归档；本计划只承接新的 HUD 切片。
+- **Target Objective**：为玩家 Lock-On 增加独立的 Camera-to-Target LOS 门禁，阻止透过可见掩体的初始锁定、循环切锁和死亡后重锁；已持有目标可在连续遮挡时获得有限宽限，避免掩体边缘造成锁定抖动。
+- **基线**：`main @ 31616b571df586db9ff46993ee85ba01d6b8ec01`（`TODO-07A2-A` 已提交）。
+- **工作树**：非 clean。全部 `Content/**`、Config、Blueprint、AnimBP、Montage、地图、插件和其他本地 WIP 均为用户所有，必须保留并排除。
+- **Archive preflight**：PASS。本次为同一 `TODO-02B4` 的计划修订，不是新阶段替换，不重复归档上一阶段。
 - **技能路由**：
   - Outer: `ue-stage-workflow`
-  - Primary: `ue5-ui-umg-slate`
-  - Support: `ue5-cpp-gameplay`
-- **执行路线**：`manual/out-of-band Gemini`。Codex/Main 保留架构、计划、范围、验证解释、Fresh Review、文档、暂存和提交所有权；Gemini 只能实施下列冻结源/test 切片。
+  - Primary: `ue5-cpp-gameplay`
+  - Support: `ue5-debug-validation`
+  - Route reason: 该切片只改玩家 Native C++ 锁定候选、射线判定、Tick 生命周期和聚焦 Automation。
+- **执行路线**：`manual/out-of-band Gemini`。Codex/Main 保留架构、计划、范围、验证解释、Fresh Review、文档、暂存和提交所有权；Codex 不创建 in-app 子代理。Gemini 按项目规则完成实施及隔离自审，但不得越出批准范围或提交。
 
-## 2. 冻结的运行时契约与非目标
+## 2. 冻结契约与刻意非目标
 
-- GAS、`UWeaponEquipmentComponent` 和现有输入路线继续作为唯一事实来源；Widget 不维护本地倒计时、不推测动画时长、不修改 Ability、GameplayEffect、GameplayTag 或 Input。
-- 不新增 Input Action、技能图标迁移、背包/物品模型、技能树、拖拽换位、CommonUI、第二条 Ability 激活路径、全局 Subsystem 或网络复制契约。
-- 每个槽位始终显示固定编号和灰底：`Empty` 仅保留编号；`Ready` 隐藏遮罩和扫光；`Cooldown` 显示灰色遮罩和白色扇形扫光；`Invalid` 保留编号和灰底并显示不可用遮罩、隐藏扫光。
-- 玩家拥有 `State.Status.Dead` 时，技能栏保留在 Viewport，配置槽位进入 `Invalid`；空槽位仍为 `Empty`。移除 Dead 或重新 Possess 后立即重新读取 ASC 状态。
-- UE 5.8 的 `GetCooldownTimeRemainingAndDuration` 基类实现按 Ability 的 Cooldown Tags 查询活动 GameplayEffect，Handle 参数不保证按 Spec 隔离。共享 Granted Tag 沿用 ASC 的共享冷却语义，不在本阶段迁移资产；Editor readback 必须记录共享是否有意。
+### 冻结运行时契约
 
-## 3. 批准修改路径与资产边界
+1. **LOS 门禁**
+   - 在 `APlayerCharacter` 中新增 `LockOnTraceChannel`，默认 `ECC_Visibility`；新增 `LockOnOcclusionGraceDuration`，默认 `2.5f` 秒。两者仅类默认值可调：`EditDefaultsOnly, BlueprintReadOnly`，不提供运行时 Blueprint 写入口。
+   - 起点依次为 `PlayerCameraManager->GetCameraLocation()`、`FollowCamera->GetComponentLocation()`、安全的玩家位置回退；终点统一复用 `FCombatProjectileTargeting::GetTargetAimPoint(TargetActor)`。
+   - 射线忽略玩家自身、递归附属 Actor（武器等）及目标自身。无归属 Actor 的世界静态几何、可见 Actor 和重复隐藏命中均视为有效阻挡。
+   - 不得使用一次 `LineTraceMultiByChannel` 实现隐藏物穿透。UE 5.8 仅生成最近的一个 blocking hit；应使用重复 `LineTraceSingleByChannel`：命中隐藏 Actor 时将其加入忽略列表后重新追踪。
+   - 总追踪次数最多 `8` 次（含初始追踪）。已忽略 Actor 再次命中或达到上限时 fail-closed，返回无 LOS；这既防异常物理状态死循环，也不把深层未知遮挡放行。
+   - 视觉透明条件仅为 `HitActor->IsHidden()`。不在 v1 读取组件 `bHiddenInGame`：项目现有 `AFloorVolume` 契约是 Actor 级 `SetActorHiddenInGame()` 且保留碰撞；组件级语义会扩大到未证实的复合 Actor 行为。
+2. **候选统一门禁**
+   - 在 `BuildLockOnCandidates` 中，候选已通过现有敌对/ASC 有效性检查和严格屏幕投影后，才调用 `HasLineOfSightToTarget`；失败即跳过。
+   - `TryAcquireLockOnTarget`、`HandleTargetCycleTriggered` 与 `TryRetargetAfterLockedTargetDeath` 继续复用该候选列表，因此自动共享 LOS 规则。
+   - 当前被遮挡但尚在宽限期内的目标不获得候选例外，不得重新成为可获取对象；现有循环找不到合法替换时的 no-op 行为保持不变。
+3. **遮挡宽限生命周期**
+   - `Tick` 先执行既有 `ValidateCurrentLockedTarget()`；只有锁仍有效时才调用私有 `UpdateLockOnOcclusion(DeltaSeconds)`。死亡、屏幕 retention 边界和既有 GAS 无效路径先短路，避免对无效目标发射射线。
+   - `UpdateLockOnOcclusion`：无有效目标时清零；`CanRetainExecutionLockedTarget(CurrentTarget, SourceASC)` 为真时清零并返回；有 LOS 时清零；无 LOS 时累计，达到有效宽限即通过现有 `ClearLockedTarget()` 安全清锁。
+   - 无效、负数或非有限宽限配置按 `0.0f` fail-closed 处理。
+   - `ClearLockedTarget()`、真正切换到不同目标、以及 Tick 发现 `LockedTarget` 弱引用失效时必须清零。对相同目标的重复 `SetLockedTarget()`、循环 no-op 或缓存刷新不得重置计时，防止输入刷新宽限。
+4. **成对处决边界**
+   - `CanRetainExecutionLockedTarget(...)` 为真时，严格豁免本阶段新增的 LOS 检查和遮挡超时，计时保持为零。
+   - 该豁免不改变既有 15% 屏幕 retention、死亡/销毁、目标 GAS 有效性或现有处决屏幕边界清锁契约。
 
-### Native / Test / Documentation
+### Deliberate Non-goals
 
-- 新增：
-  - `Source/PolyQuest/Public/UI/PlayerSkillSlotWidget.h`
-  - `Source/PolyQuest/Private/UI/PlayerSkillSlotWidget.cpp`
-  - `Source/PolyQuest/Public/UI/PlayerSkillBarHUDWidget.h`
-  - `Source/PolyQuest/Private/UI/PlayerSkillBarHUDWidget.cpp`
-  - `Source/PolyQuest/Private/Tests/SkillBarHudAutomationTests.cpp`
-  - `Source/PolyQuest/Private/Tests/TestPreparedSkillCooldownFixtures.h`
-  - `Source/PolyQuest/Private/Tests/TestPreparedSkillCooldownFixtures.cpp`
-- 修改：
-  - `Source/PolyQuest/Public/Combat/Equipment/WeaponEquipmentComponent.h`
-  - `Source/PolyQuest/Private/Combat/Equipment/WeaponEquipmentComponent.cpp`
-  - `Source/PolyQuest/Public/Framework/PolyQuestPlayerController.h`
-  - `Source/PolyQuest/Private/Framework/PolyQuestPlayerController.cpp`
-- 收口后由 Main 更新：`ARCHITECTURE.md`、`ROADMAP.md`、本 `plan.md` 的验证和 closeout 记录。
+- 不改 `LockOnRetentionMarginRatio = 0.15f`，不让 retention 泄漏到初始获取、循环候选或 Bow Target Assist。
+- 不改 Bow 6% 视口 Target Assist、投射物锁定、攻击/伤害路径、GAS 权属或处决流程。
+- 不让 See-Through / `MF_VisionTunnelFade` 参与玩法 LOS；不改 `AFloorVolume`、碰撞资产或其物理碰撞保留策略。
+- 不增加网络复制、Targeting Subsystem、泛化框架、`.Build.cs`、Config 或任何 `.uasset`/`.umap` 改动。
 
-### User-owned Editor manifest（不自动暂存）
+## 3. 批准路径、接口与所有权
 
-首次保存前冻结并逐项 readback：
+### Gemini 实施白名单
 
-- `/Game/_UI/HUD/Skills/WBP_PlayerSkillBarHUD`
-- `/Game/_UI/HUD/Skills/WBP_PlayerSkillSlot`
-- `/Game/_UI/HUD/Skills/Materials/M_UI_SkillCooldownSweep`
-- `/Game/BP/Game/BP_PlayerController` 的 `SkillBarHUDClass` 默认值
+- `Source/PolyQuest/Public/Character/Player/PlayerCharacter.h`
+- `Source/PolyQuest/Private/Character/Player/PlayerCharacter.cpp`
+- `Source/PolyQuest/Private/Tests/PlayerLockOnAutomationTests.cpp`
 
-不得手工编辑 `.uasset/.umap`；上述资产属于用户-owned Content WIP，除非另行批准，不进入本阶段代码提交。
+### 接口约束
 
-## 4. Native 实现契约
+- 新增私有辅助：安全起点解析、LOS 判定、遮挡更新和计时清零；运行时计时器保持私有，不为 HUD 或其他玩法系统暴露新 Shipping 查询 API。
+- 自动化所需的 LOS Hook、遮挡更新触发器、计时只读查询、生产起点只读查询和真实 LOS 调用入口全部放在 `WITH_DEV_AUTOMATION_TESTS` 下，沿用现有 `PlayerCharacter` 测试包装模式。
+- 不修改 `FCombatProjectileTargeting`、`PlayerLockOnTargeting`、`FloorVolume`、Build.cs、Tag 或资产。已有 `GetTargetAimPoint` 是只读复用点，不得为本阶段扩展其职责。
 
-### `UWeaponEquipmentComponent`
+### Main 收口所有权
 
-- 增加只读 `TryGetPreparedSlotBinding(int32, TSubclassOf<UGameplayAbility>&, FGameplayAbilitySpecHandle&) const`。
-- 接口先清空输出，再校验槽位范围、数组索引、Class/Handle、所属 ASC、组件自己的 grant 集合、Spec 是否存在/`PendingRemove`、以及 `Spec->Ability` Class 是否与槽位 Class 一致；行为与现有 `TryActivatePreparedSlot` 三重校验一致。
-- 增加原生 `FOnPreparedSlotsChanged` 委托。只在 `EquipWeapon` 或 `TryEquipWorldPickup` 的逻辑事务最终提交后广播一次；不得在内部 `ApplyComposition`/`TeardownEquippedWeapons` 中广播中间空布局。失败并恢复旧组合不广播，最终恢复失败导致空组合时只广播一次清空状态；组件 `EndPlay` 不向已解绑 HUD 广播。
-- 不暴露私有 Prepared 数组，不保存 `FGameplayAbilitySpec*` 给 Widget。
+- 用户完成编译、Automation、Editor readback 与 PIE 门禁，且 Main Fresh Review 完成后，才由 Main 更新 `ARCHITECTURE.md`、`ROADMAP.md`、`ROADMAP-archive.md` 和 `plan.md` 收口记录。
+- 本阶段实施交付不包含文档收口，也不包含 Git Commit。
 
-### `UPlayerSkillSlotWidget`
+## 4. Focused Automation 与验证矩阵
 
-- 使用 `UCLASS(Blueprintable)` 和内部 `EPlayerSkillSlotDisplayState` 四态；核心更新接口只接收状态和归一化 `CooldownPercent`，不接收或保存倒计时。
-- `CooldownPercent` 必须有限并 Clamp 到 `[0,1]`；`1` 为冷却开始满圆，`0` 为冷却结束。
-- 在 `NativeConstruct` 中对 `CooldownSweepImage` 只创建一次 MID；后续只更新已有 MID 的 `CooldownPercent`，缺材质/MID/控件时隐藏扫光并 fail-closed。
-- Headless test seam 仅放在 `WITH_DEV_AUTOMATION_TESTS` 下，用于注入可选控件、模拟更新和读取状态；不得成为生产 gameplay API。
+### `PolyQuest.Player.LockOn` 测试
 
-### `UPlayerSkillBarHUDWidget`
+1. `AcquireRejectsBlockedCandidate`：LOS Hook 返回遮挡时，鼠标/按键不能初始锁定该敌人。
+2. `CycleSkipsBlockedCandidates`：当前目标可见时，循环只选择 LOS 合法候选，跳过遮挡敌人。
+3. `DeathRetargetSkipsBlockedCandidates`：死亡目标的顺时针重锁只选择 LOS 合法候选。
+4. `OcclusionGraceRetainsAndRecovers`：遮挡小于 `2.5s` 时保持锁定和高亮；恢复 LOS 后计时清零。
+5. `OcclusionTimeoutClearsAndSameTargetCannotRefresh`：到达阈值时走 `ClearLockedTarget()`；同目标重复设锁或循环 no-op 不得重置已累计时间。
+6. `ExecutionExemptionSkipsOcclusionOnly`：既有成对处决标签夹具加持续 LOS 遮挡后保持锁定且计时为零；不推翻既有“超出 15% retention 仍清锁”测试。
+7. `HiddenActorRetryKeepsVisibleObstacleBlocking`：隐藏 Actor 位于前方、可见阻挡位于后方时仍无 LOS，证明重新追踪没有放行后方可见障碍。
+8. `HiddenActorOnlyDoesNotBlock`：仅隐藏 Actor 保留碰撞时 LOS 通过，证明 Actor 级视觉透明契约。
 
-- 持有 Equipment/ASC 弱引用、装备委托句柄和 `State.Status.Dead` 标签委托句柄；`BindToEquipmentAndASC` 先 `Unbind`，确认组件同属当前 Player 后注册委托并立即刷新。
-- `RefreshAllSlots` 对四个槽位逐一取得当前绑定，然后从 `BoundASC->AbilityActorInfo.Get()` 取得有效 ActorInfo，验证 ActorInfo 的 ASC、Owner、Avatar；短暂读取当前 Spec 的 `Ability` 并调用 `GetCooldownTimeRemainingAndDuration`，不保留 Spec 指针。
-- 状态映射固定为：有效绑定且 `Remaining > 0`/`Duration > 0` 为 `Cooldown`；有限且接近零为 `Ready`；无绑定、ActorInfo/Spec/Ability 无效、负 Duration、异常负 Remaining 或 NaN/Infinity 为 `Invalid`。`Duration <= 0` 不得显示 Cooldown。
-- `NativeTick` 在已绑定且可见时每帧最多查询四个槽位，以获得连续权威剩余时间；无绑定立即返回，不创建本地计时器。只在状态或比例变化时写 MID，不宣称零 Tick 开销。
-- `Unbind` 移除所有委托、清空弱引用/句柄并清理槽位；`NativeDestruct` 再次保证幂等清理。
+真实射线用现有临时 World fixture 的可控 `ECC_Visibility` 碰撞体完成；行为矩阵可用仅开发期 LOS Hook 保持确定性。现有 15% retention 测试必须保留并运行，作为正交回归证据。
 
-### `APolyQuestPlayerController`
+### 证据门禁
 
-- 增加 `SkillBarHUDClass` 和瞬态 `SkillBarHUDInstance`，沿用现有 Vital HUD 的本地 Controller/非 Dedicated Server 防护。
-- `EnsureHUDCreated` 幂等创建并以固定 Z-order 加入 Viewport；`BindToPawn` 从 `APlayerCharacter` 取得 ASC 和 `UWeaponEquipmentComponent`；`UnbindCurrentPawn` 解除技能栏后再处理既有属性/标签委托。
-- `OnUnPossess`、`EndPlay`、`Destroyed` 移除技能栏、解除绑定并清空实例；重生/重新 Possess 必须复用同一实例并完整刷新。
-- HUD 根节点为 `HitTestInvisible`，不改变现有 `GameAndUI` 输入/焦点所有权。
+| 门禁 | 所有者 | 需要的证据 |
+| --- | --- | --- |
+| 静态回查 | Gemini | 仅批准文件的最终 diff、`git diff --check`、隔离自审；不能表述为编译或运行时验证。 |
+| 手动编译 | 用户 | `PolyQuestEditor (Development Editor)` 的实际结果。 |
+| Automation | 用户 | `PolyQuest.Player.LockOn` 全部 Success。 |
+| Editor readback | 用户 | `BP_PlayerCharacter` 的两个默认值；Scene01 墙/柱对 `Visibility` 为 Block；非活动 `AFloorVolume` 管理 Actor 隐藏后碰撞仍保留。 |
+| Scene01 PIE | 用户 | 隔墙不可初始锁定；短暂绕柱不抖动；持续遮挡约 2.5 秒后清锁；处决镜头遮挡不中断；Bow Target Assist、15% retention 与 HUD 无回归。 |
 
-## 5. Editor 资产契约
+若 Scene01 没有既有可复现的 `Visibility` 掩体，不得为本阶段新建或修改资产；记录该 PIE 门禁为待用户另行授权的资产范围决定。
 
-- `WBP_PlayerSkillBarHUD` 父类为 `UPlayerSkillBarHUDWidget`，包含名称严格为 `Slot_1` 至 `Slot_4` 的四个 `WBP_PlayerSkillSlot`。
-- `WBP_PlayerSkillSlot` 父类为 `UPlayerSkillSlotWidget`，绑定名称严格为 `BackgroundImage`、`SlotNumberText`、`CooldownOverlay`、`CooldownSweepImage`；四个控件同层覆盖，编号固定为 `1-4`。
-- 根部使用 `SafeZone`，默认底部居中；每槽 `64x64`、间距 `8`、技能栏 Z-order `10`，根节点 `HitTestInvisible`。`CooldownOverlay` 初始灰色半透明，建议初始不透明度 `0.55`。
-- `M_UI_SkillCooldownSweep` 为 UI 材质，标量参数固定为 `CooldownPercent`，从 12 点方向顺时针显示剩余扇区，白色输出；无材质或参数 readback 不得宣称视觉完成。
-- `BP_PlayerController` 使用真实资产路径 `/Game/BP/Game/BP_PlayerController`，不得写成不存在的 `BP_PolyQuestPlayerController`。
+## 5. 停止条件与 Gemini 交付要求
 
-## 6. 验证矩阵
+- 任何额外 Source 文件、Config、Build.cs、Tag、`.uasset`、`.umap` 或资产碰撞修改需求出现时立即停止并回报。
+- 不得改变 Bow、15% retention、See-Through、投射物、攻击/伤害、GAS 或处决的既有契约。
+- Gemini 交付必须包含：仅三份批准文件的 diff；静态检查结果；Automation 新增/保留用例说明；对 Trace 上限、隐藏 Actor 重试、`HitActor == nullptr`、同目标计时不刷新、弱引用清理和处决豁免边界的实施自审；留给用户的编译、Editor、Automation 和 PIE 门禁。
+- 不得执行 Git Commit、`git add -A`、破坏性命令或 Editor/资产写入。任何 Git 提交均等待用户明确批准。
 
-### Focused Automation
+## 6. 已确认验证与证据边界
 
-- `PolyQuest.UI.SkillBarHUD.HeadlessDefense`：无 BindWidget、空弱引用、解绑和销毁后刷新不崩溃。
-- `PolyQuest.UI.SkillBarHUD.SlotStateTransitions`：四态、可见性、编号和扫光/MID 状态正确。
-- `PolyQuest.UI.SkillBarHUD.CooldownQueryStartRemainingExpiry`：使用 `TestPreparedSkillCooldownFixtures` 的真实 ASC/有限 Cooldown GE，验证开始满圆、中途比例、过期 Ready；覆盖共享 Tag 返回的 ASC 语义。
-- `PolyQuest.UI.SkillBarHUD.InvalidAndFiniteInputDefense`：失效 Handle/Class、PendingRemove、缺 ActorInfo、NaN/Infinity、零/负 Duration、异常 Remaining 全部进入 Invalid，不误报 Ready/Cooldown。
-- `PolyQuest.UI.SkillBarHUD.EquipmentTransactionAndLifecycle`：成功换装只收到一次最终通知；失败回滚无瞬态空布局通知；取消后 Cooldown 保留；Dead、UnPossess、重绑和最终清空无悬挂引用。
+- 用户确认 `PolyQuestEditor (Development Editor)` 手动编译通过，`PolyQuest.Player.LockOn` Focused Automation 全部 `Success`，Scene01 PIE 通过，且锁定默认值符合最终约定。
+- 本记录不把上述 PIE 结果扩展为逐个 Scene01 掩体或 `AFloorVolume` 字段的独立 Editor readback；本阶段没有资产改动，也不据此声明新的资产基线。
+- 最终 `LockOnOcclusionGraceDuration` 为 `2.5f` 秒：原始 `1.5f` 秒短于主角约 `3s` 的体力衰竭回复窗口，用户基于实测节奏确认后完成同一切片的窄调优。该值是 Lock-On 私有默认值，不是 ROADMAP 全局常量。
 
-### User-owned gates
+## 7. 收口记录（2026-09-07）
 
-- Gemini 交付前：只做批准文件的静态检查、`git diff --check` 和实现自审，不编译、不写 Editor、不提交。
-- 用户手动编译 `PolyQuestEditor (Development Editor)`。
-- 用户按 manifest 完成 Blueprint/材质创建和 Editor readback，记录父类、绑定名、材质参数、`SkillBarHUDClass` 和共享 Cooldown Tag 语义。
-- Scene01 PIE：验证四槽位的 Empty/Ready/Cooldown 开始/进行/结束、换装、Ability 取消、Dead、UnPossess/重新 Possess；确认 Vital HUD、输入和 `TODO-03C` 无回归。
-- Main 在上述证据齐全后执行一轮有界 Fresh Review；将未完成的 compile/readback/资产证据按边界写入 `ROADMAP.md`，不得把静态证据写成 PIE 或视觉证据。
-
-## 7. 停止条件、文档与提交边界
-
-- 需要新增 Tag、Input、Config、Build.cs、未列出的源/资产、第二激活路径或改变 ASC/Equipment 所有权时立即停止并回报 Main。
-- `ARCHITECTURE.md` 只记录通过验证的稳定 HUD/ASC 只读契约；`ROADMAP.md` 只同步里程碑、依赖和验证债务；不要在实现前写完成结论。
-- 提交只允许批准的 Source/Test 和 Main 文档路径；排除所有用户-owned authored Content 与无关 WIP。不得使用 `git add -A`；必须等待用户明确提交批准。
-
-## 8. 收口记录（2026-09-07）
-
-- **实际交付**：批准的 11 个 Native/Test 文件已完成。`UWeaponEquipmentComponent` 提供最终组合通知、结构空槽查询与当前 Spec 查询；`UPlayerSkillSlotWidget` / `UPlayerSkillBarHUDWidget` 提供四态只读显示与权威冷却扫光；`APolyQuestPlayerController` 管理本地 HUD 创建、Pawn 重绑和 teardown；专项夹具与 `PolyQuest.UI.SkillBarHUD` 覆盖真实 ASC 冷却和 Equipment 生命周期。
-- **Main 审查与窄修复**：两批有界 Fresh Review 发现并收口了两项状态/绑定缺陷。结构为空才显示 `Empty`，失效 Handle、`PendingRemove`、Spec 或 Class 不匹配显示 `Invalid`；Prepared 查询与激活路径均以 Ability Class 对照槽位 Class，避免显示与激活的校验口径分裂。未引入 Tag、Input、Config、Build.cs、资产写入、第二激活路径或 ASC/Equipment 所有权变化。
-- **已确认验证证据**：用户确认当前 `PolyQuest.UI.SkillBarHUD` Focused Automation 为 `Success`，并确认 Scene01 PIE 通过。Main 对批准修复文件执行了 Rider 错误级检查（无诊断）及 tracked/untracked Source 的 whitespace 检查；Main 不把这些静态证据改述为编译、Editor readback 或视觉证明。
-- **未关闭但非阻塞的 authored evidence**：没有单独归档的用户 `PolyQuestEditor (Development Editor)` 编译与直接 Editor readback。计划 manifest 的 Widgets 位于 `/Game/_UI/HUD/Skills/...`，而执行者报告写为 `/Game/_UI/HUD/Vitals/...`；实际包路径、父类、BindWidget 名、`CooldownPercent`、`SkillBarHUDClass` 与共享 Cooldown Tag 语义须由一次可追溯 readback 统一，详见 `Debt-07A2-A-AuthoredReadback`。
-- **提交与归档边界**：候选提交仅包含本计划批准的 11 个 Source/Test 文件、Main 文档 `ARCHITECTURE.md`、`ROADMAP.md`、`plan.md`，以及用户明确批准的项目策略维护 `AGENTS.md`；明确排除全部 `Content/**`、Config、Blueprint、地图、导入资源和其他用户 WIP。当前 `plan.md` 保留为最近阶段交接；下一份正式计划替换它前再对 `ROADMAP-archive.md` 执行归档预检。
+- **实际交付**：仅批准的 `PlayerCharacter.h`、`PlayerCharacter.cpp` 与 `PlayerLockOnAutomationTests.cpp` 实现 Camera-to-Target LOS 门禁、隐藏 Actor 重试、8 次总追踪上限的 fail-closed 策略，以及已持有目标的连续遮挡宽限。
+- **稳定契约**：获取、循环与死亡重锁共用严格 LOS 候选门禁；清晰 LOS、显式清锁、真实目标切换和弱引用失效清零计时；同目标重复设置不能刷新宽限。既有 15% 屏幕 retention、Bow 6% Target Assist 与现有死亡/GAS 有效性规则保持独立；成对处决仅豁免新增 LOS/宽限路径。
+- **Main Fresh Review**：已完成一轮两批有界审查，未发现 P0/P1/P2；`1.5s -> 2.5s` 的窄增量也已按最终源码、测试阈值与 fail-closed 超时路径复核，未发现阻塞问题。
+- **提交边界**：候选提交只包含上述三份 Source/Test、`ARCHITECTURE.md`、`ROADMAP.md`、`ROADMAP-archive.md` 与本记录；全部 `Content/**`、Config、Blueprint、地图、插件和其他用户 WIP 明确排除。`plan.md` 保留为最近阶段的详细交接与验证凭据，直到下一份正式计划被接受。

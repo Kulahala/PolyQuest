@@ -1360,3 +1360,67 @@ TODO-03A3E World Pickup Interaction Prompt v1
 - **证据矩阵**：Git 提交历史与 diff 静态核对；`.code-review-graph` 与 `.codegraph` 定向导航；文档一致性通过 `git diff --check`。本阶段未执行编译、Automation 或 PIE 门禁。
 - **保留债务与关闭条件**：`APlayerCharacter::Tick()` 承载透视更新与多个 HUD Widget Tick 的生命周期/性能检查；`CameraBoom->bDoCollisionTest = false` 改变相机碰撞语义的确认；MPC 运行时状态重置证据；`PolyQuest.Build.cs` 与公开 Widget/Camera 签名的编译收据；相关资产在冻结 manifest 后的 Editor readback 与 Scene01 PIE 验证。
 - **提交边界**：已于 `9a6f42f` 完成文档校准提交。
+
+## TODO-07B9 Dungeon Multi-Floor Trigger & Visibility System v1 Closeout (2026-09-06; committed at `3915d7e`, parent HEAD `9a6f42f`, working-tree snapshot not clean)
+
+> 本节记录 TODO-07B9 多层地牢立体结构触发器与空间可见性分层管理系统的实施收口。快照基于 parent HEAD `9a6f42f`，已提交于 `3915d7e`；工作树包含用户-owned `Content/**`、Config、Blueprint、地图及其他本地 WIP，因此不是干净 HEAD 快照。本节只作历史追溯，不替代当前 Source、配置或 Unreal Editor 资产作为运行时权威。
+
+- **阶段定位与目标**：构建针对地牢多层立体结构的楼层触发与可见性分层管理系统，彻底解决 45° 俯视角固定相机下二层地板、大墙与拱梁对一层的视线大面积遮挡，杜绝物理穿模下坠与 Overdraw 性能灾难。
+- **核心铁律兑现**：
+  1. **物理安全铁律（绝对保留 Collision）**：隐藏非活动楼层 Actor 时，严格仅调用 `SetActorHiddenInGame(true)` 切断渲染与 Draw Call，绝对禁止修改或关闭 Actor/Component 的 Collision！二层巡逻 AI、NavMesh 寻路、物理可破坏物与战利品物理碰撞判定完全不受影响，根绝“上层怪物下饺子跌落”与“角色掉入虚空”。
+  2. **动静分离与高度切面**：结构大件（Wall/Floor/Arch/Ceiling/Roof/Stair/Pillar 等或使用平铺材质的 Actor）归入 `ManagedStructuralActors`，由 MPC `FloorCutoffZ` 平滑切面控制，一层结构（$Z < \text{InactiveCutoffZ}$）数学上天然免疫误伤；内景道具小件（桌椅、箱桶、火把等）归入 `ManagedInteriorActors`，切层时由空间容器硬切显隐（Collision 严格保留），0 材质侵入，保护 Early-Z 并切断无用 Draw Call。
+  3. **空间聚合防漏**：原生 `AFloorVolume` 基于空间 Bounds 自动搜集管辖空间内 Actor，彻底消除手动打字符串 Tag 遗漏导致的半空漂浮道具。
+  4. **楼梯两端双 Trigger 防抖**：`AFloorTriggerVolume` 布置于楼梯底端（`TargetFloorIndex = 1`）与顶端（`TargetFloorIndex = 2`），中间楼梯段为状态滞后区间（Hysteresis），维持当前楼层状态不变，彻底根除单边界 Overlap 反复横跳与闪烁；下楼视线由既有 `MF_VisionTunnelFade`（2D 深度 + 45° 锥角）即时透视开孔兜底。
+- **实施成果与代码路径**：
+  - 新增 Source/Test：`Source/PolyQuest/Public/Environment/FloorVolume.h`、`Source/PolyQuest/Private/Environment/FloorVolume.cpp`、`Source/PolyQuest/Public/Environment/FloorTriggerVolume.h`、`Source/PolyQuest/Private/Environment/FloorTriggerVolume.cpp`、`Source/PolyQuest/Tests/FloorVisibilityAutomationTests.cpp`。
+  - 头文件与配置同步：`PlayerCharacter.h`（`SeeThroughChestZOffset = 0.0f` 对齐胶囊体几何中心，消除贴墙视野盲区）、`Config/DefaultEngine.ini`（`r.CustomDepth=3` 支持模板深度通道）。
+  - 关卡视效与氛围：清理露天天空球与 `ExponentialHeightFog` 体积雾发光/散射归零，确立暗黑地牢深渊氛围。
+- **验证证据矩阵**：
+  - Focused Automation：4 套用例（`PolyQuest.Environment.FloorVisibility.ActorClassification`、`PlayerExclusion`、`CollisionPreservedWhenHidden`、`TriggerHysteresis`）全部通过（Success）。
+  - Rider 静态检查：0 Errors / 0 Warnings。
+  - 格式与差异检查：`git diff --check` 通过，无空白异常。
+  - 用户视口与 PIE 验证：实测确认二层切层顺畅、物理碰撞稳定不掉落、一层地面与大墙无误伤、暗黑地底氛围建立。
+- **保留债务与关闭条件**：
+  - 关卡内实际摆放的 `AFloorVolume` 与 `AFloorTriggerVolume` 实例、调整后的雾效/材质资产保存在 Scene01 地图与 `Content/**` 中，仍属于用户本地 WIP，不构成 clean-checkout 资产基线；关闭条件是在后续打包或冻结阶段由用户确认该部分资产的基线化。
+- **提交边界与后续指针**：已于 `3915d7e` 完成 Source、测试与文档提交。下一执行切片为 `TODO-07A2-A: Prepared Skill Readiness/Cooldown HUD v1`。
+
+## TODO-07A2-A Prepared Skill Readiness/Cooldown HUD v1 Closeout (2026-09-07; committed at `31616b5`, parent HEAD `3915d7e`, working-tree snapshot not clean)
+
+> 本节记录 TODO-07A2-A 预备技能冷却 HUD v1 的实施收口。快照基于 parent HEAD `3915d7e`，已提交于 `31616b5`；工作树包含用户-owned `Content/**`、Config、Blueprint、地图及其他本地 WIP，因此不是干净 HEAD 快照。本节只作历史追溯，不替代当前 Source、配置或 Unreal Editor 资产作为运行时权威。
+
+- **阶段定位与目标**：为四个快捷预备技能槽位（Prepared Ability Slots `1-4`）提供只读的 `Empty / Ready / Cooldown / Invalid` 四态显示与权威冷却扇形扫光，解决固定俯视角战斗中快捷技能状态可读性问题，严格保持 GAS 与 `UWeaponEquipmentComponent` 为唯一事实来源。
+- **实施成果与代码路径**：
+  - 新增 Source/Test：
+    - `Source/PolyQuest/Public/UI/PlayerSkillSlotWidget.h`
+    - `Source/PolyQuest/Private/UI/PlayerSkillSlotWidget.cpp`
+    - `Source/PolyQuest/Public/UI/PlayerSkillBarHUDWidget.h`
+    - `Source/PolyQuest/Private/UI/PlayerSkillBarHUDWidget.cpp`
+    - `Source/PolyQuest/Private/Tests/SkillBarHudAutomationTests.cpp`
+    - `Source/PolyQuest/Private/Tests/TestPreparedSkillCooldownFixtures.h`
+    - `Source/PolyQuest/Private/Tests/TestPreparedSkillCooldownFixtures.cpp`
+  - 修改 Source：
+    - `Source/PolyQuest/Public/Combat/Equipment/WeaponEquipmentComponent.h`
+    - `Source/PolyQuest/Private/Combat/Equipment/WeaponEquipmentComponent.cpp`（增加最终换装组合通知 `OnPreparedSlotsChanged`、结构空槽查询与当前 Spec 查询 `TryGetPreparedSlotBinding`）
+    - `Source/PolyQuest/Public/Framework/PolyQuestPlayerController.h`
+    - `Source/PolyQuest/Private/Framework/PolyQuestPlayerController.cpp`（管理本地 HUD 创建、Pawn 重绑与生命周期 teardown）
+- **Main 审查与窄修复**：
+  - 两批有界 Fresh Review 发现并收口了两项状态/绑定缺陷：结构为空才显示 `Empty`，失效 Handle、`PendingRemove`、Spec 或 Class 不匹配显示 `Invalid`；Prepared 查询与激活路径均以 Ability Class 对照槽位 Class，避免显示与激活的校验口径分裂。
+  - 未引入 Tag、Input、Config、Build.cs、资产写入、第二激活路径或 ASC/Equipment 所有权变化。
+- **验证证据矩阵**：
+  - Focused Automation：用户确认 `PolyQuest.UI.SkillBarHUD` 专项测试全部通过（Success），覆盖真实 ASC 冷却与 Equipment 生命周期。
+  - 静态检查：Main 执行 Rider 错误级检查无诊断；`git diff --cached --check` 通过，无空白异常。
+  - 用户 Scene01 PIE：实测确认四槽位四态切换、换装通知、死亡重绑、冷却扫光正常，且 Vital HUD 与既有战斗无回归。
+- **保留债务与关闭条件**：
+  - `Debt-07A2-A-AuthoredReadback`：没有单独归档的用户 `PolyQuestEditor (Development Editor)` 编译与直接 Editor readback。计划 manifest 的 Widgets 位于 `/Game/_UI/HUD/Skills/...`，而执行者报告曾记录为 `/Game/_UI/HUD/Vitals/...`；实际包路径、父类、BindWidget 名、`CooldownPercent`、`SkillBarHUDClass` 与共享 Cooldown Tag 语义须由后续可追溯 readback 统一。
+- **提交边界与后续指针**：已于 `31616b5` 完成 Source、测试与核心文档提交。下一排期切片为 `TODO-02B4: Lock-On Visibility Gate And Occlusion Grace v1`。
+
+## TODO-02B4 Lock-On Visibility Gate And Occlusion Grace v1 Closeout (2026-09-07; source/doc commit)
+
+> 本节记录 TODO-02B4 的阶段收口。实施基线为 `31616b571df586db9ff46993ee85ba01d6b8ec01`；工作树包含用户-owned `Content/**`、Config、Blueprint、地图、插件及其他本地 WIP，因此本节不是干净 HEAD 快照。这里是历史追溯，不替代当前 Source、配置或 Unreal Editor 资产作为运行时权威。
+
+- **阶段目标与批准路径**：为 `APlayerCharacter` 的 Lock-On 增加 Camera-to-Target Visibility LOS 门禁及已持有目标的遮挡宽限，只改 `Source/PolyQuest/Public/Character/Player/PlayerCharacter.h`、`Source/PolyQuest/Private/Character/Player/PlayerCharacter.cpp` 与 `Source/PolyQuest/Private/Tests/PlayerLockOnAutomationTests.cpp`；没有改动资产、Config、Tag、Build.cs、Bow、投射物或 GAS 权属。
+- **稳定运行时契约**：严格候选在既有敌对/ASC/屏幕投影后使用 `ECC_Visibility` 查询 Camera 到 `FCombatProjectileTargeting::GetTargetAimPoint` 的 LOS，因此获取、循环和死亡重锁统一受门禁约束。隐藏 Actor 会被加入忽略列表后重新发起 Single Trace；无归属世界/静态命中、可见阻挡、重复隐藏命中和八次总追踪耗尽均 fail-closed。组件 `bHiddenInGame` 不在 v1 的视觉透明语义内。
+- **已持有目标与调优**：正常验证先于遮挡更新执行。连续遮挡最多保留 `2.5s`，清晰 LOS、显式清锁、真实目标切换及弱引用失效均清零；相同目标重复设置不会刷新宽限。原先 `1.5s` 短于主角约 `3s` 的体力衰竭回复窗口，用户确认节奏后在同一切片窄调为 `2.5s`。15% 屏幕 retention、Bow 6% Target Assist、死亡/团队/ASC 有效性保持独立；成对处决只豁免新增 LOS/宽限路径。
+- **验证证据矩阵**：用户确认 `PolyQuestEditor (Development Editor)` 手动编译通过、`PolyQuest.Player.LockOn` Focused Automation 全部 `Success`、Scene01 PIE 通过，且默认值符合最终约定。该记录不把 PIE 结果扩展为逐个 Scene01 碰撞组件或 `AFloorVolume` 字段的独立 Editor readback，也不据此声明资产基线。
+- **Main Fresh Review**：Main 已完成两批有界、缺陷优先的 Fresh Review，未发现 P0/P1/P2；随后对 `1.5s -> 2.5s` 的窄增量按最终默认值、测试边界及超时路径复核，未发现阻塞项。
+- **后续指针**：下一排期为独立的 `TODO-03C: Ranged Enemy v1`；它不共享或放宽 Player Lock-On、Bow Target Assist、投射物或 GAS 运行时契约。提交哈希以 Git 历史为准。

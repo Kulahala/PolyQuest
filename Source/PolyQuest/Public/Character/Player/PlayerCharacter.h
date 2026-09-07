@@ -467,6 +467,10 @@ private:
 	bool TryGetLockedTargetDirectionUnchecked(FVector& OutDirection) const;
 	void SetLockedTarget(AEnemyCharacter* NewTarget, const FPlayerLockOnCandidate* Candidate = nullptr);
 	void ClearLockedTarget();
+	FVector ResolveLockOnTraceStart(const APlayerController* PlayerController) const;
+	bool HasLineOfSightToTarget(const AActor* TargetActor) const;
+	void UpdateLockOnOcclusion(float DeltaSeconds);
+	void ResetLockOnOcclusionState();
 
 	bool IsMovementInputBlocked() const;
 
@@ -574,6 +578,16 @@ private:
 	bool bHasValidBowAimDirection = false;
 	TWeakObjectPtr<AEnemyCharacter> LockedTarget;
 	TOptional<FPlayerLockOnCandidate> LastValidLockedTargetCandidate;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|LockOn", meta = (AllowPrivateAccess = "true"))
+	TEnumAsByte<ECollisionChannel> LockOnTraceChannel = ECC_Visibility;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|LockOn", meta = (ClampMin = "0.0", UIMin = "0.0", AllowPrivateAccess = "true"))
+	float LockOnOcclusionGraceDuration = 2.5f;
+
+	float LockOnOcclusionTimer = 0.0f;
+	bool bIsCurrentLockedTargetOccluded = false;
+
 	TSet<TWeakObjectPtr<AWorldWeaponPickup>> WorldPickupCandidates;
 	TWeakObjectPtr<AWorldWeaponPickup> CurrentWorldPickupCandidate;
 	FTimerHandle FormerOwnerInteractionRefreshTimerHandle;
@@ -590,5 +604,19 @@ public:
 	void TestUnPossessed() { UnPossessed(); }
 	UCameraModifier_FovPunch* GetTestFovPunchModifier() const { return FovPunchModifier.Get(); }
 	void TriggerTestCameraFovPunch(const float PunchDegrees) { TriggerCameraFovPunch(PunchDegrees); }
+
+	TFunction<bool(const AActor* TargetActor, const FVector& TraceStart, const FVector& TargetAimPoint)> TestLockOnLOSHook;
+	void SetTestLockOnLOSHook(TFunction<bool(const AActor*, const FVector&, const FVector&)> InHook) { TestLockOnLOSHook = MoveTemp(InHook); }
+	void TriggerTestUpdateLockOnOcclusion(const float DeltaSeconds) { UpdateLockOnOcclusion(DeltaSeconds); }
+	float GetTestLockOnOcclusionTimer() const { return LockOnOcclusionTimer; }
+	bool GetTestIsCurrentLockedTargetOccluded() const { return bIsCurrentLockedTargetOccluded; }
+	FVector TriggerTestResolveLockOnTraceStart(const APlayerController* PC) const { return ResolveLockOnTraceStart(PC); }
+	bool TriggerTestHasLineOfSightToTarget(const AActor* TargetActor) const { return HasLineOfSightToTarget(TargetActor); }
+	void SetTestLockOnOcclusionGraceDuration(const float InDuration) { LockOnOcclusionGraceDuration = InDuration; }
+	void TriggerTestHandleTargetCycle(const float AxisValue);
+	bool TriggerTestBuildLockOnCandidates(TArray<FPlayerLockOnCandidate>& OutCandidates, FVector2D& OutPlayerScreenPosition) const
+	{
+		return BuildLockOnCandidates(OutCandidates, OutPlayerScreenPosition);
+	}
 #endif
 };

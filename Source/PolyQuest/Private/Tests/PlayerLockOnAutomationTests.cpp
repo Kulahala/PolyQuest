@@ -11,6 +11,8 @@
 #include "Character/Enemy/EnemyCharacter.h"
 #include "Character/Player/PlayerCharacter.h"
 #include "Character/Player/PlayerLockOnTargeting.h"
+#include "Combat/Projectile/CombatProjectileTargeting.h"
+#include "Components/BoxComponent.h"
 #include "Components/Image.h"
 #include "Engine/Engine.h"
 #include "Engine/World.h"
@@ -593,6 +595,255 @@ bool FPlayerLockOnAutomationTest::RunTest(const FString&)
 
 			Player->SetTestLockedTarget(nullptr);
 			TestEqual(TEXT("Explicit clear removes the final target highlight"), RightHighlight->GetVisibility(), ESlateVisibility::Collapsed);
+
+			// -------------------------------------------------------------------------
+			// SECTION 3: TODO-02B4 Camera-to-Target LOS Gate and Occlusion Grace
+			// -------------------------------------------------------------------------
+			{
+				EnemyTie = SpawnEnemy(TEXT("LockOn_Tie_Sec3"), FVector(600.0f, 0.0f, 100.0f));
+				TieWidget = NewObject<UEnemyHealthBarWidget>(EnemyTie);
+				TieHighlight = NewObject<UImage>(TieWidget);
+				TieHighlight->SetVisibility(ESlateVisibility::Collapsed);
+				TieWidget->SetTestTargetHighlightImage(TieHighlight);
+				EnemyTie->SetTestHealthBarWidget(TieWidget);
+
+				Player->SetTestBypassLockOnValidation(false);
+				Player->SetTestLockOnProjectionHook([](const FVector& WorldPoint, FVector2D& OutScreenPosition, FVector2D& OutViewportSize)
+				{
+					OutViewportSize = FVector2D(1920.0f, 1080.0f);
+					if (WorldPoint.Y > 100.0f)
+					{
+						OutScreenPosition = FVector2D(960.0f, 720.0f); // EnemyBottom
+					}
+					else if (WorldPoint.X < -100.0f)
+					{
+						OutScreenPosition = FVector2D(760.0f, 540.0f); // EnemyLeft
+					}
+					else if (WorldPoint.Y < -100.0f)
+					{
+						OutScreenPosition = FVector2D(960.0f, 340.0f); // EnemyTop
+					}
+					else if (WorldPoint.X > 550.0f)
+					{
+						OutScreenPosition = FVector2D(1400.0f, 540.0f); // EnemyTie
+					}
+					else if (WorldPoint.X > 100.0f)
+					{
+						OutScreenPosition = FVector2D(1100.0f, 540.0f); // EnemyRight
+					}
+					else
+					{
+						OutScreenPosition = FVector2D(960.0f, 540.0f); // Player anchor
+					}
+					return true;
+				});
+
+				// 1. AcquireRejectsBlockedCandidate: Blocked candidate cannot be acquired initially
+				TMap<const AActor*, bool> CandidateLOSMap;
+				CandidateLOSMap.Add(EnemyRight, false);
+				CandidateLOSMap.Add(EnemyBottom, true);
+				CandidateLOSMap.Add(EnemyTie, true);
+				CandidateLOSMap.Add(EnemyLeft, false);
+				CandidateLOSMap.Add(EnemyTop, false);
+
+				Player->SetTestLockOnLOSHook([&CandidateLOSMap](const AActor* TargetActor, const FVector&, const FVector&)
+				{
+					const bool* FoundLOS = CandidateLOSMap.Find(TargetActor);
+					return FoundLOS ? *FoundLOS : false;
+				});
+
+				Player->SetTestLockOnCursorPosition(FVector2D(1110.0f, 540.0f));
+				TestTrue(TEXT("Acquisition query succeeds by falling back to unblocked candidate"), Player->TriggerTestAcquireLockOnTarget());
+				TestEqual(TEXT("Blocked mouse-nearest candidate is rejected in favor of unblocked candidate"), Player->GetLockedTarget(), EnemyBottom);
+				Player->SetTestLockedTarget(nullptr);
+
+				CandidateLOSMap[EnemyTie] = false;
+				CandidateLOSMap[EnemyBottom] = false;
+				TestFalse(TEXT("Acquisition query fails when all candidates are blocked by LOS"), Player->TriggerTestAcquireLockOnTarget());
+				TestNull(TEXT("No target acquired when all candidates are blocked"), Player->GetLockedTarget());
+
+				// 2. CycleSkipsBlockedCandidates: Cycling skips blocked candidate
+				CandidateLOSMap[EnemyRight] = true;
+				CandidateLOSMap[EnemyBottom] = false;
+				CandidateLOSMap[EnemyTie] = true;
+				CandidateLOSMap[EnemyLeft] = false;
+				CandidateLOSMap[EnemyTop] = false;
+				Player->SetTestLockedTarget(EnemyRight);
+				TestEqual(TEXT("Initial lock on EnemyRight for cycle test"), Player->GetLockedTarget(), EnemyRight);
+
+				Player->TriggerTestHandleTargetCycle(1.0f);
+				TestEqual(TEXT("Clockwise cycle skips LOS-blocked candidate"), Player->GetLockedTarget(), EnemyTie);
+
+				// 3. DeathRetargetSkipsBlockedCandidates: Death auto-retarget skips blocked candidate
+				CandidateLOSMap[EnemyTie] = true;
+				CandidateLOSMap[EnemyRight] = false;
+				CandidateLOSMap[EnemyBottom] = true;
+				CandidateLOSMap[EnemyLeft] = false;
+				CandidateLOSMap[EnemyTop] = false;
+				Player->SetTestLockedTarget(EnemyTie);
+				TestTrue(TEXT("Death fixture caches current candidate for LOS test"), Player->TriggerTestValidateCurrentLockedTarget());
+
+				if (UAbilitySystemComponent* TieAsc = EnemyTie->GetAbilitySystemComponent())
+				{
+					TieAsc->AddLooseGameplayTag(DeadTag);
+					TestTrue(TEXT("Dead target completes retarget attempt under LOS filter"), Player->TriggerTestValidateCurrentLockedTarget());
+					TestEqual(TEXT("Death retarget skips LOS-blocked candidate and selects next visible"), Player->GetLockedTarget(), EnemyBottom);
+					TieAsc->RemoveLooseGameplayTag(DeadTag);
+				}
+
+				// 4. OcclusionGraceRetainsAndRecovers: Target retained within grace duration and recovers on clear LOS
+				Player->SetTestLockedTarget(EnemyRight);
+				CandidateLOSMap[EnemyRight] = false;
+
+				Player->TriggerTestUpdateLockOnOcclusion(1.0f);
+				TestEqual(TEXT("Locked target is retained within grace duration (1.0s < 2.5s)"), Player->GetLockedTarget(), EnemyRight);
+				TestTrue(TEXT("Current target is marked as occluded"), Player->GetTestIsCurrentLockedTargetOccluded());
+				TestEqual(TEXT("Occlusion timer accumulated correctly"), Player->GetTestLockOnOcclusionTimer(), 1.0f);
+				TestEqual(TEXT("Target highlight persists during grace period"), RightHighlight->GetVisibility(), ESlateVisibility::HitTestInvisible);
+
+				CandidateLOSMap[EnemyRight] = true;
+				Player->TriggerTestUpdateLockOnOcclusion(0.1f);
+				TestEqual(TEXT("Locked target remains valid after recovering LOS"), Player->GetLockedTarget(), EnemyRight);
+				TestFalse(TEXT("Occluded flag is cleared upon recovering LOS"), Player->GetTestIsCurrentLockedTargetOccluded());
+				TestEqual(TEXT("Occlusion timer reset to 0 upon recovering LOS"), Player->GetTestLockOnOcclusionTimer(), 0.0f);
+
+				// 5. OcclusionTimeoutClearsAndSameTargetCannotRefresh: Timeout clears lock; same target SetLockedTarget cannot refresh timer
+				CandidateLOSMap[EnemyRight] = false;
+				Player->TriggerTestUpdateLockOnOcclusion(1.5f);
+				TestEqual(TEXT("Occlusion timer at 1.5s"), Player->GetTestLockOnOcclusionTimer(), 1.5f);
+
+				Player->SetTestLockedTarget(EnemyRight);
+				TestEqual(TEXT("Re-setting same target does NOT reset occlusion timer"), Player->GetTestLockOnOcclusionTimer(), 1.5f);
+
+				Player->TriggerTestUpdateLockOnOcclusion(1.2f);
+				TestNull(TEXT("Exceeding grace duration clears locked target"), Player->GetLockedTarget());
+				TestEqual(TEXT("Target highlight collapsed after occlusion timeout"), RightHighlight->GetVisibility(), ESlateVisibility::Collapsed);
+				TestEqual(TEXT("Occlusion timer reset to 0 after clear"), Player->GetTestLockOnOcclusionTimer(), 0.0f);
+
+				// 6. ExecutionExemptionSkipsOcclusionOnly: Paired execution lock exempt from occlusion clear
+				if (UAbilitySystemComponent* PlayerAsc = Player->GetAbilitySystemComponent())
+				{
+					if (UAbilitySystemComponent* BottomAsc = EnemyBottom->GetAbilitySystemComponent())
+					{
+						Player->SetTestLockedTarget(EnemyBottom);
+						PlayerAsc->AddLooseGameplayTag(PlayerLockedTag);
+						BottomAsc->AddLooseGameplayTag(VictimLockedTag);
+						BottomAsc->AddLooseGameplayTag(InvulnerableTag);
+
+						CandidateLOSMap[EnemyBottom] = false;
+
+						Player->TriggerTestUpdateLockOnOcclusion(4.0f);
+						TestEqual(TEXT("Paired execution lock exempt from occlusion timeout"), Player->GetLockedTarget(), EnemyBottom);
+						TestEqual(TEXT("Execution exemption keeps occlusion timer at 0"), Player->GetTestLockOnOcclusionTimer(), 0.0f);
+
+						PlayerAsc->RemoveLooseGameplayTag(PlayerLockedTag);
+						BottomAsc->RemoveLooseGameplayTag(VictimLockedTag);
+						BottomAsc->RemoveLooseGameplayTag(InvulnerableTag);
+					}
+				}
+				Player->SetTestLockedTarget(nullptr);
+
+				// 7. Real physical collision trace verification with UBoxComponent
+				Player->SetTestLockOnLOSHook(nullptr);
+
+				Player->SetActorLocation(FVector(0.0f, 0.0f, 100.0f));
+				EnemyRight->SetActorLocation(FVector(1000.0f, 0.0f, 100.0f));
+
+				const FVector TraceStart = Player->TriggerTestResolveLockOnTraceStart(PlayerController);
+				const FVector TargetAimPoint = FCombatProjectileTargeting::GetTargetAimPoint(EnemyRight);
+
+				TestTrue(TEXT("Clear physical world line of sight passes"), Player->TriggerTestHasLineOfSightToTarget(EnemyRight));
+
+				FActorSpawnParameters ObstacleSpawnParams;
+				ObstacleSpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+
+				const FVector MidPointA = FMath::Lerp(TraceStart, TargetAimPoint, 0.4f);
+				AActor* ObstacleA = World->SpawnActor<AActor>(MidPointA, FRotator::ZeroRotator, ObstacleSpawnParams);
+				TestNotNull(TEXT("ObstacleA spawned for LOS collision test"), ObstacleA);
+				if (ObstacleA)
+				{
+					UBoxComponent* BoxA = NewObject<UBoxComponent>(ObstacleA);
+					ObstacleA->SetRootComponent(BoxA);
+					BoxA->SetWorldLocation(MidPointA);
+					BoxA->SetBoxExtent(FVector(100.0f, 100.0f, 100.0f));
+					BoxA->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
+					BoxA->SetCollisionObjectType(ECC_WorldStatic);
+					BoxA->SetCollisionResponseToAllChannels(ECR_Ignore);
+					BoxA->SetCollisionResponseToChannel(ECC_Visibility, ECR_Block);
+					BoxA->RegisterComponent();
+					BoxA->UpdateComponentToWorld();
+
+					// Case A: Visible obstacle blocks LOS
+					ObstacleA->SetActorHiddenInGame(false);
+					TestFalse(TEXT("Visible obstacle blocks physical LOS"), Player->TriggerTestHasLineOfSightToTarget(EnemyRight));
+
+					const FVector MidPointB = FMath::Lerp(TraceStart, TargetAimPoint, 0.7f);
+					AActor* ObstacleB = World->SpawnActor<AActor>(MidPointB, FRotator::ZeroRotator, ObstacleSpawnParams);
+					TestNotNull(TEXT("ObstacleB spawned for LOS retry test"), ObstacleB);
+					if (ObstacleB)
+					{
+						UBoxComponent* BoxB = NewObject<UBoxComponent>(ObstacleB);
+						ObstacleB->SetRootComponent(BoxB);
+						BoxB->SetWorldLocation(MidPointB);
+						BoxB->SetBoxExtent(FVector(100.0f, 100.0f, 100.0f));
+						BoxB->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
+						BoxB->SetCollisionObjectType(ECC_WorldStatic);
+						BoxB->SetCollisionResponseToAllChannels(ECR_Ignore);
+						BoxB->SetCollisionResponseToChannel(ECC_Visibility, ECR_Block);
+						BoxB->RegisterComponent();
+						BoxB->UpdateComponentToWorld();
+
+						// Case B: Hidden front obstacle + Visible rear obstacle still blocks LOS
+						ObstacleA->SetActorHiddenInGame(true);
+						ObstacleB->SetActorHiddenInGame(false);
+						TestFalse(TEXT("Hidden front obstacle with visible rear obstacle still blocks LOS"), Player->TriggerTestHasLineOfSightToTarget(EnemyRight));
+
+						// Case C: Both obstacles hidden -> LOS passes (demonstrates retry ignores hidden actors)
+						ObstacleB->SetActorHiddenInGame(true);
+						TestTrue(TEXT("Only hidden obstacles in path allows physical LOS to pass"), Player->TriggerTestHasLineOfSightToTarget(EnemyRight));
+
+						// Case D: Exceeding 8 hidden obstacles exhausts MaxTraceAttempts and fails closed
+						TArray<AActor*> StackedObstacles;
+						TArray<UBoxComponent*> StackedBoxes;
+						for (int32 i = 0; i < 9; ++i)
+						{
+							const FVector StackLoc = FMath::Lerp(TraceStart, TargetAimPoint, 0.1f + static_cast<float>(i) * 0.08f);
+							AActor* HiddenObs = World->SpawnActor<AActor>(StackLoc, FRotator::ZeroRotator, ObstacleSpawnParams);
+							UBoxComponent* ObsBox = NewObject<UBoxComponent>(HiddenObs);
+							HiddenObs->SetRootComponent(ObsBox);
+							ObsBox->SetWorldLocation(StackLoc);
+							ObsBox->SetBoxExtent(FVector(20.0f, 100.0f, 100.0f));
+							ObsBox->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
+							ObsBox->SetCollisionObjectType(ECC_WorldStatic);
+							ObsBox->SetCollisionResponseToAllChannels(ECR_Ignore);
+							ObsBox->SetCollisionResponseToChannel(ECC_Visibility, ECR_Block);
+							ObsBox->RegisterComponent();
+							ObsBox->UpdateComponentToWorld();
+							HiddenObs->SetActorHiddenInGame(true);
+							StackedObstacles.Add(HiddenObs);
+							StackedBoxes.Add(ObsBox);
+						}
+
+						TestFalse(TEXT("9 hidden obstacles in path exhausts 8-trace budget and fails closed"), Player->TriggerTestHasLineOfSightToTarget(EnemyRight));
+
+						for (int32 i = 0; i < StackedObstacles.Num(); ++i)
+						{
+							StackedBoxes[i]->DestroyComponent();
+							StackedObstacles[i]->Destroy();
+						}
+
+						BoxB->DestroyComponent();
+						ObstacleB->Destroy();
+					}
+
+					BoxA->DestroyComponent();
+					ObstacleA->Destroy();
+
+					// Case E: Clear path directly to target actor passes
+					TestTrue(TEXT("Clear path directly to target actor passes"), Player->TriggerTestHasLineOfSightToTarget(EnemyRight));
+				}
+			}
+
 			PlayerController->Destroy();
 			Player->Destroy();
 		}
