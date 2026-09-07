@@ -10,9 +10,13 @@
 class UAbilityTask_PlayMontageAndWait;
 class UAbilityTask_MeleeTraceWindow;
 class UAbilityTask_WaitGameplayEvent;
+class UAbilityTask_WaitDelay;
 class UAnimInstance;
 class UAnimMontage;
 class UGameplayEffect;
+class UNiagaraComponent;
+class UNiagaraSystem;
+class USceneComponent;
 
 /**
  * Holds a root-motion attack at an authored pose, then releases one charged hit.
@@ -92,6 +96,12 @@ protected:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Charged Attack|Motion Warping", meta = (ClampMin = "0.0", ClampMax = "180.0", ToolTip = "最大有效修正夹角（度），超过此角度判定为偏角过大不予修正。"))
 	float MaxWarpAngleDegrees = 60.0f;
 
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Charged Attack|VFX", meta = (ToolTip = "蓄力期间附着的 Niagara 特效资产。"))
+	TObjectPtr<UNiagaraSystem> ChargeVFXSystem;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Charged Attack|VFX", meta = (ToolTip = "角色自身骨骼插槽近战接触源名称覆盖（如 Weapon_L）。未设置（NAME_None）时使用武器默认接触源。"))
+	FName ChargeVFXTraceSourceName = NAME_None;
+
 private:
 	UPROPERTY(Transient)
 	TObjectPtr<UAbilityTask_PlayMontageAndWait> MontageTask;
@@ -131,6 +141,12 @@ private:
 
 	UPROPERTY(Transient)
 	TObjectPtr<UAnimMontage> ActiveMontage;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UNiagaraComponent> ChargeVFXComponent;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UAbilityTask_WaitDelay> WaitDelayTask;
 
 	FGameplayTag PrimaryAttackInputTag;
 	FGameplayTag InputReleasedEventTag;
@@ -188,6 +204,12 @@ private:
 	UFUNCTION()
 	void OnRateWindowEnd(FGameplayEventData Payload);
 
+	UFUNCTION()
+	void OnChargeFullDelayFinished();
+
+	void StartChargeFeedback();
+	void CleanupChargeFeedback();
+
 	void BeginRelease(float HeldDuration);
 	void EndFromMontage(bool bWasCancelled);
 	bool IsGameplayEventFromActiveMontage(const FGameplayEventData& Payload) const;
@@ -242,8 +264,55 @@ public:
 		MaxWarpAngleDegrees = InMaxAngle;
 	}
 	void SetTestEndAbilityRequested(bool bRequested) { bEndAbilityRequested = bRequested; }
+	void Test_SetAbilityActive(bool bActive)
+	{
+		bIsActive = bActive;
+	}
+
+	void SetTestChargeVFXTrackingEnabled(bool bEnable) { bTestChargeVFXTrackingEnabled = bEnable; }
+	bool IsTestChargeVFXTrackingEnabled() const { return bTestChargeVFXTrackingEnabled; }
+	void SetTestForceSpawnNull(bool bForce) { bTestForceSpawnNull = bForce; }
+	bool IsTestForceSpawnNull() const { return bTestForceSpawnNull; }
+
+	void SetTestChargeVFXSystem(UNiagaraSystem* InSystem) { ChargeVFXSystem = InSystem; }
+	UNiagaraSystem* GetTestChargeVFXSystem() const { return ChargeVFXSystem; }
+	void SetTestChargeVFXTraceSourceName(FName InSourceName) { ChargeVFXTraceSourceName = InSourceName; }
+	FName GetTestChargeVFXTraceSourceName() const { return ChargeVFXTraceSourceName; }
+	void SetTestMaximumChargeDuration(float InDuration) { MaximumChargeDuration = InDuration; }
+	float GetTestMaximumChargeDuration() const { return MaximumChargeDuration; }
+
+	UNiagaraComponent* GetTestChargeVFXComponent() const { return ChargeVFXComponent; }
+	UAbilityTask_WaitDelay* GetTestWaitDelayTask() const { return WaitDelayTask; }
+
+	int32 GetTestStartChargeFeedbackCallCount() const { return TestStartChargeFeedbackCallCount; }
+	int32 GetTestCleanupChargeFeedbackCallCount() const { return TestCleanupChargeFeedbackCallCount; }
+	int32 GetTestFullCallbackCount() const { return TestFullCallbackCount; }
+	bool IsTestChargeVFXActive() const { return bTestChargeVFXActive; }
+	float GetTestRecordedChargePhase() const { return TestRecordedChargePhase; }
+	USceneComponent* GetTestAttachParent() const { return TestAttachParent.Get(); }
+	FName GetTestAttachSocketName() const { return TestAttachSocketName; }
+	float GetTestDelayDuration() const { return TestDelayDuration; }
+
+	void Test_SimulateChargeFullDelayFinished() { OnChargeFullDelayFinished(); }
+	void Test_StartChargeFeedback() { StartChargeFeedback(); }
+	void Test_CleanupChargeFeedback() { CleanupChargeFeedback(); }
+	bool Test_IsChargingStateApplied() const { return bChargingStateApplied; }
+	void Test_SetChargingStateApplied(bool bApplied) { bChargingStateApplied = bApplied; }
+	bool Test_IsReleaseStarted() const { return bReleaseStarted; }
+	float Test_GetDamageMultiplier() const { return DamageMultiplier; }
+	float Test_GetPoiseDamageMagnitude() const { return PoiseDamageMagnitude; }
 
 private:
 	bool bTestBypassMontageActiveCheck = false;
+	bool bTestChargeVFXTrackingEnabled = false;
+	bool bTestForceSpawnNull = false;
+	bool bTestChargeVFXActive = false;
+	int32 TestStartChargeFeedbackCallCount = 0;
+	int32 TestCleanupChargeFeedbackCallCount = 0;
+	int32 TestFullCallbackCount = 0;
+	float TestRecordedChargePhase = -1.0f;
+	float TestDelayDuration = -1.0f;
+	TWeakObjectPtr<USceneComponent> TestAttachParent = nullptr;
+	FName TestAttachSocketName = NAME_None;
 #endif
 };

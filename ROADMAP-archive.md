@@ -1424,3 +1424,16 @@ TODO-03A3E World Pickup Interaction Prompt v1
 - **验证证据矩阵**：用户确认 `PolyQuestEditor (Development Editor)` 手动编译通过、`PolyQuest.Player.LockOn` Focused Automation 全部 `Success`、Scene01 PIE 通过，且默认值符合最终约定。该记录不把 PIE 结果扩展为逐个 Scene01 碰撞组件或 `AFloorVolume` 字段的独立 Editor readback，也不据此声明资产基线。
 - **Main Fresh Review**：Main 已完成两批有界、缺陷优先的 Fresh Review，未发现 P0/P1/P2；随后对 `1.5s -> 2.5s` 的窄增量按最终默认值、测试边界及超时路径复核，未发现阻塞项。
 - **后续指针**：下一排期为独立的 `TODO-03C: Ranged Enemy v1`；它不共享或放宽 Player Lock-On、Bow Target Assist、投射物或 GAS 运行时契约。提交哈希以 Git 历史为准。
+
+## TODO-07B10 Charged Attack Niagara Feedback v1 Closeout (2026-09-08; source/doc commit)
+
+> 本节记录 TODO-07B10 的阶段收口。实施基线为 `4549a5462c5981ac1b0360b70d8d89fea7d6a6bd`；工作树包含用户-owned `Content/**`、Config、Blueprint、地图、插件及其他本地 WIP，因此本节不是干净 HEAD 快照。这里是历史追溯，不替代当前 Source、配置、资产或 Unreal Editor 状态作为运行时权威。
+
+- **阶段目标与批准路径**：在现有 `UChargedAttackAbility` 生命周期内增加一个 Ability-owned 附着 Niagara 蓄力反馈，并新增主手 Display/OwnerMesh 挂载解析；实现严格限定于 `ChargedAttackAbility.h/.cpp`、`WeaponEquipmentComponent.h/.cpp` 与 `ChargedAttackNiagaraFeedbackAutomationTests.cpp` 五个 Source/Test 路径。未改变 GAS/ASC 权属、伤害/Poise/Cost、Tag、Input、Trace、Montage、Config、Build.cs 或二进制资产。
+- **稳定运行时契约**：确认 Montage 活动且 `SetCharging(true)` 成功后才启动 VFX；`HeldDuration` 继续使用 `Input.PrimaryAttack` 的既有时钟，`MaximumChargeDuration` 是 Full 的唯一阈值，`User.ChargePhase` 以 `0.0` 表示 Gather、`1.0` 表示 Full。已满蓄直接切 Full 且不创建 Delay；未满蓄只拥有一个 `UAbilityTask_WaitDelay`。`Event.Attack.Charged.HoldReady` 仍只是姿态暂停。
+- **生成与清理**：Niagara 以 `bAutoActivate=false` 创建，先写相位再显式激活；`BeginRelease()` 与唯一 `EndAbility()` 清理出口先移除 Delay 委托、结束并清空 Task，再 `Deactivate()` 并清空组件。缺失/非法系统、时长、组件、源、Socket 或 renderer-unavailable Spawn 均只让 VFX fail-closed，不影响玩法路径。
+- **挂载契约**：Display-mesh 返回 `MainHandDisplayComponent` 与 `NAME_None`；OwnerMesh 仅在 override 为 `NAME_None` 时使用 `DefaultOwnerMeshTraceSourceName`，显式源必须精确命中 `OwnerMeshTraceSources`，非法显式源不回退到默认右手。`ChargeVFXTraceSourceName` 的 CDO 默认保持 `NAME_None`。
+- **验证证据**：执行者报告了批准路径静态检查与 `git diff --check` 通过；用户确认 `PolyQuest.Combat.ChargedAttackNiagaraFeedback` Automation 成功并确认 Scene01 PIE 通过。用户提供的执行报告记录了 Niagara/Charged GA 配置与 Gather-to-Full 表现；本记录不把静态检查或 Headless tracking seam 包装成渲染证据，Main 也未重新编译、运行 Automation、读取 Editor 或进入 PIE。
+- **Main Fresh Review**：Main 按 `ue-strict-review` 两批预算完成批准范围内的缺陷优先审查，未发现可由当前 diff、具体行号和可解释场景证明的 P0/P1/P2/P3 Finding。`OnChargeFullDelayFinished()` 缺少 generation/token、清理助手使用指针存在性判断、以及 Spawn-null 后仍可能保留 Delay 均只作为未复现的覆盖边界记录；现有清理与 fail-closed 证据不足以将其升级为阻断缺陷，故不新增独立路线项。
+- **保留债务与关闭条件**：`Debt-07B10-CompileReadback` 为非阻塞 authored-validation debt：当前没有独立的用户-owned `PolyQuestEditor (Development Editor)` 编译与逐项 Niagara/Charged GA/Montage attachment readback 收据。以可追溯的用户编译/readback 或 evidence-backed no-adoption 关闭；该债务不阻止 Source/Automation/PIE 收口，但阻止 clean authored-baseline 或 packaging 声明。
+- **提交边界与后续指针**：本阶段提交仅包含五个批准 Source/Test 路径与 `plan.md`、`ARCHITECTURE.md`、`ROADMAP.md`、本归档文档；既有 Content/Config/Blueprint/地图/插件 WIP 均排除。下一排期为独立的 `TODO-03C: Ranged Enemy v1`；它不依赖或放宽本阶段的玩家蓄力反馈契约。提交哈希以 Git 历史为准。

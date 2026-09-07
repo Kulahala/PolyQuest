@@ -78,6 +78,15 @@ public:
 	/** Resolves a named Socket on the current main-hand display mesh to a finite world transform. */
 	bool TryGetEquippedMainHandDisplaySocketTransform(FName SocketName, FTransform& OutTransform) const;
 
+	/**
+	 * Resolves the Niagara attachment parent and socket for the equipped main-hand weapon.
+	 * Display-mesh weapons attach to MainHandDisplayComponent root with NAME_None.
+	 * Owner-mesh weapons resolve RequestedOwnerMeshTraceSourceName through OwnerMeshTraceSources,
+	 * falling back to DefaultOwnerMeshTraceSourceName only when RequestedOwnerMeshTraceSourceName is NAME_None.
+	 * Returns false fail-closed if the weapon, component, source, or socket is invalid.
+	 */
+	bool TryResolveMainHandChargeVFXAttachment(FName RequestedOwnerMeshTraceSourceName, USceneComponent*& OutAttachParent, FName& OutAttachSocketName) const;
+
 	/** The single input resolver: Guard/Parry through the Effective Defense Profile, Primary through the Base Input Profile. */
 	bool TryResolveInputIntent(const FGameplayTag& InputIntentTag, FGameplayTag& OutAbilityTag) const;
 

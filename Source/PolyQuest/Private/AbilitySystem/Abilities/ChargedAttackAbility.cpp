@@ -4,10 +4,15 @@
 #include "AbilitySystemComponent.h"
 #include "Abilities/GameplayAbilityTriggerType.h"
 #include "Abilities/Tasks/AbilityTask_PlayMontageAndWait.h"
+#include "Abilities/Tasks/AbilityTask_WaitDelay.h"
 #include "Abilities/Tasks/AbilityTask_WaitGameplayEvent.h"
 #include "Animation/AnimInstance.h"
 #include "Animation/AnimMontage.h"
 #include "Animation/Combat/AnimNotifyState_ActionWindows.h"
+#include "Combat/Equipment/WeaponEquipmentComponent.h"
+#include "NiagaraComponent.h"
+#include "NiagaraFunctionLibrary.h"
+#include "NiagaraSystem.h"
 #include "Character/BaseCharacter.h"
 #include "Character/Enemy/EnemyCharacter.h"
 #include "Character/Player/PlayerCharacter.h"
@@ -97,6 +102,14 @@ void UChargedAttackAbility::ActivateAbility(
 {
 #if WITH_DEV_AUTOMATION_TESTS
 	bTestBypassMontageActiveCheck = false;
+	TestStartChargeFeedbackCallCount = 0;
+	TestCleanupChargeFeedbackCallCount = 0;
+	TestFullCallbackCount = 0;
+	TestRecordedChargePhase = -1.0f;
+	TestDelayDuration = -1.0f;
+	TestAttachParent = nullptr;
+	TestAttachSocketName = NAME_None;
+	bTestChargeVFXActive = false;
 #endif
 	bEndAbilityRequested = false;
 	bDodgeCancelable = false;
@@ -205,6 +218,10 @@ void UChargedAttackAbility::ActivateAbility(
 	else
 	{
 		SetCharging(true);
+		if (bChargingStateApplied)
+		{
+			StartChargeFeedback();
+		}
 	}
 }
 
@@ -226,6 +243,7 @@ void UChargedAttackAbility::EndAbility(
 #endif
 	bHoldCancelWindowLatchedAcrossPause = false;
 	SetCharging(false);
+	CleanupChargeFeedback();
 	SetDodgeCancelable(false);
 	CloseTraceWindow();
 	RestoreBaselineMontageRate();
@@ -430,6 +448,7 @@ void UChargedAttackAbility::BeginRelease(float HeldDuration)
 	}
 
 	SetCharging(false);
+	CleanupChargeFeedback();
 
 	if (!CheckCost(CurrentSpecHandle, CurrentActorInfo, nullptr))
 	{
@@ -831,5 +850,160 @@ void UChargedAttackAbility::TryApplyMeleeMotionWarpTarget(APlayerCharacter* Play
 					bPlayerOnGround ? 1 : 0, MeleeMotionWarpSnapshot.bCapturedTargetOnGround ? 1 : 0));
 		}
 #endif
+	}
+}
+
+void UChargedAttackAbility::StartChargeFeedback()
+{
+	if (bEndAbilityRequested || bReleaseStarted || !bChargingStateApplied)
+	{
+		return;
+	}
+
+	if (!FMath::IsFinite(MaximumChargeDuration) || MaximumChargeDuration <= 0.0f)
+	{
+		UE_LOG(LogPolyQuest, Warning, TEXT("Charged attack VFX aborted: MaximumChargeDuration (%.3f) is non-positive or non-finite."), MaximumChargeDuration);
+		return;
+	}
+
+	APlayerCharacter* PlayerCharacter = Cast<APlayerCharacter>(GetAvatarActorFromActorInfo());
+	if (!PlayerCharacter)
+	{
+		return;
+	}
+
+	if (!ChargeVFXSystem)
+	{
+#if WITH_DEV_AUTOMATION_TESTS
+		if (bTestChargeVFXTrackingEnabled)
+		{
+			TestStartChargeFeedbackCallCount++;
+			bTestChargeVFXActive = false;
+			TestRecordedChargePhase = -1.0f;
+		}
+#endif
+		return;
+	}
+
+	UWeaponEquipmentComponent* EquipmentComp = PlayerCharacter->FindComponentByClass<UWeaponEquipmentComponent>();
+	if (!EquipmentComp)
+	{
+		UE_LOG(LogPolyQuest, Warning, TEXT("Charged attack VFX aborted for '%s': WeaponEquipmentComponent not found."), *GetNameSafe(PlayerCharacter));
+		return;
+	}
+
+	USceneComponent* AttachParent = nullptr;
+	FName AttachSocketName = NAME_None;
+	if (!EquipmentComp->TryResolveMainHandChargeVFXAttachment(ChargeVFXTraceSourceName, AttachParent, AttachSocketName) || !IsValid(AttachParent))
+	{
+		UE_LOG(LogPolyQuest, Warning, TEXT("Charged attack VFX aborted for '%s': failed to resolve attachment for trace source '%s'."),
+			*GetNameSafe(PlayerCharacter), *ChargeVFXTraceSourceName.ToString());
+		return;
+	}
+
+	const float HeldDuration = FMath::Max(0.0f, PlayerCharacter->GetCombatInputHeldDuration(PrimaryAttackInputTag));
+	const float RemainingToFull = FMath::Max(0.0f, MaximumChargeDuration - HeldDuration);
+	const bool bStartFull = (RemainingToFull <= KINDA_SMALL_NUMBER);
+	const float InitialPhase = bStartFull ? 1.0f : 0.0f;
+
+#if WITH_DEV_AUTOMATION_TESTS
+	if (bTestChargeVFXTrackingEnabled)
+	{
+		TestStartChargeFeedbackCallCount++;
+		TestAttachParent = AttachParent;
+		TestAttachSocketName = AttachSocketName;
+		TestDelayDuration = bStartFull ? 0.0f : RemainingToFull;
+		TestRecordedChargePhase = bTestForceSpawnNull ? -1.0f : InitialPhase;
+		bTestChargeVFXActive = !bTestForceSpawnNull;
+	}
+	else
+#endif
+	{
+		ChargeVFXComponent = UNiagaraFunctionLibrary::SpawnSystemAttached(
+			ChargeVFXSystem,
+			AttachParent,
+			AttachSocketName,
+			FVector::ZeroVector,
+			FRotator::ZeroRotator,
+			EAttachLocation::SnapToTarget,
+			true,
+			false
+		);
+
+		if (ChargeVFXComponent)
+		{
+			static const FName ChargePhaseParamName(TEXT("User.ChargePhase"));
+			ChargeVFXComponent->SetVariableFloat(ChargePhaseParamName, InitialPhase);
+			ChargeVFXComponent->Activate(true);
+		}
+	}
+
+	if (bStartFull)
+	{
+		return;
+	}
+
+	WaitDelayTask = UAbilityTask_WaitDelay::WaitDelay(this, RemainingToFull);
+	if (WaitDelayTask)
+	{
+		WaitDelayTask->OnFinish.AddDynamic(this, &UChargedAttackAbility::OnChargeFullDelayFinished);
+		WaitDelayTask->ReadyForActivation();
+
+		// ReadyForActivation is a synchronous reentrancy boundary.
+		if (bEndAbilityRequested || bReleaseStarted || !bChargingStateApplied)
+		{
+			return;
+		}
+	}
+}
+
+void UChargedAttackAbility::OnChargeFullDelayFinished()
+{
+	WaitDelayTask = nullptr;
+
+	if (bEndAbilityRequested || bReleaseStarted || !bChargingStateApplied)
+	{
+		return;
+	}
+
+#if WITH_DEV_AUTOMATION_TESTS
+	if (bTestChargeVFXTrackingEnabled)
+	{
+		TestFullCallbackCount++;
+		if (bTestChargeVFXActive)
+		{
+			TestRecordedChargePhase = 1.0f;
+		}
+	}
+#endif
+
+	if (IsValid(ChargeVFXComponent) && ChargeVFXComponent->IsActive())
+	{
+		static const FName ChargePhaseParamName(TEXT("User.ChargePhase"));
+		ChargeVFXComponent->SetVariableFloat(ChargePhaseParamName, 1.0f);
+	}
+}
+
+void UChargedAttackAbility::CleanupChargeFeedback()
+{
+#if WITH_DEV_AUTOMATION_TESTS
+	if (bTestChargeVFXTrackingEnabled)
+	{
+		TestCleanupChargeFeedbackCallCount++;
+		bTestChargeVFXActive = false;
+	}
+#endif
+
+	if (WaitDelayTask)
+	{
+		WaitDelayTask->OnFinish.RemoveAll(this);
+		WaitDelayTask->EndTask();
+		WaitDelayTask = nullptr;
+	}
+
+	if (ChargeVFXComponent)
+	{
+		ChargeVFXComponent->Deactivate();
+		ChargeVFXComponent = nullptr;
 	}
 }

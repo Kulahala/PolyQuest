@@ -1,111 +1,125 @@
-# TODO-02B4: Lock-On Visibility Gate And Occlusion Grace v1 实施计划与收口记录
+# TODO-07B10: Charged Attack Niagara Feedback v1 实施计划
 
 ## 1. 阶段定位、基线与路由
 
-- **Target Objective**：为玩家 Lock-On 增加独立的 Camera-to-Target LOS 门禁，阻止透过可见掩体的初始锁定、循环切锁和死亡后重锁；已持有目标可在连续遮挡时获得有限宽限，避免掩体边缘造成锁定抖动。
-- **基线**：`main @ 31616b571df586db9ff46993ee85ba01d6b8ec01`（`TODO-07A2-A` 已提交）。
-- **工作树**：非 clean。全部 `Content/**`、Config、Blueprint、AnimBP、Montage、地图、插件和其他本地 WIP 均为用户所有，必须保留并排除。
-- **Archive preflight**：PASS。本次为同一 `TODO-02B4` 的计划修订，不是新阶段替换，不重复归档上一阶段。
+- **Target Objective**：为 `UChargedAttackAbility` 增加一个 Ability-owned 的附着 Niagara 蓄力反馈。确认蓄力期间为 Gather，相同有效持有时长达到 `MaximumChargeDuration` 后为 Full；VFX 只消费生命周期与相位，不参与任何玩法判定。
+- **基线**：`main @ 4549a5462c5981ac1b0360b70d8d89fea7d6a6bd`（TODO-02B4 已提交）。
+- **工作树**：非 clean。全部 `Content/**`、`Config/**`、Blueprint、AnimBP、Montage、地图、插件及其他本地 WIP 均为用户所有，必须保留并排除。当前 `ROADMAP.md` 也有用户未提交变动；本阶段不修改它。
+- **Archive preflight**：PASS。当前 `plan.md` 对应的 TODO-02B4 有唯一的 2026-09-07 `ROADMAP-archive.md` 收口条目、基线、范围与验证记录。该归档里的旧 TODO-03C 后续指针是历史漂移；实时 `ROADMAP.md` 的 TODO-07B10 是当前权威。不重复归档或改写 TODO-02B4 历史记录。
 - **技能路由**：
   - Outer: `ue-stage-workflow`
   - Primary: `ue5-cpp-gameplay`
-  - Support: `ue5-debug-validation`
-  - Route reason: 该切片只改玩家 Native C++ 锁定候选、射线判定、Tick 生命周期和聚焦 Automation。
-- **执行路线**：`manual/out-of-band Gemini`。Codex/Main 保留架构、计划、范围、验证解释、Fresh Review、文档、暂存和提交所有权；Codex 不创建 in-app 子代理。Gemini 按项目规则完成实施及隔离自审，但不得越出批准范围或提交。
+  - Support: `unreal-niagara`, `ue5-debug-validation`
+  - Route reason: 该切片在现有 GAS Ability 生命周期内增加局部 Niagara 组件、挂载解析与确定性 Automation，不改变战斗权属或资产写入边界。
+- **执行路线**：`manual/out-of-band Gemini`。Codex/Main 保留架构、范围、验证解释、Fresh Review、文档、暂存和提交所有权；Codex 不创建 in-app 子代理。Gemini 只实施本计划批准的 Source/Test 路径，不得提交。
 
-## 2. 冻结契约与刻意非目标
+## 2. 冻结运行时契约与刻意非目标
 
 ### 冻结运行时契约
 
-1. **LOS 门禁**
-   - 在 `APlayerCharacter` 中新增 `LockOnTraceChannel`，默认 `ECC_Visibility`；新增 `LockOnOcclusionGraceDuration`，默认 `2.5f` 秒。两者仅类默认值可调：`EditDefaultsOnly, BlueprintReadOnly`，不提供运行时 Blueprint 写入口。
-   - 起点依次为 `PlayerCameraManager->GetCameraLocation()`、`FollowCamera->GetComponentLocation()`、安全的玩家位置回退；终点统一复用 `FCombatProjectileTargeting::GetTargetAimPoint(TargetActor)`。
-   - 射线忽略玩家自身、递归附属 Actor（武器等）及目标自身。无归属 Actor 的世界静态几何、可见 Actor 和重复隐藏命中均视为有效阻挡。
-   - 不得使用一次 `LineTraceMultiByChannel` 实现隐藏物穿透。UE 5.8 仅生成最近的一个 blocking hit；应使用重复 `LineTraceSingleByChannel`：命中隐藏 Actor 时将其加入忽略列表后重新追踪。
-   - 总追踪次数最多 `8` 次（含初始追踪）。已忽略 Actor 再次命中或达到上限时 fail-closed，返回无 LOS；这既防异常物理状态死循环，也不把深层未知遮挡放行。
-   - 视觉透明条件仅为 `HitActor->IsHidden()`。不在 v1 读取组件 `bHiddenInGame`：项目现有 `AFloorVolume` 契约是 Actor 级 `SetActorHiddenInGame()` 且保留碰撞；组件级语义会扩大到未证实的复合 Actor 行为。
-2. **候选统一门禁**
-   - 在 `BuildLockOnCandidates` 中，候选已通过现有敌对/ASC 有效性检查和严格屏幕投影后，才调用 `HasLineOfSightToTarget`；失败即跳过。
-   - `TryAcquireLockOnTarget`、`HandleTargetCycleTriggered` 与 `TryRetargetAfterLockedTargetDeath` 继续复用该候选列表，因此自动共享 LOS 规则。
-   - 当前被遮挡但尚在宽限期内的目标不获得候选例外，不得重新成为可获取对象；现有循环找不到合法替换时的 no-op 行为保持不变。
-3. **遮挡宽限生命周期**
-   - `Tick` 先执行既有 `ValidateCurrentLockedTarget()`；只有锁仍有效时才调用私有 `UpdateLockOnOcclusion(DeltaSeconds)`。死亡、屏幕 retention 边界和既有 GAS 无效路径先短路，避免对无效目标发射射线。
-   - `UpdateLockOnOcclusion`：无有效目标时清零；`CanRetainExecutionLockedTarget(CurrentTarget, SourceASC)` 为真时清零并返回；有 LOS 时清零；无 LOS 时累计，达到有效宽限即通过现有 `ClearLockedTarget()` 安全清锁。
-   - 无效、负数或非有限宽限配置按 `0.0f` fail-closed 处理。
-   - `ClearLockedTarget()`、真正切换到不同目标、以及 Tick 发现 `LockedTarget` 弱引用失效时必须清零。对相同目标的重复 `SetLockedTarget()`、循环 no-op 或缓存刷新不得重置计时，防止输入刷新宽限。
-4. **成对处决边界**
-   - `CanRetainExecutionLockedTarget(...)` 为真时，严格豁免本阶段新增的 LOS 检查和遮挡超时，计时保持为零。
-   - 该豁免不改变既有 15% 屏幕 retention、死亡/销毁、目标 GAS 有效性或现有处决屏幕边界清锁契约。
+1. **唯一时钟与相位**
+   - `MaximumChargeDuration` 是 Full VFX 与现有 `BeginRelease()` Damage/Poise 插值的共同唯一权威。
+   - 在 Montage 已确认活动且 `SetCharging(true)` 后，读取同一玩家输入时钟 `GetCombatInputHeldDuration(Input.PrimaryAttack)`；`HeldDuration` 包含 Primary-to-Charged handoff 之前的按住时间。
+   - 计算 `RemainingToFull = max(0, MaximumChargeDuration - HeldDurationAtActivation)`。当 `RemainingToFull <= KINDA_SMALL_NUMBER` 时直接以 Full 启动，完全不创建 `UAbilityTask_WaitDelay`；否则只创建一个 Ability-owned Delay。
+   - 固定 Niagara 参数 `User.ChargePhase`：`0.0f = Gather`，`1.0f = Full`。System 负责视觉过渡；C++ 只写相位和生命周期。
+   - `Event.Attack.Charged.HoldReady` 继续只是动画姿态暂停，既有 Montage/Notify 不移动、不改作 VFX 时钟。
+
+2. **生成、重入与清理**
+   - 使用 `UNiagaraFunctionLibrary::SpawnSystemAttached`，显式传入 `bAutoDestroy = true`、`bAutoActivate = false`；创建后先写 `User.ChargePhase`，再 `Activate(true)`，避免第一帧使用资产默认参数。
+   - 直接 Release Handoff 不会调用 `SetCharging(true)`，因此不创建 Charge VFX。
+   - Delay 指针必须在 `ReadyForActivation()` 前保存；该调用返回后若 `EndAbility()` 已同步发生，禁止恢复旧指针、旧组件或旧状态。
+   - 私有幂等 `CleanupChargeFeedback()` 在 `BeginRelease()` 和唯一的 `EndAbility()` 清理出口复用：先对 Delay `OnFinish.RemoveAll(this)`，再 `EndTask()`、置空；随后对有效组件调用 `Deactivate()` 并清空引用。禁止按 `bWasCancelled` 分流到 `DeactivateImmediate()` 或 `DestroyComponent()`。
+   - Full 回调入口必须检查 `bEndAbilityRequested`、`bReleaseStarted`、`bChargingStateApplied` 与当前 VFX 有效/活跃性。Release、取消、Dodge/Hit 中断、死亡、销毁、Montage 结束、激活失败及旧回调均不得留下或复活 VFX。
+   - 缺 Niagara 资产、`SpawnSystemAttached` 返回空、非法/非有限时长、无效组件、无效显式源或 Socket 时，VFX 单独 fail-closed 并诊断；不得中止或改变 Charged 的伤害、Poise、Cost、Tag、Trace、Montage 或 GAS 生命周期。
+
+3. **挂载契约**
+   - `ChargeVFXTraceSourceName` 是 Ability-side `EditDefaultsOnly, BlueprintReadOnly` 字段，CDO 默认严格为 `NAME_None`。
+   - 对 `bUseOwnerMeshSocketForTrace` 的主手近战武器：空 override 才通过 `DefaultOwnerMeshTraceSourceName` 解析；显式 override 必须精确命中 `OwnerMeshTraceSources`，并返回该条目的 `OwnerMeshSocketName`。显式 `Weapon_L` 无法解析时绝不暗中回退 `Weapon_R`。
+   - Display-mesh 武器返回有效 `MainHandDisplayComponent` 与 `NAME_None`，让 Niagara 直接跟随已由 `AttachSocketName` 建立的显示挂载链；不把它强制转换成 OwnerMesh trace profile。
+   - `UWeaponEquipmentComponent` 负责封装上述只读解析，向 Ability 暴露非 Blueprint 的 C++ 挂载 parent/socket 查询；不泄露可写显示组件状态。
+   - 当前空手作者化预期保持为默认 `Weapon_R`，由 Charged GA 资产显式覆盖 `Weapon_L`。不从 `UAnimNotifyState_AttackTraceWindow::TraceSourceNames` 获取该 VFX 源。
 
 ### Deliberate Non-goals
 
-- 不改 `LockOnRetentionMarginRatio = 0.15f`，不让 retention 泄漏到初始获取、循环候选或 Bow Target Assist。
-- 不改 Bow 6% 视口 Target Assist、投射物锁定、攻击/伤害路径、GAS 权属或处决流程。
-- 不让 See-Through / `MF_VisionTunnelFade` 参与玩法 LOS；不改 `AFloorVolume`、碰撞资产或其物理碰撞保留策略。
-- 不增加网络复制、Targeting Subsystem、泛化框架、`.Build.cs`、Config 或任何 `.uasset`/`.umap` 改动。
+- 不改 `MaximumChargeDuration` 的 Damage/Poise 算法、`HeldDuration` 输入权属、任何 Gameplay Tag、Input、TraceWindow、伤害路径、Motion Warp、Montage 或 Cost 行为。
+- 不增加 Timed Niagara Montage Notify、固定 VFX 时长、第二个 GAS Tag、泛化 VFX Subsystem、VFX-to-gameplay 回调、网络复制、Config 或 Build.cs 改动。
+- 不修改 `.uasset`、`.umap`、Niagara、GA、Montage、DataAsset、Blueprint、地图或导入资产；用户只读/受控 Editor 操作另列为验证门禁。
+- 不把 Headless/NullRHI 自动化结果包装成真实 Niagara 渲染、Editor readback 或 PIE 视觉证据。
 
 ## 3. 批准路径、接口与所有权
 
 ### Gemini 实施白名单
 
-- `Source/PolyQuest/Public/Character/Player/PlayerCharacter.h`
-- `Source/PolyQuest/Private/Character/Player/PlayerCharacter.cpp`
-- `Source/PolyQuest/Private/Tests/PlayerLockOnAutomationTests.cpp`
+- `Source/PolyQuest/Public/AbilitySystem/Abilities/ChargedAttackAbility.h`
+- `Source/PolyQuest/Private/AbilitySystem/Abilities/ChargedAttackAbility.cpp`
+- `Source/PolyQuest/Public/Combat/Equipment/WeaponEquipmentComponent.h`
+- `Source/PolyQuest/Private/Combat/Equipment/WeaponEquipmentComponent.cpp`
+- `Source/PolyQuest/Private/Tests/ChargedAttackNiagaraFeedbackAutomationTests.cpp`（新增）
 
-### 接口约束
+### 最小接口变更
 
-- 新增私有辅助：安全起点解析、LOS 判定、遮挡更新和计时清零；运行时计时器保持私有，不为 HUD 或其他玩法系统暴露新 Shipping 查询 API。
-- 自动化所需的 LOS Hook、遮挡更新触发器、计时只读查询、生产起点只读查询和真实 LOS 调用入口全部放在 `WITH_DEV_AUTOMATION_TESTS` 下，沿用现有 `PlayerCharacter` 测试包装模式。
-- 不修改 `FCombatProjectileTargeting`、`PlayerLockOnTargeting`、`FloorVolume`、Build.cs、Tag 或资产。已有 `GetTargetAimPoint` 是只读复用点，不得为本阶段扩展其职责。
+- `UChargedAttackAbility`：增加 `ChargeVFXSystem`、`ChargeVFXTraceSourceName`、私有 Niagara/Delay 运行时状态和私有启动、切相位、清理 helper。
+- `UWeaponEquipmentComponent`：新增只读非 Blueprint C++ 查询，概念签名为 `TryResolveMainHandChargeVFXAttachment(FName RequestedOwnerMeshTraceSourceName, USceneComponent*& OutAttachParent, FName& OutAttachSocketName)`；只返回当前已验证装备的 attachment parent/socket。
+- `WITH_DEV_AUTOMATION_TESTS` 下可加入最小 test-tracking seam，沿用 `ProjectileFlightTrail` 的模式记录 System、attachment、phase、Delay、cleanup 与强制 Spawn-null；不得新增 Shipping 查询 API 或通用 VFX 抽象。
 
-### Main 收口所有权
+### Main 与用户所有权
 
-- 用户完成编译、Automation、Editor readback 与 PIE 门禁，且 Main Fresh Review 完成后，才由 Main 更新 `ARCHITECTURE.md`、`ROADMAP.md`、`ROADMAP-archive.md` 和 `plan.md` 收口记录。
-- 本阶段实施交付不包含文档收口，也不包含 Git Commit。
+- Gemini 首轮交付前应完成一次干净、只读的隔离实施自审；若执行环境不支持，必须如实说明，不能以扩大范围替代。
+- 用户拥有一个 Niagara System、现有 Charged GA 的赋值/`Weapon_L` override、Montage/TraceWindow readback 和 Scene01 PIE；不手改二进制资产。
+- Main 仅在用户验证与 Fresh Review 完成后，更新 `ARCHITECTURE.md`、`ROADMAP.md`、`ROADMAP-archive.md` 和本计划的收口记录；实施阶段本身不包含文档收口或 Git Commit。
 
 ## 4. Focused Automation 与验证矩阵
 
-### `PolyQuest.Player.LockOn` 测试
+### `PolyQuest.Combat.ChargedAttackNiagaraFeedback`
 
-1. `AcquireRejectsBlockedCandidate`：LOS Hook 返回遮挡时，鼠标/按键不能初始锁定该敌人。
-2. `CycleSkipsBlockedCandidates`：当前目标可见时，循环只选择 LOS 合法候选，跳过遮挡敌人。
-3. `DeathRetargetSkipsBlockedCandidates`：死亡目标的顺时针重锁只选择 LOS 合法候选。
-4. `OcclusionGraceRetainsAndRecovers`：遮挡小于 `2.5s` 时保持锁定和高亮；恢复 LOS 后计时清零。
-5. `OcclusionTimeoutClearsAndSameTargetCannotRefresh`：到达阈值时走 `ClearLockedTarget()`；同目标重复设锁或循环 no-op 不得重置已累计时间。
-6. `ExecutionExemptionSkipsOcclusionOnly`：既有成对处决标签夹具加持续 LOS 遮挡后保持锁定且计时为零；不推翻既有“超出 15% retention 仍清锁”测试。
-7. `HiddenActorRetryKeepsVisibleObstacleBlocking`：隐藏 Actor 位于前方、可见阻挡位于后方时仍无 LOS，证明重新追踪没有放行后方可见障碍。
-8. `HiddenActorOnlyDoesNotBlock`：仅隐藏 Actor 保留碰撞时 LOS 通过，证明 Actor 级视觉透明契约。
+1. `StartsGatherOnlyAfterConfirmedCharging`：Montage 确认与 `SetCharging(true)` 后仅启动一次 Gather；Release Handoff 不创建。
+2. `UsesHeldDurationAndBypassesFullDelay`：预先持有时长计入剩余 Delay；已满蓄直接 Full 且没有 Delay；非满蓄通过 `World->Tick(ELevelTick::LEVELTICK_All, DeltaSeconds)` 到阈值后才 Full。
+3. `CleanupPreventsLateFullPhase`：Release、Input Cancel、EndAbility 和 actor destruction 清理 tracking state；清理后的旧 Delay 回调不得再次 Full 或重启。
+4. `ResolvesOwnerMeshSourcesFailClosed`：`NAME_None` 使用默认 `Weapon_R`，显式 `Weapon_L` 生效，非法显式源失败且不回退。
+5. `ResolvesDisplayMeshRootAttachment`：Display-mesh 路径返回 `MainHandDisplayComponent` 与 `NAME_None`。
+6. `NullSystemAndSpawnFailurePreserveGameplay`：系统为空或 test seam 强制 Spawn-null 时，VFX 无操作，而 Charged 的释放、Cost、Poise、Tag 与清理仍可正常推进。
 
-真实射线用现有临时 World fixture 的可控 `ECC_Visibility` 碰撞体完成；行为矩阵可用仅开发期 LOS Hook 保持确定性。现有 15% retention 测试必须保留并运行，作为正交回归证据。
+测试以受控 `UWorld` 和开发期 tracking seam 做确定性生命周期断言，覆盖 NullRHI/Headless；真实组件参数与渲染表现留给用户 Editor/PIE 门禁。
 
 ### 证据门禁
 
 | 门禁 | 所有者 | 需要的证据 |
 | --- | --- | --- |
-| 静态回查 | Gemini | 仅批准文件的最终 diff、`git diff --check`、隔离自审；不能表述为编译或运行时验证。 |
-| 手动编译 | 用户 | `PolyQuestEditor (Development Editor)` 的实际结果。 |
-| Automation | 用户 | `PolyQuest.Player.LockOn` 全部 Success。 |
-| Editor readback | 用户 | `BP_PlayerCharacter` 的两个默认值；Scene01 墙/柱对 `Visibility` 为 Block；非活动 `AFloorVolume` 管理 Actor 隐藏后碰撞仍保留。 |
-| Scene01 PIE | 用户 | 隔墙不可初始锁定；短暂绕柱不抖动；持续遮挡约 2.5 秒后清锁；处决镜头遮挡不中断；Bow Target Assist、15% retention 与 HUD 无回归。 |
-
-若 Scene01 没有既有可复现的 `Visibility` 掩体，不得为本阶段新建或修改资产；记录该 PIE 门禁为待用户另行授权的资产范围决定。
+| 静态回查 | Gemini | 只限批准路径的最终 diff、Rider 错误级检查（可用时）、`git diff --check`、隔离实施自审；不表述为编译或运行时验证。 |
+| 手动编译 | 用户 | `PolyQuestEditor (Development Editor)` 实际结果。 |
+| Automation | 用户 | `PolyQuest.Combat.ChargedAttackNiagaraFeedback` 全部 Success，及受影响的既有 Charged 输入/Trace/Motion Warp 聚焦回归。 |
+| Editor readback | 用户 | Charged GA 的 `MaximumChargeDuration`、`ChargeVFXSystem`、`ChargeVFXTraceSourceName`；Niagara `User.ChargePhase`、Bounds、Gather/Full、Deactivate/auto-destroy；空手 `Weapon_L` 到实际 OwnerMesh Socket，及 Charged Montage TraceWindow 值。 |
+| Scene01 PIE | 用户 | 短按 Gather 后释放、满蓄 Full、改动 `MaximumChargeDuration` 后阈值同步、Dodge/Hit cancel、死亡，以及命中/伤害/Trace 无回归。 |
 
 ## 5. 停止条件与 Gemini 交付要求
 
-- 任何额外 Source 文件、Config、Build.cs、Tag、`.uasset`、`.umap` 或资产碰撞修改需求出现时立即停止并回报。
-- 不得改变 Bow、15% retention、See-Through、投射物、攻击/伤害、GAS 或处决的既有契约。
-- Gemini 交付必须包含：仅三份批准文件的 diff；静态检查结果；Automation 新增/保留用例说明；对 Trace 上限、隐藏 Actor 重试、`HitActor == nullptr`、同目标计时不刷新、弱引用清理和处决豁免边界的实施自审；留给用户的编译、Editor、Automation 和 PIE 门禁。
-- 不得执行 Git Commit、`git add -A`、破坏性命令或 Editor/资产写入。任何 Git 提交均等待用户明确批准。
+- 任何额外 Source 文件、Tag、Input、Config、Build.cs、`.uasset`、`.umap`、Montage/Notify 迁移、资产导入或编辑需求出现时立即停止并回报。
+- 不得触碰 `ROADMAP.md`、`ARCHITECTURE.md`、`ROADMAP-archive.md`、`plan.md`、全部 `Content/**` 与 Config；不得 `git add -A`、提交、回滚或删除用户 WIP。
+- 实施中若发现 `MaximumChargeDuration`、`HeldDuration`、`ChargeVFXTraceSourceName` 或 `OwnerMeshTraceSources` 无法按本计划表达，先报告真实源码/资产证据，不得自行放宽 fail-closed、改成默认右手或引入全局替代方案。
+- Gemini 交付必须包含：五个批准 Source/Test 路径的 diff；静态检查结果；新增/保留 Automation 说明；对 `ReadyForActivation()` 重入、Delay 委托注销、NullRHI/Spawn-null、显式源 fail-closed、Display root attachment、BeginRelease/EndAbility 单一清理和旧回调的自审；留给用户的编译、Editor、Automation 与 PIE 门禁。
+- 同一根因只允许一轮有证据的修复及一次目标重跑；根因重复或连续两轮修复失败后停止并提供首个失败证据。
 
-## 6. 已确认验证与证据边界
+## 6. 实施、验证与 Fresh Review 收口（2026-09-08）
 
-- 用户确认 `PolyQuestEditor (Development Editor)` 手动编译通过，`PolyQuest.Player.LockOn` Focused Automation 全部 `Success`，Scene01 PIE 通过，且锁定默认值符合最终约定。
-- 本记录不把上述 PIE 结果扩展为逐个 Scene01 掩体或 `AFloorVolume` 字段的独立 Editor readback；本阶段没有资产改动，也不据此声明新的资产基线。
-- 最终 `LockOnOcclusionGraceDuration` 为 `2.5f` 秒：原始 `1.5f` 秒短于主角约 `3s` 的体力衰竭回复窗口，用户基于实测节奏确认后完成同一切片的窄调优。该值是 Lock-On 私有默认值，不是 ROADMAP 全局常量。
+### 实施结果
 
-## 7. 收口记录（2026-09-07）
+- Gemini 将实现限定在本计划五个 Source/Test 路径内：`UChargedAttackAbility` 增加 Ability-owned Niagara 生命周期与 Delay 相位切换，`UWeaponEquipmentComponent` 增加只读主手挂载解析，新增 `PolyQuest.Combat.ChargedAttackNiagaraFeedback` 专项 Automation。
+- 已落实冻结契约：`MaximumChargeDuration` 与 `HeldDuration` 共同决定 Full 时刻；`ChargeVFXTraceSourceName` 的 CDO 默认是 `NAME_None`；`bAutoActivate=false` 时先写 `User.ChargePhase` 再激活；满蓄直接旁路 Delay；清理先注销 Delay 委托、再 `EndTask()`，最后统一 `Deactivate()`；显式非法 OwnerMesh 源严格 fail-closed，Display-mesh 使用根部 `NAME_None` 挂载。
+- 代码、测试和资产配置没有引入新的 Tag、Input、Config、Build.cs、伤害路径、GAS 权属或二进制资产改动。
 
-- **实际交付**：仅批准的 `PlayerCharacter.h`、`PlayerCharacter.cpp` 与 `PlayerLockOnAutomationTests.cpp` 实现 Camera-to-Target LOS 门禁、隐藏 Actor 重试、8 次总追踪上限的 fail-closed 策略，以及已持有目标的连续遮挡宽限。
-- **稳定契约**：获取、循环与死亡重锁共用严格 LOS 候选门禁；清晰 LOS、显式清锁、真实目标切换和弱引用失效清零计时；同目标重复设置不能刷新宽限。既有 15% 屏幕 retention、Bow 6% Target Assist 与现有死亡/GAS 有效性规则保持独立；成对处决仅豁免新增 LOS/宽限路径。
-- **Main Fresh Review**：已完成一轮两批有界审查，未发现 P0/P1/P2；`1.5s -> 2.5s` 的窄增量也已按最终源码、测试阈值与 fail-closed 超时路径复核，未发现阻塞问题。
-- **提交边界**：候选提交只包含上述三份 Source/Test、`ARCHITECTURE.md`、`ROADMAP.md`、`ROADMAP-archive.md` 与本记录；全部 `Content/**`、Config、Blueprint、地图、插件和其他用户 WIP 明确排除。`plan.md` 保留为最近阶段的详细交接与验证凭据，直到下一份正式计划被接受。
+### 验证证据
+
+- **Source/static evidence（Gemini/Main）**：批准 diff、关键生命周期/挂载路径与专项测试结构已回查；`git diff --check` 无异常。该证据不等同于编译或运行时证明。
+- **User evidence**：用户确认 `PolyQuest.Combat.ChargedAttackNiagaraFeedback` Automation 成功，且 Scene01 PIE 通过；用户提供的执行报告还记录了 Niagara/Charged GA 配置与 Gather/Full 视觉表现。Main 本轮未重新编译、运行 Automation 或进入 PIE。
+- **Editor/资产边界**：Niagara、Charged GA、Montage、Blueprint、地图和其他 `Content/**` 仍是用户-owned WIP；本阶段不把它们纳入 Source/doc 提交，也不宣称 clean-checkout authored baseline。
+
+### Main Fresh Review
+
+- Main 按 `ue-strict-review` 的两批预算完成批准范围内的缺陷优先审查，未发现可由当前 diff、具体行号和可解释场景证明的 P0/P1/P2/P3 Finding；无阻断项。
+- 以下仅作为历史覆盖边界，不升级为实现缺陷或开放路线图项：`OnChargeFullDelayFinished()` 未使用 generation/token（现有清理已先移除委托并结束 Task，未证明旧 timer 能影响新激活）；清理助手使用指针存在性判断而非 `IsValid()`（未复现失效对象崩溃）；Headless/Null-RHI 下 Spawn-null 后仍可能建立 Delay（专项测试证明玩法路径保持，未证明状态污染）。
+
+### 收口与后续
+
+- 本计划保留为最近阶段的法定交接凭据；详细历史收据同步写入 `ROADMAP-archive.md`，稳定运行时契约同步写入 `ARCHITECTURE.md`，活动路线转写到 `ROADMAP.md`。
+- 当前收到的用户确认未包含独立的 `PolyQuestEditor (Development Editor)` 编译与逐项 Editor readback 收据；因此保留 `Debt-07B10-CompileReadback` 作为非阻塞 authored-validation debt。关闭条件是可追溯的用户编译/readback 收据或 evidence-backed no-adoption；该债务不阻止 Source/Automation/PIE 收口或下一条 `TODO-03C` 路线。
+- 本阶段提交只包含批准的五个 Source/Test 路径与四份收口文档；所有既有 Content/Config/Blueprint/地图/插件 WIP 均明确排除。

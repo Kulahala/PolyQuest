@@ -86,6 +86,96 @@ bool UWeaponEquipmentComponent::TryGetEquippedMainHandDisplaySocketTransform(FNa
 	return true;
 }
 
+bool UWeaponEquipmentComponent::TryResolveMainHandChargeVFXAttachment(FName RequestedOwnerMeshTraceSourceName, USceneComponent*& OutAttachParent, FName& OutAttachSocketName) const
+{
+	OutAttachParent = nullptr;
+	OutAttachSocketName = NAME_None;
+
+	const UMeleeWeaponDefinition* MainMelee = Cast<UMeleeWeaponDefinition>(CurrentMainHandWeapon);
+	if (!MainMelee)
+	{
+		return false;
+	}
+
+	// 1. Display-mesh weapon: attach to the root of MainHandDisplayComponent with NAME_None.
+	if (!MainMelee->bUseOwnerMeshSocketForTrace)
+	{
+		if (!IsValid(MainHandDisplayComponent) || !MainMelee->WeaponMesh
+			|| MainHandDisplayComponent->GetStaticMesh() != MainMelee->WeaponMesh)
+		{
+			return false;
+		}
+
+		OutAttachParent = MainHandDisplayComponent.Get();
+		OutAttachSocketName = NAME_None;
+		return true;
+	}
+
+	// 2. Owner-mesh weapon: attach to the owner character's skeletal mesh socket.
+	const APlayerCharacter* PlayerCharacter = Cast<APlayerCharacter>(GetOwner());
+	USkeletalMeshComponent* OwnerMesh = PlayerCharacter ? PlayerCharacter->GetMesh() : nullptr;
+	if (!OwnerMesh)
+	{
+		return false;
+	}
+
+	// Explicit override requested: must strictly match OwnerMeshTraceSources; do NOT fall back.
+	if (!RequestedOwnerMeshTraceSourceName.IsNone())
+	{
+		for (const FOwnerMeshMeleeTraceSource& Source : MainMelee->OwnerMeshTraceSources)
+		{
+			if (Source.TraceSourceName == RequestedOwnerMeshTraceSourceName)
+			{
+				if (!Source.OwnerMeshSocketName.IsNone() && OwnerMesh->DoesSocketExist(Source.OwnerMeshSocketName))
+				{
+					OutAttachParent = OwnerMesh;
+					OutAttachSocketName = Source.OwnerMeshSocketName;
+					return true;
+				}
+				return false;
+			}
+		}
+
+		// Explicit source was not found in OwnerMeshTraceSources: fail-closed, never fall back to Default.
+		return false;
+	}
+
+	// Override is NAME_None: use DefaultOwnerMeshTraceSourceName if configured.
+	if (MainMelee->OwnerMeshTraceSources.Num() > 0)
+	{
+		if (MainMelee->DefaultOwnerMeshTraceSourceName.IsNone())
+		{
+			return false;
+		}
+
+		for (const FOwnerMeshMeleeTraceSource& Source : MainMelee->OwnerMeshTraceSources)
+		{
+			if (Source.TraceSourceName == MainMelee->DefaultOwnerMeshTraceSourceName)
+			{
+				if (!Source.OwnerMeshSocketName.IsNone() && OwnerMesh->DoesSocketExist(Source.OwnerMeshSocketName))
+				{
+					OutAttachParent = OwnerMesh;
+					OutAttachSocketName = Source.OwnerMeshSocketName;
+					return true;
+				}
+				return false;
+			}
+		}
+
+		return false;
+	}
+
+	// Legacy / single-socket fallback when OwnerMeshTraceSources is empty: use AttachSocketName if socket exists.
+	if (!MainMelee->AttachSocketName.IsNone() && OwnerMesh->DoesSocketExist(MainMelee->AttachSocketName))
+	{
+		OutAttachParent = OwnerMesh;
+		OutAttachSocketName = MainMelee->AttachSocketName;
+		return true;
+	}
+
+	return false;
+}
+
 bool UWeaponEquipmentComponent::BuildTargetCompositionForIncoming(UWeaponDefinition* IncomingDefinition, UWeaponDefinition*& OutTargetMainHand, UWeaponDefinition*& OutTargetOffHand, FString& OutReason) const
 {
 	OutReason.Empty();
