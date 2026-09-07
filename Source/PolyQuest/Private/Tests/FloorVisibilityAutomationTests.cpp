@@ -6,6 +6,7 @@
 
 #include "Character/Player/PlayerCharacter.h"
 #include "Components/BoxComponent.h"
+#include "Components/SceneComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Engine/Engine.h"
 #include "Engine/StaticMeshActor.h"
@@ -47,10 +48,22 @@ bool FFloorVisibilityAutomationTest::RunTest(const FString&)
 			}
 		} ScopeCleanup{ World };
 
+		auto SetupActorRoot = [](AActor* Actor, const FVector& Location)
+		{
+			if (Actor)
+			{
+				USceneComponent* RootComp = NewObject<USceneComponent>(Actor, TEXT("RootComponent"));
+				Actor->SetRootComponent(RootComp);
+				RootComp->RegisterComponent();
+				Actor->SetActorLocation(Location);
+			}
+		};
+
 		// 1.1 Structural Name Classification (Wall, Floor, Arch, Ceiling)
 		FActorSpawnParameters SpawnParams;
 		SpawnParams.Name = FName(TEXT("SM_Dungeon_StoneWall_01"));
 		AActor* WallActor = World->SpawnActor<AActor>(AActor::StaticClass(), FVector(0.f, 0.f, 500.f), FRotator::ZeroRotator, SpawnParams);
+		SetupActorRoot(WallActor, FVector(0.f, 0.f, 500.f));
 		TestNotNull(TEXT("WallActor spawned"), WallActor);
 		if (WallActor)
 		{
@@ -59,6 +72,7 @@ bool FFloorVisibilityAutomationTest::RunTest(const FString&)
 
 		SpawnParams.Name = FName(TEXT("SM_Dungeon_Floor_Tile_02"));
 		AActor* FloorTileActor = World->SpawnActor<AActor>(AActor::StaticClass(), FVector(0.f, 0.f, 500.f), FRotator::ZeroRotator, SpawnParams);
+		SetupActorRoot(FloorTileActor, FVector(0.f, 0.f, 500.f));
 		TestNotNull(TEXT("FloorTileActor spawned"), FloorTileActor);
 		if (FloorTileActor)
 		{
@@ -68,6 +82,7 @@ bool FFloorVisibilityAutomationTest::RunTest(const FString&)
 		// 1.2 Interior Prop Classification (Chair, Torch, Barrel)
 		SpawnParams.Name = FName(TEXT("SM_Wooden_Chair_A"));
 		AActor* ChairActor = World->SpawnActor<AActor>(AActor::StaticClass(), FVector(0.f, 0.f, 500.f), FRotator::ZeroRotator, SpawnParams);
+		SetupActorRoot(ChairActor, FVector(0.f, 0.f, 500.f));
 		TestNotNull(TEXT("ChairActor spawned"), ChairActor);
 		if (ChairActor)
 		{
@@ -76,6 +91,7 @@ bool FFloorVisibilityAutomationTest::RunTest(const FString&)
 
 		SpawnParams.Name = FName(TEXT("BP_WallTorch_Dungeon"));
 		AActor* TorchActor = World->SpawnActor<AActor>(AActor::StaticClass(), FVector(0.f, 0.f, 500.f), FRotator::ZeroRotator, SpawnParams);
+		SetupActorRoot(TorchActor, FVector(0.f, 0.f, 500.f));
 		TestNotNull(TEXT("TorchActor spawned"), TorchActor);
 		if (TorchActor)
 		{
@@ -85,6 +101,7 @@ bool FFloorVisibilityAutomationTest::RunTest(const FString&)
 		// 1.3 Explicit Tag Override
 		SpawnParams.Name = FName(TEXT("SM_SpecialProp"));
 		AActor* TaggedStructural = World->SpawnActor<AActor>(AActor::StaticClass(), FVector(0.f, 0.f, 500.f), FRotator::ZeroRotator, SpawnParams);
+		SetupActorRoot(TaggedStructural, FVector(0.f, 0.f, 500.f));
 		if (TaggedStructural)
 		{
 			TaggedStructural->Tags.Add(FName(TEXT("Floor.Structural")));
