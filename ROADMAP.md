@@ -206,6 +206,7 @@ For older completed stages, validation evidence, and exact historical wording, s
 - TODO-07B1/07B1A, TODO-07B2, TODO-07B3, TODO-07B4, TODO-07B5, TODO-07B6, TODO-07B7, and TODO-07B9 are delivered; `TODO-03I4` has separately removed the legacy Loadout compatibility surface. The post-E baseline deltas are tracked under this umbrella. The umbrella owns focused presentation work, not new combat ownership.
   - Re-author final Montage composition and Notify timing only after the selected animation set is stable. Reuse the proven TODO-02F rate lifecycle; do not add overlapping playback-rate systems or use Motion Warping for locomotion.
   - `TODO-07B9: Dungeon Multi-Floor Trigger & Visibility System v1` is delivered. Spatial `AFloorVolume` auto-collects contained actors and toggles interior visibility while strictly preserving physics collisions; structural geometry clips via MPC `FloorCutoffZ` DitherTemporalAA; dual `AFloorTriggerVolume` components provide jitter-free floor hysteresis across staircases. Verified via 4 focused Automation suites and Scene01/Demonstration PIE.
+  - `Player Vital HUD` has a completed narrow presentation closeout: damage health drops immediately, healing uses `8.0f` smoothing while Buffer never lags the rising main bar, and Stamina uses `12.0f` drain / `6.0f` regeneration smoothing; lethal or exhausted `<= 0.001f` values snap to zero in the same update. This does not create a new TODO or change the next scheduled `TODO-03C` route; the historical receipt is in `ROADMAP-archive.md`.
 
 
 

@@ -1437,3 +1437,21 @@ TODO-03A3E World Pickup Interaction Prompt v1
 - **Main Fresh Review**：Main 按 `ue-strict-review` 两批预算完成批准范围内的缺陷优先审查，未发现可由当前 diff、具体行号和可解释场景证明的 P0/P1/P2/P3 Finding。`OnChargeFullDelayFinished()` 缺少 generation/token、清理助手使用指针存在性判断、以及 Spawn-null 后仍可能保留 Delay 均只作为未复现的覆盖边界记录；现有清理与 fail-closed 证据不足以将其升级为阻断缺陷，故不新增独立路线项。
 - **保留债务与关闭条件**：`Debt-07B10-CompileReadback` 为非阻塞 authored-validation debt：当前没有独立的用户-owned `PolyQuestEditor (Development Editor)` 编译与逐项 Niagara/Charged GA/Montage attachment readback 收据。以可追溯的用户编译/readback 或 evidence-backed no-adoption 关闭；该债务不阻止 Source/Automation/PIE 收口，但阻止 clean authored-baseline 或 packaging 声明。
 - **提交边界与后续指针**：本阶段提交仅包含五个批准 Source/Test 路径与 `plan.md`、`ARCHITECTURE.md`、`ROADMAP.md`、本归档文档；既有 Content/Config/Blueprint/地图/插件 WIP 均排除。下一排期为独立的 `TODO-03C: Ranged Enemy v1`；它不依赖或放宽本阶段的玩家蓄力反馈契约。提交哈希以 Git 历史为准。
+
+## TODO-07B9 Post-Closeout Test-Fixture Spatial Correction (2026-09-08; committed at `482ae71`, parent HEAD `c708d65`, working-tree snapshot not clean)
+
+> 本节记录 TODO-07B9 收口后的窄测试夹具修正。该提交只修正 Automation 夹具对空间位置的表达，不替代当前 Source、配置、资产或 Unreal Editor 状态作为运行时权威。
+
+- **范围与实际结果**：仅修改 `Source/PolyQuest/Private/Tests/FloorVisibilityAutomationTests.cpp`。为测试中 `World->SpawnActor<AActor>` 创建的裸 Actor 安装并注册 `USceneComponent` RootComponent，再显式设置 `Z = 500` 的世界位置，使 FloorVolume 空间收集读取到有效的组件 Bounds/Transform。
+- **运行时边界**：`AFloorVolume`、`AFloorTriggerVolume` 的生产代码以及层切换可见性、Collision 保留和楼梯 Hysteresis 契约均未改变；本次只消除了无 RootComponent 的测试 Actor 被固定在原点、进而造成假性跨层收集失败的夹具失真。
+- **验证证据边界**：提交 `482ae71` 的提交记录报告 `PolyQuest.Environment.FloorVisibility` 为 Success、Rider 为 0 Errors 且 `git diff --check` 通过。本次文档对齐只读取当前源码与提交历史，未重新运行 Automation、Rider、编译、Editor 或 PIE。
+- **路线影响**：不新增路线债务或阶段编号；现有 `TODO-07B9` 收口与下一排期 `TODO-03C` 保持不变，全部用户-owned Content/Config WIP 继续排除。
+
+## Player Vital HUD Smooth Interpolation And Zero-Snap Closeout (2026-09-08; committed at `fefdb87`, parent HEAD `482ae71`, working-tree snapshot not clean)
+
+> 本节记录 TODO-07B 表现 umbrella 下的窄 Vital HUD 收口；它不是新的 TODO 阶段，不替代当前 Source、配置、资产或 Unreal Editor 状态作为运行时权威。
+
+- **范围与实际结果**：提交 `fefdb87` 修改 `PlayerVitalHUDWidget.h/.cpp` 与 `VitalHudAutomationTests.cpp`，并已同步 `ARCHITECTURE.md`。Health 受击时主条即时下降；治疗以 `HealthRegenInterpSpeed = 8.0f` 平滑上升，Buffer 在上升过程中不落后于主条。Stamina 按消耗 `12.0f`、恢复 `6.0f` 的非对称速度平滑追赶；致死或耗尽值 `<= 0.001f` 时 Health/Buffer 或 Stamina 在同一更新归零。
+- **测试覆盖**：`VitalHudAutomationTests.cpp` 新增 1.13/1.14，分别覆盖体力消耗/恢复平滑与 Zero-Snap、Health 治疗平滑/受击即时下降及致死归零。旧的 Health/Stamina 插值开关已移除，机制常驻；没有引入新的 GAS、Input、资产或游戏玩法权属。
+- **验证证据边界**：提交 `fefdb87` 的提交记录报告 Rider 对三处 C++ 路径为 0 Errors、用户已在 Editor Automation 窗口确认 `PolyQuest.UI.PlayerVitalHUD` Success，且 `git diff --check` 通过。本次文档对齐未重新编译、运行 Automation、读取 UMG 资产或进入 PIE，因此不把上述记录扩写为新的 Main、Editor readback 或视觉证据。
+- **路线影响**：不新建形式化 Debt；当前证据未显示需要持续跟踪的缺陷或被接受延期风险。该窄表现收口不改变 `TODO-03C: Ranged Enemy v1` 的下一排期，相关历史凭据只保留在本归档。
