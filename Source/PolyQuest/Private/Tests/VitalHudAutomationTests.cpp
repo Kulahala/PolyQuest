@@ -61,24 +61,27 @@ bool FVitalHudAutomationTest::RunTest(const FString&)
 
 			// Normal range
 			PlayerWidget->SetHealth(50.0f, 100.0f);
-			TestEqual(TEXT("Player normal health percent is 0.5"), HPBar->GetPercent(), 0.5f);
-			TestEqual(TEXT("Player normal health current text is '50'"), HPCurr->GetText().ToString(), TEXT("50"));
-			TestEqual(TEXT("Player normal health max text is '100'"), HPMax->GetText().ToString(), TEXT("100"));
+			TestEqual(TEXT("Player health clamped correctly (normal)"), HPBar->GetPercent(), 0.5f);
+			TestEqual(TEXT("Player health current text rounded"), HPCurr->GetText().ToString(), TEXT("50"));
+			TestEqual(TEXT("Player health max text rounded"), HPMax->GetText().ToString(), TEXT("100"));
 
-			PlayerWidget->SetStamina(30.0f, 100.0f);
-			TestEqual(TEXT("Player normal stamina percent is 0.3"), SPBar->GetPercent(), 0.3f);
-			TestEqual(TEXT("Player normal stamina current text is '30'"), SPCurr->GetText().ToString(), TEXT("30"));
-			TestEqual(TEXT("Player normal stamina max text is '100'"), SPMax->GetText().ToString(), TEXT("100"));
-
-			// Over-max clamping
+			// Above max (smooth healing fill-up to clamped max)
 			PlayerWidget->SetHealth(150.0f, 100.0f);
-			TestEqual(TEXT("Player over-max health percent is clamped to 1.0"), HPBar->GetPercent(), 1.0f);
-			TestEqual(TEXT("Player over-max health current text is clamped to '100'"), HPCurr->GetText().ToString(), TEXT("100"));
-			TestEqual(TEXT("Player over-max health max text is '100'"), HPMax->GetText().ToString(), TEXT("100"));
+			PlayerWidget->SimulateTickForTesting(1.0f);
+			TestEqual(TEXT("Player health clamped to max"), HPBar->GetPercent(), 1.0f);
+			TestEqual(TEXT("Player health current text clamped to max"), HPCurr->GetText().ToString(), TEXT("100"));
 
+			// Stamina normal
+			PlayerWidget->SetStamina(75.0f, 100.0f);
+			TestEqual(TEXT("Player stamina clamped correctly (normal)"), SPBar->GetPercent(), 0.75f);
+			TestEqual(TEXT("Player stamina current text rounded"), SPCurr->GetText().ToString(), TEXT("75"));
+			TestEqual(TEXT("Player stamina max text rounded"), SPMax->GetText().ToString(), TEXT("100"));
+
+			// Stamina above max (smooth recovery fill-up to clamped max)
 			PlayerWidget->SetStamina(200.0f, 100.0f);
-			TestEqual(TEXT("Player over-max stamina percent is clamped to 1.0"), SPBar->GetPercent(), 1.0f);
-			TestEqual(TEXT("Player over-max stamina current text is clamped to '100'"), SPCurr->GetText().ToString(), TEXT("100"));
+			PlayerWidget->SimulateTickForTesting(1.0f);
+			TestEqual(TEXT("Player stamina clamped to max"), SPBar->GetPercent(), 1.0f);
+			TestEqual(TEXT("Player stamina current text clamped to max"), SPCurr->GetText().ToString(), TEXT("100"));
 
 			// Negative current clamping
 			PlayerWidget->SetHealth(-20.0f, 100.0f);
@@ -195,11 +198,12 @@ bool FVitalHudAutomationTest::RunTest(const FString&)
 			BufferWidget->SimulateTickForTesting(0.2f);
 			TestEqual(TEXT("During delay, Buffer percent still holds at 1.0"), BufferBar->GetPercent(), 1.0f);
 
-			// Healing received: buffer snaps up immediately with HP
+			// Healing received: buffer delay cleared immediately, then health and buffer smoothly fill up
 			BufferWidget->SetHealth(80.0f, 100.0f);
-			TestEqual(TEXT("After healing, HP percent snaps to 0.8"), HPBar->GetPercent(), 0.8f);
-			TestEqual(TEXT("After healing, Buffer percent snaps immediately to 0.8"), BufferBar->GetPercent(), 0.8f);
 			TestEqual(TEXT("After healing, Buffer delay timer is 0.0"), BufferWidget->GetTestBufferDelayTimer(), 0.0f);
+			BufferWidget->SimulateTickForTesting(0.80f);
+			TestEqual(TEXT("After healing tick, HP percent converges to 0.8"), HPBar->GetPercent(), 0.8f);
+			TestEqual(TEXT("After healing tick, Buffer percent converges to 0.8"), BufferBar->GetPercent(), 0.8f);
 		}
 
 		// 1.5 PlayerVitalHUDWidget StaminaExhaustedOverlay Assertions
@@ -659,6 +663,108 @@ bool FVitalHudAutomationTest::RunTest(const FString&)
 			TestEqual(TEXT("Tri-state: Full-HP enemy completely fades to 0.0 quickly"),
 				FullHpLockWidget->GetTestRenderOpacity(), 0.0f);
 		}
+
+		// 1.13 PlayerVitalHUDWidget Stamina Smooth Interp and Zero-Snap Assertions
+		{
+			UPlayerVitalHUDWidget* InterpWidget = NewObject<UPlayerVitalHUDWidget>(GetTransientPackage());
+			UProgressBar* SPBar = NewObject<UProgressBar>(InterpWidget);
+			InterpWidget->SetTestStaminaWidgets(SPBar, nullptr, nullptr);
+
+			// Initial setup (100 / 100): instant snap to 1.0f on first initialization
+			InterpWidget->SetStamina(100.0f, 100.0f);
+			TestEqual(TEXT("Initial stamina bar snaps to 1.0"), SPBar->GetPercent(), 1.0f);
+			TestEqual(TEXT("Initial TargetStaminaPercent is 1.0"), InterpWidget->GetTestTargetStaminaPercent(), 1.0f);
+			TestEqual(TEXT("Initial CurrentStaminaPercent is 1.0"), InterpWidget->GetTestCurrentStaminaPercent(), 1.0f);
+
+			// Sprint / Drain consumption (100 -> 60): target changes instantly, progress bar holds on frame 0
+			InterpWidget->SetStamina(60.0f, 100.0f);
+			TestEqual(TEXT("After drain, target stamina is 0.6"), InterpWidget->GetTestTargetStaminaPercent(), 0.6f);
+			TestEqual(TEXT("Frame 0 after drain, progress bar holds at 1.0"), SPBar->GetPercent(), 1.0f);
+
+			// Advance 0.05s: fast drain catch-up
+			InterpWidget->SimulateTickForTesting(0.05f);
+			TestTrue(TEXT("Stamina progress bar smoothly decays below 1.0"), SPBar->GetPercent() < 1.0f);
+			TestTrue(TEXT("Stamina progress bar has not undershot 0.6"), SPBar->GetPercent() >= 0.6f);
+
+			// Advance to full convergence (0.55s)
+			InterpWidget->SimulateTickForTesting(0.55f);
+			TestEqual(TEXT("Stamina progress bar fully converges to 0.6"), SPBar->GetPercent(), 0.6f);
+			TestEqual(TEXT("CurrentStaminaPercent equals target 0.6"), InterpWidget->GetTestCurrentStaminaPercent(), 0.6f);
+
+			// Natural recovery / Regen (60 -> 90): smooth filling
+			InterpWidget->SetStamina(90.0f, 100.0f);
+			TestEqual(TEXT("After regen, target stamina is 0.9"), InterpWidget->GetTestTargetStaminaPercent(), 0.9f);
+			TestEqual(TEXT("Frame 0 after regen, progress bar holds at 0.6"), SPBar->GetPercent(), 0.6f);
+
+			// Advance 0.05s: gentle regen interpolation
+			InterpWidget->SimulateTickForTesting(0.05f);
+			TestTrue(TEXT("Stamina progress bar smoothly increases above 0.6"), SPBar->GetPercent() > 0.6f);
+			TestTrue(TEXT("Stamina progress bar has not overshot 0.9"), SPBar->GetPercent() <= 0.9f);
+
+			// Advance to full convergence (1.00s)
+			InterpWidget->SimulateTickForTesting(1.00f);
+			TestEqual(TEXT("Stamina progress bar fully converges to 0.9"), SPBar->GetPercent(), 0.9f);
+
+			// Zero stamina instant bottom snap (90 -> 0):
+			// Must snap to 0.0 immediately without waiting for tick or interpolation!
+			InterpWidget->SetStamina(0.0f, 100.0f);
+			TestEqual(TEXT("Stamina depleted to 0 snaps progress bar to 0.0 immediately"), SPBar->GetPercent(), 0.0f);
+			TestEqual(TEXT("CurrentStaminaPercent is 0.0 on zero snap"), InterpWidget->GetTestCurrentStaminaPercent(), 0.0f);
+			TestEqual(TEXT("TargetStaminaPercent is 0.0 on zero snap"), InterpWidget->GetTestTargetStaminaPercent(), 0.0f);
+
+			// Boundary condition: near-zero clamp (e.g. 0.05 / 100 = 0.0005f <= 0.001f) also snaps immediately
+			InterpWidget->SetStamina(50.0f, 100.0f);
+			InterpWidget->SimulateTickForTesting(0.60f);
+			InterpWidget->SetStamina(0.05f, 100.0f);
+			TestEqual(TEXT("Near-zero stamina (<= 0.001) snaps immediately to 0.0"), SPBar->GetPercent(), 0.0f);
+		}
+
+		// 1.14 PlayerVitalHUDWidget Health Smooth Healing and Instant Damage-Snap Assertions
+		{
+			UPlayerVitalHUDWidget* HealthInterpWidget = NewObject<UPlayerVitalHUDWidget>(GetTransientPackage());
+			UProgressBar* HPBar = NewObject<UProgressBar>(HealthInterpWidget);
+			UProgressBar* BufferBar = NewObject<UProgressBar>(HealthInterpWidget);
+			HealthInterpWidget->SetTestHealthWidgets(HPBar, nullptr, nullptr);
+			HealthInterpWidget->SetTestHealthBufferProgressBar(BufferBar);
+
+			// Initial setup (100 / 100): instant snap to 1.0f on first initialization
+			HealthInterpWidget->SetHealth(100.0f, 100.0f);
+			TestEqual(TEXT("Initial health bar snaps to 1.0"), HPBar->GetPercent(), 1.0f);
+			TestEqual(TEXT("Initial buffer bar snaps to 1.0"), BufferBar->GetPercent(), 1.0f);
+			TestEqual(TEXT("Initial CurrentHealthPercent is 1.0"), HealthInterpWidget->GetTestCurrentHealthPercent(), 1.0f);
+
+			// Damage taken (100 -> 40): main health bar drops instantly (zero delay), buffer bar holds at 1.0
+			HealthInterpWidget->SetHealth(40.0f, 100.0f);
+			TestEqual(TEXT("Damage instantly snaps main health bar to 0.4 on frame 0"), HPBar->GetPercent(), 0.4f);
+			TestEqual(TEXT("Damage holds buffer bar at 1.0 during catch-up delay"), BufferBar->GetPercent(), 1.0f);
+			TestEqual(TEXT("CurrentHealthPercent matches target 0.4 immediately after damage"), HealthInterpWidget->GetTestCurrentHealthPercent(), 0.4f);
+
+			// Advance 0.60s: buffer bar catches up and converges to 0.4
+			HealthInterpWidget->SimulateTickForTesting(0.60f);
+			TestEqual(TEXT("Buffer bar catches up to 0.4 after delay"), BufferBar->GetPercent(), 0.4f);
+
+			// Healing received (40 -> 80): smooth healing fill-up
+			HealthInterpWidget->SetHealth(80.0f, 100.0f);
+			TestEqual(TEXT("After healing, TargetHealthPercent is 0.8"), HealthInterpWidget->GetTestTargetHealthPercent(), 0.8f);
+			TestEqual(TEXT("Frame 0 after healing, main health bar holds at 0.4"), HPBar->GetPercent(), 0.4f);
+
+			// Advance 0.05s: smooth upward fill-up
+			HealthInterpWidget->SimulateTickForTesting(0.05f);
+			TestTrue(TEXT("Health bar smoothly fills up above 0.4"), HPBar->GetPercent() > 0.4f);
+			TestTrue(TEXT("Health bar has not overshot 0.8"), HPBar->GetPercent() <= 0.8f);
+			TestTrue(TEXT("Buffer bar follows rising health fill-up"), BufferBar->GetPercent() >= HPBar->GetPercent());
+
+			// Advance to full convergence (0.80s)
+			HealthInterpWidget->SimulateTickForTesting(0.80f);
+			TestEqual(TEXT("Health bar fully converges to 0.8"), HPBar->GetPercent(), 0.8f);
+			TestEqual(TEXT("Buffer bar converges to 0.8 with health"), BufferBar->GetPercent(), 0.8f);
+
+			// Lethal damage / Death (80 -> 0): instant snap to 0.0 for both bars
+			HealthInterpWidget->SetHealth(0.0f, 100.0f);
+			TestEqual(TEXT("Fatal damage instantly snaps health bar to 0.0"), HPBar->GetPercent(), 0.0f);
+			TestEqual(TEXT("Fatal damage instantly snaps buffer bar to 0.0"), BufferBar->GetPercent(), 0.0f);
+			TestEqual(TEXT("CurrentHealthPercent is 0.0 on lethal damage"), HealthInterpWidget->GetTestCurrentHealthPercent(), 0.0f);
+		}
 	}
 
 	// -------------------------------------------------------------------------
@@ -830,6 +936,7 @@ bool FVitalHudAutomationTest::RunTest(const FString&)
 			{
 				ASC1->SetNumericAttributeBase(UCharacterAttributeSet::GetHealthAttribute(), 80.0f);
 				ASC1->SetNumericAttributeBase(UCharacterAttributeSet::GetStaminaAttribute(), 60.0f);
+				HUDInstance1->SimulateTickForTesting(0.80f);
 
 				TestEqual(TEXT("HUD Health percent observed as 0.8"), HUD_HPBar->GetPercent(), 0.8f);
 				TestEqual(TEXT("HUD Health current text observed as '80'"), HUD_HPCurr->GetText().ToString(), TEXT("80"));
@@ -839,6 +946,7 @@ bool FVitalHudAutomationTest::RunTest(const FString&)
 				// No Player healing feature is authored yet, so drive an upward ASC change directly.
 				ASC1->SetNumericAttributeBase(UCharacterAttributeSet::GetHealthAttribute(), 100.0f);
 				ASC1->SetNumericAttributeBase(UCharacterAttributeSet::GetStaminaAttribute(), 100.0f);
+				HUDInstance1->SimulateTickForTesting(1.00f);
 
 				TestEqual(TEXT("HUD Health percent refreshes to 1.0 after an upward ASC change"), HUD_HPBar->GetPercent(), 1.0f);
 				TestEqual(TEXT("HUD Health current text refreshes to '100' after an upward ASC change"), HUD_HPCurr->GetText().ToString(), TEXT("100"));

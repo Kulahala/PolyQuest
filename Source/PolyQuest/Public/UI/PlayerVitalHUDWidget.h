@@ -75,14 +75,20 @@ public:
 	float GetTestStaminaShakeTimer() const;
 	float GetTestHealthTranslationY() const;
 	float GetTestStaminaTranslationY() const;
+	float GetTestTargetHealthPercent() const;
+	float GetTestCurrentHealthPercent() const;
+	float GetTestTargetStaminaPercent() const;
+	float GetTestCurrentStaminaPercent() const;
 	void SimulateTickForTesting(float InDeltaTime);
 #endif
 
 protected:
 	virtual void NativeConstruct() override;
 	virtual void NativeTick(const FGeometry& MyGeometry, float InDeltaTime) override;
+	void UpdateHealth(const float InDeltaTime);
 	void UpdateBufferHealth(float InDeltaTime);
 	void UpdateBufferDamageFlash(float InDeltaTime);
+	void UpdateStamina(const float InDeltaTime);
 	void UpdateStaminaChargeFlash(float InDeltaTime);
 	void UpdateVignette(float InDeltaTime);
 	void UpdateShake(float InDeltaTime);
@@ -113,8 +119,20 @@ protected:
 	UPROPERTY(EditDefaultsOnly, Category = "Vital|Buffer", meta = (ClampMin = "0.01"))
 	float BufferDamageFlashDuration = 0.15f;
 
+	/** Interp speed for health recovery / healing fill-up. */
+	UPROPERTY(EditDefaultsOnly, Category = "Vital|Buffer", meta = (ClampMin = "0.1"))
+	float HealthRegenInterpSpeed = 8.0f;
+
 	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<UWidget> StaminaBarOverlay;
+
+	/** Interp speed for stamina natural recovery / regeneration. */
+	UPROPERTY(EditDefaultsOnly, Category = "Vital|Stamina", meta = (ClampMin = "0.1"))
+	float StaminaRegenInterpSpeed = 6.0f;
+
+	/** Interp speed for stamina consumption / drain (fast catch-up to soften steps). */
+	UPROPERTY(EditDefaultsOnly, Category = "Vital|Stamina", meta = (ClampMin = "0.1"))
+	float StaminaDrainInterpSpeed = 12.0f;
 
 	/** Base normal color for stamina bar (dynamically captured from widget if valid, fallback #2ECC71). */
 	UPROPERTY(EditDefaultsOnly, Category = "Vital|Stamina")
@@ -195,7 +213,10 @@ protected:
 
 private:
 	float TargetHealthPercent = 0.0f;
+	float CurrentHealthPercent = 0.0f;
 	float CurrentBufferPercent = 0.0f;
+	float TargetStaminaPercent = 1.0f;
+	float CurrentStaminaPercent = 1.0f;
 	float BufferDelayTimer = 0.0f;
 	float BufferDamageFlashTimer = 0.0f;
 	float StaminaChargeFlashTimer = 0.0f;

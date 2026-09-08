@@ -42,6 +42,7 @@ void UPlayerVitalHUDWidget::SetHealth(float Current, float Max)
 	{
 		CurrentBufferPercent = DisplayPercent;
 		TargetHealthPercent = DisplayPercent;
+		CurrentHealthPercent = DisplayPercent;
 		bIsHealthInitialized = true;
 		BufferDelayTimer = 0.0f;
 		BufferDamageFlashTimer = 0.0f;
@@ -54,45 +55,68 @@ void UPlayerVitalHUDWidget::SetHealth(float Current, float Max)
 			}
 			HealthBufferProgressBar->SetPercent(CurrentBufferPercent);
 		}
+		if (HealthProgressBar)
+		{
+			HealthProgressBar->SetPercent(CurrentHealthPercent);
+		}
 	}
 	else if (DisplayPercent > TargetHealthPercent)
 	{
-		// Strictly healing: buffer snaps up immediately with current health, cancel damage white flash
-		CurrentBufferPercent = DisplayPercent;
+		// Strictly healing: target increases, smoothly catches up via UpdateHealth in Tick
 		TargetHealthPercent = DisplayPercent;
 		BufferDelayTimer = 0.0f;
 		BufferDamageFlashTimer = 0.0f;
 		if (HealthBufferProgressBar)
 		{
-			HealthBufferProgressBar->SetPercent(CurrentBufferPercent);
 			HealthBufferProgressBar->SetFillColorAndOpacity(HealthBufferBaseColor);
 		}
 	}
 	else if (DisplayPercent < TargetHealthPercent)
 	{
-		// Strictly damage: start delay timer before catch-up begins, trigger white impact crest and health shake
+		// Strictly damage: main health bar drops instantly (zero delay), buffer bar holds and delay starts
 		TargetHealthPercent = DisplayPercent;
-		BufferDelayTimer = BufferCatchUpDelay;
-		DamageFlashTimer = DamageFlashDuration;
-		BufferDamageFlashTimer = BufferDamageFlashDuration;
-		if (HealthBufferProgressBar)
+		CurrentHealthPercent = DisplayPercent;
+		if (HealthProgressBar)
 		{
-			if (!bHasCapturedBufferBaseColor)
-			{
-				HealthBufferBaseColor = HealthBufferProgressBar->GetFillColorAndOpacity();
-				bHasCapturedBufferBaseColor = true;
-			}
-			HealthBufferProgressBar->SetFillColorAndOpacity(FLinearColor(2.0f, 2.0f, 2.0f, HealthBufferBaseColor.A));
+			HealthProgressBar->SetPercent(CurrentHealthPercent);
 		}
-		PlayHealthShake();
+
+		// Zero health instant bottom snap: if dead/depleted, snap buffer bar to 0 immediately
+		if (DisplayPercent <= 0.001f)
+		{
+			TargetHealthPercent = 0.0f;
+			CurrentHealthPercent = 0.0f;
+			CurrentBufferPercent = 0.0f;
+			BufferDelayTimer = 0.0f;
+			BufferDamageFlashTimer = 0.0f;
+			if (HealthProgressBar)
+			{
+				HealthProgressBar->SetPercent(0.0f);
+			}
+			if (HealthBufferProgressBar)
+			{
+				HealthBufferProgressBar->SetPercent(0.0f);
+			}
+		}
+		else
+		{
+			BufferDelayTimer = BufferCatchUpDelay;
+			DamageFlashTimer = DamageFlashDuration;
+			BufferDamageFlashTimer = BufferDamageFlashDuration;
+			if (HealthBufferProgressBar)
+			{
+				if (!bHasCapturedBufferBaseColor)
+				{
+					HealthBufferBaseColor = HealthBufferProgressBar->GetFillColorAndOpacity();
+					bHasCapturedBufferBaseColor = true;
+				}
+				HealthBufferProgressBar->SetFillColorAndOpacity(FLinearColor(2.0f, 2.0f, 2.0f, HealthBufferBaseColor.A));
+			}
+			PlayHealthShake();
+		}
 	}
 	// If DisplayPercent == TargetHealthPercent, health did not change (e.g. stamina regen trigger).
 	// Preserve ongoing buffer delay and interpolation without any disturbance.
-
-	if (HealthProgressBar)
-	{
-		HealthProgressBar->SetPercent(DisplayPercent);
-	}
 
 	if (HealthCurrentText)
 	{
@@ -110,11 +134,45 @@ void UPlayerVitalHUDWidget::SetHealth(float Current, float Max)
 void UPlayerVitalHUDWidget::NativeTick(const FGeometry& MyGeometry, float InDeltaTime)
 {
 	Super::NativeTick(MyGeometry, InDeltaTime);
+	UpdateHealth(InDeltaTime);
 	UpdateBufferHealth(InDeltaTime);
 	UpdateBufferDamageFlash(InDeltaTime);
+	UpdateStamina(InDeltaTime);
 	UpdateStaminaChargeFlash(InDeltaTime);
 	UpdateVignette(InDeltaTime);
 	UpdateShake(InDeltaTime);
+}
+
+void UPlayerVitalHUDWidget::UpdateHealth(const float InDeltaTime)
+{
+	// Smooth healing fill-up: interpolate CurrentHealthPercent towards higher TargetHealthPercent
+	if (CurrentHealthPercent < TargetHealthPercent)
+	{
+		if (!FMath::IsNearlyEqual(CurrentHealthPercent, TargetHealthPercent, 0.001f))
+		{
+			const float InterpSpeed = FMath::Max(0.1f, HealthRegenInterpSpeed);
+			CurrentHealthPercent = FMath::FInterpTo(CurrentHealthPercent, TargetHealthPercent, InDeltaTime, InterpSpeed);
+		}
+		else
+		{
+			CurrentHealthPercent = TargetHealthPercent;
+		}
+
+		if (HealthProgressBar)
+		{
+			HealthProgressBar->SetPercent(CurrentHealthPercent);
+		}
+
+		// Buffer bar follows healing fill-up so it never stays behind the rising health
+		if (CurrentBufferPercent < CurrentHealthPercent)
+		{
+			CurrentBufferPercent = CurrentHealthPercent;
+			if (HealthBufferProgressBar)
+			{
+				HealthBufferProgressBar->SetPercent(CurrentBufferPercent);
+			}
+		}
+	}
 }
 
 void UPlayerVitalHUDWidget::UpdateBufferHealth(float InDeltaTime)
@@ -301,11 +359,20 @@ void UPlayerVitalHUDWidget::SetStamina(float Current, float Max)
 	if (!bIsStaminaInitialized)
 	{
 		bIsStaminaInitialized = true;
+		TargetStaminaPercent = DisplayPercent;
+		CurrentStaminaPercent = DisplayPercent;
 		LastStaminaPercent = DisplayPercent;
 		StaminaChargeFlashTimer = 0.0f;
+
+		if (StaminaProgressBar)
+		{
+			StaminaProgressBar->SetPercent(CurrentStaminaPercent);
+		}
 	}
 	else
 	{
+		TargetStaminaPercent = DisplayPercent;
+
 		// Natural recovery reaching full stamina: from < 1.0 to >= 1.0
 		if (LastStaminaPercent < 0.999f && DisplayPercent >= 0.999f)
 		{
@@ -326,12 +393,20 @@ void UPlayerVitalHUDWidget::SetStamina(float Current, float Max)
 				StaminaProgressBar->SetFillColorAndOpacity(StaminaBaseColor);
 			}
 		}
-		LastStaminaPercent = DisplayPercent;
-	}
 
-	if (StaminaProgressBar)
-	{
-		StaminaProgressBar->SetPercent(DisplayPercent);
+		// Zero stamina instant bottom snap: if exhausted or depleted, snap to 0 immediately
+		if (DisplayPercent <= 0.001f)
+		{
+			TargetStaminaPercent = 0.0f;
+			CurrentStaminaPercent = 0.0f;
+			if (StaminaProgressBar)
+			{
+				StaminaProgressBar->SetPercent(0.0f);
+			}
+		}
+		// Note: When DisplayPercent > 0.001f, progress bar smoothly catches up via UpdateStamina in Tick.
+
+		LastStaminaPercent = DisplayPercent;
 	}
 
 	if (StaminaCurrentText)
@@ -344,6 +419,37 @@ void UPlayerVitalHUDWidget::SetStamina(float Current, float Max)
 	{
 		const int32 RoundedMax = FMath::RoundToInt(DisplayMax);
 		StaminaMaxText->SetText(FText::AsNumber(RoundedMax));
+	}
+}
+
+void UPlayerVitalHUDWidget::UpdateStamina(const float InDeltaTime)
+{
+	if (!StaminaProgressBar)
+	{
+		return;
+	}
+
+	if (TargetStaminaPercent <= 0.001f)
+	{
+		if (CurrentStaminaPercent != 0.0f)
+		{
+			CurrentStaminaPercent = 0.0f;
+			StaminaProgressBar->SetPercent(0.0f);
+		}
+		return;
+	}
+
+	if (!FMath::IsNearlyEqual(CurrentStaminaPercent, TargetStaminaPercent, 0.001f))
+	{
+		const float ConfiguredSpeed = (TargetStaminaPercent < CurrentStaminaPercent) ? StaminaDrainInterpSpeed : StaminaRegenInterpSpeed;
+		const float InterpSpeed = FMath::Max(0.1f, ConfiguredSpeed);
+		CurrentStaminaPercent = FMath::FInterpTo(CurrentStaminaPercent, TargetStaminaPercent, InDeltaTime, InterpSpeed);
+		StaminaProgressBar->SetPercent(CurrentStaminaPercent);
+	}
+	else if (CurrentStaminaPercent != TargetStaminaPercent)
+	{
+		CurrentStaminaPercent = TargetStaminaPercent;
+		StaminaProgressBar->SetPercent(CurrentStaminaPercent);
 	}
 }
 
@@ -628,10 +734,32 @@ float UPlayerVitalHUDWidget::GetTestStaminaTranslationY() const
 	return TargetWidget ? TargetWidget->GetRenderTransform().Translation.Y : 0.0f;
 }
 
+float UPlayerVitalHUDWidget::GetTestTargetHealthPercent() const
+{
+	return TargetHealthPercent;
+}
+
+float UPlayerVitalHUDWidget::GetTestCurrentHealthPercent() const
+{
+	return CurrentHealthPercent;
+}
+
+float UPlayerVitalHUDWidget::GetTestTargetStaminaPercent() const
+{
+	return TargetStaminaPercent;
+}
+
+float UPlayerVitalHUDWidget::GetTestCurrentStaminaPercent() const
+{
+	return CurrentStaminaPercent;
+}
+
 void UPlayerVitalHUDWidget::SimulateTickForTesting(float InDeltaTime)
 {
+	UpdateHealth(InDeltaTime);
 	UpdateBufferHealth(InDeltaTime);
 	UpdateBufferDamageFlash(InDeltaTime);
+	UpdateStamina(InDeltaTime);
 	UpdateStaminaChargeFlash(InDeltaTime);
 	UpdateVignette(InDeltaTime);
 	UpdateShake(InDeltaTime);
