@@ -35,6 +35,7 @@ namespace
 
 	void AdvanceExhaustionTimer(UWorld* World, float DeltaSeconds)
 	{
+		PrimeExhaustionTimer(World);
 		constexpr float MaxTickStepSeconds = 0.1f;
 		while (DeltaSeconds > KINDA_SMALL_NUMBER)
 		{
@@ -126,6 +127,7 @@ bool FPlayerExhaustionAutomationTest::RunTest(const FString&)
 	ASC->SetNumericAttributeBase(UCharacterAttributeSet::GetStaminaAttribute(), 100.0f);
 	ASC->SetNumericAttributeBase(UCharacterAttributeSet::GetMoveSpeedAttribute(), BaseMoveSpeed);
 	TestTrue(TEXT("Player fixture applied the persistent Stamina regen setup"), Player->HasTestStaminaRegenEffectApplied());
+	TestEqual(TEXT("Exhaustion minimum duration is configured to 2.0 seconds"), Player->GetExhaustionMinimumDurationSeconds(), 2.0f);
 
 	const FGameplayAbilitySpecHandle JumpSpecHandle = ASC->GiveAbility(FGameplayAbilitySpec(UTestJumpExhaustionAbility::StaticClass(), 1, INDEX_NONE, Player));
 	TestTrue(TEXT("Jump test spec is valid"), JumpSpecHandle.IsValid());
@@ -152,13 +154,13 @@ bool FPlayerExhaustionAutomationTest::RunTest(const FString&)
 	PrimeExhaustionTimer(World);
 
 	ASC->SetNumericAttributeBase(UCharacterAttributeSet::GetStaminaAttribute(), 20.0f);
-	TestTrue(TEXT("Positive Stamina before three seconds retains Exhaustion"), ASC->HasMatchingGameplayTag(ExhaustedTag));
+	TestTrue(TEXT("Positive Stamina before two seconds retains Exhaustion"), ASC->HasMatchingGameplayTag(ExhaustedTag));
 	TestTrue(TEXT("Jump can activate during Exhaustion once Stamina is positive"),
 		JumpCDO && JumpCDO->CanActivateAbility(JumpSpecHandle, ASC->AbilityActorInfo.Get()));
 
 	AdvanceExhaustionTimer(World, 1.0f);
 	ASC->SetNumericAttributeBase(UCharacterAttributeSet::GetStaminaAttribute(), 0.0f);
-	AdvanceExhaustionTimer(World, 2.1f);
+	AdvanceExhaustionTimer(World, 1.1f);
 	TestTrue(TEXT("A second depletion does not extend the original timer"), Player->IsTestExhaustionActive());
 	TestFalse(TEXT("Expired timer is not retained while waiting for positive Stamina"), Player->HasTestExhaustionRecoveryTimer());
 	TestTrue(TEXT("Zero Stamina at timer expiry retains Exhaustion"), ASC->HasMatchingGameplayTag(ExhaustedTag));
@@ -173,21 +175,48 @@ bool FPlayerExhaustionAutomationTest::RunTest(const FString&)
 	// The Player owns one loose-tag contribution and must not clear another system's contribution.
 	ASC->SetNumericAttributeBase(UCharacterAttributeSet::GetStaminaAttribute(), 0.0f);
 	ASC->AddLooseGameplayTag(ExhaustedTag);
-	AdvanceExhaustionTimer(World, 3.1f);
+	AdvanceExhaustionTimer(World, 2.1f);
 	ASC->SetNumericAttributeBase(UCharacterAttributeSet::GetStaminaAttribute(), 20.0f);
 	TestFalse(TEXT("Recovery clears the Player-owned Exhaustion lifecycle with an external tag contributor"), Player->IsTestExhaustionActive());
 	TestTrue(TEXT("Recovery preserves an external Exhausted loose-tag contribution"), ASC->HasMatchingGameplayTag(ExhaustedTag));
 	ASC->RemoveLooseGameplayTag(ExhaustedTag);
 	TestFalse(TEXT("Removing the external contributor clears the remaining Exhausted tag"), ASC->HasMatchingGameplayTag(ExhaustedTag));
 
-	// A post-recovery depletion starts a fresh three-second window.
+	// A post-recovery depletion starts a fresh two-second window.
 	ASC->SetNumericAttributeBase(UCharacterAttributeSet::GetStaminaAttribute(), 0.0f);
 	TestTrue(TEXT("A post-recovery depletion starts a new Exhaustion cycle"), Player->HasTestExhaustionRecoveryTimer());
-	AdvanceExhaustionTimer(World, 2.9f);
+	AdvanceExhaustionTimer(World, 1.9f);
 	ASC->SetNumericAttributeBase(UCharacterAttributeSet::GetStaminaAttribute(), 20.0f);
-	TestTrue(TEXT("A fresh cycle still holds before its own three-second expiry"), ASC->HasMatchingGameplayTag(ExhaustedTag));
+	TestTrue(TEXT("A fresh cycle still holds before its own two-second expiry"), ASC->HasMatchingGameplayTag(ExhaustedTag));
 	AdvanceExhaustionTimer(World, 0.2f);
 	TestFalse(TEXT("A fresh cycle clears after its own expiry and positive Stamina"), ASC->HasMatchingGameplayTag(ExhaustedTag));
+
+	// Depletion during an active action (e.g. Attacking, Dodging) defers the recovery timer until the action completes.
+	const FGameplayTag TagAttacking = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Action.Attacking")), false);
+	TestTrue(TEXT("State.Action.Attacking tag is valid"), TagAttacking.IsValid());
+	ASC->AddLooseGameplayTag(TagAttacking);
+	ASC->SetNumericAttributeBase(UCharacterAttributeSet::GetStaminaAttribute(), 0.0f);
+	TestTrue(TEXT("Exhaustion activates while action tag is present"), Player->IsTestExhaustionActive());
+	TestTrue(TEXT("Exhausted tag is written while action tag is present"), ASC->HasMatchingGameplayTag(ExhaustedTag));
+	TestTrue(TEXT("Recovery timer is pending action completion"), Player->IsTestExhaustionTimerPendingActionEnd());
+	TestFalse(TEXT("Recovery timer has not started while action tag is present"), Player->HasTestExhaustionRecoveryTimer());
+
+	AdvanceExhaustionTimer(World, 1.0f);
+	TestTrue(TEXT("Timer remains pending while action tag is retained"), Player->IsTestExhaustionTimerPendingActionEnd());
+	TestFalse(TEXT("Timer remains unstarted while action tag is retained"), Player->HasTestExhaustionRecoveryTimer());
+
+	// Action ends (e.g. montage completes and tag is removed): timer begins its two-second countdown.
+	ASC->RemoveLooseGameplayTag(TagAttacking);
+	TestFalse(TEXT("Ending action clears the pending flag"), Player->IsTestExhaustionTimerPendingActionEnd());
+	TestTrue(TEXT("Ending action starts the two-second recovery timer"), Player->HasTestExhaustionRecoveryTimer());
+
+	AdvanceExhaustionTimer(World, 1.9f);
+	ASC->SetNumericAttributeBase(UCharacterAttributeSet::GetStaminaAttribute(), 20.0f);
+	TestTrue(TEXT("Exhaustion retained before post-action two-second timer expires"), ASC->HasMatchingGameplayTag(ExhaustedTag));
+
+	AdvanceExhaustionTimer(World, 0.2f);
+	TestFalse(TEXT("Exhaustion clears after post-action two-second timer expires and Stamina recovered"), Player->IsTestExhaustionActive());
+	TestFalse(TEXT("Exhausted tag removed after post-action expiry"), ASC->HasMatchingGameplayTag(ExhaustedTag));
 
 	// A future Player death tag must clear the Player-owned state immediately without adding a death system here.
 	ASC->SetNumericAttributeBase(UCharacterAttributeSet::GetStaminaAttribute(), 0.0f);
@@ -205,7 +234,7 @@ bool FPlayerExhaustionAutomationTest::RunTest(const FString&)
 	TestTrue(TEXT("Destroying the Player succeeds"), Player->Destroy());
 	TestFalse(TEXT("EndPlay removes the Exhausted tag"), ASC->HasMatchingGameplayTag(ExhaustedTag));
 	TestTrue(TEXT("EndPlay restores the non-Exhaustion MoveSpeed"), FMath::IsNearlyEqual(ASC->GetNumericAttribute(UCharacterAttributeSet::GetMoveSpeedAttribute()), BaseMoveSpeed));
-	AdvanceExhaustionTimer(World, 3.1f);
+	AdvanceExhaustionTimer(World, 2.1f);
 
 	return true;
 }

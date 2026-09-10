@@ -134,7 +134,7 @@ protected:
 
 	/** Minimum duration in seconds before exhaustion recovery can clear the exhausted state. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Stamina", meta = (ClampMin = "0.0"))
-	float ExhaustionMinimumDurationSeconds = 3.0f;
+	float ExhaustionMinimumDurationSeconds = 2.0f;
 
 	/** 更新摄像机到角色的视线遮挡状态，并动态驱动 MPC_PlayerGlobals（PlayerPosition 与平滑 TunnelRadius） */
 	void UpdateSeeThroughOcclusion(float DeltaSeconds);
@@ -378,6 +378,7 @@ public:
 	bool HasTestStaminaRegenEffectApplied() const { return bStaminaRegenEffectApplied; }
 	bool IsTestExhaustionActive() const { return bExhaustionActive; }
 	bool HasTestExhaustionRecoveryTimer() const { return ExhaustionRecoveryTimerHandle.IsValid(); }
+	bool IsTestExhaustionTimerPendingActionEnd() const { return bExhaustionTimerPendingActionEnd; }
 	bool HasTestExhaustionMoveSpeedEffect() const { return ExhaustionMoveSpeedEffectHandle.IsValid(); }
 	int32 GetTestWorldPickupCandidateCount() const { return WorldPickupCandidates.Num(); }
 	bool HasTestFormerOwnerInteractionTimer() const { return FormerOwnerInteractionRefreshTimerHandle.IsValid(); }
@@ -516,6 +517,9 @@ private:
 	FDelegateHandle HealthAttributeChangedHandle;
 	FDelegateHandle StaminaAttributeChangedHandle;
 	FDelegateHandle ExhaustionDeadStateTagChangedHandle;
+	FDelegateHandle ExhaustionAttackingTagChangedHandle;
+	FDelegateHandle ExhaustionDodgingTagChangedHandle;
+	FDelegateHandle ExhaustionParryingTagChangedHandle;
 	TWeakObjectPtr<UAbilitySystemComponent> SprintStateBoundAbilitySystemComponent;
 	TWeakObjectPtr<UAbilitySystemComponent> HealthBoundAbilitySystemComponent;
 	TWeakObjectPtr<UAbilitySystemComponent> ExhaustionBoundAbilitySystemComponent;
@@ -533,6 +537,7 @@ private:
 	bool bStaminaRegenEffectApplied = false;
 	bool bExhaustionActive = false;
 	bool bExhaustionMinimumDurationElapsed = false;
+	bool bExhaustionTimerPendingActionEnd = false;
 	bool bHasLoggedMissingCombatFeedbackData = false;
 	TWeakObjectPtr<APlayerCameraManager> ActiveHitFeedbackCameraManager;
 	TWeakObjectPtr<UCameraShakeBase> ActiveHitFeedbackCameraShake;
@@ -563,6 +568,9 @@ private:
 	void OnStaminaAttributeChanged(const FOnAttributeChangeData& ChangeData);
 	void OnExhaustionDeadStateTagChanged(const FGameplayTag Tag, int32 NewCount);
 	void BeginExhaustion();
+	void StartExhaustionRecoveryTimer();
+	bool IsExhaustionActionBlockingActive() const;
+	void OnExhaustionActionTagChanged(const FGameplayTag Tag, int32 NewCount);
 	void OnExhaustionMinimumDurationElapsed();
 	void TryClearExhaustionAfterRecovery();
 	void ClearExhaustionState();

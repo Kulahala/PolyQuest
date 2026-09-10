@@ -88,6 +88,8 @@ APlayerCharacter::APlayerCharacter()
 	BigHitReactionEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Reaction.Player.Big")), false);
 	LaunchReactionEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Reaction.Player.Launch")), false);
 
+	ExhaustionMinimumDurationSeconds = 2.0f;
+
 	GetCapsuleComponent()->InitCapsuleSize(42.f, 96.0f);
 
 	bUseControllerRotationPitch = false;
@@ -2520,6 +2522,21 @@ void APlayerCharacter::BindExhaustionStateEvents()
 		ExhaustionDeadStateTagChangedHandle = CharacterASC->RegisterGameplayTagEvent(DeadStateTag)
 			.AddUObject(this, &APlayerCharacter::OnExhaustionDeadStateTagChanged);
 	}
+	if (AttackingStateTag.IsValid())
+	{
+		ExhaustionAttackingTagChangedHandle = CharacterASC->RegisterGameplayTagEvent(AttackingStateTag)
+			.AddUObject(this, &APlayerCharacter::OnExhaustionActionTagChanged);
+	}
+	if (DodgingStateTag.IsValid())
+	{
+		ExhaustionDodgingTagChangedHandle = CharacterASC->RegisterGameplayTagEvent(DodgingStateTag)
+			.AddUObject(this, &APlayerCharacter::OnExhaustionActionTagChanged);
+	}
+	if (ParryingStateTag.IsValid())
+	{
+		ExhaustionParryingTagChangedHandle = CharacterASC->RegisterGameplayTagEvent(ParryingStateTag)
+			.AddUObject(this, &APlayerCharacter::OnExhaustionActionTagChanged);
+	}
 
 	if (CharacterASC->GetNumericAttribute(UCharacterAttributeSet::GetStaminaAttribute()) <= 0.0f)
 	{
@@ -2541,10 +2558,25 @@ void APlayerCharacter::UnbindExhaustionStateEvents()
 		{
 			BoundASC->UnregisterGameplayTagEvent(ExhaustionDeadStateTagChangedHandle, DeadStateTag);
 		}
+		if (ExhaustionAttackingTagChangedHandle.IsValid() && AttackingStateTag.IsValid())
+		{
+			BoundASC->UnregisterGameplayTagEvent(ExhaustionAttackingTagChangedHandle, AttackingStateTag);
+		}
+		if (ExhaustionDodgingTagChangedHandle.IsValid() && DodgingStateTag.IsValid())
+		{
+			BoundASC->UnregisterGameplayTagEvent(ExhaustionDodgingTagChangedHandle, DodgingStateTag);
+		}
+		if (ExhaustionParryingTagChangedHandle.IsValid() && ParryingStateTag.IsValid())
+		{
+			BoundASC->UnregisterGameplayTagEvent(ExhaustionParryingTagChangedHandle, ParryingStateTag);
+		}
 	}
 
 	StaminaAttributeChangedHandle.Reset();
 	ExhaustionDeadStateTagChangedHandle.Reset();
+	ExhaustionAttackingTagChangedHandle.Reset();
+	ExhaustionDodgingTagChangedHandle.Reset();
+	ExhaustionParryingTagChangedHandle.Reset();
 	ExhaustionBoundAbilitySystemComponent.Reset();
 }
 
@@ -2591,12 +2623,60 @@ void APlayerCharacter::BeginExhaustion()
 	bExhaustionMinimumDurationElapsed = false;
 	CharacterASC->AddLooseGameplayTag(ExhaustedStateTag);
 	ApplyExhaustionMoveSpeedEffect();
+
+	if (IsExhaustionActionBlockingActive())
+	{
+		bExhaustionTimerPendingActionEnd = true;
+	}
+	else
+	{
+		bExhaustionTimerPendingActionEnd = false;
+		StartExhaustionRecoveryTimer();
+	}
+}
+
+void APlayerCharacter::StartExhaustionRecoveryTimer()
+{
+	UWorld* World = GetWorld();
+	if (!World || !bExhaustionActive || bExhaustionMinimumDurationElapsed)
+	{
+		return;
+	}
+
+	World->GetTimerManager().ClearTimer(ExhaustionRecoveryTimerHandle);
 	World->GetTimerManager().SetTimer(
 		ExhaustionRecoveryTimerHandle,
 		this,
 		&APlayerCharacter::OnExhaustionMinimumDurationElapsed,
 		ExhaustionMinimumDurationSeconds,
 		false);
+}
+
+bool APlayerCharacter::IsExhaustionActionBlockingActive() const
+{
+	const UAbilitySystemComponent* CharacterASC = ExhaustionBoundAbilitySystemComponent.Get();
+	if (!CharacterASC)
+	{
+		return false;
+	}
+
+	return (AttackingStateTag.IsValid() && CharacterASC->HasMatchingGameplayTag(AttackingStateTag))
+		|| (DodgingStateTag.IsValid() && CharacterASC->HasMatchingGameplayTag(DodgingStateTag))
+		|| (ParryingStateTag.IsValid() && CharacterASC->HasMatchingGameplayTag(ParryingStateTag));
+}
+
+void APlayerCharacter::OnExhaustionActionTagChanged(const FGameplayTag, int32)
+{
+	if (!bExhaustionActive || !bExhaustionTimerPendingActionEnd)
+	{
+		return;
+	}
+
+	if (!IsExhaustionActionBlockingActive())
+	{
+		bExhaustionTimerPendingActionEnd = false;
+		StartExhaustionRecoveryTimer();
+	}
 }
 
 void APlayerCharacter::OnExhaustionMinimumDurationElapsed()
@@ -2630,6 +2710,8 @@ void APlayerCharacter::TryClearExhaustionAfterRecovery()
 void APlayerCharacter::ClearExhaustionState()
 {
 	const bool bRemoveOwnedExhaustionTag = bExhaustionActive;
+
+	bExhaustionTimerPendingActionEnd = false;
 
 	if (UWorld* World = GetWorld())
 	{
