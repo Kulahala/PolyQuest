@@ -1,125 +1,156 @@
-# TODO-07B10: Charged Attack Niagara Feedback v1 实施计划
+# TODO-07B11: Enemy Launch Reaction Root-Motion Knockdown v1
 
 ## 1. 阶段定位、基线与路由
 
-- **Target Objective**：为 `UChargedAttackAbility` 增加一个 Ability-owned 的附着 Niagara 蓄力反馈。确认蓄力期间为 Gather，相同有效持有时长达到 `MaximumChargeDuration` 后为 Full；VFX 只消费生命周期与相位，不参与任何玩法判定。
-- **基线**：`main @ 4549a5462c5981ac1b0360b70d8d89fea7d6a6bd`（TODO-02B4 已提交）。
-- **工作树**：非 clean。全部 `Content/**`、`Config/**`、Blueprint、AnimBP、Montage、地图、插件及其他本地 WIP 均为用户所有，必须保留并排除。当前 `ROADMAP.md` 也有用户未提交变动；本阶段不修改它。
-- **Archive preflight**：PASS。当前 `plan.md` 对应的 TODO-02B4 有唯一的 2026-09-07 `ROADMAP-archive.md` 收口条目、基线、范围与验证记录。该归档里的旧 TODO-03C 后续指针是历史漂移；实时 `ROADMAP.md` 的 TODO-07B10 是当前权威。不重复归档或改写 TODO-02B4 历史记录。
+- **Target Objective**：为 UEnemyLaunchReactionAbility 增加 Enemy 专属、固定距离的 grounded Root Motion 击倒路径。位移与倒地、滑行、翻滚、恢复表现由作者化 Montage 提供；胶囊碰撞、地面、台阶和边缘仍由 Character Movement Component（CMC）唯一负责。
+- **本阶段范围**：只实施 Slice A。Slice B（Enemy-local Motion Warping）和 Slice C（阻挡命中后的专属水平表现）只作为后续证据触发项，不在本阶段预铺实现。
+- **基线**：main @ 319feb6f8ebf6df9b3fbf70831eeebfc7778bfc0（2026-09-11 当前 HEAD；07B11 只读规划基线）。
+- **当前工作树**：非 clean。现有 Content/**、Config、Blueprint、AnimBP、Montage、地图、插件和其他 WIP 均为用户所有；本阶段必须保留、排除，不得回滚、清理或批量暂存。当前 `ROADMAP.md` 与 `Source/PolyQuest/Public/Combat/Projectile/CombatProjectile.h` 等仍有用户未提交变动；`ARCHITECTURE.md` 的稳定契约更新仅由 Main 在验证收口时完成。
+- **Archive Preflight**：PASS。上一阶段 TODO-07B10 已在 `ROADMAP-archive.md` 保留唯一收口摘要；其被替换的完整旧 `plan.md` 由 Git 历史（`319feb6:plan.md`，同源于 `c708d65`）保留。本次替换不重复归档、不改写历史记录。
 - **技能路由**：
-  - Outer: `ue-stage-workflow`
-  - Primary: `ue5-cpp-gameplay`
-  - Support: `unreal-niagara`, `ue5-debug-validation`
-  - Route reason: 该切片在现有 GAS Ability 生命周期内增加局部 Niagara 组件、挂载解析与确定性 Automation，不改变战斗权属或资产写入边界。
-- **执行路线**：`manual/out-of-band Gemini`。Codex/Main 保留架构、范围、验证解释、Fresh Review、文档、暂存和提交所有权；Codex 不创建 in-app 子代理。Gemini 只实施本计划批准的 Source/Test 路径，不得提交。
+  - Outer: ue-stage-workflow
+  - Primary: ue5-cpp-gameplay
+  - Support: ue5-debug-validation
+  - Route reason: 这是现有 GAS Ability 内的局部双路径生命周期改造，需要保留旧物理回退并增加 Root Motion/CMC 状态边界与确定性 Automation。
+- **执行路线**：manual/out-of-band Gemini。Implementation executors: 1（Gemini）；in-app delegation: 0。Main 保留架构、范围、验证解释、Fresh Review、文档、暂存和提交所有权；Gemini 不得提交。
 
-## 2. 冻结运行时契约与刻意非目标
+## 2. 目标、刻意非目标与所有权
 
-### 冻结运行时契约
+### 目标
 
-1. **唯一时钟与相位**
-   - `MaximumChargeDuration` 是 Full VFX 与现有 `BeginRelease()` Damage/Poise 插值的共同唯一权威。
-   - 在 Montage 已确认活动且 `SetCharging(true)` 后，读取同一玩家输入时钟 `GetCombatInputHeldDuration(Input.PrimaryAttack)`；`HeldDuration` 包含 Primary-to-Charged handoff 之前的按住时间。
-   - 计算 `RemainingToFull = max(0, MaximumChargeDuration - HeldDurationAtActivation)`。当 `RemainingToFull <= KINDA_SMALL_NUMBER` 时直接以 Full 启动，完全不创建 `UAbilityTask_WaitDelay`；否则只创建一个 Ability-owned Delay。
-   - 固定 Niagara 参数 `User.ChargePhase`：`0.0f = Gather`，`1.0f = Full`。System 负责视觉过渡；C++ 只写相位和生命周期。
-   - `Event.Attack.Charged.HoldReady` 继续只是动画姿态暂停，既有 Montage/Notify 不移动、不改作 VFX 时钟。
-
-2. **生成、重入与清理**
-   - 使用 `UNiagaraFunctionLibrary::SpawnSystemAttached`，显式传入 `bAutoDestroy = true`、`bAutoActivate = false`；创建后先写 `User.ChargePhase`，再 `Activate(true)`，避免第一帧使用资产默认参数。
-   - 直接 Release Handoff 不会调用 `SetCharging(true)`，因此不创建 Charge VFX。
-   - Delay 指针必须在 `ReadyForActivation()` 前保存；该调用返回后若 `EndAbility()` 已同步发生，禁止恢复旧指针、旧组件或旧状态。
-   - 私有幂等 `CleanupChargeFeedback()` 在 `BeginRelease()` 和唯一的 `EndAbility()` 清理出口复用：先对 Delay `OnFinish.RemoveAll(this)`，再 `EndTask()`、置空；随后对有效组件调用 `Deactivate()` 并清空引用。禁止按 `bWasCancelled` 分流到 `DeactivateImmediate()` 或 `DestroyComponent()`。
-   - Full 回调入口必须检查 `bEndAbilityRequested`、`bReleaseStarted`、`bChargingStateApplied` 与当前 VFX 有效/活跃性。Release、取消、Dodge/Hit 中断、死亡、销毁、Montage 结束、激活失败及旧回调均不得留下或复活 VFX。
-   - 缺 Niagara 资产、`SpawnSystemAttached` 返回空、非法/非有限时长、无效组件、无效显式源或 Socket 时，VFX 单独 fail-closed 并诊断；不得中止或改变 Charged 的伤害、Poise、Cost、Tag、Trace、Montage 或 GAS 生命周期。
-
-3. **挂载契约**
-   - `ChargeVFXTraceSourceName` 是 Ability-side `EditDefaultsOnly, BlueprintReadOnly` 字段，CDO 默认严格为 `NAME_None`。
-   - 对 `bUseOwnerMeshSocketForTrace` 的主手近战武器：空 override 才通过 `DefaultOwnerMeshTraceSourceName` 解析；显式 override 必须精确命中 `OwnerMeshTraceSources`，并返回该条目的 `OwnerMeshSocketName`。显式 `Weapon_L` 无法解析时绝不暗中回退 `Weapon_R`。
-   - Display-mesh 武器返回有效 `MainHandDisplayComponent` 与 `NAME_None`，让 Niagara 直接跟随已由 `AttachSocketName` 建立的显示挂载链；不把它强制转换成 OwnerMesh trace profile。
-   - `UWeaponEquipmentComponent` 负责封装上述只读解析，向 Ability 暴露非 Blueprint 的 C++ 挂载 parent/socket 查询；不泄露可写显示组件状态。
-   - 当前空手作者化预期保持为默认 `Weapon_R`，由 Charged GA 资产显式覆盖 `Weapon_L`。不从 `UAnimNotifyState_AttackTraceWindow::TraceSourceNames` 获取该 VFX 源。
+- 在有效 Enemy 专属 Root Motion Montage 已配置且角色处于 MOVE_Walking 时，完整击倒表现由一个连续 Montage 驱动。
+- 首帧前完成面向攻击者的 Yaw 对齐，Root Motion 使用本地 -X 固定位移表达远离攻击者的后退/倒地。
+- Root Motion 期间不产生第二套物理 Launch 状态；异常移动模式、取消、死亡、销毁和同步重入均安全收敛到单一 EndAbility() 清理出口。
+- 保留并可显式使用现有 LaunchCharacter() + Falling/LandingRecovery 流程作为兼容 fallback。
 
 ### Deliberate Non-goals
 
-- 不改 `MaximumChargeDuration` 的 Damage/Poise 算法、`HeldDuration` 输入权属、任何 Gameplay Tag、Input、TraceWindow、伤害路径、Motion Warp、Montage 或 Cost 行为。
-- 不增加 Timed Niagara Montage Notify、固定 VFX 时长、第二个 GAS Tag、泛化 VFX Subsystem、VFX-to-gameplay 回调、网络复制、Config 或 Build.cs 改动。
-- 不修改 `.uasset`、`.umap`、Niagara、GA、Montage、DataAsset、Blueprint、地图或导入资产；用户只读/受控 Editor 操作另列为验证门禁。
-- 不把 Headless/NullRHI 自动化结果包装成真实 Niagara 渲染、Editor readback 或 PIE 视觉证据。
+- 不改 PlayerLaunchReactionAbility、FLaunchFacingSmoothingState、AEnemyCharacter、AEnemyAIController、FHitReactionImpactResolver 或 UAbilityTask_TurnToFacing。
+- 不改任何 GameplayTag、Input、Config、Build.cs、GAS 权属、伤害/Poise 路径或既有 Enemy cancellation taxonomy。
+- 不修改或迁移共享的 AM_LaunchTakeoff / AM_LaunchLandingRecovery，不编辑 .uasset、.umap、Blueprint、AnimBP 或导入资源。
+- 不加入全局 Motion Warping、Enemy 通用移动框架、Ragdoll/物理击飞重写、网络预测/回滚、空中/大间隙飞行支持。
+- 不在本阶段解决墙体命中后的自定义停顿、滑行转场或骨骼表现问题；若 PIE 证明需要，进入 Slice C。
 
-## 3. 批准路径、接口与所有权
+## 3. Approved Paths 与最小接口
 
-### Gemini 实施白名单
+Gemini 只可修改：
 
-- `Source/PolyQuest/Public/AbilitySystem/Abilities/ChargedAttackAbility.h`
-- `Source/PolyQuest/Private/AbilitySystem/Abilities/ChargedAttackAbility.cpp`
-- `Source/PolyQuest/Public/Combat/Equipment/WeaponEquipmentComponent.h`
-- `Source/PolyQuest/Private/Combat/Equipment/WeaponEquipmentComponent.cpp`
-- `Source/PolyQuest/Private/Tests/ChargedAttackNiagaraFeedbackAutomationTests.cpp`（新增）
+- Source/PolyQuest/Public/AbilitySystem/Abilities/EnemyLaunchReactionAbility.h
+- Source/PolyQuest/Private/AbilitySystem/Abilities/EnemyLaunchReactionAbility.cpp
+- Source/PolyQuest/Private/Tests/EnemyLaunchReactionRootMotionAutomationTests.cpp（新增）
 
-### 最小接口变更
+允许的接口/状态变化：
 
-- `UChargedAttackAbility`：增加 `ChargeVFXSystem`、`ChargeVFXTraceSourceName`、私有 Niagara/Delay 运行时状态和私有启动、切相位、清理 helper。
-- `UWeaponEquipmentComponent`：新增只读非 Blueprint C++ 查询，概念签名为 `TryResolveMainHandChargeVFXAttachment(FName RequestedOwnerMeshTraceSourceName, USceneComponent*& OutAttachParent, FName& OutAttachSocketName)`；只返回当前已验证装备的 attachment parent/socket。
-- `WITH_DEV_AUTOMATION_TESTS` 下可加入最小 test-tracking seam，沿用 `ProjectileFlightTrail` 的模式记录 System、attachment、phase、Delay、cleanup 与强制 Spawn-null；不得新增 Shipping 查询 API 或通用 VFX 抽象。
+- 增加 EditDefaultsOnly、BlueprintReadOnly 的 RootMotionKnockdownMontage，默认 nullptr。
+- 增加 EditDefaultsOnly、BlueprintReadOnly 的 bUseGroundedRootMotionKnockdown，CDO 默认 true；显式设为 false 时锁定 legacy 物理流程。
+- 在私有 ELaunchPhase 增加 RootMotionKnockdown，与旧 Takeoff、TurningToLaunch、AwaitingAirborne、Airborne、LandingRecovery 隔离。
+- 在 CPP 增加私有 TryResolveRootMotionFacingYaw(...)，只做平面方向归一化、有限值校验和 Yaw 变换；不得改变 Resolver 公共接口或旧速度算法。
+- WITH_DEV_AUTOMATION_TESTS 下可增加只读 getter、测试 setter 和回调触发 seam，用于验证分支、Task、阶段、ledge 恢复和清理；不得把测试 seam 暴露到 Shipping。
+- 现有 CommitEventTask、Launch 速度字段和旧资产字段保留，仅由 legacy 分支使用。
 
-### Main 与用户所有权
+## 4. 冻结运行时契约
 
-- Gemini 首轮交付前应完成一次干净、只读的隔离实施自审；若执行环境不支持，必须如实说明，不能以扩大范围替代。
-- 用户拥有一个 Niagara System、现有 Charged GA 的赋值/`Weapon_L` override、Montage/TraceWindow readback 和 Scene01 PIE；不手改二进制资产。
-- Main 仅在用户验证与 Fresh Review 完成后，更新 `ARCHITECTURE.md`、`ROADMAP.md`、`ROADMAP-archive.md` 和本计划的收口记录；实施阶段本身不包含文档收口或 Git Commit。
+### 4.1 分支选择与激活校验
 
-## 4. Focused Automation 与验证矩阵
+- 公共校验继续要求有效 ASC、存活 Enemy、AnimInstance、所需既有 Tag、有效移动组件和可接受的地面状态。
+- Root Motion 候选必须同时满足：开关为真、Montage 有效、HasRootMotion() 为真、Slot 配置有效、播放长度为有限正值，且移动模式精确为 MOVE_Walking。
+- Legacy 候选必须同时满足：TakeoffMontage 与 LandingRecoveryMontage 有效；LaunchHorizontalSpeed、LaunchVerticalSpeed、FacingTurnRateDegreesPerSecond 为有限正值；保持现有 grounded 约束。
+- CanActivateAbility 只在 Root Motion 候选或 Legacy 候选至少一套有效时通过。Root Motion 候选有效时不再强制要求旧 Takeoff/Landing 资产。
+- Root Motion 开关或资产在启动前无效且 Legacy 候选有效时，选择 Legacy fallback；两套均无效才拒绝激活。
+- Root Motion 已选定后若受击方向、对象、委托或移动状态失败，只能 fail-closed 结束，禁止动态切换到 LaunchCharacter()。
 
-### `PolyQuest.Combat.ChargedAttackNiagaraFeedback`
+### 4.2 Root Motion 分支时序
 
-1. `StartsGatherOnlyAfterConfirmedCharging`：Montage 确认与 `SetCharging(true)` 后仅启动一次 Gather；Release Handoff 不创建。
-2. `UsesHeldDurationAndBypassesFullDelay`：预先持有时长计入剩余 Delay；已满蓄直接 Full 且没有 Delay；非满蓄通过 `World->Tick(ELevelTick::LEVELTICK_All, DeltaSeconds)` 到阈值后才 Full。
-3. `CleanupPreventsLateFullPhase`：Release、Input Cancel、EndAbility 和 actor destruction 清理 tracking state；清理后的旧 Delay 回调不得再次 Full 或重启。
-4. `ResolvesOwnerMeshSourcesFailClosed`：`NAME_None` 使用默认 `Weapon_R`，显式 `Weapon_L` 生效，非法显式源失败且不回退。
-5. `ResolvesDisplayMeshRootAttachment`：Display-mesh 路径返回 `MainHandDisplayComponent` 与 `NAME_None`。
-6. `NullSystemAndSpawnFailurePreserveGameplay`：系统为空或 test seam 强制 Spawn-null 时，VFX 无操作，而 Charged 的释放、Cost、Poise、Tag 与清理仍可正常推进。
+1. 创建 Root Motion Montage Task；不创建 CommitEventTask。
+2. CommitAbility 成功后设置绑定 Enemy、ActiveMontage 和 CurrentPhase = RootMotionKnockdown。
+3. 停止 AI 导航和当前速度。
+4. 在新 Montage ReadyForActivation() 之前调用 CharacterASC->CancelAbilities(&AbilitiesToCancel, nullptr, this)，取消 Enemy Melee 与 Small Hit Reaction。
+5. 取消后立即检查 EnemyCharacter->HasAnyRootMotion()；仍有残留时 fail-closed，禁止两个 Root Motion 来源在首帧叠加。
+6. 从现有受击上下文读取本地攻击者方向，通过 TryResolveRootMotionFacingYaw 计算面向攻击者的 Yaw。方向缺失、零向量、非有限或无法归一化时，在播放前结束 Ability。
+7. 在 MontageTask->ReadyForActivation() 之前一次性 SetActorRotation；不得调用 UAbilityTask_TurnToFacing，不得依赖旧水平/垂直速度参数。
+8. 在 ReadyForActivation() 之前保存原始 bCanWalkOffLedges，设置为 false 并标记 bLedgeSettingModified；绑定 Montage End 与 MovementModeChanged 委托。
+9. 调用 ReadyForActivation() 后检查 bEndAbilityRequested、Ability Active 状态和 Montage 身份/活动状态。同步重入已经结束时不得恢复旧 Task、Montage 或阶段。
+10. Montage 确认活动后再调用既有 BeginLaunchStanceBreakDeferral()；若此后自然完成则完成 deferral，否则由统一清理出口中止。
 
-测试以受控 `UWorld` 和开发期 tracking seam 做确定性生命周期断言，覆盖 NullRHI/Headless；真实组件参数与渲染表现留给用户 Editor/PIE 门禁。
+### 4.3 Notify、移动模式和自然结束
 
-### 证据门禁
+- Root Motion 分支不创建或依赖 CommitEventTask。ReactionLaunchCommit Notify 对该分支是可选观察点，不暂停 Montage、不触发 Launch、不创建 Falling watchdog；缺失或延迟不妨碍自然收尾。
+- RootMotionKnockdown 期间仅接受 MovementMode == MOVE_Walking。任何离开该模式的变化，包括 MOVE_Falling、MOVE_NavWalking 或其他模式，立即 EndFromMontage(true)。
+- OnActiveMontageEnded 只在 Montage 身份匹配时处理：Root Motion Montage 非中断结束标记自然完成并结束 Ability；中断结束按异常路径处理。旧 Takeoff/Landing 的处理保持 legacy 语义。
+- Root Motion Montage 必须自身包含起飞、后退/滑行/翻滚和恢复段；不另行启动 LandingRecovery Montage。
+
+### 4.4 单一清理出口与 legacy 保全
+
+- EndAbility() 必须幂等，统一解绑所有委托、结束并置空 Task、停止活动 Montage、恢复 bCanWalkOffLedges、清空绑定指针/阶段，并处理 Stance Break deferral。
+- 自然 Root Motion 结束调用 CompleteLaunchStanceBreakDeferral()；中断、Falling、死亡、销毁、UnPossess、播放失败和同步重入调用 AbortLaunchStanceBreakDeferral()。两者均不得产生第二条状态恢复路径。
+- Legacy 分支保留当前 CommitEventTask -> Takeoff pause -> FacingTask -> LaunchCharacter -> Falling/LandingRecovery 生命周期；只将资产校验改为分支兼容，不顺手重构旧路径。
+- 不调用 DisableMovement()，不直接写 Actor Location，不清理或覆盖其他 Ability 的 Root Motion；残留 Root Motion 只允许触发 fail-closed。
+
+## 5. 用户拥有的 Editor 资产门禁
+
+用户在 Unreal Editor 中创建或确认一个 Enemy-exclusive Knockdown Montage。Codex/Gemini 不得编辑二进制资产。
+
+Editor readback 必须确认：
+
+- Montage 使用 Enemy Skeleton 和有效 Slot，AnimBP 的 Root Motion 模式能让 CMC 消费该 Montage。
+- 实际 Sequence 已启用 Root Motion，Montage HasRootMotion() 为真，播放长度有效。
+- 根骨骼位移是本地 -X 的固定后退距离；敌人先面向攻击者，再向后倒地/滑行/翻滚。
+- 起飞、位移、恢复在同一 Montage 内完成，并在可行地面状态下自然结束。
+- ReactionLaunchCommit 可存在也可缺失；它不是 Root Motion 生命周期硬门禁。
+- 只在 GA_EnemyLaunchReaction 上赋值新 Montage；旧 Takeoff/Landing 资产仍保留为 fallback。不得修改共享 Player/Enemy Montage。
+
+## 6. Focused Automation
+
+新增测试文件并注册：
+
+PolyQuest.Combat.EnemyLaunchReactionRootMotion
+
+至少覆盖以下确定性场景：
+
+1. SelectsRootMotionBranchWhenConfigured：有效 Root Motion Montage + 开关开启 + Walking 选择新分支；不创建 CommitEventTask、Facing Task 或 Falling watchdog。
+2. FallsBackToPhysicsLaunchWhenDisabledOrInvalid：开关关闭、Root Motion Montage 缺失/无 Root Motion/Slot 无效时，在 Legacy 配置完整的前提下选择旧流程；两套均无效时 fail-closed。
+3. InstantFacingAppliedBeforeMontageActivation：使用有限平面受击方向，在 Montage Task ReadyForActivation() 前完成面向攻击者的 Yaw；验证不读取旧速度作为 Root Motion 前置。
+4. LedgeProtectionRestoredOnAllExitPaths：自然完成、被动中断、同步重入和对象销毁后均恢复原始 bCanWalkOffLedges，且清理只发生一次。
+5. PrematureFallingAbortsReactionAndStanceBreak：Root Motion 阶段进入 MOVE_Falling 或其他非 Walking 模式时立即异常结束并调用 Abort deferral。
+6. CommitNotifyIsNonBlocking：Root Motion 分支不监听 Commit Task；有 Notify、无 Notify、延迟 Notify 都不阻止 Montage 自然结束。
+
+测试使用 transient 对象和 WITH_DEV_AUTOMATION_TESTS seam；Headless/NullRHI 结果只证明 Native 分支和生命周期，不证明真实动画位移、碰撞或视觉表现。
+
+## 7. 验证矩阵与收口门禁
 
 | 门禁 | 所有者 | 需要的证据 |
 | --- | --- | --- |
-| 静态回查 | Gemini | 只限批准路径的最终 diff、Rider 错误级检查（可用时）、`git diff --check`、隔离实施自审；不表述为编译或运行时验证。 |
-| 手动编译 | 用户 | `PolyQuestEditor (Development Editor)` 实际结果。 |
-| Automation | 用户 | `PolyQuest.Combat.ChargedAttackNiagaraFeedback` 全部 Success，及受影响的既有 Charged 输入/Trace/Motion Warp 聚焦回归。 |
-| Editor readback | 用户 | Charged GA 的 `MaximumChargeDuration`、`ChargeVFXSystem`、`ChargeVFXTraceSourceName`；Niagara `User.ChargePhase`、Bounds、Gather/Full、Deactivate/auto-destroy；空手 `Weapon_L` 到实际 OwnerMesh Socket，及 Charged Montage TraceWindow 值。 |
-| Scene01 PIE | 用户 | 短按 Gather 后释放、满蓄 Full、改动 `MaximumChargeDuration` 后阈值同步、Dodge/Hit cancel、死亡，以及命中/伤害/Trace 无回归。 |
+| 最终静态回查 | Gemini / Main | 仅批准路径 diff、Rider 错误级检查（可用时）、git diff --check、实施自审；不得称为 PIE 或视觉证据 |
+| 手动编译 | 用户 | PolyQuestEditor (Development Editor) 实际成功结果 |
+| Focused Automation | 用户 | 新专项全部 Success，并回归 PolyQuest.Combat.HitReaction、PolyQuest.Combat.LaunchFacingSmoothing、PolyQuest.Enemy.RootMotionFacing |
+| Editor readback | 用户 | Enemy GA 新字段、Montage Root Motion/Slot/Skeleton/AnimBP 模式、固定 -X 位移与旧 fallback 配置 |
+| Scene01 PIE | 用户 | 平地、缓坡、台阶、墙/墙角、边缘、Montage 中断、死亡/销毁和 Legacy fallback |
+| Main Fresh Review | Main | 依 ue-strict-review 做批准范围内的一跳影响审查，重点检查取消/销毁/重入/null/委托/移动模式/Tag 回归 |
+| Commit gate | 用户 + Main | 用户明确批准后才可按批准路径暂存和提交；本计划阶段不自动提交 |
 
-## 5. 停止条件与 Gemini 交付要求
+Slice A 的 PIE 成功标准：
 
-- 任何额外 Source 文件、Tag、Input、Config、Build.cs、`.uasset`、`.umap`、Montage/Notify 迁移、资产导入或编辑需求出现时立即停止并回报。
-- 不得触碰 `ROADMAP.md`、`ARCHITECTURE.md`、`ROADMAP-archive.md`、`plan.md`、全部 `Content/**` 与 Config；不得 `git add -A`、提交、回滚或删除用户 WIP。
-- 实施中若发现 `MaximumChargeDuration`、`HeldDuration`、`ChargeVFXTraceSourceName` 或 `OwnerMeshTraceSources` 无法按本计划表达，先报告真实源码/资产证据，不得自行放宽 fail-closed、改成默认右手或引入全局替代方案。
-- Gemini 交付必须包含：五个批准 Source/Test 路径的 diff；静态检查结果；新增/保留 Automation 说明；对 `ReadyForActivation()` 重入、Delay 委托注销、NullRHI/Spawn-null、显式源 fail-closed、Display root attachment、BeginRelease/EndAbility 单一清理和旧回调的自审；留给用户的编译、Editor、Automation 与 PIE 门禁。
-- 同一根因只允许一轮有证据的修复及一次目标重跑；根因重复或连续两轮修复失败后停止并提供首个失败证据。
+- 平地固定距离与作者化 Root Motion 一致。
+- 缓坡和台阶保持 CMC 地面跟随，不穿透、不进入空中 Launch。
+- 墙体/墙角由 CMC 阻挡胶囊，不出现穿透；专属阻挡过渡不在本阶段承诺。
+- 边缘不会被伪装成空中击飞；离开 Walking 会异常收敛。
+- 所有退出路径恢复 ledge 设置、Montage/Task/委托和 GAS/Poise 生命周期。
 
-## 6. 实施、验证与 Fresh Review 收口（2026-09-08）
+## 8. Gemini 交付要求与停止条件
 
-### 实施结果
+- 先阅读本 plan.md、目标 Header/CPP、直接调用者和现有相关 Automation；只在批准路径内实现。
+- 首轮交付前完成一次干净、只读的实施自审；明确列出 ReadyForActivation() 同步重入、残留 Root Motion、Montage 身份、MovementMode、销毁/UnPossess、ledge 恢复和单一 EndAbility() 清理检查。
+- 交付内容必须包含批准路径 diff、静态检查结果、Automation 结果/新增覆盖、未运行的用户门禁，以及明确的 fallback 与非目标说明。
+- 不得修改 plan.md、ROADMAP.md、ARCHITECTURE.md、全部 Content/**、Config、Blueprint、AnimBP、Montage、地图或 Build.cs；不得 git add -A、提交、回滚、删除或导入资产。
+- 任何额外 Source 文件、Tag、Input、Config、Build.cs、共享 Montage 迁移、Motion Warping 组件、网络逻辑或墙体专属表现需求出现时立即停止并报告，不自行扩大范围。
+- 同一根因只允许一轮有证据的修复及一次目标重跑；根因重复或连续两轮失败后停止并保留首个失败证据。
+- 没有真实 Warp 窗口及动态距离/目标消费者时，不实现 Slice B；没有墙体 PIE 证据时，不实现 Slice C。
 
-- Gemini 将实现限定在本计划五个 Source/Test 路径内：`UChargedAttackAbility` 增加 Ability-owned Niagara 生命周期与 Delay 相位切换，`UWeaponEquipmentComponent` 增加只读主手挂载解析，新增 `PolyQuest.Combat.ChargedAttackNiagaraFeedback` 专项 Automation。
-- 已落实冻结契约：`MaximumChargeDuration` 与 `HeldDuration` 共同决定 Full 时刻；`ChargeVFXTraceSourceName` 的 CDO 默认是 `NAME_None`；`bAutoActivate=false` 时先写 `User.ChargePhase` 再激活；满蓄直接旁路 Delay；清理先注销 Delay 委托、再 `EndTask()`，最后统一 `Deactivate()`；显式非法 OwnerMesh 源严格 fail-closed，Display-mesh 使用根部 `NAME_None` 挂载。
-- 代码、测试和资产配置没有引入新的 Tag、Input、Config、Build.cs、伤害路径、GAS 权属或二进制资产改动。
+## 9. Main 收口记录与后续排期（2026-09-11）
 
-### 验证证据
-
-- **Source/static evidence（Gemini/Main）**：批准 diff、关键生命周期/挂载路径与专项测试结构已回查；`git diff --check` 无异常。该证据不等同于编译或运行时证明。
-- **User evidence**：用户确认 `PolyQuest.Combat.ChargedAttackNiagaraFeedback` Automation 成功，且 Scene01 PIE 通过；用户提供的执行报告还记录了 Niagara/Charged GA 配置与 Gather/Full 视觉表现。Main 本轮未重新编译、运行 Automation 或进入 PIE。
-- **Editor/资产边界**：Niagara、Charged GA、Montage、Blueprint、地图和其他 `Content/**` 仍是用户-owned WIP；本阶段不把它们纳入 Source/doc 提交，也不宣称 clean-checkout authored baseline。
-
-### Main Fresh Review
-
-- Main 按 `ue-strict-review` 的两批预算完成批准范围内的缺陷优先审查，未发现可由当前 diff、具体行号和可解释场景证明的 P0/P1/P2/P3 Finding；无阻断项。
-- 以下仅作为历史覆盖边界，不升级为实现缺陷或开放路线图项：`OnChargeFullDelayFinished()` 未使用 generation/token（现有清理已先移除委托并结束 Task，未证明旧 timer 能影响新激活）；清理助手使用指针存在性判断而非 `IsValid()`（未复现失效对象崩溃）；Headless/Null-RHI 下 Spawn-null 后仍可能建立 Delay（专项测试证明玩法路径保持，未证明状态污染）。
-
-### 收口与后续
-
-- 本计划保留为最近阶段的法定交接凭据；详细历史收据同步写入 `ROADMAP-archive.md`，稳定运行时契约同步写入 `ARCHITECTURE.md`，活动路线转写到 `ROADMAP.md`。
-- 当前收到的用户确认未包含独立的 `PolyQuestEditor (Development Editor)` 编译与逐项 Editor readback 收据；因此保留 `Debt-07B10-CompileReadback` 作为非阻塞 authored-validation debt。关闭条件是可追溯的用户编译/readback 收据或 evidence-backed no-adoption；该债务不阻止 Source/Automation/PIE 收口或下一条 `TODO-03C` 路线。
-- 本阶段提交只包含批准的五个 Source/Test 路径与四份收口文档；所有既有 Content/Config/Blueprint/地图/插件 WIP 均明确排除。
+- **实现范围**：执行者报告确认改动封闭在本计划批准的 Enemy Header/CPP 与专项 Automation 路径；Player Launch 路径未改动，符合本阶段非目标。
+- **用户证据**：用户确认 `PolyQuest.Combat.EnemyLaunchReactionRootMotion`、既有 HitReaction/LaunchFacingSmoothing/RootMotionFacing 回归 Automation、`PolyQuestEditor (Development Editor)` 编译以及 Scene01 PIE 通过；该记录不把执行者静态结果包装成运行时证据。
+- **Main Fresh Review**：批准范围内未发现可由当前 diff/source 证据定级的 P0/P1/P2 缺陷。影响雷达的结构性未覆盖提示保留为残余风险，不触发范围扩张或 Player 修复。
+- **门禁状态**：用户已补充确认 `PolyQuestEditor (Development Editor)` 编译通过，`Debt-07B11-CompileReadback` 关闭；07B11 的实现、静态、编译、Automation、Editor/资产 readback、PIE 与 Main Fresh Review 门禁均已有对应证据，可以进入提交门。
+- **Player 对齐决定**：不把 Player 重构并入 TODO-07B11。未来只在独立、证据触发的 `TODO-07B12` 中评估通用 `State.Block.Facing` 契约及 Player 专属 grounded launch；本阶段不新增该 Tag、不改 AIController/PlayerLaunchReactionAbility，也不把提案写入 `ARCHITECTURE.md`。
+- **后续触发条件**：只有真实 In-Place 动作转向复现、统一 Tag 所有权与清理边界、Player 相机/输入/Tech Roll 契约均冻结后，才进入 TODO-07B12；Motion Warping 仍需真实 Montage Warp Window 与动态目标/距离消费者。

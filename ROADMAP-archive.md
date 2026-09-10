@@ -1455,3 +1455,14 @@ TODO-03A3E World Pickup Interaction Prompt v1
 - **测试覆盖**：`VitalHudAutomationTests.cpp` 新增 1.13/1.14，分别覆盖体力消耗/恢复平滑与 Zero-Snap、Health 治疗平滑/受击即时下降及致死归零。旧的 Health/Stamina 插值开关已移除，机制常驻；没有引入新的 GAS、Input、资产或游戏玩法权属。
 - **验证证据边界**：提交 `fefdb87` 的提交记录报告 Rider 对三处 C++ 路径为 0 Errors、用户已在 Editor Automation 窗口确认 `PolyQuest.UI.PlayerVitalHUD` Success，且 `git diff --check` 通过。本次文档对齐未重新编译、运行 Automation、读取 UMG 资产或进入 PIE，因此不把上述记录扩写为新的 Main、Editor readback 或视觉证据。
 - **路线影响**：不新建形式化 Debt；当前证据未显示需要持续跟踪的缺陷或被接受延期风险。该窄表现收口不改变 `TODO-03C: Ranged Enemy v1` 的下一排期，相关历史凭据只保留在本归档。
+
+## TODO-07B11 Enemy Launch Reaction Root-Motion Knockdown v1 Closeout (2026-09-11)
+
+> 本节记录 TODO-07B11 Slice A 的实施与验证证据。它保留当前用户工作树、批准路径和证据边界，不替代实时 Source、配置、资产或 Unreal Editor 状态作为运行时权威。用户已确认 Development Editor 编译在 Automation 与 PIE 之前通过，故本阶段可按完整门禁收口。
+
+- **范围与实际结果**：实现严格限定于 `EnemyLaunchReactionAbility.h/.cpp` 与 `EnemyLaunchReactionRootMotionAutomationTests.cpp`。Enemy 在 `MOVE_Walking` 且 Root Motion Montage 有效时使用作者化固定距离击倒；CMC 继续负责胶囊碰撞、地面、台阶和边缘；旧 `LaunchCharacter` 路径保留为启动前兼容 fallback。Player Launch、AIController、Tag、Input、Config、Build.cs 和二进制资产未改动。
+- **稳定契约**：Root Motion 分支在 `ReadyForActivation()` 前完成竞争 Ability 取消、残留 Root Motion 检查、一次性 Yaw 对齐和 `bCanWalkOffLedges` 保护；离开 `MOVE_Walking`、取消、死亡、销毁、UnPossess、播放失败和同步重入统一收敛到幂等 `EndAbility()`。`ReactionLaunchCommit` 对该分支不是生命周期硬门禁。
+- **验证证据**：执行者报告 Rider 0 Errors 与批准路径 `git diff --check`；用户确认 `PolyQuestEditor (Development Editor)` 编译、专项 Enemy Root Motion Automation、HitReaction/LaunchFacingSmoothing/RootMotionFacing 回归 Automation 及 Scene01 PIE 通过。上述证据不扩写为完整资产基线或包装/发布证明。
+- **Main Fresh Review**：Main 在批准范围内未发现可由当前 diff/source 证据定级的 P0/P1/P2 缺陷；Player 未改动符合本阶段非目标。结构性影响雷达提示保留为残余风险，不触发范围扩张。
+- **债务与后续指针**：`Debt-07B11-CompileReadback` 已由用户确认的编译结果关闭。后续候选路线为条件性 `TODO-07B12`：先验证 Ability-owned `State.Block.Facing` 的通用生命周期与 AI/Player 消费，再另行评估 Player 专属 grounded launch；不在本阶段预铺该 Tag、全局 Motion Warping 或 Player 重构。
+- **提交边界**：本阶段收口提交仅包含批准的 Enemy Header/CPP、专项 Automation、`ARCHITECTURE.md`、`ROADMAP.md`、`ROADMAP-archive.md` 与 `plan.md`；全部用户-owned Content/Config/Blueprint/AnimBP/Montage/地图/插件及其他 WIP 均排除。提交哈希以 Git 历史为准。

@@ -63,6 +63,53 @@ public:
 	float GetFacingTurnRateDegreesPerSecond() const { return FacingTurnRateDegreesPerSecond; }
 	bool GetTestLandingRecoveryCompletedNaturally() const { return bLandingRecoveryCompletedNaturally; }
 	void SetTestLandingRecoveryCompletedNaturally(bool bValue) { bLandingRecoveryCompletedNaturally = bValue; }
+
+	bool GetUseGroundedRootMotionKnockdown() const { return bUseGroundedRootMotionKnockdown; }
+	void SetTestUseGroundedRootMotionKnockdown(bool bValue) { bUseGroundedRootMotionKnockdown = bValue; }
+	UAnimMontage* GetTestRootMotionKnockdownMontage() const { return RootMotionKnockdownMontage.Get(); }
+	void SetTestRootMotionKnockdownMontage(UAnimMontage* Montage) { RootMotionKnockdownMontage = Montage; }
+	void SetTestTakeoffMontage(UAnimMontage* Montage) { TakeoffMontage = Montage; }
+	void SetTestLandingRecoveryMontage(UAnimMontage* Montage) { LandingRecoveryMontage = Montage; }
+	bool IsTestPhaseRootMotionKnockdown() const;
+	bool IsTestPhaseTakeoff() const;
+	bool IsTestPhaseNone() const;
+	uint8 GetTestCurrentPhaseRaw() const;
+	bool GetTestLedgeSettingModified() const { return bLedgeSettingModified; }
+	void SetTestLedgeSettingModified(bool bModified) { bLedgeSettingModified = bModified; }
+	bool GetTestSavedCanWalkOffLedges() const { return bSavedCanWalkOffLedges; }
+	void SetTestSavedCanWalkOffLedges(bool bValue) { bSavedCanWalkOffLedges = bValue; }
+	bool GetTestCommitEventTaskActive() const { return CommitEventTask != nullptr; }
+	bool GetTestFacingTurnTaskActive() const { return FacingTurnTask != nullptr; }
+	bool GetTestFallValidationTaskActive() const { return FallValidationTask != nullptr; }
+	void SetTestBypassMontageActiveCheck(bool bBypass) { bTestBypassMontageActiveCheck = bBypass; }
+	bool GetTestBypassMontageActiveCheck() const { return bTestBypassMontageActiveCheck; }
+	UAnimInstance* GetTestBoundAnimInstance() const { return BoundAnimInstance.Get(); }
+	void SetTestBoundAnimInstance(UAnimInstance* AnimInst) { BoundAnimInstance = AnimInst; }
+	bool CallTestIsRootMotionKnockdownCandidate(const AEnemyCharacter* InEnemy, const class UCharacterMovementComponent* InMovement) const
+	{
+		return IsRootMotionKnockdownCandidate(InEnemy, InMovement);
+	}
+	bool CallTestIsLegacyLaunchCandidate(const class UCharacterMovementComponent* InMovement) const
+	{
+		return IsLegacyLaunchCandidate(InMovement);
+	}
+	bool CallTestValidateActivationSetup(const FGameplayAbilityActorInfo* ActorInfo) const { return ValidateActivationSetup(ActorInfo); }
+	void TriggerTestMovementModeChanged(ACharacter* Character, EMovementMode PrevMovementMode, uint8 PreviousCustomMode)
+	{
+		OnMovementModeChanged(Character, PrevMovementMode, PreviousCustomMode);
+	}
+	void TriggerTestLaunchCommitEvent(const FGameplayEventData& Payload)
+	{
+		OnLaunchCommitEventReceived(Payload);
+	}
+	void TriggerTestActiveMontageEnded(UAnimMontage* Montage, bool bInterrupted)
+	{
+		OnActiveMontageEnded(Montage, bInterrupted);
+	}
+	static bool CallTestTryResolveRootMotionFacingYaw(const FVector& LocalAttackerDirection, float ImpactReferenceYaw, float& OutFacingYaw)
+	{
+		return TryResolveRootMotionFacingYaw(LocalAttackerDirection, ImpactReferenceYaw, OutFacingYaw);
+	}
 #endif
 
 private:
@@ -73,8 +120,15 @@ private:
 		TurningToLaunch,
 		AwaitingAirborne,
 		Airborne,
-		LandingRecovery
+		LandingRecovery,
+		RootMotionKnockdown
 	};
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Enemy|Reaction", meta = (AllowPrivateAccess = "true", ToolTip = "敌人击飞受击地面 Root Motion 击倒动画 Montage 资产。"))
+	TObjectPtr<UAnimMontage> RootMotionKnockdownMontage;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Enemy|Reaction", meta = (AllowPrivateAccess = "true", ToolTip = "是否在地面 MOVE_Walking 下优先使用作者化 Root Motion 击倒而非旧物理 Launch。"))
+	bool bUseGroundedRootMotionKnockdown = true;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Enemy|Reaction", meta = (AllowPrivateAccess = "true", ToolTip = "敌人击飞受击起飞与滞空姿态动画 Montage 资产。"))
 	TObjectPtr<UAnimMontage> TakeoffMontage;
@@ -151,6 +205,13 @@ private:
 	void OnMovementModeChanged(ACharacter* Character, EMovementMode PrevMovementMode, uint8 PreviousCustomMode);
 
 	bool ValidateActivationSetup(const FGameplayAbilityActorInfo* ActorInfo) const;
+	bool IsRootMotionKnockdownCandidate(const AEnemyCharacter* EnemyCharacter, const class UCharacterMovementComponent* MovementComponent) const;
+	bool IsLegacyLaunchCandidate(const class UCharacterMovementComponent* MovementComponent) const;
+	static bool TryResolveRootMotionFacingYaw(const FVector& LocalAttackerDirection, float ImpactReferenceYaw, float& OutFacingYaw);
 	bool IsEventFromTakeoffMontage(const FGameplayEventData& Payload) const;
 	void EndFromMontage(bool bWasCancelled);
+
+#if WITH_DEV_AUTOMATION_TESTS
+	bool bTestBypassMontageActiveCheck = false;
+#endif
 };

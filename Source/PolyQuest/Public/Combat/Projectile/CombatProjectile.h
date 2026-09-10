@@ -58,7 +58,9 @@ struct POLYQUEST_API FCombatProjectileLaunchRequest
 
 /**
  * Concrete travelling combat projectile Actor.
- * Driven by UProjectileMovementComponent with zero gravity, no bounce, and no homing in v1.
+ * Driven by UProjectileMovementComponent with zero gravity and no bounce.
+ * Optional limited homing steers velocity toward the launch-time target within
+ * the configured duration, turn-rate, and total-turn budget.
  * Owns collision, flight lifecycle, single-hit delivery, and fail-closed cleanup.
  */
 UCLASS()

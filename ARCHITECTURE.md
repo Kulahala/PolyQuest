@@ -1045,24 +1045,38 @@ selects only Abilities carrying `Ability.Action.Teardown.OnUnpossess`.
 #### Launch reaction
 
 `UPlayerLaunchReactionAbility` and `UEnemyLaunchReactionAbility` are matching
-`InstancedPerActor`, `ServerOnly` Gameplay-Event abilities. Their actual Native
-phase enum is:
+`InstancedPerActor`, `ServerOnly` Gameplay-Event abilities, but their grounded
+presentation contracts are now intentionally distinct.
+
+`UPlayerLaunchReactionAbility` retains the Native phase sequence:
 
 ~~~text
 None -> Takeoff -> TurningToLaunch -> AwaitingAirborne -> Airborne -> LandingRecovery
 ~~~
 
-Before the Takeoff Montage starts, each freezes the target-local impact
-direction and reference Yaw. `Event.Reaction.Launch.Commit` is accepted only
-from the current Avatar and the active Takeoff Montage or its contained
-sequence. The event pauses the Takeoff Montage; a facing task completes the
-frozen turn, then `LaunchCharacter()` and CharacterMovement own capsule
-displacement. `MovementModeChanged` is the fast path into Falling, with a
-watchdog governed by `AirborneTransitionGraceSeconds` /
-`EnemyAirborneTransitionGraceSeconds` for a commit that never becomes airborne.
-Landing stops the paused Takeoff, clears residual movement once, and starts the
-authored LandingRecovery Montage. No repeated direct actor-location writes are
-used for flight.
+It freezes the target-local impact direction and reference Yaw before the
+Takeoff Montage, accepts `Event.Reaction.Launch.Commit` only from the current
+Avatar and active Takeoff Montage (or its contained sequence), pauses Takeoff,
+completes the facing task, and then lets `LaunchCharacter()` plus
+CharacterMovement own capsule displacement. `MovementModeChanged` is the fast
+path into Falling, with the existing watchdog governed by
+`AirborneTransitionGraceSeconds`. Landing stops the paused Takeoff, clears
+residual movement once, and starts the authored LandingRecovery Montage.
+
+`UEnemyLaunchReactionAbility` retains that same sequence for its Legacy Physics
+fallback and adds a separate `RootMotionKnockdown` phase. When the opt-in flag,
+Enemy Montage, Root Motion/Slot/length validation, and exact `MOVE_Walking`
+precondition pass, one continuous authored Montage owns the Enemy's takeoff,
+backward displacement, knockdown, and recovery. Before task activation the
+Ability cancels competing Enemy abilities, rejects residual Root Motion,
+applies the resolved attacker-facing Yaw once, and captures
+`bCanWalkOffLedges`; CMC remains the sole capsule, floor, step, and ledge
+authority. Any movement-mode change away from `MOVE_Walking`, Montage
+interruption, cancellation, death, destruction, unpossession, or startup
+failure converges on the idempotent `EndAbility()` cleanup. A Root Motion
+startup failure does not switch to `LaunchCharacter()` after the branch has
+been selected; Legacy fallback is decided only before startup. The Root Motion
+branch does not create or require `Event.Reaction.Launch.Commit`.
 
 Only the Player launch Ability listens to the existing Dodge cancel-window
 events, and only during `LandingRecovery` from the matching recovery Montage.
@@ -1070,9 +1084,15 @@ It exposes one scoped `State.Action.CanCancel.Dodge` contribution; there is no
 Player air Dodge, Enemy recovery Dodge, or generic reaction-cancel layer.
 Montage/task/delegate cleanup, ledge-setting restoration, frozen snapshots,
 watchdog failure, renewed Falling, death, destruction, and teardown all converge
-on `EndAbility()`. A natural Enemy LandingRecovery end releases the pending
-Poise/Stance-Break deferral; an abnormal end clears it and restores Poise when
-the living enemy remains at zero.
+on `EndAbility()`. A natural Enemy LandingRecovery or Root Motion Montage end
+releases the pending Poise/Stance-Break deferral; an abnormal end clears it and
+restores Poise when the living enemy remains at zero.
+
+`AEnemyAIController` currently suppresses focus-driven rotation while actual
+Enemy Root Motion or the Enemy Launch Reaction is active. This is not a generic
+In-Place action lock and there is no adopted `State.Block.Facing` contract in
+the current runtime; the evidence-gated cross-Ability facing contract and
+Player-wide launch alignment are tracked separately in `TODO-07B12`.
 
 #### Enemy death and teardown
 
