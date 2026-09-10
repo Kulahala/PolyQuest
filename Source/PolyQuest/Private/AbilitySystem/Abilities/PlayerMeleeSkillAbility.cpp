@@ -122,6 +122,7 @@ void UPlayerMeleeSkillAbility::ActivateAbility(
 	bEndAbilityRequested = false;
 	bDodgeCancelable = false;
 	bRuntimeActionTagsApplied = false;
+	ActiveRateWindowCount = 0;
 	bRateWindowApplied = false;
 	ActiveMontage = nullptr;
 	BoundAnimInstance = nullptr;
@@ -520,15 +521,16 @@ void UPlayerMeleeSkillAbility::CloseTraceWindow()
 
 void UPlayerMeleeSkillAbility::OnRateWindowBegin(FGameplayEventData Payload)
 {
-	// Ignore duplicate Begin events; authored rate windows must not overlap.
-	if (bRateWindowApplied || !IsGameplayEventFromActiveMontage(Payload) || Payload.EventMagnitude <= 0.0f)
+	if (!IsGameplayEventFromActiveMontage(Payload) || Payload.EventMagnitude <= 0.0f)
 	{
 		return;
 	}
 
 	if (IsValid(BoundAnimInstance) && IsValid(ActiveMontage) && BoundAnimInstance->Montage_IsActive(ActiveMontage.Get()))
 	{
+		// Last-one-wins: latest rate window overrides current play rate for rhythmic cadence.
 		BoundAnimInstance->Montage_SetPlayRate(ActiveMontage.Get(), Payload.EventMagnitude);
+		ActiveRateWindowCount++;
 		bRateWindowApplied = true;
 	}
 }
@@ -540,11 +542,20 @@ void UPlayerMeleeSkillAbility::OnRateWindowEnd(FGameplayEventData Payload)
 		return;
 	}
 
-	RestoreBaselineMontageRate();
+	if (ActiveRateWindowCount > 0)
+	{
+		ActiveRateWindowCount--;
+	}
+
+	if (ActiveRateWindowCount == 0)
+	{
+		RestoreBaselineMontageRate();
+	}
 }
 
 void UPlayerMeleeSkillAbility::RestoreBaselineMontageRate()
 {
+	ActiveRateWindowCount = 0;
 	if (!bRateWindowApplied)
 	{
 		return;

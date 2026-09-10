@@ -124,6 +124,7 @@ private:
 	bool bComboBranchWindowOpen = false;
 	bool bContinuationBuffered = false;
 	bool bComboTransitionInProgress = false;
+	int32 ActiveRateWindowCount = 0;
 	bool bRateWindowApplied = false;
 	bool bEndAbilityRequested = false;
 

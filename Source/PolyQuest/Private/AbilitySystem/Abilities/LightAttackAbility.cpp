@@ -70,6 +70,7 @@ void ULightAttackAbility::ActivateAbility(
 	bComboBranchWindowOpen = false;
 	bContinuationBuffered = false;
 	bComboTransitionInProgress = false;
+	ActiveRateWindowCount = 0;
 	bRateWindowApplied = false;
 	ActiveEntryIndex = INDEX_NONE;
 	ActiveEntryMontage = nullptr;
@@ -270,6 +271,7 @@ void ULightAttackAbility::EndAbility(
 	bComboBranchWindowOpen = false;
 	bContinuationBuffered = false;
 	bComboTransitionInProgress = false;
+	ActiveRateWindowCount = 0;
 	bRateWindowApplied = false;
 	ActiveEntryIndex = INDEX_NONE;
 	ActiveEntryMontage = nullptr;
@@ -620,15 +622,16 @@ void ULightAttackAbility::TryConsumeBufferedComboContinuation()
 
 void ULightAttackAbility::OnRateWindowBegin(FGameplayEventData Payload)
 {
-	// Ignore duplicate Begin events; authored rate windows must not overlap.
-	if (bRateWindowApplied || !IsGameplayEventFromActiveMontage(Payload) || Payload.EventMagnitude <= 0.0f)
+	if (!IsGameplayEventFromActiveMontage(Payload) || Payload.EventMagnitude <= 0.0f)
 	{
 		return;
 	}
 
 	if (BoundAnimInstance && ActiveEntryMontage && BoundAnimInstance->Montage_IsActive(ActiveEntryMontage.Get()))
 	{
+		// Last-one-wins: latest rate window overrides current play rate for rhythmic cadence.
 		BoundAnimInstance->Montage_SetPlayRate(ActiveEntryMontage.Get(), Payload.EventMagnitude);
+		ActiveRateWindowCount++;
 		bRateWindowApplied = true;
 	}
 }
@@ -640,11 +643,20 @@ void ULightAttackAbility::OnRateWindowEnd(FGameplayEventData Payload)
 		return;
 	}
 
-	RestoreBaselineMontageRate();
+	if (ActiveRateWindowCount > 0)
+	{
+		ActiveRateWindowCount--;
+	}
+
+	if (ActiveRateWindowCount == 0)
+	{
+		RestoreBaselineMontageRate();
+	}
 }
 
 void ULightAttackAbility::RestoreBaselineMontageRate()
 {
+	ActiveRateWindowCount = 0;
 	if (!bRateWindowApplied)
 	{
 		return;

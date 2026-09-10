@@ -130,6 +130,7 @@ private:
 	FGameplayTag TeardownOnUnpossessTag;
 	bool bDodgeCancelable = false;
 	bool bRuntimeActionTagsApplied = false;
+	int32 ActiveRateWindowCount = 0;
 	bool bRateWindowApplied = false;
 	bool bEndAbilityRequested = false;
 
