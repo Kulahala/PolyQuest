@@ -1,471 +1,1309 @@
 # PolyQuest Architecture
 
-## Current Verified State
+This document is the current Native C++ and runtime-config architecture ledger for
+PolyQuest. It records stable ownership and contracts, not a stage diary or an
+asset-authoring checklist.
 
-PolyQuest is a UE 5.8 Windows C++ project. The only runtime module is PolyQuest. Its Public dependencies are Core, CoreUObject, Engine, InputCore, EnhancedInput, AIModule, StateTreeModule, GameplayStateTreeModule, GameplayAbilities, GameplayTags, GameplayTasks, UMG, and Slate; its Private dependencies are Niagara and MotionWarping. `Config/Tags/PolyQuestGameplayTags.ini` is the project Gameplay Tag source.
+## Scope and evidence
 
-The stable runtime ownership contract is:
+The current evidence boundary is Native C++ and tracked project/runtime
+configuration: Source/PolyQuest, PolyQuest.uproject, Source/PolyQuest/PolyQuest.Build.cs,
+Config/DefaultEngine.ini, and Config/Tags/PolyQuestGameplayTags.ini. Build,
+Unreal Editor, .uasset graph,
+PIE, and visual evidence are deliberately outside this ledger unless explicitly
+recorded with their own evidence type.
 
-- ABaseCharacter owns the single-player Ability System Component and CharacterAttributeSet. Native GameplayAbilities own activation, cancellation, costs, asynchronous work, and teardown; GameplayEffects own attribute mutation. StateTree and controllers do not become parallel action-state authorities.
-- UWeaponEquipmentComponent owns Player equipment transactions and prepared Ability identities. AWorldWeaponPickup owns overlap/CanInteract and drop presentation. UAbilityTask_MeleeTraceWindow -> FMeleeHitResolver -> Damage GameplayEffect remains the sole melee damage path.
-- AEnemyAIController owns Enemy target, focus, leash, and tactical movement state. StateTree selects high-level intent; Enemy abilities and effects execute combat and cleanup. Poise-to-zero dispatches the existing State.Status.Stunned / Stance Break route.
-- Player Lock-On owns strict acquisition/cycle and bounded retention of an existing target. Bow may consume one validated lock snapshot at Release, while the projectile owns its own post-launch snapshot, homing, collision, and lifetime.
-- Hit Reaction classification, Mesh Overlay, hit-stop, Camera Shake, audio, weapon trails, and projectile trails remain separate presentation channels at their established native ownership boundaries. They never apply a second damage route.
-- The fixed Scene01 route and user-authored GA/GE, Montage, AnimBP, Blueprint, UMG, input, DataAsset, Niagara, sound, map, and imported resources are not interchangeable evidence. Mutable authored assets remain local WIP unless a named stage closes them through Editor readback and user validation.
+| Label | Meaning |
+| --- | --- |
+| [Native] | Direct static fact from the current C++ source. |
+| [Config] | Direct static fact from a tracked configuration file. |
+| [Authored asset] | A referenced or expected asset contract; its actual asset data was not read back in this pass. |
+| [Historical Editor readback] | A behavior-relevant authored-asset snapshot recorded by an identified earlier Editor readback; it is not fresh current-asset evidence and must be refreshed after asset edits. |
+| [Not verified in this pass] | Intentionally outside the static source/config evidence boundary. |
 
-The module sections below are the current contract reference. Chronological stage narratives and detailed validation receipts are preserved in ROADMAP-archive.md; future work belongs in ROADMAP.md. Source, Config, and actual assets remain stronger evidence than any document.
+Unless a paragraph says otherwise, class names, ownership, and lifecycle claims
+are [Native]. Static inspection establishes code/config intent only; it is not
+evidence of a successful build, Editor readback, PIE behavior, or visual result.
 
-## Product Entry And Template Retirement
+Values exposed as `UPROPERTY`, DataAsset fields, Config entries, or authored
+StateTree properties are referenced by their source member name below instead of
+being copied as a second tuning table. Their current values belong to the
+source/config/asset that owns them; only non-tunable validation rules and
+ownership constraints are architectural facts here.
 
-`/Game/Maps/Scene01` is the product prototype map. `Config/DefaultEngine.ini` sets it as both the game default map and the editor startup map.
+## Contents
 
-The active player route is `BP_GameMode -> BP_Player -> APlayerCharacter -> ABaseCharacter`, while `BP_PlayerController -> APolyQuestPlayerController` owns desktop mapping-context installation. `APolyQuestGameMode` and `APolyQuestPlayerController` remain the same reflected `/Script/PolyQuest` Blueprint roots after their source moved to `Framework/`.
+- [Runtime topology and ownership](#runtime-topology-and-ownership)
+- [GAS, attributes, and character lifecycle](#gas-attributes-and-character-lifecycle)
+- [Input, equipment, and world pickups](#input-equipment-and-world-pickups)
+- [Melee, defense, and action abilities](#melee-defense-and-action-abilities)
+- [Paired execution](#paired-execution)
+- [Bow, projectile, and target assist](#bow-projectile-and-target-assist)
+- [Camera, lock-on, and floor visibility](#camera-lock-on-and-floor-visibility)
+- [Enemy AI and StateTree](#enemy-ai-and-statetree)
+- [Reaction, death, feedback, and UI](#reaction-death-feedback-and-ui)
+- [Gameplay Tag taxonomy](#gameplay-tag-taxonomy)
+- [Non-goals and authored dependencies](#non-goals-and-authored-dependencies)
 
-`APolyQuestPlayerController` adds each authored `DefaultMappingContexts` entry only for a local desktop player. The fixed-camera native route intentionally does not bind a Look action; Mapping Context asset topology remains user-owned authoring WIP. The retired mobile touch widget, forced-touch setting, and mobile-excluded context path are not part of the product route.
+---
 
-`APolyQuestCharacter`, the `ThirdPerson` map/Blueprint closure, and the generated `Variant_Combat`, `Variant_Platforming`, and `Variant_SideScrolling` source/content closures have been retired. New product gameplay is introduced through documented PolyQuest stages rather than by extending a generated template variant.
+## Runtime topology and ownership
 
-## GAS Core Contract
+### Project baseline
 
-### Actor And Attribute Ownership
+The project descriptor declares UE 5.8, Windows as its target platform, and one
+project `Runtime` module named PolyQuest [Config]. Product genre, visual style,
+and network mode are not established by this evidence pass.
 
-- `ABaseCharacter` owns one `UAbilitySystemComponent` and one `UCharacterAttributeSet` default subobject.
-- The AttributeSet is registered exactly once through `AddAttributeSetSubobject(...)` during character construction. Its current fields are `Health`, `MaxHealth`, `Poise`, `MaxPoise`, `Stamina`, `MaxStamina`, `StaminaRegenRateMultiplier`, and `MoveSpeed`; Health, Poise, and Stamina values initialize to `100.0f`, `StaminaRegenRateMultiplier` initializes to `1.0f`, and `MoveSpeed` initializes to `500.0f`.
-- `UCharacterAttributeSet` clamps both current and base Stamina to `[0, MaxStamina]` and both current and base Poise to `[0, MaxPoise]`, clamps `StaminaRegenRateMultiplier` and `MoveSpeed` to nonnegative values, and sets the loose `State.Status.Exhausted` count exactly to `1` at zero or `0` after recovery. Attributes remain the source of truth, so repeated Stamina drains while clamped at zero cannot leave Exhausted latched after recovery. The AttributeSet clamps Poise values only; it never selects death or stance-break behavior.
-- In the current single-player boundary, `OwnerActor == AvatarActor == ABaseCharacter`. `BeginPlay()` initializes actor info with `InitAbilityActorInfo(this, this)` so an unpossessed test target can receive a GameplayEffect. `PossessedBy()` initializes it again after the superclass possession path.
-- `StartupAbilities` is a Blueprint-configured list on `ABaseCharacter`. Authority grants each class during possession only when `FindAbilitySpecFromClass()` confirms it is not already present, so a repeated possession path cannot duplicate a spec.
-- `EndPlay()` calls `CancelAllAbilities()` before character teardown. This is the character-level teardown entry for active Montages, AbilityTasks, and owned ability tags.
-- The player-specific camera, movement, look, and jump input layer belongs to `APlayerCharacter`; the base character has no unconditional tick or player input contract.
+| Area | Current source/config fact |
+| --- | --- |
+| Public module dependencies | Core, CoreUObject, Engine, InputCore, EnhancedInput, AIModule, StateTreeModule, GameplayStateTreeModule, GameplayAbilities, GameplayTags, GameplayTasks, UMG, Slate, SlateCore |
+| Private module dependencies | Niagara, MotionWarping |
+| Default map | /Game/Maps/Scene01.Scene01 [Config] |
+| Editor startup map | /Game/Maps/Scene01.Scene01 [Config] |
+| Default GameMode reference | /Game/BP/Game/BP_GameMode.BP_GameMode_C [Config] |
+| Gameplay Tag source | Config/Tags/PolyQuestGameplayTags.ini [Config] |
 
-### Runtime Routing And Input
+The map and GameMode entries are configuration references. Their placed actors,
+Blueprint parent classes, graph wiring, and visual layout remain [Not verified
+in this pass] unless they are independently read back from the Editor. A
+Native/source scan alone also does not prove permanent retirement of legacy
+template maps, Blueprints, or imported assets; that is an Editor/reference
+inspection claim.
 
-- `BP_GameMode` is the active default GameMode and selects `BP_Player` as the default Pawn and `BP_PlayerController` as the PlayerController.
-- `APolyQuestPlayerController` installs Blueprint-authored desktop `DefaultMappingContexts` for local players. `APlayerCharacter` intentionally leaves `LookAction` and `MouseLookAction` unbound in the fixed-camera route; authored mapping assets remain outside the native runtime contract.
-- `APlayerCharacter` binds `PrimaryAttackAction`, `AimAction`, `GuardAction`, and four fixed `AbilitySlotActions`. Every combat-input `Started` records held time and sends `Event.Input.Pressed` with the actual `Input.*` tag in `FGameplayEventData::InstigatorTags`; `UWeaponEquipmentComponent` then resolves Primary/Sprint through the equipped MainHand direct fields, Guard/Parry through the Effective Defense Profile, and prepared slots through exact handles. `Completed` sends `Released`; `Canceled` sends `Canceled`; both clear the held state. The input layer never plays a Montage, spends Stamina, traces, or mutates an Attribute directly.
-- `GuardAction` uses the held-combat-input route and the Effective Defense Profile: `Input.Guard -> Ability.Defense.Guard`. Its physical held value is only input delivery; `State.Action.Guarding` on the ASC, not a Player input boolean, is the gameplay Guard state.
-- `UWeaponDefinition::PrimaryAttackAbilityTag` is the canonical MainHand route for `Input.PrimaryAttack`, and its optional `SprintAttackAbilityTag` is the canonical Sprint route; each configured tag must match exactly one granted Ability CDO. A missing Sprint tag falls through to the existing Primary request path. The Primary Ability still chooses Light or Charged after the Combo listener has first access to the same Pressed event. A route change affects future input starts only and never grants, revokes, or cancels active Abilities.
-- `Event.Input.Pressed`, `Event.Input.Released`, and `Event.Input.Canceled` are semantic delivery events for already active Abilities using `WaitGameplayEvent`; they are not general `AbilityTriggers`. `Event.Attack.Charged.ReleaseHandoff` is the narrow exception: its tagged payload activates Charged when a normal release at or after the threshold arrives before the `WaitDelay` callback, so Charged can use the original held duration after Character input state has been cleared. A future event-triggered Ability must use a dedicated outer event tag or validate the payload's input intent before activation, because the generic outer event alone does not distinguish Primary, Aim, and Slot input.
-- Current validation is keyboard/mouse-only by explicit scope decision. Gamepad Right Shoulder and Left Trigger mappings are deferred rather than treated as verified controller support.
-- `APlayerCharacter` uses one `DodgeSprintAction` as a temporal physical-input arbiter. Its positive authorable threshold defaults to `0.15s`: release before that threshold requests the existing `Ability.Dodge`, while reaching the threshold resolves the held press to Sprint intent and never adds a late Dodge on release. Dodge still derives one camera-relative world direction from the latest movement input; Jump release still calls `StopJumping()` so a pre-action UE jump request cannot remain latched.
-- The arbiter owns only press timing and held intent. It never changes MoveSpeed, Stamina, Gameplay Tags, Montages, or Ability cleanup; `UDodgeAbility` and `USprintAbility` remain the GAS owners of those contracts, and the ASC Sprint tag remains runtime truth. Attacking, Dodging, movement blocking, and leaving the ground end only the current Sprint; a resolved long hold survives those temporary blockers and existing movement, tag, and landing paths retry it when valid. Physical release, Canceled input, and teardown clear the shared input state; exhaustion still requires a physical release before Sprint can restart. Keyboard/mouse is the verified scope, while controller support remains a Roadmap validation debt.
+### Source anchors
 
-### Player Equipment And Combat Input
+| Contract | Primary Native paths |
+| --- | --- |
+| Character and GAS base | Source/PolyQuest/Public/Character and Source/PolyQuest/Public/AbilitySystem |
+| Player input, camera, and lock-on | Source/PolyQuest/Public/Character/Player |
+| Equipment and pickups | Source/PolyQuest/Public/Combat/Equipment |
+| Melee and execution | Source/PolyQuest/Public/Combat/Melee, Source/PolyQuest/Public/Combat/Execution, Source/PolyQuest/Public/AbilitySystem/Abilities |
+| Projectile and targeting | Source/PolyQuest/Public/Combat/Projectile |
+| AI and floor visibility | Source/PolyQuest/Public/AI and Source/PolyQuest/Public/Environment |
+| Feedback and UI | Source/PolyQuest/Public/Combat/Feedback, Source/PolyQuest/Public/Camera, and Source/PolyQuest/Public/UI |
 
-- `UWeaponDefinition` is the abstract authored base of every player equipment item: hand-slot occupancy (`MainHandOneHanded`, `MainHandTwoHanded`, `OffHand`), display mesh/socket/offsets and finite strictly-positive `DisplayScale`, `BaseGrantedActions`, Reusable/Exclusive candidate lists, the default prepared `1-4` layout, one optional `UDefenseProfileDefinition`, and canonical MainHand `PrimaryAttackAbilityTag`/optional `SprintAttackAbilityTag`. MainHand attack tags must match exactly one `BaseGrantedActions` Ability CDO; OffHand definitions must leave both attack tags invalid. All action fields store `TSubclassOf<UGameplayAbility>` directly. `BaseGrantedActions` are the always-granted family chain; Reusable and Exclusive are one candidate union in v1, while real exclusive selection belongs to the later rest-site stage. A candidate/default/base duplicate or an invalid default entry fails definition validation. Definition types store authored data only - no equipped state, active spec, input state, or trace history.
-- `UMeleeWeaponDefinition` is the compatible melee subtype: trace radius/subdivisions, and dual-mode Blade Base/Tip marker authoring (optional Static Mesh trace socket pair `BladeBaseSocketName` / `BladeTipSocketName` or legacy relative vectors `BladeBaseMarkerRelativeLocation` / `BladeTipMarkerRelativeLocation`), plus `bUseOwnerMeshSocketForTrace`. A displayed socket pair must set both names, use distinct names, resolve on `WeaponMesh`, and have non-coincident socket `RelativeLocation` values; malformed pairs fail equipment preflight before a transaction mutates handles, displays, or markers. A displayed weapon with a complete valid socket pair attaches its transient marker components directly to the spawned `UStaticMeshComponent` at the named sockets via `SnapToTargetNotIncludingScale`; non-adopted displayed melee definitions retain legacy relative-vector attachment; the legal Unarmed form has no display mesh and attaches the same marker pair below the owning character mesh at `AttachSocketName`. All forms expose the same runtime marker pair to `UMeleeTraceSourceComponent` and use the same Trace Window and resolver path.
-- The same melee definition optionally owns the player execution presentation fields `FrontExecutionMontage` and `BackstabExecutionMontage`. They are direction-specific authored references, not global Ability defaults; missing fields reject only the corresponding execution route and do not invalidate an otherwise usable weapon definition.
-- `UOffHandWeaponDefinition` is the concrete OffHand equipment subtype: it validates `HandSlot == OffHand`, inherited `LocomotionMode == Default`, and a display `WeaponMesh`, while retaining zero trace markers or damage data. Its `bProvidesShieldPresentation` field is authored data only: it means this committed OffHand exposes the v1 Shield presentation fact and does not inspect an Ability Tag, ASC state, inventory, or UI.
-- `DisplayScale` owns equipped StaticMesh presentation only. `UWeaponEquipmentComponent` applies it to each transient display component without modifying the definition's location or rotation offsets; the display component's Socket world transforms therefore carry the same scale into display-attached melee markers and the Bow launch query. Owner-SkeletalMesh trace sources and `TraceRadius` remain character-geometry and collision-thickness facts. World pickups retain their separate `WorldPickupDisplayTransform`, including its independent scale.
-- `UDefenseProfileDefinition` is tag-only: it holds distinct valid Guard/Parry ability tags, with an OffHand profile overriding a MainHand profile and no profile resolving to the existing generic Guard/Parry defaults. An explicit profile passes equipment preflight only when its own `BaseGrantedActions` contains exactly one Guard class and exactly one Parry class; each CDO must carry the exact profile tag and a tag in the corresponding generic Guard/Parry category (the generic check is hierarchical so Editor-authored child-only containers are valid), and the two classes must differ. This prevents a malformed Shield profile from borrowing StartupAbilities or the other hand's grants.
-- `TODO-03A4` uses that contract for the first Shield: its Guard/Parry specs remain component-owned and execute the existing native `UPlayerGuardAbility` / `UPlayerParryAbility` lifecycle, cancellation, Guard Break, and cleanup paths. Shield has no trace, damage, collision-hit, or prepared `1-4` responsibility in v1; Shield action preparation and rest-site persistence remain later equipment work.
-- `APlayerCharacter` creates one player-only `UWeaponEquipmentComponent`, equips its required `DefaultEquippedWeapon` in `BeginPlay`, and exposes only narrow C++ helpers for startup-ability inspection. A valid authored Unarmed definition is a legal default MainHand; a missing or invalid definition remains fail-visible and never creates an implicit null-equipment state. `APlayerCharacter` also owns the native `InteractAction` binding (`ETriggerEvent::Started`) and the Player-owned world-pickup candidate snapshot; it never lets the prompt or input layer mutate equipment, ASC state, or GameplayEffects.
-- `UWeaponEquipmentComponent` owns both hand slots, all component-granted base and prepared specs, the index-aligned prepared `1-4` classes/handles, runtime display/marker components, and the single input resolution. `Input.Guard`/`Input.Parry` resolve through the Effective Defense Profile (off-hand override, main-hand fallback, built-in defaults); `Input.PrimaryAttack` and Sprint Attack resolve through the current MainHand's direct tags to an equipment-granted Ability; `Input.AbilitySlot.*` calls `TryActivatePreparedSlot` by exact handle with triple validation (valid handle, current component grant, class-slot match), never a tag route. Its narrow `TryGetEquippedMainHandDisplaySocketTransform(...)` query resets output to Identity and fails closed unless the current display mesh still matches the equipped MainHand, the named Socket exists, and its world transform is finite; it exposes no display-component ownership.
-- `UWeaponEquipmentComponent::EquipWeapon` is the single-slot direct/debug equipment entry. It rejects `State.Status.Dead`, active attack, Guard, Parry, Dodge, any active component-granted spec, and the Primary hold/release arbitration spec; preflights the definition, socket, authoritative ASC, StartupAbilities, foreign duplicate specs, and the composed base/prepared grant set, then rejects any TwoHanded/OffHand conflict with zero handle changes. After the snapshot and teardown it applies the new composition; a post-preflight failure restores the old composition and prepared identities by re-granting them and rebinding fresh handles. It never cancels an active combat Ability, alters Attributes, exposes a public unequip operation, or converts an invalid MainHand into an implicit bare-handed state. Component teardown clears only the specs and transient components it owns.
-- `UWeaponEquipmentComponent::TryEquipWorldPickup` is the atomic world pickup equipment transaction. It normalizes target compositions via `BuildTargetCompositionForIncoming` (TwoHanded clears OffHand; Shield while holding TwoHanded clears main to `UnarmedFallbackDefinition`), rejects same-definition picks as no-ops, snapshots old state, tears down and applies the new composition, stages displaced dropped pickups via `AWorldWeaponPickup::StageDisplacedDrops` with interaction collision temporarily disabled (`NoCollision`), and only upon complete success activates interaction collision (`QueryOnly`) on all provisional drops, calls `SourcePickup->OnPickupConsumed()`, and destroys the source. An Apply failure or Drop failure completely rolls back old weapon definitions, direct routes, and prepared ability specs/handles on ASC while preserving the source pickup.
-- `AWorldWeaponPickup` is a map-facing interaction actor holding an immutable `UWeaponDefinition`. It manages a `QueryOnly` interaction sphere, definition-authored `WorldPickupDisplayTransform` visual presentation, reentrancy guards (`bInteractionInProgress`), and a `0.5s` `FormerOwner` anti-repickup cooldown via `TWeakObjectPtr<APlayerCharacter>`. Its overlap callbacks retain only weak Player references and notify those Players when definition, interaction, collision, or teardown state changes; it owns no prompt, input, equipment mutation, or GAS state. A private `FWorldPickupGrounding` helper keeps the authored mesh orientation unchanged, transforms all eight local mesh-bounds corners through that display transform, and moves only the Actor Root along the normalized `ECC_Visibility` ground-hit normal until the lowest projected corner is `2cm` clear. `StageDisplacedDrops` uses that calculation before `FinishSpawning`; invalid visible-mesh bounds/transform data destroys every provisional drop and returns failure to the existing equipment rollback, while a valid no-mesh definition retains the direct `ImpactPoint + Normal * 2cm` fallback. The user-confirmed Scene01 route shows displaced weapons remaining visible on the ground near the prior player position without an initial physics throw.
+### Runtime ownership map
 
-### World Interaction Prompt And Candidate Snapshot
+~~~text
+Input assets [Authored asset]
+        |
+        v
+APolyQuestPlayerController ---- creates local HUD and interaction views
+        |
+        v
+APlayerCharacter ---- UWeaponEquipmentComponent ---- UWeaponDefinition assets
+        |                         |
+        |                         +---- AWorldWeaponPickup transaction boundary
+        |
+        +---- ABaseCharacter ---- ASC + AttributeSet + melee trace/trail
+        |             |
+        |             +---- GameplayAbilities / GameplayEffects / GameplayTags
+        |
+        +---- lock-on, camera, motion warping, pickup candidate arbitration
 
-- `APlayerCharacter` owns `WorldPickupCandidates` as a weak set and `CurrentWorldPickupCandidate` as the one current snapshot. Begin/End overlap, pickup state notifications, position-changing movement updates, former-owner cooldown expiry, Dead-state transitions, possession, and teardown feed the same resolver; there is no Player or Controller Tick scan. `GetOverlappingActors` is limited to initial/re-possession seeding.
-- The resolver removes invalid or destroyed weak entries, gates each candidate through `AWorldWeaponPickup::CanInteract(this)`, and chooses the nearest valid pickup with the existing distance then Actor-name tie-break. It clears and re-arms one Player-specific timer for the earliest requester-filtered FormerOwner cooldown, so a cooldown belonging to another Player cannot affect this prompt.
-- `HandleInteractStarted` consumes only `CurrentWorldPickupCandidate`. A missing or newly invalid snapshot fails closed and refreshes the prompt without rescanning or silently selecting another pickup; a valid snapshot calls `UWeaponEquipmentComponent::TryEquipWorldPickup`, the sole equipment mutation, and refreshes after success or failure.
-- `UWeaponDefinition::InteractionDisplayName` is authored display data only. `APolyQuestPlayerController` owns one local transient `UWorldInteractionPromptWidget`, creates it idempotently, keeps it `Collapsed` when hidden and `HitTestInvisible` when shown, and removes it on unpossess/teardown. The widget is passive, exposes a null-safe `SetPromptText`, and owns no input, candidate arbitration, timer, GAS, equipment, or Tick. The configured UMG class and required `PromptText` binding remain user-authored Content WIP; this contract adds no Gameplay Tag, Build.cs dependency, or second interaction authority.
-- `UPlayerMeleeSkillAbility` is the narrow prepared melee-skill lifecycle used by the first `GA_Skill_Whirlwind`: the slot activates its exact prepared Spec, the Ability confirms its tracked Montage before its one Cost/Cooldown commit, then arms the existing Trace, Dodge-cancel, and rate-window listeners. Its action tags, Guard cancellation, trace task, rate restoration, Montage stop, and input-block cleanup converge through `EndAbility()`. The Ability CDO receives the native capability/teardown tags `Ability.Action.CancelableBy.Dodge`, `Ability.Action.CancelableBy.Defense`, `Ability.Action.CancelableBy.Reaction`, and `Ability.Action.Teardown.OnUnpossess` in `PostLoad()` and `PostCDOCompiled()` so Blueprint default-tag serialization cannot remove lifecycle contracts; a concrete identity such as `Ability.Skill.Whirlwind` and its Cooldown GE tag remain authored on the GA/GE assets. Dodge, Guard/Parry, reaction, Guard Break, and `UnPossessed()` selectors consume the corresponding orthogonal tags; the retired `Ability.Skill.Melee` tag is not part of the current runtime taxonomy.
-- The component creates display and marker components with `NoCollision` and overlap generation disabled. `UMeleeTraceSourceComponent` resolves the equipped owner's live marker pair plus weapon-owned radius/subdivisions first; static enemy geometry definitions (`StaticMeleeWeaponDefinition`) with valid Socket pairs next; and the legacy fixed-name lookup (`BladeTraceBase`/`BladeTraceTip`) only as a fallback when `StaticMeleeWeaponDefinition == nullptr`. Any invalid static definition fails closed and never silently falls back to legacy markers. `UAbilityTask_MeleeTraceWindow`, `FMeleeHitResolver`, the project-level trace channel, and the shared resolver remain the single shared damage path.
-- `TODO-07B2` adds one root-attached `UMeleeWeaponTrailComponent` to every `ABaseCharacter` solely for melee-trail lifetime ownership. The component is inactive, non-auto-destroyed, and does not attach to or query weapon displays or Blade markers; `UAbilityTask_MeleeTraceWindow` is its only runtime caller. After the Task's existing initial/current `TryGetBladeEndpoints()` samples, it forwards those same world positions to `User.BladeBase` / `User.BladeTip` before the unchanged Sweep/Resolver work. A weak requester token prevents a stale Task's update or teardown from changing a successor's trail; `OnDestroy()` ends only its own request with normal `Deactivate()`. No configured Niagara System is a silent visual no-op. This remains local Task/component presentation rather than a GameplayCue, a Tag-driven dispatcher, or another damage/trace route.
-- `TODO-03A6D` extends the player melee trace contract to bounded multi-source tracing: `UMeleeWeaponDefinition` supports `FOwnerMeshMeleeTraceSource` profiles (`TraceSourceName`, `OwnerMeshSocketName`, `BladeBaseMarkerRelativeLocation`, `BladeTipMarkerRelativeLocation`) with `DefaultOwnerMeshTraceSourceName`, allowing owner-mesh Unarmed weapons to configure both `RightFist` and `LeftFist`. `UWeaponEquipmentComponent` stores transient markers in source-keyed maps (`MainHandBladeBaseMarkers`, `MainHandBladeTipMarkers`). `UAnimNotifyState_AttackTraceWindow` carries an authored `TraceSourceNames` array in `FGameplayEventData::OptionalObject2`. `UAbilityTask_MeleeTraceWindow` executes all-or-nothing Phase 1 endpoint validation, Phase 2 source-keyed trail forwarding, and Phase 3 multi-source sweeping with shared target deduplication in a single window (`DeliveredTargets`). `UMeleeWeaponTrailComponent` manages lazily created, transient child `UNiagaraComponent` instances for named sources with source-keyed weak requesters, preventing cross-hand trail clobbering while legacy single-source weapons continue through the default root component path.
+AEnemyAIController ---- perception, navigation, tactical intent, StateTree
+        |
+        v
+AEnemyCharacter ---- ASC, attributes, poise/death, enemy reaction dispatch
+~~~
 
-### Weapon Locomotion And Shield Presentation
+| Owner | Owns | Does not own |
+| --- | --- | --- |
+| ABaseCharacter | ASC, UCharacterAttributeSet, melee trace source, melee trail, common ASC lifecycle | Player input, equipment composition, AI intent |
+| APlayerCharacter | Camera, lock-on state, Motion Warping, equipment component, pickup candidate selection, player exhaustion lifecycle | A second action-state machine or projectile flight state |
+| AEnemyCharacter | Enemy poise transition, death pipeline, enemy reaction dispatch | Player equipment or StateTree tactical policy |
+| UWeaponEquipmentComponent | Hand composition, component-granted specs, prepared slots, display components, input-to-spec resolution | World overlap arbitration and pickup prompt presentation |
+| AWorldWeaponPickup | Interaction overlap surface, displayed definition reference, grounding, former-owner cooldown | Input handling, UI, GAS mutation, equipment transaction ownership |
+| AEnemyAIController | Perception, target/focus, home/tactical movement, attack preparation, execution AI lock | Combat action state authority |
+| Gameplay Ability / Effect | Activation, cancellation, transient gameplay state, costs and effects | Persistent parallel controller or StateTree action state |
 
-- `EWeaponLocomotionMode` is a small reflected `uint8` enum for MainHand locomotion families only: `Default = 0`, `LightSword = 1`, `HeavySword = 2`, and `Bow = 4`. The explicit Bow value preserves existing serialized Bow assets after the retired composite value at ordinal `3` was removed. `UWeaponDefinition::IsValidWeaponDefinition()` accepts only those four values, so ordinal `3` and every other invalid value fail closed.
-- `UWeaponDefinition::LocomotionMode` authors the immutable MainHand base mode (`Default` for unarmed, `LightSword` for one-handed sword, `HeavySword` for two-handed greatsword, `Bow` for ranged). An OffHand must keep its inherited base mode at `Default`; it never publishes a base locomotion family and no MainHand/OffHand composition enum or validation pair remains.
+### Authority rules
+
+- GAS is the only combat-state authority. Abilities, Effects, Tags, Attributes,
+  and AbilityTasks own activation, interruption, cost, recovery, and temporary
+  restrictions.
+- AEnemyAIController and StateTree select and execute tactical intent, but do
+  not maintain a parallel action enum or duplicate combat-state machine.
+- Presentation channels such as trails, overlays, camera shake, hit-stop, sound,
+  and Niagara effects do not create another damage or attribution path.
+
+---
+
+## GAS, attributes, and character lifecycle
+
+### Common character initialization
+
+ABaseCharacter creates these default subobjects:
+
+- UAbilitySystemComponent
+- UCharacterAttributeSet
+- UMeleeTraceSourceComponent
+- UMeleeWeaponTrailComponent
+
+The AttributeSet is registered through AddAttributeSetSubobject. Both
+BeginPlay() and PossessedBy() initialize the ASC actor info with the character
+as owner and avatar. On authority, PossessedBy() grants StartupAbilities only
+after FindAbilitySpecFromClass() confirms that the class has not already been
+granted.
+
+ABaseCharacter::EndPlay() clears its common bindings/presentation state and
+cancels active abilities before character teardown. Its MoveSpeed attribute
+delegate updates CharacterMovement->MaxWalkSpeed; it does not introduce an
+unrelated movement-state authority.
+
+### Attribute ownership
+
+| Attribute | Source member | AttributeSet responsibility |
+| --- | --- | --- |
+| Health | `Health` | Clamp to [0, MaxHealth]; keep Health at zero when the dead state is present |
+| MaxHealth | `MaxHealth` | Supplies the Health upper bound; this class has no separate MaxHealth clamp |
+| Poise | `Poise` | Clamp to [0, MaxPoise] |
+| MaxPoise | `MaxPoise` | Supplies the Poise upper bound; this class has no separate MaxPoise clamp |
+| Stamina | `Stamina` | Clamp to [0, MaxStamina] |
+| MaxStamina | `MaxStamina` | Supplies the Stamina upper bound; this class has no separate MaxStamina clamp |
+| StaminaRegenRateMultiplier | `StaminaRegenRateMultiplier` | Non-negative clamp |
+| MoveSpeed | `MoveSpeed` | Non-negative clamp; ABaseCharacter owns CharacterMovement synchronization |
+
+UCharacterAttributeSet initializes and clamps attributes. It does not own the
+Exhausted tag lifecycle or dispatch Enemy Stance Break.
+
+Transition ownership:
+
+- Player stamina reaches zero: `APlayerCharacter::OnStaminaAttributeChanged` /
+  `BeginExhaustion()` add the Player-owned loose `State.Status.Exhausted` tag,
+  apply the configured exhaustion MoveSpeed effect, and enter the exhaustion
+  lifecycle. `ExhaustionMinimumDurationSeconds` governs the minimum recovery
+  gate. When any blocking action tag (`State.Action.Attacking`,
+  `State.Action.Dodging`, or `State.Action.Parrying`) is present, starting that
+  gate is deferred; it starts only after none of those tags remains. Normal
+  recovery requires both elapsed minimum duration and positive Stamina; Dead
+  state and EndPlay clear the lifecycle directly.
+  `APlayerCharacter::ClearExhaustionState()` clears the recovery timer and
+  pending action-deferral state, removes its own effect handle, and removes only
+  the Player-owned loose tag; the effect does not own tag removal.
+- Enemy poise changes: `AEnemyCharacter::OnPoiseAttributeChanged` owns poise
+  recovery and Stance Break dispatch. A zero crossing is not an AttributeSet-side
+  event.
+- Health reaches terminal state: character-specific health/death handling owns
+  the terminal path; the AttributeSet enforces the zero-health invariant after
+  death.
+
+### Lifecycle and async safety
+
+- Ability activation, attribute cost, and temporary state are represented by
+  GAS Ability/Effect/Tag lifetimes rather than controller booleans.
+- Async callbacks from timers, montages, notifies, traces, or AbilityTasks must
+  validate their active object, relevant actor/ASC, token/context, and current
+  state before mutating gameplay state.
+- ReadyForActivation() is treated as a synchronous re-entry boundary. Code
+  after it may restore task state only when the ability remains active.
+- Natural completion, cancellation, death, destruction, and teardown converge
+  on the owning ability's idempotent EndAbility() cleanup path.
+
+---
+
+## Input, equipment, and world pickups
+
+### Equipment data and runtime composition
+
+UWeaponDefinition is an authored UDataAsset base. It describes a weapon's hand
+occupancy, display attachment, locomotion mode, action candidates, default
+prepared slots, defense profile, and direct attack tags. It owns no active
+runtime state.
+
+| Definition area | Stable Native contract |
+| --- | --- |
+| Hand slot | MainHandOneHanded, MainHandTwoHanded, or OffHand |
+| Display | WeaponMesh, AttachSocketName, DisplayLocationOffset, DisplayRotationOffset, DisplayScale, and WorldPickupDisplayTransform |
+| Combat actions | BaseGrantedActions, DefaultPreparedActions, ReusableCombatActions, ExclusiveCombatActions, direct primary/sprint tags, and optional DefenseProfile |
+| Melee extension | Trace geometry, BladeSubdivisions, sockets/markers, owner-mesh trace sources, execution montage/range data |
+| Off-hand extension | Optional defense override and shield presentation fact |
+| Bow extension | Projectile definition plus authored draw/hold/release presentation references |
+
+ReusableCombatActions and ExclusiveCombatActions are currently authoring groups
+that merge into one candidate pool. The word Exclusive does not represent an
+implemented runtime exclusivity rule.
+
+UWeaponEquipmentComponent exists only on APlayerCharacter. It owns the current
+hand composition, component-granted Ability specs, prepared-slot identities and
+handles, display/marker components, and input intent resolution.
+
+| Input route | Resolution rule |
+| --- | --- |
+| Primary and sprint attack | Current MainHand's direct Ability tags |
+| Guard and parry | Effective defense profile: OffHand override, then MainHand fallback, then built-in fallback |
+| Ability slots 1-4 | Exact prepared spec handle plus handle validity, component ownership, and class identity checks |
+
+#### Weapon locomotion and shield presentation
+
+- `EWeaponLocomotionMode` is a reflected `uint8` enum for MainHand locomotion families only: `Default = 0`, `LightSword = 1`, `HeavySword = 2`, and `Bow = 4`. The explicit Bow value preserves existing serialized Bow assets after ordinal `3` was reserved/deprecated. `UWeaponDefinition::IsValidWeaponDefinition()` accepts only those four values; an OffHand must retain its inherited base mode at `Default`.
 - `UWeaponEquipmentComponent::GetResolvedLocomotionMode()` is a pure, stateless `BlueprintPure` MainHand query with zero caching, delegates, ticks, or tag mutations. It returns `Default` for a null or invalid MainHand and otherwise returns the validated MainHand family.
-- `UWeaponEquipmentComponent::HasShieldEquipped()` is a separate pure query. It returns true only when the committed `CurrentOffHandWeapon` is a `UOffHandWeaponDefinition` with `bProvidesShieldPresentation == true`; it has no cache, delegate, Tick, tag mutation, equipment mutation, or independent runtime state.
-- `ABP_Player_Dungeon` consumes two independent facts: ordinary `GetResolvedLocomotionMode()` feeds its labelled `Default`, `LightSword`, `HeavySword`, and `Bow` branches, while full-body Shield Guard is selected only by `HasShieldEquipped()` together with exact active `State.Action.Guarding.Shield`. `Ability.Defense.Guard.Shield` is an ability route rather than an equipped-item signal, and generic `State.Action.Guarding` remains insufficient because single-Sword Guard also owns it. The Shield Guard branch uses `BS_Shield_Walk_Run`, bypasses the single-Sword upper-body visual route, and remains upstream of Reaction Overlay.
-- `ABP_Player_Dungeon` incorporates procedural locomotion polish: an `Inertialization` node is placed before final pose output to absorb velocity/state transition pops between Idle, Walk/Run, and Sprint BlendSpaces without requiring dedicated stop transition montages; procedural deceleration lean is applied via `Modify Bone` on `spine_01`/`spine_03` in Component Space driven by GroundSpeed deltas to provide physical weight-shift feedback during abrupt stops. ThirdPerson template Foot IK remains bypassed due to conflicts with combat montages and paired execution; procedural pelvis drop is omitted to prevent ground clipping or floating until a formal grounded IK pass is introduced.
-- The old `BS_SwordShield_Walk_Run` Content asset is retained after its AnimBP branch was removed. It is not a current runtime selection path and was deliberately not deleted without a separate Reference Viewer-backed Content-cleanup approval.
+- `UWeaponEquipmentComponent::HasShieldEquipped()` is a separate pure query. It returns true only when the committed `CurrentOffHandWeapon` is a `UOffHandWeaponDefinition` with `bProvidesShieldPresentation == true`.
+- `ABP_Player_Dungeon` [Authored asset] consumes both facts: `GetResolvedLocomotionMode()` feeds its `Default`, `LightSword`, `HeavySword`, and `Bow` locomotion branches, while full-body Shield Guard is selected only when `HasShieldEquipped()` is true and exact active `State.Action.Guarding.Shield` is present.
 
-### Player Bow, Target Assistance, And Projectile
+### Input event boundary
 
-- `UBowWeaponDefinition` is a concrete `UWeaponDefinition` for the first player Bow. It requires `MainHandTwoHanded`, a valid display mesh and launch Socket, one valid immutable `UProjectileDefinition`, its direct `PrimaryAttackAbilityTag == Ability.Attack.Primary`, and exactly one granted Primary Ability derived from `UBowDrawFireAbility`; it rejects the melee `UPrimaryAttackAbility`, duplicate Primary grants, and unrelated Primary-tag abilities. It has no runtime target, flight, input, or cooldown state.
-- `UProjectileDefinition` owns immutable authored display, initial/max speed, lifespan, collision radius, Damage GameplayEffect, Target Assist, Limited Homing, and optional Flight Trail presentation data. `FlightTrailSystem` selects the Niagara System, `FlightTrailSocketName` requests the display-mesh attachment point, and `FlightTrailFinishTimeoutSeconds` bounds only terminal visual completion. Its gameplay/data-integrity validation rejects null damage classes, non-finite or invalid movement/collision values, invalid display transforms, and an enabled Limited Homing route without Target Assist; it deliberately does not reject a null System, missing Socket, or presentation timeout. Those visual cases resolve at runtime as a silent no-op, root fallback warning, or `0.35s` timeout fallback respectively. The Definition has no active-flight handle, target, owner, or mutable combat state.
-- `UBowDrawFireAbility` is the equipped Bow's `Ability.Attack.Primary` implementation. It requires held `Input.PrimaryAttack`, a valid current Bow, and a valid Draw/Hold/Release montage before it arms matching input and animation event tasks. It validates both `Instigator` and `Target` against the current avatar and validates the source Montage before state changes. An early normal release records one request, then the first valid Draw-ready event advances it to the minimum legal Release; only a valid matching Release event spawns an arrow. At that Release it resolves the pointer direction. When the immutable `UProjectileDefinition` enables Target Assist, it first asks the Player's C++-only `ResolveValidLockedTarget()` for one B2-validated lock; that valid lock becomes the launch target snapshot, otherwise the unchanged B2 automatic target-assist query runs. Target Assist disabled means neither path runs. No later input, camera, or lock event retargets that arrow. Canceled input, Montage failure, Dodge/Guard Break cancellation, interruption, and teardown converge through `EndAbility()` without spawning an arrow; a successfully spawned arrow is not owned by later Ability cleanup.
-- `TODO-03B-4` keeps the existing Bow action and aim/target contracts while making its active Draw/Hold/Release/Recovery interval mobile. The Ability deliberately owns no `State.Input.Block.Movement`, but retains `State.Action.Attacking` and `State.Input.Block.Jump`; after its Montage is confirmed active it applies one exact handle from the required authored `MobileBowMoveSpeedGameplayEffectClass`, then cancels only an active Sprint. That handle persists for the whole active Ability and is removed by the same idempotent `EndAbility()` cleanup before task, aim-requester, scoped-tag, rate, and Montage teardown. The multiplier is mutable authored GE data, not a native or architecture constant; the native fixture validates handle isolation and MoveSpeed-to-CharacterMovement synchronization without asserting current Content tuning.
-- `TODO-03B-5` separates Bow locomotion selection from the Hold-only UpperBody-layer decision. `UBowDrawFireAbility` keeps `State.Action.Attacking` for the full Draw -> Hold -> Release lifetime and adds the existing loose `State.Action.Charging` only after a valid DrawReady event, removing it before Release and through every terminal cleanup path. In `ABP_Player_Dungeon`, `Is Bow Aiming` (`Bow` mode plus `Attacking`) selects the Bow locomotion BlendSpace, while `Is Bow Holding` (`Bow` mode plus `Charging`) drives `AllowBlend = NOT (Is Shield Guarding OR Is Bow Holding)`; therefore Draw/Release retain their UpperBody Montage poses and Hold alone uses the full-body Bow hold presentation. The stage does not add a Tag, input route, targeting path, or alternate action authority.
-- `FCombatProjectileTargeting` is a narrow read-only helper, not a general lock-on framework. It accepts only a living hostile `ACharacter` with a valid ASC and then applies distance, horizontal angle, elevation, pitch, third-party `ECC_Visibility` obstruction, camera-forward, and local-viewport checks to the stable upper-torso aim point. The viewport rectangle has a fixed 6% edge overscan so a just-off-screen target can still qualify at Release; unavailable local projection fails closed. Its test-only projection hook is compiled only under `WITH_DEV_AUTOMATION_TESTS`.
-- `ACombatProjectile` is the one concrete travelling runtime Actor in v1. A QueryOnly `USphereComponent` is its root and `UProjectileMovementComponent` remains the sole swept-position mover with zero gravity, no bounce, native homing disabled, and explicit `ECC_Camera` ignore. Its display mesh has no collision, and it owns one inactive `FlightTrailComponent` default subobject rather than spawning a second VFX Actor. After successful initialization, the component attaches to the requested valid display-mesh Socket or its root using `SnapToTargetNotIncludingScale`; a null System is silent and a missing requested Socket warns/falls back without affecting combat. When the launch snapshot enables Limited Homing, the Projectile Actor Tick adjusts only Velocity direction after the initial pointer-directed straight-flight delay; it never searches again, switches targets, rechecks the viewport, or hand-moves its position. It stops steering and keeps its last valid velocity when the snapshot target becomes invalid, leaves configured world bounds, exhausts duration/turn budget, hits, or ends play. A total-turn budget above 90 degrees deliberately permits the current casual U-turn behavior. A blocking world impact, successfully delivered hostile pawn impact, or lifespan expiry immediately disables collision/movement/Homing and ends gameplay delivery. With an active trail, the Actor detaches that still-owned component in world space, hides only its mesh, deactivates emission, and remains alive until the Niagara completion callback or bounded timeout destroys it; external destroy and EndPlay remain immediate. Rejected same-team, self, dead, invulnerable, invalid, and duplicate contacts do not create a second damage path.
-- The launch request keeps source Actor and ASC as weak references, but `ACombatProjectile` snapshots its Damage GameplayEffect class into a transient reflected property during initialization. `FCombatProjectileHitResolver` consumes that snapshot, reuses the existing team/Dead/Invulnerable/player-defense gates, then builds and applies one GameplayEffect Spec to the target ASC. It never calls the melee trace/resolver path or writes Health/Poise directly. This keeps a launched arrow valid even if its authored Projectile Definition is later released by GC, while source teardown remains fail-closed.
+`APlayerCharacter::SetupPlayerInputComponent()` binds movement, jump, combat
+input, four ability slots, interaction, lock-on, and target-cycle actions. The
+declared `LookAction` and `MouseLookAction` are not bound in the current fixed
+camera route. Physical keys, mouse buttons, wheel axes, and Mapping Context
+contents are [Authored asset] and are not inferred from the Native bindings.
 
-### Camera And Action Facing
+For a combat input intent, the Player records the press time and sends
+`Event.Input.Pressed` with the exact `Input.*` tag in the event payload, then
+requests the routed Ability. `Completed` and `Canceled` clear the held record
+and send `Event.Input.Released` or `Event.Input.Canceled` with the measured held
+duration. This layer does not play a montage, spend Stamina, write an Attribute,
+or perform a trace directly.
 
-- `CameraBoom` owns a fixed-world, elevated oblique Perspective composition with SpringArm collision; it is not driven by controller look input. Movement resolves its horizontal forward/right axes from the CameraBoom's current world yaw. Character bodies (`ABaseCharacter` `CapsuleComponent` and `SkeletalMeshComponent`) and fixed weapon displays (`WeaponMesh`) enforce `ECC_Camera = Ignore` (`ABaseCharacter::BeginPlay` and `DisableFixedWeaponDisplayCollision`), ensuring the top-down SpringArm maintains a stable view distance without shrinking or zooming when character bodies or weapons occlude the line of sight, while leaving movement, physics, melee trace, and damage channels unchanged.
-- The accepted `TODO-03B-5` presentation tuning sets the native `CameraBoom` follow lag to `CameraLagSpeed = 8.0f` with `CameraLagMaxDistance = 0.0f` (no maximum lag distance). This is an adjacent user-authored feel adjustment, not a Bow/GAS state or camera-ownership contract; future retuning remains a focused presentation decision.
-- Light, Charged, Sprint Attack, and Melee Skill resolve one horizontal facing yaw at ability startup. With a valid screen-space lock they use the target's planar direction once; otherwise they retain the legacy camera-relative/input-or-actor-forward route. Directional Dodge always resolves from nonzero camera-relative movement input, while a no-input Dodge uses the valid lock and otherwise keeps actor-forward fallback. Combo continuation does not resolve a new direction.
-- `APlayerCharacter` keeps `CharacterMovement.bOrientRotationToMovement` disabled while an action, Root Motion, active Bow requester, hit reaction, death, or Stunned state owns yaw. Those routes are never continuously overwritten by lock Tick. Sprint is the deliberate movement-facing exception even while the lock remains valid.
-- `APlayerCharacter` owns one local `TWeakObjectPtr<AEnemyCharacter>` screen-space lock. Explicit Middle Mouse acquisition scans only living hostile, non-invulnerable Enemy candidates whose upper-torso aim point is strictly inside the local viewport and chooses the cursor-nearest candidate with deterministic ties; explicit Wheel input cycles that current lock clockwise or counter-clockwise around the projected Player. During valid grounded Idle/Walk/Run, Guard, and non-Root-Motion `MOVE_None` Parry, Tick turns toward that target at the native `CharacterMovement.RotationRate.Yaw` default of `800 degrees/second`.
-- Candidate acquisition, cycle, and death-retarget additionally require camera-to-`FCombatProjectileTargeting::GetTargetAimPoint` LOS on `ECC_Visibility` after the existing team/ASC/strict-screen checks. A repeated `LineTraceSingleByChannel` retries only Actor-hidden hits (`IsHidden()`); world/static or visible hits, a repeated hidden hit, and exhaustion of the eight total attempts fail closed. This player Lock-On rule is independent of the post-process See-Through path.
-- The Player caches the current lock's last valid screen candidate. A confirmed current-target death makes exactly one strict-viewport candidate scan and selects the next clockwise record from that cache, wrapping when necessary; old/new Health-bar highlights transfer through the existing Enemy bridge. An already-owned target may remain valid within the fixed per-axis `15%` retention band, even when it is absent from strict cycle candidates; Cycle is then a no-op and does not clear or replace the lock. During a paired execution, `ValidateCurrentLockedTarget()` may retain that already-owned target only when the Player owns `State.Action.Execution.PlayerLocked`, the target owns `State.Action.Execution.VictimLocked` and `State.Status.Invulnerable`, both actors are living same-world hostile combatants, and the target remains within the retention projection. Initial acquisition and cycle candidate construction remain strict and continue to reject invulnerable targets. Exiting the retention band, destruction, invalid ASC/team state, projection/controller/camera failure, Player death, and explicit clear clear the lock according to the existing contract and never scan for a replacement. `ResolveValidLockedTarget()` is the narrow non-Blueprint C++ read for a consumer that needs a current target: it runs that same validation once, returns the still-valid or death-handed-off target, and returns null after every other clear.
-- A currently held target receives at most `2.5s` of continuous LOS obstruction grace after normal validation succeeds. Clear LOS, `ClearLockedTarget()`, a true target switch, and weak-target invalidation reset the timer; setting the same target again cannot refresh it. A valid paired execution bypasses only this new LOS/grace path and keeps the timer at zero; it does not relax the existing screen-retention, death, team, or ASC validity gates. Bow retains its separate `6%` Target Assist behavior.
-- `AEnemyCharacter` caches a C++-only lock-highlight request and replays it when its typed `UEnemyHealthBarWidget` resolves. The optional `TargetHighlightImage` only toggles `HitTestInvisible`/`Collapsed`; it owns no Health data, gameplay state, timer, or input. Target switch, enemy death, and Enemy EndPlay clear the presentation bridge.
-- While a Bow requester is active, `APlayerCharacter` deprojects the local mouse ray and intersects it with the actor-center Z plane before deriving horizontal yaw. This matches the ray reference plane to the character rotation reference and avoids the oblique-camera offset caused by a Capsule-bottom/actor-center mismatch; invalid input retains the last valid Bow yaw. Lock state does not participate in Bow Draw/Hold facing, camera control, Homing, collision, or projectile lifetime; only an enabled Target Assist release may consume one validated lock as its initial target snapshot.
+`DodgeSprintAction` is a temporal physical-input arbiter. Its
+`DodgeSprintHoldThresholdSeconds` separates a short release (Dodge) from a hold
+that resolves to Sprint. The arbiter owns only press timing; the Dodge and
+Sprint Abilities own GAS tags, costs, movement, and cleanup. On a non-sprint
+`Input.PrimaryAttack`, the request order is Front execution, Backstab execution,
+then the equipped MainHand direct route. A Sprint Attack is attempted before
+that execution branch when the movement/input predicate qualifies.
 
-### Camera Occlusion And See-Through Systems
+### Defense profile contract
 
-- Screen-space character X-Ray occlusion is implemented via post-process material `/Game/_Materials/PostProcess/M_Occlusion_PostProcess`. It evaluates `CustomDepth` against `SceneDepth` to provide situational awareness for obscured actors without compromising visual style:
-  - **Player (`Stencil = 1`)**: Occluded pixels render natural 100% PBR material detail without color tinting or silhouette wash out; in unoccluded direct line-of-sight, a subtle 0.85px soft shadow rim (`SceneColor * 0.55`) is composited to accentuate character silhouette definition against dark backgrounds.
-  - **Enemy (`Stencil = 2`)**: Occluded pixels render an amber/red emissive silhouette outline with a translucent hologram fill, clearly communicating threat positioning and intent behind environmental geometry while preventing visual clutter.
-  - **Weapon Stencil Synchronization Contract**: `UWeaponEquipmentComponent::ApplyComposition()` automatically propagates `OwnerMesh->bRenderCustomDepth` and `OwnerMesh->CustomDepthStencilValue` to the dynamically spawned `DisplayComponent`. When an Actor renders to Custom Depth with a specific Stencil value (Player=1, Enemy=2), equipped weapon meshes automatically inherit the same render depth and stencil flags without per-weapon configuration, ensuring weapons are unified with character X-Ray rendering.
-- Camera line-of-sight environmental see-through (Vision Tunnel) resolves vertical pillar and wall obstruction between the camera and the player:
-  - **Native C++ Occlusion Driver**: `APlayerCharacter::UpdateSeeThroughOcclusion(float DeltaSeconds)` runs in `Tick`. It performs a native sphere sweep (`SweepSingleByChannel`, radius `25.0f` cm, `ECC_Visibility`) toward the player anchor (`GetActorLocation() + FVector(0.0f, 0.0f, SeeThroughChestZOffset)` with `SeeThroughChestZOffset = 0.0f`). Because `GetActorLocation()` already returns the capsule geometric center ($Z \approx 96\text{cm}$ above ground, aligning naturally with the character's belly/pelvis), setting offset to `0.0f` keeps the line-of-sight centered on the torso, preventing near-wall occlusion cuts from aiming at the top of the helmet and clipping character visibility. The sweep origin is pushed forward from `CameraLoc` by `SeeThroughNearClipOffset` (default `150.0f` cm) along the line-of-sight to prevent false-positive occlusion triggers from near-camera ceiling ledges, door lintels, or hanging foreground props.
-  - **Dynamic Tunnel Radius Smoothing**: When occluded, `TargetRadius` opens to `280.0f` cm; when clear, `TargetRadius` returns to `0.0f`. `CurrentTunnelRadius` interpolates toward `TargetRadius` via `FMath::FInterpTo` with asymmetric rates: `TunnelRadiusOpenInterpSpeed = 20.0f` provides snappy ~0.08s visual acquisition upon obstruction, while `TunnelRadiusCloseInterpSpeed = 6.0f` produces graceful, lag-buffered fade out that eliminates visual breathing/chatter when hovering around corner thresholds. The driver pushes world-space `PlayerPosition` (Vector) and smoothed `TunnelRadius` (Scalar) directly to `/Game/_Materials/SeeThrough/MPC_PlayerGlobals` via `UKismetMaterialLibrary`.
-  - **Vision Tunnel Shader (`MF_VisionTunnelFade`)**: Projects a 3D line-of-sight cylinder along the camera-to-player ray using `SphereMask(WorldPos, ClosestPointOnRay, EffectiveRadius, Hardness)`. The projection scalar $t$ modulates an End-of-Ray Taper factor: $\text{Taper} = 1.0 - \text{Saturate}((t - 0.92) \times 12.5)$, producing $\text{EffectiveRadius} = \text{TunnelRadius} \times \text{Taper}$. To completely eliminate spurious cuts on tall background walls, arches, and lateral side walls caused by camera pitch and wide cylinder overlap, the shader applies a dual geometric filter:
-    1. **2D Horizontal Depth Gate**: $\text{DistBehind} = \text{Dot}(W_{xy} - P_{xy}, \text{Normalize}(P_{xy} - C_{xy}))$, mapped via $\text{BehindCutoff} = \text{Saturate}(-\text{DistBehind} / 50.0)$, forcing geometry behind the player ($\text{DistBehind} \ge 0$) to remain strictly 100% solid.
-    2. **Angular Cone Wedge Gate**: Evaluates horizontal azimuth relative to the player-to-camera sightline $\text{DotAngle} = \text{Dot}(\text{Normalize}(W_{xy} - P_{xy}), \text{Normalize}(P_{xy} - C_{xy}))$. A smooth gate $\text{AngleFactor} = \text{Saturate}((-0.7071 - \text{DotAngle}) / 0.112)$ limits see-through strictly to an arc of $\pm 45^\circ$ directly facing the camera (full opening within $\pm 35^\circ$, fading to zero by $\pm 45^\circ$). Lateral side walls ($\ge 45^\circ$) and back walls are culled to 0.0, forming a tapered forward cone capped by the 280cm cylinder.
-    The composite modifier $\text{BehindCutoff} \times \text{AngleFactor}$ scales the `SphereMask` output before feeding `DitherTemporalAA` into `Opacity Mask` (Masked blend mode) through a `MaterialExpressionShadowReplace` (`ShadowPassSwitch`) with `Shadow = 1.0`, suppressing shadow hole artifacts and maintaining solid ground shadows during see-through dithering.
-  - **Overhead Ceiling Fade (`MF_CeilingWideFade`)**: Provides a 2D horizontal radial mask (radius 1500cm) filtered by height (`Z > Player.Z + 150.0f`) to peel away low ceilings, cavern roofs, and dungeon overhangs. Architectural boundary: `MF_CeilingWideFade` is strictly dedicated to overhead ceilings/roofs (`SM_Ceiling`, `SM_Ceiling_Arch_A`, `SM_Roof`) and must not be wired to vertical wall master materials (`M_Tiling_Master`), ensuring vertical room walls remain solid. Vertical walls and standalone pillars exclusively route through `MF_VisionTunnelFade`.
-  - **Level Design Edit-Time & Asset Override Contract**: `MPC_PlayerGlobals` asset defaults are strictly preserved as `0.0f` (`TunnelRadius = 0.0`, `CeilingRadius = 0.0`, `TunnelHardness = 0.95`, `CeilingHardness = 0.85`). In edit mode, all geometry renders 100% solid and opaque. Runtime see-through is dynamically activated by `APlayerCharacter`: `BeginPlay` initializes `CeilingRadius` to `MaxCeilingRadius` (default 1500cm); `UpdateSeeThroughOcclusion` in `Tick` drives dynamic `TunnelRadius` and `PlayerPosition`; and `EndPlay` resets `TunnelRadius` and `CeilingRadius` cleanly back to `0.0f`. For imported legacy UE4 materials (where engine `bCanMaskedBeAssumedOpaque` treats unoverridden instances as Opaque), child Material Instances (`M_StoneWall_Inst`, `M_Decorative_Arches_Inst`) must explicitly enable `Base Property Overrides -> Override Blend Mode = Masked` to activate the masked dithering pipeline.
-- Material assets are structured under `/Game/_Materials/`: `PostProcess/` (`M_Occlusion_PostProcess`, `M_Occlusion_PostProcess_NoOutline`), `SeeThrough/` (`MF_VisionTunnelFade`, `MF_CeilingWideFade`, `MPC_PlayerGlobals`, `M_Ceiling_DitherFade_Demo`, `M_Pillar_VisionTunnel_Demo`), and `CombatFX/` (`M_HitFlash_Red`, `M_Blood_LowPoly`, `M_MeleeTrail_White/Red/Black`).
+`UDefenseProfileDefinition` is tag-and-class mapping data, not a second defense
+state machine. The effective lookup order is OffHand profile, MainHand profile,
+then built-in Guard/Parry defaults. When a profile is authored, its Guard and
+Parry tags must be valid and distinct, and the corresponding component-granted
+Ability classes must carry the exact profile tags; malformed mappings fail
+equipment preflight rather than borrowing an unrelated StartupAbility.
 
-### Dungeon Multi-Floor Architecture & Visibility Management
+### Equipment transaction boundary
 
-- PolyQuest implements a hybrid spatial floor visibility system combining actor-level visibility toggling and MPC-driven height clipping, eliminating upper-tier obstruction in multi-story dungeons under the 45° fixed isometric camera without incurring Overdraw penalties or physics desynchronization:
-  - **Collision Preservation Contract (Anti-Drop Guarantee)**: When an upper floor is deactivated (`SetFloorActive(false)`), only rendering and draw calls are suppressed via `SetActorHiddenInGame(true)`. Actor and component collision settings (`CollisionEnabled`) are strictly preserved and never disabled. AI patrol, NavMesh pathfinding, physics-enabled barrel/chest placement, and projectile line-of-sight collisions remain intact on higher levels, permanently preventing enemy drop-through ("dumpling drops") and character falling into the void.
-  - **Dynamic-Static Separation & `FloorCutoffZ` Clipping**:
-    - **Global Cutoff Plane (`FloorCutoffZ`)**: Rather than relying on a global opacity scalar that would inadvertently fade lower-level geometry, `MPC_PlayerGlobals` publishes `FloorCutoffZ` representing the maximum visible world Z height. When the upper floor is inactive, `FloorCutoffZ` smoothly interpolates to the lower threshold (`InactiveCutoffZ`, e.g. below the 2nd-floor walking surface); when active, it interpolates to `ActiveCutoffZ` (above the upper ceiling). Geometry with $Z \le \text{InactiveCutoffZ}$ (e.g. Floor 1 walls and ground) is mathematically immune to clipping artifacts.
-    - **Structural Geometry (`ManagedStructuralActors`)**: Meshes matching keywords (`Wall`, `Floor`, `Arch`, `Ceiling`, `Roof`, `Stair`, `Pillar`, `Column`) or master materials (`M_Tiling_Master`, `M_StoneWall`, `M_Decorative_Arches`) are categorized as structural and clipped smoothly via `FloorCutoffZ` DitherTemporalAA.
-    - **Interior Props (`ManagedInteriorActors`)**: Interior furniture, props, barrels, wall torches, and chandeliers default to interior categorization and toggle visibility instantaneously on floor transitions. Because interior props are naturally occluded by the upper floor slab when viewing from below, instant hiding is visually imperceptible, incurs zero material modifications, preserves Early-Z rejection, and eliminates redundant draw calls.
-  - **Spatial Auto-Gathering Container (`AFloorVolume`)**: Placed in the level with a bounding box covering the upper floor. On `BeginPlay()`, it automatically discovers and classifies contained actors via bounding-box containment, strictly excluding `APlayerCharacter`, controllers, and global managers, eliminating manual tag omissions and floating torches.
-  - **Staircase Dual-Trigger Hysteresis (`AFloorTriggerVolume`)**: Dedicated triggers are placed at the bottom (`TargetFloorIndex = 1`) and top (`TargetFloorIndex = 2`) of staircases. Overlapping the bottom trigger locks Floor 1, while overlapping the top trigger activates Floor 2. The intermediate staircase span serves as a stable hysteresis zone with no state flipping. During descent before hitting the bottom trigger, the existing `MF_VisionTunnelFade` (2D depth + 45° frustum cone) provides immediate line-of-sight aperture clearing for door lintels or overhead arches.
+`EquipWeapon()` and `TryEquipWorldPickup()` are the equipment mutation entry
+points. They use a transactional sequence:
 
-### Light Attack Ability Lifecycle
+~~~text
+preflight -> snapshot -> teardown old grants/display -> apply target composition
+          -> either commit new state or rollback the complete old composition
+~~~
 
+Preflight validates the current character/ASC state, definition and sockets,
+composition constraints, and the relevant Ability identities. Direct
+`EquipWeapon()` preserves the other hand while building its target composition;
+it does not normalize a cross-slot conflict, so a two-handed MainHand with an
+existing OffHand (or an OffHand with an existing two-handed MainHand) is rejected
+by preflight. `TryEquipWorldPickup()` first normalizes through
+`BuildTargetCompositionForIncoming()`: an incoming one-handed MainHand replaces
+the MainHand and retains OffHand unless it is replacing a current two-handed
+MainHand; an incoming two-handed MainHand clears OffHand; and an incoming
+OffHand replaces a current two-handed MainHand with
+`UnarmedFallbackDefinition` (or fails if that fallback is not configured).
 
-- `ULightAttackAbility` is `InstancedPerActor` and `ServerOnly` within the current single-player boundary. It owns `Ability.Attack.Light`, owns `State.Action.Attacking` while active, and is blocked by attacking, dodging, parrying, dead, exhausted, and stunned state tags.
-- Before the initial `CommitAbility()`, it validates its ASC, animation instance, inherited Cost/Damage/regen-delay GameplayEffect classes, required event tags, and a nonempty `UComboChainDataAsset` containing unique non-null complete Montages. A missing required configuration logs a warning and ends without applying cost, starting tasks, or recording hit state.
-- `UComboChainDataAsset` stores ordered Montage references only. It holds no active entry, buffered input, target, cost state, or other mutable runtime state; `ULightAttackAbility` owns those values for the entire chain.
-- The initial entry commits once through `CommitAbility()`. A continuation first passes `CheckCost()` and then commits only its Cost through `CommitAbilityCost()`, so each accepted entry spends Stamina once while the shared Stamina-action base applies regeneration delay when the whole Ability ends.
-- Persistent `UAbilityTask_WaitGameplayEvent` listeners receive Trace Window, Dodge-cancel, primary-input, Combo InputWindow, and Combo BranchWindow semantics across the chain. `UAbilityTask_PlayMontageAndWait` starts the selected entry, while an identity-filtered `UAnimInstance::OnMontageEnded` callback owns natural completion or interruption; an end event from a replaced Montage cannot end its successor.
-- `UAnimNotifyState_AttackTraceWindow` and the combat action-window NotifyStates send semantic events from an ASC-capable mesh owner and attach their source animation in `FGameplayEventData::OptionalObject`. The Ability accepts only events from its current entry Montage. It permits one buffered `Input.PrimaryAttack`: an early input is consumed when the BranchWindow opens, while an input during an open BranchWindow continues immediately.
-- A matching Trace Window opens or closes the shared melee task. The task samples the fixed Blade Base/Tip path, and its resolver-owned GAS delivery can record a target only after successful resolution; no animation event writes `Health` or `Poise` directly. One active Ability owns one Trace Window task at a time, but a single Montage may contain multiple sequential, non-overlapping `UAnimNotifyState_AttackTraceWindow` placements: each matching Begin creates a fresh window after the prior End cleanup, with its own per-window delivered-target set and trail lifecycle. An overlapping Begin closes/replaces the prior window rather than running two tasks in parallel, and a stale prior End is ignored by NotifyState identity.
-- Natural completion, interruption, Dodge cancellation, character teardown, and configuration failure converge through `EndAbility()`. Cleanup removes the Montage delegate, ends all tasks, removes the scoped Dodge-cancel and Defense-cancel tags, clears entry/buffer state, and prevents duplicate cleanup.
-- Future direct task-level `ExternalCancel()` callers must define whether they also stop the Montage and must still converge through ability cleanup. There is no current caller; this is a conditional cancellation-contract requirement for later Stun or explicit interruption work.
+At Player BeginPlay, `DefaultEquippedWeapon` is passed through direct
+`EquipWeapon()`. If it is absent, Native code logs a warning and the Player
+starts without melee capability. `UnarmedFallbackDefinition` is not a startup
+default; this pass observes it only in the world-pickup two-handed-to-OffHand
+normalization above.
 
-### Stamina Actions And Dodge Lifecycle
+For a world pickup transaction, displaced drops start with NoCollision.
+Only a full success changes them to QueryOnly, consumes the source pickup, and
+destroys it. A failed apply or drop-grounding operation restores the previous
+composition and leaves the source pickup intact.
 
-- `UStaminaActionAbility` is the narrow base for Stamina-consuming actions. It permits activation only while current Stamina is positive, allows the authored cost GameplayEffect to consume the remaining amount, and lets the AttributeSet clamp the result to zero. After a successfully committed action ends, it applies the authored regeneration-delay effect through the owner ASC.
-- `ULightAttackAbility` now derives from that base and listens for semantic Dodge-cancel window Begin/End events. It owns both `State.Action.CanCancel.Dodge` and `State.Action.CanCancel.Defense` for the same active-Montage window that permits an interruption, then removes both loose tags from every normal, cancelled, interrupted, and teardown path.
-- `UDodgeAbility` is `InstancedPerActor`, `ServerOnly`, and enables UE 5.8 `bRetriggerInstancedAbility` in the current single-player boundary. It requires grounded movement and rejects dead, stunned, or exhausted states. `State.Action.Attacking` or `State.Action.Dodging` requires the current scoped `State.Action.CanCancel.Dodge`; `State.Action.Charging` is descriptive state and never grants permission. The engine performs this successor preflight, including Stamina cost validation, before ending an active Dodge; insufficient Stamina therefore leaves the old segment intact. The static self-Dodging blocker is intentionally absent because this explicit preflight owns the re-trigger rule.
-- A matching Dodge `ActionDodgeCancelWindow` alone lets the active Dodge own `State.Action.CanCancel.Dodge`; a matching `MontageRateWindow` alone applies a positive authored playback rate. The Dodge ability owns those loose-tag and rate lifetimes together with its invulnerability GameplayEffect. Normal completion, interruption, cancellation, `EndPlay()`, or a late event converge through `EndAbility()`, which removes the effect and tag, restores playback rate before stopping the Montage, and ends every task.
-- Dodge uses `UAbilityTask_PlayMontageAndWait` completion callbacks bound to the specific active Montage instance: `OnCompleted` ends a natural segment, while `OnInterrupted` and `OnCancelled` end a cancelled segment. It does not subscribe to the global `UAnimInstance::OnMontageEnded` multicast, so stopping the old segment during re-trigger cannot end its successor. It also does not end at `OnBlendOut`; the authored visual blend completes before normal ability cleanup.
-- `UAnimNotifyState_ActionDodgeCancelWindow` and `UAnimNotifyState_DodgeInvulnerability` are separate reflected types in one combat-action-window source group. They require only an ASC-capable mesh owner and send Gameplay Events; they do not mutate Attributes, Gameplay Tags, or ability state directly.
+### World pickup and interaction boundary
 
-### Directional Guard And Player Guard Break
+AWorldWeaponPickup::WeaponDefinition is an editable definition reference and
+can be changed through SetWeaponDefinition(). It is the pickup's current
+represented definition, not an immutable runtime value.
 
-- `UPlayerGuardAbility` is `InstancedPerActor` and `ServerOnly`. It requires grounded movement, positive Stamina, held Guard input, and no Dead, Exhausted, Stunned, Dodging, or active Guard state. `State.Action.Guarding` remains the generic active-Guard category: single-Sword Guard owns the parent, while Shield Guard owns `State.Action.Guarding.Shield`; hierarchical matching preserves the generic C++ contract. Only a confirmed active Guard Montage applies the authored `0.7` MoveSpeed and `0.7` `StaminaRegenRateMultiplier` Duration GameplayEffects and cancels Sprint.
-- The Guard arc is an exact horizontal `120` degrees from the player's current forward vector to the attacker's actor-center direction. After self, team, Dead, and Invulnerable rejection but before creating the original Damage GameplayEffect Spec, `FMeleeHitResolver` calls the Player's narrow Guard entry.
-- A valid Guard applies the authored instant Guard-Stamina GameplayEffect through negative `Data.Stamina.GuardDamage`, refreshes the existing authored Stamina regeneration delay, and returns successful resolution to the Trace Window. That records the target as delivered for this window, so the original Health-damage Spec is not applied and a continuous trace cannot charge the same contact repeatedly. A block that reaches zero Stamina still absorbs that contact once, then sends `Event.Reaction.Player.GuardBreak`; an unaccepted event logs a configuration warning and never falls back to the original damage.
-- `UPlayerGuardBreakAbility` is `InstancedPerActor`, `ServerOnly`, Gameplay-Event triggered, and owns `State.Status.Stunned`. Only after its authored Guard Break Montage is active does it stop/disable movement, require a physical Guard release before a later Guard, and cancel Guard, Sprint, and attack abilities. Its one `EndAbility()` cleanup restores walking only for a live non-destroying player that it locked and never restores Stamina directly.
-- Light, Charged, and Sprint Attack own `State.Action.CanCancel.Defense` during the same scoped active-Montage interval as the existing Dodge Cancel Window. An eligible Guard cancels that attack only after its own Montage starts. An attack cancels an already active Guard only after its own Montage starts; a held RMB retries Guard on the next tick only when that attack really cancelled a live Guard, so input pressed during a non-cancelable attack is not a global buffer.
-- Shield Guard presentation is an authored branch, not a second Guard state machine. `ABP_Player_Dungeon` derives `IsShieldGuarding` from the active child tag, plays full-body `BS_Shield_Walk_Run`, and sets the existing `DefaultGroup.UpperBody` visual branch to zero only while that state is active; generic single-Sword Guard keeps the upper-body branch. The Shield Guard Montage remains required for the native Ability's task/delegate/effect lifecycle, while `ReactionOverlayGroup.ReactionOverlay` remains downstream. B2 retains yaw ownership for locked Guard, and ordinary unlocked Guard remains movement-facing.
+- The actor owns a query-only interaction sphere, display component, grounding,
+  and re-entry protection.
+- Overlaps retain weak Player references and notify the Player; they do not
+  activate abilities or change equipment directly.
+- A former owner is rejected for `FormerOwnerRejectDuration` to avoid
+  immediately collecting a newly dropped item.
+- `StageDisplacedDrops()` passes the Native constant `FixedClearance` into
+  `FWorldPickupGrounding::TryComputeGroundedRootLocation()` for definitions with a
+  `WeaponMesh`. The helper itself accepts a generic `Clearance` parameter and
+  calculates the root location that places the transformed local bounds corners
+  along the valid ground normal. Without a `WeaponMesh`, `StageDisplacedDrops()`
+  directly offsets the hit point along the hit normal by `FixedClearance`.
+  `ProjectLocationToGround()` is an independent static trace helper that offsets
+  by `NormalOffsetDistance` along the normal, with no active callers in Native
+  source. Invalid grounding reports failure to the surrounding transaction so
+  it can roll back.
 
-### Timed Parry And Enemy Poise Counter
+APlayerCharacter owns the weak pickup candidate set and its current candidate
+snapshot. It filters invalid candidates through CanInteract, resolves the
+nearest valid pickup with deterministic distance/name tie-breaking, and avoids
+an unconditional tick scan. UWorldInteractionPromptWidget, created by
+APolyQuestPlayerController, is a passive view: it owns neither candidate
+arbitration, input, GAS state, nor equipment mutation.
 
-- `UPlayerParryAbility` is `InstancedPerActor` and `ServerOnly`, entered through `IA_Parry -> Input.Parry -> Effective Defense Profile -> Ability.Defense.Parry`. It owns `State.Action.Parrying` while active and blocks the same player action set as the other defensive/action abilities; Q release does not interrupt or buffer another action.
-- Startup pays the authored `GE_Parry_Cost` through `CommitStaminaCostOnly(...)`, preserving the shared overdraft-to-zero and one regeneration-delay contract. Only after the Parry Montage is confirmed active does it lock movement, cancel Sprint/Guard and an eligible attack, and expose the Notify-driven `State.Action.ParryActive` window.
-- `UAnimNotifyState_PlayerParryWindow` sends identity-filtered begin/end events only. During the authored `0.15s` window, `FMeleeHitResolver` checks Parry before Guard and the player's `120`-degree front arc; a successful contact is consumed without Health or Guard-Stamina damage and applies the authored `Data.Poise.Parry = -100` through `GE_Parry_PoiseDamage` to the attacker ASC. The existing C3C Poise crossing and Stance Break remain the enemy reaction source.
-- Natural completion of the full Parry Montage is the sole cooldown commit point: the ability commits the authored `0.5s` Duration `GE_Parry_Cooldown`, whose Granted `Cooldown.Parry` tag drives native `CheckCooldown`. Montage failure, interruption, death, and teardown never commit that cooldown; one `EndAbility()` owns the window, delegate, task, movement, and resume-state cleanup.
-- The Parry's own `MOVE_None` lock preserves a held-RMB Guard-resume qualification, while an external `MOVE_Falling` cancels Parry and clears that qualification. The ability does not introduce a second damage, Poise, direction-reaction, Root Motion, or AI/StateTree path.
+---
 
-### Primary And Charged Attack Lifecycle
+## Melee, defense, and action abilities
 
-- `UPrimaryAttackAbility` is `InstancedPerActor`, `ServerOnly`, and has no Cost. It owns the generic movement/jump input-block tags only while it arbitrates one held `Input.PrimaryAttack`; a `UAbilityTask_WaitDelay` at `0.2 s` and exact Released/Canceled event listeners choose the next action. A short normal release requests `Ability.Attack.Light`; Canceled ends without creating a new attack.
-- If a normal release at or after `0.2 s` wins the same-frame race with the delay callback, Primary forwards the original event duration through `Event.Attack.Charged.ReleaseHandoff` rather than reading the already-cleared held-input cache. `UChargedAttackAbility` accepts only that event with the owning actor and exact `Input.PrimaryAttack` tag, then begins its release path once.
-- `UChargedAttackAbility` derives from `UStaminaActionAbility`, owns `Ability.Attack.Charged` and `State.Action.Attacking`, and adds `State.Action.Charging` only before release. A matching active-Montage `ActionDodgeCancelWindow` temporarily grants the scoped Dodge/Defense tags; when HoldReady pauses the Montage, the Ability latches only a window that was already valid, ignores the pause-generated pseudo-End, and lets the resumed timeline's real End remove the tags. A Hold without such a window never gains permission. It validates its authored Montage/effects/tags, checks and commits Cost on normal release, calculates a `1.0x` to `1.8x` SetByCaller damage multiplier from held duration, then resumes the paused Root Motion Montage from the same playhead.
-- After release, Charged accepts matching Trace Window Begin/End events only from its active Montage and opens or closes the common melee task with its existing authored GameplayEffect carrying both `Data.Damage.Charged` (`1.0x` to `1.8x`) and `Data.Poise.Charged` (linear `-25` through `-50`) SetByCaller magnitudes on one Damage GE Spec. Montage identity, source actor, source animation, and `OnMontageEnded` reject stale events and converge natural completion, cancellation, Dodge, and teardown through `EndAbility()`.
-- During a confirmed active charged Montage, after `SetCharging(true)` succeeds, `UChargedAttackAbility` may own one attached Niagara component for presentation only. It reads the same `Input.PrimaryAttack` held-duration clock used by release and uses `MaximumChargeDuration` as the sole Full threshold; `User.ChargePhase` is `0.0` for Gather and `1.0` for Full. `Event.Attack.Charged.HoldReady` remains pose-only and does not become a VFX clock or gameplay authority.
-- The charged feedback path creates the Niagara system with auto-activation disabled, writes `User.ChargePhase` before explicit activation, bypasses the delay when the effective hold is already full, and otherwise owns one `UAbilityTask_WaitDelay`. Missing/invalid system, duration, component, source, socket, or a renderer-unavailable Spawn result fail closed for VFX only; damage, Poise, Cost, Tags, Trace, Montage, and GAS lifetime remain unchanged.
-- `BeginRelease()` and the single `EndAbility()` cleanup path share one idempotent feedback cleanup: remove the Delay finish delegate, end and clear the task, deactivate and clear the Niagara component. Display-mesh main-hand weapons resolve to `MainHandDisplayComponent` with `NAME_None`; owner-mesh weapons resolve an explicit `ChargeVFXTraceSourceName` through `OwnerMeshTraceSources`, use `DefaultOwnerMeshTraceSourceName` only for an unset override, and never silently redirect an invalid explicit source.
+### Damage route and trace ownership
 
-### Front Execution Lifecycle
+There is one Native melee damage route:
 
-- Front execution's player Montage is resolved only from the equipped main-hand `UMeleeWeaponDefinition::FrontExecutionMontage`. `CanActivateAbility()`, `ActivateAbility()`, and `CommitAbility()` share the same fail-closed resolver; activation retains the weapon definition and Montage in transient snapshots, and Commit rejects a live main-hand or Montage identity change. A missing field rejects Front execution without an Unarmed or Ability-CDO fallback.
-- `UPlayerFrontExecutionAbility` is an `InstancedPerActor`, `ServerOnly` Player ability requested from the existing `Input.PrimaryAttack` route only after Sprint handling and only for a melee MainHand. Bow, unarmed/invalid direct routes, prepared slots, and the physical input contract remain unchanged; a rejected execution request falls through to the normal Primary route.
-- Activation consumes one current Lock-On target snapshot and succeeds only when the living target is in the same World, owns `State.Status.Stunned` through an active `UEnemyStanceBreakAbility`, and has zero Poise. It validates the shared finite execution distance (`0..250 cm`) and front geometry, then synchronously requests the target's `UEnemyVictimExecutionAbility`; only an accepted request creates the paired lock. The Player owns its `PlayerLocked`/`Invulnerable` lifetime and does not write target tags directly.
-- A valid action reads `ExecutionSnapDistance` from the equipped `UMeleeWeaponDefinition` and, after the paired handshake but before the Player Montage starts, performs one deterministic `FExecutionSnapAlignment` Snap. Front uses the target's planar forward offset and faces the target; Backstab uses the planar rear offset and the activation-time target-forward snapshot. The Capsule temporarily ignores the target during the swept move, then restores its prior ignore state on every exit. Final location and Yaw are checked with `1.0 cm`/`1.0 deg` tolerances and wrapped angle deltas; an environment blocking hit or failed tolerance check restores the original Transform with `TeleportPhysics` and stops movement before formal Release/`EndAbility()` cleanup. The helper uses the player's current `Z` as its vertical basis, which addresses the observed player/target height mismatch; complex slopes and steps remain outside this contract.
-- The equipped `UMeleeWeaponDefinition` is the sole authoring source for the execution distance triplet: `MinExecutionDistance`/`MaxExecutionDistance` define the inclusive horizontal center-distance window and `ExecutionSnapDistance` defines the one-shot physical alignment displacement. `FExecutionSnapAlignment::IsExecutionDistanceRangeValid()` is the sole Native validator (finite values, `Min >= 0`, `Max > Min`, `Min <= Snap <= Max`, and `Max <= 250 cm`); both `CanActivateAbility()` and `ActivateAbility()` fail closed before Commit or Victim handshake. Each activation snapshots all three values, `CommitAbility()` exact-compares the live weapon/Montage/triplet, and post-activation Snap, geometry, and hit checks use the snapshot. The execution path no longer creates or clears ordinary-attack Motion-Warp targets; ordinary Light/Charged/Sprint/Skill abilities retain their own Motion-Warp ownership. The former execution-only Motion-Warp configuration fields were removed by an explicit product decision and are not a current serialization compatibility contract.
-- `UAnimNotify_PlayerExecutionHit` emits the canonical `Event.Action.Execution.Hit`, and the active Ability accepts only that exact tag. `UAnimNotify_PlayerExecutionVictimStart` is listened to by the active Player Ability and, after session/identity validation, synchronously forwards the VictimStart request to the target-side Ability. The Ability validates the current session, avatar, Montage, reservation, target state, and finite hit data before constructing one authorized `FMeleeHitRequest` for the shared `FMeleeHitResolver -> Damage GameplayEffect` path. A consumed event cannot retry damage, and VictimStart never activates an Ability by itself.
-- Target/session invalidation, Stunned removal, death, destruction, player cancellation/UnPossess, Montage completion/interruption/cancellation, task startup failure, and resolver failure converge through one idempotent `EndAbility()` cleanup that releases the Victim session, removes delegates/tasks, stops the owned Montage when valid, releases any temporary Snap collision ignore, restores a failed Snap Transform and velocity, and removes Player-owned tags. The target-side Victim Ability owns its lock, movement/AI pause, and corresponding cleanup.
+~~~text
+UAbilityTask_MeleeTraceWindow
+    -> FMeleeHitResolver
+    -> Damage GameplayEffect spec
+    -> target AbilitySystemComponent
+~~~
 
-### Backstab Execution Lifecycle
+UMeleeTraceSourceComponent selects a trace branch by owner context rather than
+walking a cross-branch fallback chain:
 
-- Backstab's player Montage is resolved only from the equipped main-hand `UMeleeWeaponDefinition::BackstabExecutionMontage`. The same resolver, transient weapon/Montage snapshots, and Commit-time live identity check apply independently of Front execution; a missing field rejects Backstab without an Unarmed or Ability-CDO fallback.
-- `UPlayerBackstabExecutionAbility` is a distinct `InstancedPerActor`, `ServerOnly` Player ability requested from `Input.PrimaryAttack` only after Sprint handling and only for a melee MainHand. The native input order is Front Execution, then Backstab, then the existing direct Primary route; Bow, unarmed/invalid routes, prepared slots, and physical input ownership remain unchanged.
-- Activation consumes the current raw Lock-On target once. The target must be a living `AEnemyCharacter` in the same World and non-invulnerable; ordinary or externally contributed `State.Status.Stunned` rejects Backstab, while exactly one active `UEnemyStanceBreakAbility` owning the sole Stunned contribution is accepted. The Player's horizontal position must be within the shared finite execution distance (`0..250 cm`) and the target's rear-sector angle (default `60` degrees, legal range `[0, 90]`). The rear geometry is an activation-time snapshot: the target may turn during the wind-up, but hit-time validity, distance, and state are still rechecked and no retargeting occurs. A synchronous Victim request establishes the paired lock before animation starts.
-- The Ability reads the equipped weapon's `ExecutionSnapDistance` and applies the same one-shot rear Snap contract as Front, using the captured target-forward snapshot. Its authored Montage carries `UAnimNotify_PlayerExecutionHit` for the canonical `Event.Action.Execution.Hit`, and the active Ability accepts only that exact tag. It consumes the common `VictimStart` request and forwards it only after validating the current activation token, session, Avatar/Instigator, target ASC, and animation identity. It then validates the hit-time target, reservation, finite hit data, and exactly-once state before using the shared resolver. A resolver failure consumes the event and ends the Ability without retry.
-- Each activation owns a generation token and transient callback context for Montage, hit-event, and target delegates. Synchronous task-start failure, natural completion, interruption, cancellation, target loss, death, destruction, and Player teardown converge through one idempotent `EndAbility()` that releases the Victim session, invalidates the context, unbinds delegates, ends valid tasks, stops the owned Montage, restores any failed Snap state, releases temporary collision ignore, and removes activation-owned tags. The execution cleanup does not clear Motion-Warp targets owned by ordinary attacks.
+- An equipped Player resolves the current MainHand melee definition. Its
+  optional named owner-mesh sources are resolved by the definition; the
+  display-mesh socket/marker path is the equipment component's internal marker
+  implementation for the default source. If this equipped branch is invalid,
+  it fails closed and does not fall through to a static or legacy source.
+- An owner without an equipment component may use a valid
+  `StaticMeleeWeaponDefinition` and its display-mesh sockets.
+- Only when neither equipped nor static-definition geometry is present does the
+  legacy component-name fixture apply, and it supports only an unnamed source.
 
-### Paired Execution Lock Lifecycle
+An invalid named/static source fails closed rather than silently selecting an
+unrelated branch. `UMeleeWeaponDefinition` supports `FOwnerMeshMeleeTraceSource`
+profiles (`TraceSourceName`, `OwnerMeshSocketName`,
+`BladeBaseMarkerRelativeLocation`, `BladeTipMarkerRelativeLocation`) with
+`DefaultOwnerMeshTraceSourceName`, allowing owner-mesh Unarmed weapons to
+configure multiple contact sources (such as `RightFist` and `LeftFist`).
+`UWeaponEquipmentComponent` stores transient markers in source-keyed maps
+(`MainHandBladeBaseMarkers`, `MainHandBladeTipMarkers`).
 
-- `UExecutionLockContext` is a transient session object created by the Player execution Ability with the Player Ability as Outer. Front, Backstab, and Victim hold the same object strongly through transient properties; actor, ASC, Ability, request-tag, activation-token, accepted, active, and release state are validated through weak references and fail closed after invalidation.
-- `UEnemyVictimExecutionAbility` is the target-side GAS owner of `State.Action.Execution.Victim`, `State.Action.Execution.VictimLocked`, `State.Status.Invulnerable`, `State.Status.Stunned`, and movement/jump blocking during a paired session. It accepts only a same-world, living, matching Request context; Front additionally requires the active zero-Poise Stance Break, while Backstab accepts only one active Stance Break with exactly one pre-activation Stunned contribution after subtracting Victim's own `ActivationOwnedTags` contribution. It stops movement, pauses the existing `AEnemyAIController` StateTree/navigation lock, cancels the permitted enemy action abilities, and synchronously marks the context accepted. It caches an optional Front or Backstab Victim Montage but starts it only after the authenticated `Event.Action.Execution.Request.VictimStart` request consumed by the active Victim Ability; the Victim Montage is presentation-only, has no gameplay clock or completion-barrier authority, and its callbacks are owned and cleared by that Ability. Missing or failed presentation cannot alter Hit, Release, death, or Launch ownership.
-- `MOVE_None`/`MOVE_Walking` transitions remain wholly owned by `UEnemyVictimExecutionAbility`; Player Snap only asserts the cross-Ability result. A Backstab accepted during Stance Break captures the recovery handoff before cancelling StanceBreak; `VictimLocked` makes StanceBreak skip its own movement/Poise recovery, and Victim `EndAbility()` restores the live target exactly once. Pending Victim Montage direction follows the request tag, so a handed-off Backstab still uses the Backstab Montage.
-- `AEnemyAIController::BeginExecutionLock()` / `EndExecutionLock()` pause and restore only the same possessed Pawn's pre-lock StateTree, navigation, focus, and movement state. Tick, perception, attack preparation, approach, reposition, and completion callbacks cannot issue new AI movement while locked; death and UnPossess never restart the AI.
-- `FMeleeHitResolver` remains the sole melee damage entry. An execution `FMeleeHitRequest` may bypass the target's `State.Status.Invulnerable` only when the current `UExecutionLockContext` authorizes the exact source Ability/`SourceObject`, source/target Actor and ASC, active Victim Ability, and activation token; ordinary Melee and Projectile requests remain blocked. The resolver wraps an authorized application in a stack-owned hit scope, so duplicate, stale, or failed transactions cannot leave the session in `Resolving`.
-- An authorized lethal execution hit leaves Health at `0`, promotes the current session to `DeathPending`, and keeps Player/Victim lock, Invulnerable, and Lock-On retention until authenticated Release or abnormal finalization. `UEnemyVictimExecutionAbility` owns the pending tag and, on formal Release, synchronously calls `AEnemyCharacter::CommitExecutionDeath()` before completing the session; that method is the only execution entry to the existing `SetDeadState -> HandleDeath -> CancelAllAbilities -> StartDeathRagdoll` terminal chain. A normal nonlethal Release restores the Victim's movement/AI/Poise, removes its owned status tags through `EndAbility()`, and then dispatches the existing `Event.Reaction.Enemy.Launch` with the Player/Enemy payload; an unavailable or rejected Launch ability leaves the living target standing.
-- `UAnimNotify_PlayerExecutionRelease` sends only `Event.Action.Execution.Request.Release` to the Player's own ASC with the owning animation as `OptionalObject`; `UAnimNotify_PlayerExecutionVictimStart` follows the same Player-owned event ingress rule for the common `Event.Action.Execution.Request.VictimStart`. Player Front/Backstab validate each request against the active Montage/Sequence and session, then send at most one authenticated VictimStart forward and one formal Release; Hit and Release are separate state axes, so Hit-before-Release waits while Release-before-Hit latches without blocking the one legal Hit. Before formal Release the Player unbinds target callbacks, and it retains the valid context through its own Montage tail; cancellation, destruction, death, and UnPossess use the owning cleanup to invalidate the session and cannot dispatch a nonlethal Launch.
-- Player Lock-On retains only the already-owned paired target under the explicit retention gates above; acquisition and cycle never select an invulnerable target. `DeathPending` is an execution-only delayed terminal state, not a revival state; pending Health writes remain at `0`, and ordinary non-execution lethal damage still enters the immediate Dead teardown.
+`UAbilityTask_MeleeTraceWindow` executes across three explicit phases:
+1. **Phase 1 (Endpoint validation)**: All-or-nothing sampling across all
+   configured sources; any invalid or non-finite source fails closed.
+2. **Phase 2 (Trail forwarding)**: Source-keyed trail updates to
+   `UMeleeWeaponTrailComponent`, which manages transient child
+   `UNiagaraComponent` instances per named source with source-keyed weak
+   requesters to prevent cross-source trail clobbering.
+3. **Phase 3 (Multi-source sweep & deduplication)**: Sweeps all valid sources on
+   the project `MeleeTrace` channel (`ECC_GameTraceChannel1`). Its window-scoped
+   `DeliveredTargets` set enforces shared deduplication across all sources,
+   guaranteeing that an actor overlapping multiple sweeps in the same window
+   receives damage at most once.
 
-### Bow Action-Window Lifecycle
+### Shared combat gates
 
-- `UBowDrawFireAbility` is `InstancedPerActor` and owns `Ability.Attack.Primary` plus the active attacking/input-block state. It adds `State.Action.Charging` as a loose tag only after the identity-validated DrawReady event advances the phase to Holding, removes it before entering Release, and removes it again from every `EndAbility()` path; the Bow CDO does not statically advertise Charging. The AnimBP keeps separate authored facts: `Is Bow Aiming` (`Bow` mode plus `State.Action.Attacking`) selects Bow locomotion, while `Is Bow Holding` (`Bow` mode plus `State.Action.Charging`) gates the UpperBody layer.
-- Matching events from the current Bow Montage or one of its contained sequences may open/close the same scoped Dodge/Defense cancellation tags and apply/restore the current Montage rate. Wrong Avatar, foreign Animation, stale task, duplicate window, invalid rate, or teardown event fails closed. Normal LMB Released remains a release request rather than a cancellation; all interruption, requester removal, tag removal, rate restore, task completion, and Montage stop converge in Bow-owned `EndAbility()`.
+FMeleeHitResolver validates source/target identity, team, ASC availability,
+dead and invulnerable state before applying the Damage GameplayEffect. It also
+contains the melee Guard/Parry gates. A valid defensive response consumes or
+redirects the incoming melee hit through its intended stamina/poise effect
+contract instead of creating a second direct damage path.
 
-### Sprint, Jump, And Sprint Attack Lifecycle
+The defensive order is Parry before Guard. The Native predicates
+`ParryHalfArcDegrees` and `GuardHalfArcDegrees` define the shared front-arc
+geometry. A live `State.Action.ParryActive` window consumes the contact and
+applies the configured negative `Data.Poise.Parry` payload to the attacker. A
+live `State.Action.Guarding` window consumes the contact and routes
+the configured `Data.Stamina.GuardDamage` payload to the Player. Projectile
+delivery uses the Guard gate only; it does not invent a projectile-specific
+Parry path.
 
-- `MoveSpeed` is the final horizontal cap owned by `UCharacterAttributeSet`. `ABaseCharacter` binds exactly one ASC attribute-change delegate after ActorInfo initialization, writes the nonnegative value to `CharacterMovement.MaxWalkSpeed`, and removes that delegate in `EndPlay()`.
-- `APlayerCharacter` owns the authority-only Exhaustion lifecycle. Its first Stamina value at or below zero adds one Player loose `State.Status.Exhausted` contribution, applies one exact Infinite `MoveSpeed x0.7` handle, and starts one fixed three-second timer while normal Stamina regeneration continues. It clears only after that original timer and a positive current Stamina value; repeated depletion cannot extend the timer. Death-tag receipt, EndPlay, and ASC rebinding use the same idempotent cleanup and retain other systems' tag contributions.
-- `USprintAbility` is an `InstancedPerActor`, `ServerOnly` continuous ability. While grounded Sprint input and nonzero movement remain valid, it owns `State.Movement.Sprinting` and `State.Resource.Stamina.RegenBlocked`, applies authored MoveSpeed and periodic Stamina-drain effects, and converges input release, zero movement, airborne state, action interruption, exhaustion, external cancellation, and EndPlay through cleanup. Exhaustion requires the Sprint input to be released before a new Sprint may start.
-- `UStaminaActionAbility` applies its authored Stamina regeneration-delay effect after a committed action by default. `UJumpAbility` is the explicit zero-cost movement exception: it keeps valid Cost and Delay authored references, calls the base GAS cost check rather than the shared positive-Stamina gate, and skips that delay on end. It can therefore start while Exhausted without spending Stamina, interrupting normal regeneration, or altering the Player-owned Exhaustion timer/tag/slow. A Jump that began during Sprint still applies a separately removable air-only MoveSpeed effect before ending ground Sprint; that effect grants neither a Sprint tag, Stamina drain, nor regeneration block, and Player removes it on landing or EndPlay. Walking off a ledge only ends Sprint and never grants this jump-specific air speed.
-- The current MainHand direct route can supply one optional `SprintAttackAbilityTag`. Primary input sends its existing semantic event first, then Player requests that direct tag only while a real Sprint tag, grounded state, and movement input are all present; unavailable or rejected Sprint Attack falls back to `Ability.Attack.Primary`. No Loadout route participates in this resolution.
-- `USprintAttackAbility` validates and commits its authored cost before it ends Sprint and plays its Root Motion Montage. It owns action movement/jump/regen-block tags only during its active lifetime, accepts matching active-Montage Trace Window timing, reuses the common melee task, and exposes Dodge cancellation only through the authored recovery window. Its Montage, tasks, loose tags, and delegate converge through `EndAbility()`.
+Projectile collision uses FCombatProjectileHitResolver, not the melee resolver,
+but follows the corresponding team, living, invulnerability, and Player Guard
+eligibility rules for projectile delivery.
 
-### Montage Rate Window And Action Timing
+### Action ability boundaries
 
-- `UAnimNotifyState_MontageRateWindow` is a timing-only authored NotifyState for an active combat Montage. Its per-placement `RateMultiplier` is clamped to a positive value and is sent through `Event.Action.RateWindow.Begin` in `FGameplayEventData::EventMagnitude`; the matching End carries the same source Animation in `OptionalObject`.
-- `ULightAttackAbility`, `UChargedAttackAbility`, `USprintAttackAbility`, and `UBowDrawFireAbility` each own persistent Begin/End Gameplay Event tasks and accept an event only from their current active Montage (or a contained source sequence) and owning actor. A positive matching Begin changes only that Montage instance's play rate; a matching End restores their existing fixed `1.0` baseline.
-- `FAbilityMontageRateWindowLifecycle` is the narrow Ability-side lifecycle protocol currently consumed by `UEnemyStanceBreakAbility`. It binds only after the active Montage is confirmed, captures that instance's actual baseline rate, validates avatar/event/source-animation identity and finite positive magnitudes, applies matching rates through an internal LIFO stack for nested windows, and restores the preceding rate or baseline on matching End.
-- Each consumer restores its own baseline before stopping or replacing its Montage. The Enemy Stance Break helper additionally clears its weak references, stack, and applied state through the same teardown path; its RateWindow tasks and Montage callbacks are Ability-owned and never form a global character listener or tick-based writer. Player action timing, Trace, Combo, cancel, and HoldReady semantics remain unchanged.
-- RateWindow is explicit opt-in per Ability and active Montage. Existing Player consumers retain their non-overlapping authored-window contract; the Enemy helper supports nested source-animation payloads through LIFO because the event does not identify a NotifyState instance. Dodge recovery retains its own existing RateWindow consumer, while Guard, Parry, and Guard Break do not consume this protocol.
+- Action classes own their activation tags, temporary input/movement blocks,
+  montage/task delegates, costs, and cleanup.
+- UStaminaActionAbility is the common stamina-action base. It permits a
+  committed action to deplete the attribute to zero under the AttributeSet
+  clamp, then applies the common regeneration-delay contract on termination.
+- Player Guard and Parry resolve against the effective defense profile instead
+  of a separate shield-only state machine. Authored windows, montages, Effects,
+  and timings remain [Authored asset] unless read back.
+- Combo, charged, sprint, dodge, and prepared actions use their own Ability
+  lifetime and cancellation tags. No controller/StateTree action enum mirrors
+  these states.
 
-### Stylized Player Presentation
+#### Prepared melee skill lifecycle (`UPlayerMeleeSkillAbility`)
 
-- Player melee samples the runtime markers through `UMeleeTraceSourceComponent`; the display never uses weapon collision, overlaps, physics, or an independent damage path. Fixed enemy weapon displays (`WeaponMesh`) enforce `NoCollision`, ignore all collision channels including `ECC_Camera`, and disable overlap generation via `ABaseCharacter::DisableFixedWeaponDisplayCollision()`, preventing camera obstruction. The enemy resolves blade endpoints from the shared `UMeleeWeaponDefinition` Socket pair (`Trace_Base` / `Trace_Tip`) when configured, and falls back to legacy Marker components when unconfigured.
-- The current authored first Light montage file is `Content/BP/Montages/LightSword/AM_Sword_LightAttack01.uasset`; it plays the retargeted root-motion sequence `Anim_SAS_V2_ComboAttack02_01_Root` through `DefaultGroup.DefaultSlot`. `ABP_Player_Dungeon` uses `Root Motion from Montages Only`, so the Montage drives the Character's forward movement. `APlayerCharacter` exclusively owns one `UMotionWarpingComponent`; Motion-Warp behavior is opt-in per authored entry. `ULightAttackAbility::StartComboEntry()` may write one static actor-center contact target for zero-based entry `0`, `1`, or `2` when that entry is a legal opt-in and the Ability's first valid Lock-On snapshot passes finite distance, angle, and grounded checks. The first legal entry captures once; later entries reuse the cached target position/ground state with their own bounds, never tick-follow or reselect a target. Entry replacement, disabled/invalid/out-of-range configuration, task/montage failure, ability cancellation/natural end, airborne interruption, target death/destruction, `ClearLockedTarget()`, UnPossess, and EndPlay clear stale targets; Enemy invalidation clears the Player warp target immediately while preserving the existing one-time death retarget contract. This presentation layer does not alter the Trace Window, `FMeleeHitResolver`, or Damage GameplayEffect path; Charged, Sprint, Skill, Bow, and Enemy adoption remain separate contracts.
-- `UChargedAttackAbility`, `USprintAttackAbility`, and `UPlayerMeleeSkillAbility` implement separate, opt-in source contracts on the same Player-owned bridge and pure evaluator. Charged attempts one static snapshot after a successful release commit, active-Montage validation, and release damage/poise setup but before resuming a held Montage; Sprint attempts one static snapshot only after its Montage Task and Montage are both active and before Guard/Sprint cancellation; Skill attempts once after its active Montage/Commit gates. Each Ability owns and resets its snapshot, clears stale targets through `EndAbility()` and failure paths, and leaves Cost, Tags, Trace/Resolver/Damage, Dodge/Guard cancellation, and Sprint ownership unchanged. The corresponding GA/Montage Notify, Modifier, Root Motion, and target-name authoring remains mutable local `Content/**` WIP until the user performs the explicit readback; these source contracts are not clean authored-fixture claims.
-- All four current Player Motion-Warp consumers share the source-level target-distance contract `MinTriggerDistance <= WarpStopDistance <= MaxTriggerDistance`. `MaxTriggerDistance` is the maximum target distance that may trigger correction, not a correction-budget field. A lower bound strictly below `WarpStopDistance` permits a bounded reverse correction; equality preserves forward-only behavior, and a target exactly at the stop distance is a no-op. The interval and the existing finite, grounded, angle, static-snapshot, and invalidation gates bound the write; no tick-follow or retargeting is introduced. Authored-field migration and per-asset readback remain validation gates rather than established asset facts.
-- Attack animation uses the shared Trace Window NotifyState only for timing. Light, Charged, and Sprint Attack retain their own Cost, state, cancellation, and attack-specific effect data while sharing the same motion-trace task and resolver.
-- The Socket, player Blueprint, AnimBP, Montage, GA/GE, input assets, and retargeting assets remain deliberately local mutable authoring WIP. The stable direct sword and retargeted Sequence assets can be versioned separately, but this subset does not recreate the local playable fixture from a clean checkout.
+- `UPlayerMeleeSkillAbility` is the narrow prepared melee-skill lifecycle (e.g. `GA_Skill_Whirlwind`):
+  - Its prepared slot activates its exact granted `FGameplayAbilitySpecHandle`.
+  - The Ability confirms its tracked Montage before its single Cost and Cooldown commit, then arms the trace task, Dodge-cancel, and rate-window listeners.
+  - Action tags, Guard cancellation, trace task, playback rate restoration, Montage stop, and input-block cleanup converge through one idempotent `EndAbility()`.
+  - The Ability CDO receives native capability and teardown tags (`Ability.Action.CancelableBy.Dodge`, `Ability.Action.CancelableBy.Defense`, `Ability.Action.CancelableBy.Reaction`, `Ability.Action.Teardown.OnUnpossess`) in `PostLoad()` and `PostCDOCompiled()` so Blueprint default-tag serialization cannot strip lifecycle contracts.
+  - Concrete identity (such as `Ability.Skill.Whirlwind`) and Cooldown GE tags remain authored on GA/GE assets.
 
-### First Enemy AI And Melee Intent
+#### Player RateWindow policy
 
-- `APlayerCharacter` registers its native `UAIPerceptionStimuliSourceComponent` for Sight in `BeginPlay()` and unregisters it during teardown. It defaults to `Team.Player`; `AEnemyCharacter` defaults to `Team.Enemy`, inherits the BaseCharacter ASC, startup-ability grant, `MeleeTrace` endpoint, and fixed trace-source fixture, and auto-possesses with `AEnemyAIController`.
-- `UEnemyAttackProfile` is one static authored input for an enemy attack: one Montage, one damage GameplayEffect, a finite positive `AttackRange`, a finite non-negative `CooldownAfterAttack`, and a finite non-negative `GuardStaminaDamage`. `UEnemyAttackSet` is the static authored collection of attack entries with an explicit `EngagementRange`. `SelectAttackProfile()` performs pure weighted selection across all valid entries within `EngagementRange` without pre-filtering by individual attack reach, allowing short-range attacks to be selected and executed via approach.
-- `AEnemyAIController` is the one owner of a valid Player target, Controller focus, home location, Sight configuration, `UStateTreeAIComponent` start/stop lifecycle, pending attack profile snapshot, and cooldown expiration. Before starting StateTree logic it validates the possessed `UEnemyAttackSet`, `UEnemyAIProfile`, and Poise recovery configuration, then caches `EngagementRange` as instance-only `MeleeRange` and `LeashRadius` as `CachedLeashRadius`; perception only sends `Event.AI.Target.Acquired` or `Event.AI.Target.Lost`, never starts a Montage, applies a GameplayEffect, or mutates an Attribute.
-- The authored StateTree selects `Patrol -> Alert -> Chase -> Combat -> Return`. Native conditions query the Controller; native tasks may stop stale movement, prepare attack decisions, execute approach movement, request the enemy Ability, or request bounded cooldown repositioning, but they do not store a second target/state, cancel the Ability, or mutate combat values. Combat enters a bounded sub-state flow `Decision -> Approach -> Attack -> Reposition -> Wait`:
-  - `Decision` (via `FEnemyStateTreeTask_PrepareMeleeAttack`) performs a one-time weighted selection from all valid entries in `UEnemyAttackSet` without pre-filtering by individual `AttackRange`. If the target is already within the selected profile's `AttackRange` (`Enemy Pending Melee Attack In Range`), it branches directly to `Attack`. If outside its `AttackRange` but within `EngagementRange` (`Enemy Pending Melee Attack Out Of Range`), it branches to `Approach`. If invalid or target leaves range, it transitions to `Wait`.
-  - `Approach` (via `FEnemyStateTreeTask_ApproachSelectedMeleeAttack`) dynamically approaches the current `TargetActor` with acceptance radius set to `SelectedProfile.AttackRange`. The selected profile is retained throughout the approach without re-rolling. Upon reaching range, it transitions to `Attack`. If approach times out (exceeding `UEnemyAIProfile::ApproachTimeout`, default `3.0s`) or navigation fails, the decision is cleared and it transitions to `Wait` to retry after the 0.5s poll delay. Target loss (`Event.AI.Target.Lost`) interrupts and transitions to `Alert`.
-  - `Attack` (via `FEnemyStateTreeTask_RequestMeleeAttack`) requests `UEnemyMeleeAbility`, which consumes the Controller's prepared `PendingAttackProfile`, verifies that the target is within `AttackRange`, and commits the attack snapshot. Attacking observes the ASC-owned `State.Action.Attacking` tag until the active Ability ends naturally.
-  - `Reposition` (via `FEnemyStateTreeTask_RepositionDuringCooldown`) drives Controller-governed navigation during attack cooldown, cycling to `Wait` upon completion or delay.
-  - `Wait` (via Delay 0.5s) polls readiness: when attack cooldown ends and target remains in `EngagementRange` (`Enemy Is Attack Ready` and in range), it transitions back to `Decision`.
-- `UEnemyAIProfile` is the immutable authored data asset for spacing, repositioning, approach timeout, and leash parameters: `PreferredCombatDistance`, `LateralRepositionDistance`, `RepositionAcceptanceRadius`, `RepositionRetryDelay`, `LeashRadius`, and `ApproachTimeout` (default `3.0s`, finite positive). Controller `OnPossess()` requires `PreferredCombatDistance <= EngagementRange` and positive finite values before starting logic.
-- `AEnemyAIController::CalculateTargetRelativeRepositionPoint` generates target-relative spacing points clamped to `EngagementRange` via $\sqrt{EngagementRange^2 - PreferredCombatDistance^2}$. Controller-owned state permits one active `MoveTo`, enforces the authored minimum request interval, alternates left/right after successful requests, retries one failed request on the same side, and switches side after a second failure; no hard request cap applies while cooldown remains.
-- `UEnemyMeleeAbility` is `InstancedPerActor` and `ServerOnly`. It validates the ASC, Controller target/range, animation setup, `AttackSet`, and Trace Window tags; it consumes the Controller's `PendingAttackProfile` snapshot (Montage, damage GameplayEffect, cooldown, and GuardStaminaDamage) for activation once in range. It owns `Ability.Attack.Enemy.Melee` and active `State.Action.Attacking`; only matching active-Montage NotifyState events can open or close the shared trace task. Natural end, interruption, cancellation, invalid setup, and teardown converge through `EndAbility()`. The Controller cooldown begins only when `Montage_IsActive()` had confirmed that the Montage actually started.
-- The minimal team rule uses exact `Team.*` tags: invalid or equal tags reject a hit. This is not yet a full faction, attitude, party, target-selection, or multiplayer relation system.
-- `MeleeRange` is an exact Controller center-distance check based on `AttackSet` `EngagementRange`. The authored Chase `FStateTreeMoveToTask` binds its acceptance radius to that value and disables both agent and goal radius additions; changing enemy dimensions or attack reach must preserve this one `AttackSet`-owned geometry rule.
+`ULightAttackAbility` and `UPlayerMeleeSkillAbility` each consume
+`Event.Action.RateWindow.Begin/End` only when both event actors are their
+owning Avatar and `Payload.OptionalObject` exactly matches their tracked active
+Montage. A valid Begin with a positive
+`EventMagnitude` applies that magnitude as the current Montage play rate.
+Successive or overlapping valid Begins use a last-one-wins policy: the most
+recent override remains active until the local active-window count returns to
+zero. A valid End decrements that count only when it is positive; restoration
+occurs when the count reaches zero, or through the existing transition and
+terminal cleanup paths. Each Ability restores its fixed native rate rather
+than a captured pre-window baseline.
 
-#### Enemy Hit Reaction And Safe Interrupt
+This is a consumer-local policy for these two Player Abilities. It does not
+adopt `FAbilityMontageRateWindowLifecycle`, does not imply all Player
+Abilities support RateWindow, and does not complete the conditional
+Player/Enemy lifecycle unification in `TODO-07B8-C`.
 
-- A received GameplayEffect remains the only entry to enemy reaction semantics. After a server-side Health decrease that leaves the enemy alive, `AEnemyCharacter` reads the applied EffectSpec Asset Tags through `FHitReactionClassifier`; exact `Data.Reaction.Big` sends `Event.Reaction.Enemy.Big` and `Data.Reaction.Small` sends `Event.Reaction.Enemy.Small` to the target ASC. Healing, unchanged/direct Health writes, rejected resolver hits, Stunned/Dead states, broken Poise, and lethal damage do not request a reaction. The shared resolver remains delivery-only and does not select presentation.
-- `UEnemyHitReactionAbility` is `InstancedPerActor`, `ServerOnly`, and Gameplay-Event triggered. It owns `Ability.Reaction.Enemy.Big` and active `State.Action.HitReacting`, blocks Dead, Stunned, and re-entry, and owns one authored reaction Montage plus its delegate/task cleanup. Since C3F, it confirms Montage startup before stopping current velocity, cancelling `Ability.Attack.Enemy.Melee` and Enemy Small, temporarily preventing ledge walk-off, and binding Falling cleanup; Montage Root Motion remains the sole planar displacement owner. The cancelled melee Ability remains responsible for its Trace Window, Montage, action-tag, and cooldown cleanup.
-- `AEnemyAIController` and the Combat StateTree task observe `State.Action.HitReacting`; they do not infer reaction state from playback or create a second AI state. Combat waits while the tag exists and does not issue another melee request. Reaction teardown restores only the ledge-walk setting it captured; it never forces a movement mode, while Dead teardown remains terminal.
-- C3B deliberately began with an in-place hard-interrupt policy for Big reactions. C3F subsequently established the separate grounded Root Motion Big contract; the delivered Stance Break baseline below remains functionally in place.
+#### Key Ability cancel, commit, and Montage cleanup contracts
 
-#### Enemy Notify-Timed Hyper Armor
+- **`UDodgeAbility`**: Uses `UAbilityTask_PlayMontageAndWait` instance-bound callbacks (`OnCompleted`, `OnInterrupted`, `OnCancelled`). It does not bind the global `OnMontageEnded` multicast, preventing a re-triggered dodge from ending its successor, and does not terminate at `OnBlendOut`.
+- **`UPlayerGuardAbility`**: Requires grounded movement, positive Stamina, held Guard input, and absence of blocking states. Only a confirmed active Guard Montage applies MoveSpeed and `StaminaRegenRateMultiplier` Duration GameplayEffects and cancels Sprint. Absorbing a contact at zero Stamina sends `Event.Reaction.Player.GuardBreak`.
+- **`UPlayerGuardBreakAbility`**: Gameplay-Event triggered, owns `State.Status.Stunned`. Once its Montage is active, it locks movement and cancels Guard, Sprint, and attack abilities. `EndAbility()` restores walking only for a live, non-destroying character.
+- **`UPlayerParryAbility`**: Pays `GE_Parry_Cost` on startup via `CommitStaminaCostOnly`. Only after its Montage is active does it lock movement, cancel Sprint/Guard/Attack, and expose the Notify-driven `State.Action.ParryActive` window. Natural completion of the full Montage is the sole cooldown commit point (`GE_Parry_Cooldown` with `Cooldown.Parry`); montage interruption, death, or teardown never commits cooldown.
+- **`UChargedAttackAbility`**: Derives from `UStaminaActionAbility`, owns `Ability.Attack.Charged` and `State.Action.Attacking`, and adds `State.Action.Charging` prior to release. Latches valid Dodge/Defense cancel windows across the hold pause; commits Cost on normal release, evaluates held duration for damage/Poise scaling, and resumes Root Motion. Natural completion, cancellation, Dodge, and teardown converge through `EndAbility()`.
 
-- `UAnimNotifyState_EnemyHyperArmor` is a timing-only NotifyState in the shared combat action-window group. It sends `Event.Attack.HyperArmor.Begin` or `.End` through the mesh owner's ASC and attaches the source Animation in `OptionalObject`; it does not mutate Attributes, Ability state, Movement, Collision, Controller, or AI.
-- The active `UEnemyMeleeAbility` owns the loose `State.Status.HyperArmor` count. Its Begin/End listeners accept only an event from the current living attack instance: the Ability has started, its current avatar is both Instigator and Target, and `OptionalObject` is the active attack Montage. Begin writes an exact count of one once; End and every `EndAbility()` route clear it to zero before Montage, Trace, and event-task cleanup.
-- `UEnemyHitReactionAbility` blocks activation while that tag exists, so a Big-tagged Charged hit inside the authored window still resolves Health and Poise but neither cancels the attack nor queues a delayed C3B reaction. `UEnemyStanceBreakAbility` and terminal Dead teardown do not block on Hyper Armor; their existing cancellation of EnemyMelee reaches the same tag cleanup path.
-- v1 supports one continuous non-overlapping Hyper Armor window per attack Montage, authored to cover the existing Trace Window. It does not add a second attack state, Trace/Resolver path, StateTree branch, or Hyper Armor behavior for the player.
+### Motion Warping
 
-#### Enemy Poise And Stance Break
+APlayerCharacter owns the sole UMotionWarpingComponent. Ordinary melee action
+Abilities attempt a one-shot lock-on snapshot at their first legal warp
+evaluation; when valid, the snapshot is cached. They use
+FMeleeMotionWarpingLifecycle for geometry validation. A warp target is only
+written when the Player and target are grounded and its distance/direction
+contract is valid. It is cleaned up on cancellation, death, destruction,
+unpossession, and EndPlay.
 
-- Poise depletion travels only through the shared melee delivery path. `FMeleeHitRequest`, `UAbilityTask_MeleeTraceWindow`, and `FMeleeHitResolver` accept a narrow multi-SetByCaller tag-to-magnitude map applied after the legacy single-value field; the single-value overload remains for Light, Sprint Attack, and EnemyMelee, whose Poise magnitudes are authored as fixed GE Modifiers. Charged is the only map user, sending `Data.Damage.Charged` and `Data.Poise.Charged` on one Damage GE Spec.
-- `AEnemyCharacter` observes its own Poise attribute on the server. Nonlethal partial depletion restarts exactly one recovery timer (`2.0s` delay, then `10/s` in `0.1s` steps); each tick applies the authored Instant `GE_EnemyPoise_Recovery` through a fresh outgoing Spec with `Data.Poise.Recovery`, and the timer stops when full, dead, stunned, tearing down, invalid, or when the effect fails to advance Poise. Poise is never written outside authored GameplayEffects; the native helpers (`IsPoiseBroken`, `HasValidPoiseRecoveryConfiguration`, `RestorePoiseToMax`) only read state or route through that GE.
-- A positive-to-zero crossing clears pending recovery and defers one next-tick dispatch of `Event.Reaction.Enemy.StanceBreak`, so every modifier of the same GE settles first. The dispatch requires authority, a live non-destroying enemy, positive Health, a still-broken Poise, and a valid recovery configuration; when no ability accepts the event it logs and restores Poise to Max through the recovery GE rather than leaving an unrepeatable zero state. Lethal damage wins over Stance Break under every authored modifier order: the lethal Health block promotes Dead before the reaction block, and death teardown clears the pending dispatch.
-- `UEnemyStanceBreakAbility` is `InstancedPerActor`, `ServerOnly`, and Gameplay-Event triggered. It owns `Ability.Reaction.Enemy.StanceBreak` and the existing `State.Status.Stunned` for its active lifetime, blocks Dead and Stunned re-entry, and may preempt active `State.Action.HitReacting`. Only after its authored `StanceBreakMontage` is confirmed active does it stop/disable CharacterMovement and explicitly cancel `Ability.Attack.Enemy.Melee`, `Ability.Reaction.Enemy.Big`, and `Ability.Reaction.Enemy.Small`; a failed start, invalid configuration, or rejected activation leaves prior combat untouched. When an accepted execution Victim owns `VictimLocked`, this ability skips its own movement/Poise recovery and leaves that handoff to the Victim cleanup path.
-- During its active Montage, Stance Break owns the matching RateWindow Begin/End event tasks and delegates them to `FAbilityMontageRateWindowLifecycle`. Events must belong to the current avatar and active Montage or source Sequence; invalid or late events are ignored. RateWindow changes only playback timing and never owns Stunned, Poise, damage, or reaction dispatch.
-- Its guarded `EndAbility()` first invalidates callbacks and restores the RateWindow baseline, then stops the active Montage, ends the event/Montage tasks, restores walking only for a living non-destroying enemy that this ability actually locked (a concurrently ending hit reaction recovers its own lock because both sides dynamically query the still-owned Stunned tag), and restores full Poise through the recovery GE before `Super::EndAbility()` drops Stunned. Death teardown never receives movement or Poise restoration. `AEnemyCharacter::UnPossessed()` selects only abilities carrying `Ability.Action.Teardown.OnUnpossess` before calling the parent teardown.
-- The C3E interaction is explicit: Health hit-reaction dispatch skips reaction events while current Poise is broken (`IsPoiseBroken()`), `IsDead()`, or `bIsStunned`, and `UEnemyHitReactionAbility::EndAbility()` does not restore walking while `State.Status.Stunned` is owned. `AEnemyAIController::IsEnemyStunned()` is ASC-tag based; attack requests reject Dead, Stunned, HitReacting, invalid AttackSet/target/range, and cooldown, while the Combat StateTree task stays `Running` during Stunned.
-- The delivered Stance Break is a full-body, functionally in-place presentation. Its current authored source may contain root translation, but `DisableMovement()` deliberately suppresses actor displacement exactly as in C3B; this is not functional Root Motion stance-break behavior. Controller `OnPossess()` additionally requires a valid Poise recovery configuration before starting StateTree logic and logs once when it denies startup, so a misconfigured enemy fails closed at spawn rather than fighting without stance semantics.
+The Native motion-warp configuration requires finite values and
+`MinTriggerDistance <= WarpStopDistance <= MaxTriggerDistance`, with a valid
+warp target name and a maximum angle in `[0, 180] deg`. A target at the exact
+stop distance is a deliberate no-op; the helper preserves the Player's Z and
+does not emit an identity correction.
 
-#### Enemy Death And Teardown
+Execution does not reuse ordinary action Motion Warping. It has a separate
+one-shot snap contract described below.
 
-- `UCharacterAttributeSet` clamps Health to `[0, MaxHealth]`. Once an ASC owns `State.Status.Dead`, any later Health write remains `0`; the AttributeSet clamps values but does not decide which character enters a terminal state.
-- After BaseCharacter initializes ActorInfo, `AEnemyCharacter` observes its Health and `State.Status.Dead`. Ordinary Health at or below zero writes an exact loose Dead-tag count of one, and any legal source that grants the Dead Tag converges through the same idempotent teardown, which retains that loose count as the terminal state. During an active authorized execution hit scope, the Enemy instead captures the finite ragdoll velocity, keeps Health at `0`, and notifies the current Victim Ability to own `State.Status.DeathPending` until `CommitExecutionDeath()` is called; this is a delayed terminal handoff, not a revival semantic.
-- The terminal teardown tells `AEnemyAIController` to stop StateTree, path movement, target, and focus; then cancels the enemy ASC's active Abilities and stops/disables CharacterMovement. Ability cancellation retains each Ability's existing `EndAbility()` cleanup route for Montage, action tag, Trace Window, and task state.
-- `FMeleeHitResolver` rejects a shared melee request when either source or target ASC owns `State.Status.Dead`; an execution request also has to pass the active context hit-state and exact source/target credential checks, so a `DeathPending` or finalized session cannot accept another hit. Native C2 teardown does not select a death asset or write AnimBP state.
-- `ABP_Enemy_Goblin` is presentation-only: it caches `AEnemyCharacter::IsDead()` in `bIsDead` and uses a one-way `Dead` state. Its `To Land` state alias covers `Fall Loop` and `Jump`; its `To Falling` alias covers `Land` and `Locomotion`; each alias enters `Dead` when `bIsDead == true`. `Dead` has no exit transition. The AnimBP does not write Health, Gameplay Tags, Ability, AI, Controller, movement, or collision state.
-- After the terminal teardown, `AEnemyCharacter` can hand presentation to a compatible SkeletalMesh ragdoll when `bUseRagdollOnDeath` is enabled and a Physics Asset exists: it disables the inherited Capsule collision/overlaps, applies the engine `Ragdoll` profile, enables simulation, and wakes bodies. This is presentation only; the ASC Dead Tag and C2 teardown remain authoritative. Disabled ragdoll or a missing Physics Asset intentionally leaves the C3A AnimBP terminal state as the fallback.
-- `TODO-02C4` adds one optional directional presentation handoff without changing that authority: during the first lethal Health GameplayEffect callback, Enemy resolves only the current Context's finite attacker direction, converts it to a world-space attacker-away velocity change, and copies that value before `SetDeadState()` synchronously begins teardown. No Effect Spec, Context, Actor, or prior nonlethal-hit reference survives the callback. `StartDeathRagdoll()` consumes and clears the value before every early return; after the existing profile/simulation setup, it calls `AddImpulse(..., bVelChange = true)` once only when the authored non-None bone resolves to a simulated body. `NAME_None`, invalid Context/direction/speed, disabled ragdoll, repeat death, and teardown add no force; an invalid configured non-None body preserves ordinary ragdoll and warns once. Bone selection and mutable force tuning remain Enemy Blueprint/Physics Asset authoring, not AI, damage, Tags, or a new death system.
-- On the player route, `UWeaponEquipmentComponent` creates the weapon display with collision and overlap generation disabled, so it cannot block the SpringArm or enter corpse physics. `ABaseCharacter::DisableFixedWeaponDisplayCollision` remains unchanged solely for the authored enemy fixed fixture; player equipment no longer relies on a name-based collision guard.
+---
 
-#### ST_Enemy_Goblin_Melee Authored Runtime Contract
+## Paired execution
 
-`/Game/BP/Characters/Enemy/ST_Enemy_Goblin_Melee` uses `StateTreeAIComponentSchema`, with `AIControllerClass` set to native `/Script/PolyQuest.EnemyAIController` and Context Actor Class set to `Pawn`. `BP_EnemyAIController` inherits `AEnemyAIController`; its inherited `StateTreeComponent.StateTreeRef` is this asset and automatic start remains disabled, so native `OnPossess()` starts logic only after Profile validation. Editor readback reports the asset compiled, with no root parameters, global evaluators, or global tasks. `Root` owns the five ordered leaf states `Patrol`, `Alert`, `Chase`, `Combat`, and `Return`; all six current state nodes are enabled and use `Any` task-completion mode, while every leaf currently has one completion-relevant task.
+### Session ownership and entry conditions
+
+UPlayerFrontExecutionAbility and UPlayerBackstabExecutionAbility are
+server-authoritative Player abilities. Each creates one transient
+UExecutionLockContext and synchronously asks the target's
+UEnemyVictimExecutionAbility to accept the session. A context captures the
+specific actors, ASCs, abilities, request, activation token, and release state;
+stale callbacks fail closed.
+
+The two entry paths have distinct eligibility rules:
+
+| Path | Core condition |
+| --- | --- |
+| Front execution | Valid living target, execution distance/geometry, and real zero-Poise Stance Break state |
+| Backstab execution | Valid living target, `MaxBackAngleDegrees` rear geometry, and its dedicated Stance Break compatibility check |
+
+Both paths snapshot their equipped melee definition and montage/range data.
+Missing, invalid, or changed source data rejects the action rather than falling
+back to an unrelated weapon, CDO, or target.
+
+### Paired lock state
+
+| Side | Ability identity and runtime state |
+| --- | --- |
+| Player | Player execution ability and State.Action.Execution.PlayerLocked |
+| Enemy victim | Ability.Action.Execution.Victim, State.Action.Execution.VictimLocked, State.Status.Invulnerable, State.Status.Stunned, and movement/jump restrictions |
+
+The victim ability identity and its active lock intentionally use different
+namespaces: `Ability.Action.Execution.Victim` identifies the ability, while
+`State.Action.Execution.VictimLocked` identifies the paired-lock lifetime.
+
+The victim ability owns target-side movement/AI lock and cleanup. The Player
+does not write target state tags directly. AEnemyAIController pauses the
+locked Pawn's StateTree/navigation/focus progression and cannot issue fresh
+tactical movement until a legal release or recovery path restores it.
+
+The semantic ingress tags are `Event.Action.Execution.Request.Front`,
+`Event.Action.Execution.Request.Backstab`, and
+`Event.Action.Execution.Request.VictimStart`; the active Player montage emits
+`Event.Action.Execution.Hit` and `Event.Action.Execution.Request.Release`.
+Each request is checked against the active montage, source/target identity,
+session, and activation token before it can advance the pair.
+
+### Snap alignment
+
+FExecutionSnapAlignment is a one-shot, swept alignment step after the paired
+handshake and before the Player montage. It validates a finite horizontal range
+and target direction, temporarily ignores the target capsule during the move,
+and restores collision/transform on failure.
+
+| Execution kind | Player snap location | Facing |
+| --- | --- | --- |
+| Front | TargetLocation + TargetForward2D * SnapDistance | -TargetForward2D (toward the target) |
+| Backstab | TargetLocation - TargetForward2D * SnapDistance | +TargetForward2D (same direction as the target) |
+
+`FExecutionSnapAlignment::IsExecutionDistanceRangeValid()` enforces all of the
+following rules:
+- All distance inputs (`MinDistance`, `MaxDistance`, `SnapDistance`) must be finite;
+- `MinDistance >= 0.0f`;
+- `MinDistance < MaxDistance`;
+- `SnapDistance > 0.0f`;
+- `MinDistance <= SnapDistance <= MaxDistance`;
+- `MaxDistance` is bounded by `NativeMaxDistanceHardCap`.
+
+The helper normalizes the target forward vector in XY, uses the Player's current Z for the
+snap location, and derives the facing vector from that normalized planar
+direction. The snap is independent of the ordinary Motion Warping lifecycle. A
+blocked sweep or failed final transform tolerance ends the execution through the
+normal cleanup path.
+
+### Semantic event and terminal flow
+
+~~~text
+paired lock accepted
+    -> VictimStart (presentation handoff)
+    -> Hit (one authorized melee hit)
+    -> Release (terminal decision and recovery/death handoff)
+~~~
+
+- Hit remains on FMeleeHitResolver -> Damage GameplayEffect; an execution
+  context may bypass the target's temporary invulnerability only when it
+  authorizes the exact active source, target, victim ability, and token.
+- A lethal authorized hit adds State.Status.DeathPending. On legal Release,
+  CommitExecutionDeath() enters SetDeadState -> HandleDeath ->
+  CancelAllAbilities -> StartDeathRagdoll.
+- A non-lethal legal Release restores the victim's recoverable movement/AI/poise
+  state and may dispatch the existing Enemy Launch event.
+- Montage end, cancellation, task startup failure, target invalidation, death,
+  destruction, unpossession, and EndPlay all converge on idempotent context,
+  task, collision-ignore, tag, and delegate cleanup.
+
+Victim montages and notify placement are [Authored asset]; their actual graph
+or timing cannot be inferred from the C++ contract alone.
+
+---
+
+## Bow, projectile, and target assist
+
+### Projectile definition
+
+UProjectileDefinition is an authored DataAsset that contains display, collision,
+damage, target-assist, homing, and flight-trail parameters. It does not store an
+active target or flight state.
+
+| Contract | Source members |
+| --- | --- |
+| Movement and lifetime | `InitialSpeed`, `MaxSpeed`, `LifespanSeconds`, `CollisionRadius` |
+| Target assist | `bEnableTargetAssist`, `TargetAssistMaxDistance`, `TargetAssistMaxAngleDegrees`, `TargetAssistMaxHeightDelta`, `TargetAssistMaxPitchDegrees` |
+| Limited homing | `bEnableLimitedHoming`, `HomingStartDelaySeconds`, `HomingDurationSeconds`, `HomingTurnRateDegreesPerSecond`, `HomingMaxTotalTurnDegrees` |
+| Flight trail | `FlightTrailSystem`, `FlightTrailSocketName`, `FlightTrailFinishTimeoutSeconds` |
+
+`UProjectileDefinition::IsValidProjectileDefinition()` owns the finite/positive
+checks and the dependency that limited homing requires target assist. The
+projectile uses the authored turn budget as a finite deflection limit; whether
+that permits a rear-hemisphere turn is an asset choice, not a second targeting
+rule.
+
+### Bow action boundary
+
+`UBowDrawFireAbility` is an `InstancedPerActor`, `ServerOnly` Ability. It owns
+the Bow's `Ability.Attack.Primary` / `State.Action.Attacking` lifetime and adds
+`State.Action.Charging` only after an identity-validated DrawReady event. On
+release it removes the charging state, resolves the launch direction and one
+target snapshot, then spawns/initializes the projectile. Draw/Hold/Release
+montage sections, speed Effects, projectile class overrides, and notify timing
+are [Authored asset].
+
+### Launch snapshot and target assistance
+
+FCombatProjectileTargeting is a narrow read-only helper, not a general Lock-On
+framework. It chooses at most one living hostile Character with a valid ASC
+after filtering self, same team, dead/invulnerable state, distance, angle,
+  height, pitch, camera-forward, viewport projection, and ECC_Visibility
+  obstruction. Its Bow target-assist screen margin is the targeting filter's
+  `ScreenMarginRatio`, separate from Player lock retention.
+Equal candidates are ordered by angle, then distance, then stable name.
+
+At Bow release, `FCombatProjectileLaunchRequest` stores the projectile
+definition, source/ASC, combat payload, initial flight direction, selected
+target, release-time `InitialTargetAimPoint`, and homing parameters.
+`ACombatProjectile` derives its initial velocity from `InitialFlightDirection`;
+its current Native flight logic does not read `InitialTargetAimPoint`. During
+limited homing it validates the same cached target actor and recomputes that
+actor's current aim point. It does not search again or retarget after launch.
+Lock-On may contribute one validated snapshot at release, but Lock-On does not
+own the projectile's flight target.
+
+### Flight and hit delivery
+
+ACombatProjectile owns a collision sphere and UProjectileMovementComponent.
+It uses zero gravity and adjusts velocity direction for limited homing rather
+than manually relocating the actor. Invalid target, timeout, or exhausted turn
+budget stops steering and leaves the projectile flying straight. A valid pawn
+hit or blocking impact disables the applicable collision/movement lifecycle.
+A successfully resolved pawn hit is delivered once and enters terminal trail
+cleanup; a rejected pawn is ignored so flight can continue. The Native path has
+no AoE explosion or penetration-through-target contract.
+
+Flight-trail components are presentation-only. A terminal trail may detach into
+world space and wait for its Niagara completion callback or its configured
+timeout before final actor cleanup. Trail assets and rendering are [Authored
+asset] / [Not verified in this pass].
+
+---
+
+## Camera, lock-on, and floor visibility
+
+### Fixed oblique camera
+
+APlayerCharacter constructs a fixed world-oriented oblique setup through the
+`CameraBoom` and `FollowCamera` properties `TargetArmLength`,
+`RelativeRotation`, `CameraLagSpeed`, `CameraLagMaxDistance`, `FieldOfView`, and
+`bDoCollisionTest`. The constructor disables pawn-control rotation and SpringArm
+collision testing; it does not bind ordinary controller look input as a separate
+free-look route. Exact tuning belongs to the constructor, not this ledger.
+
+### Lock-on boundary
+
+APlayerCharacter owns one weak AEnemyCharacter lock target.
+
+- The authored `LockOnAction` performs strict viewport, cursor-nearest
+  acquisition; its physical binding is [Authored asset].
+- The authored `TargetCycleAction` uses deterministic screen-space ordering; its
+  physical binding is [Authored asset].
+- Acquisition, cycling, and ordinary death retargeting remain strict viewport
+  checks.
+- `LockOnTraceChannel` handles line-of-sight. Hidden-actor checks use the bounded
+  retry path; visible obstruction, a world hit, or retry exhaustion fails
+  closed.
+- `LockOnRetentionMarginRatio` is retention-only hysteresis. It does not relax
+  initial acquisition, cycling, or projectile target-assist rules.
+- `LockOnOcclusionGraceDuration` is the obstruction grace owned by the Player.
+  Paired execution may retain
+  its already-owned valid target through its explicit lock conditions, without
+  relaxing team, ASC, death, or retention checks for other targets.
+
+Action-facing remains owned by the relevant action ability/root-motion contract.
+Lock-On is not a global authorization to alter projectile targeting or action
+state.
+
+### See-through occlusion boundary
+
+`APlayerCharacter::UpdateSeeThroughOcclusion()` is the Native bridge for the
+camera-to-player visibility test. It sweeps a sphere on `SeeThroughTraceChannel`
+from a near-clipped camera point to the Player chest, ignores the Player and its
+attached actors, writes `PlayerPosition` and `CeilingRadius` directly, and
+interpolates only `TunnelRadius`. Sweep radius, near-clip offset, tunnel radius,
+open/close interpolation speeds, and ceiling radius are owned by
+`SeeThroughSweepRadius`, `SeeThroughNearClipOffset`, `MaxTunnelRadius`,
+`TunnelRadiusOpenInterpSpeed`, `TunnelRadiusCloseInterpSpeed`, and
+`MaxCeilingRadius` respectively.
+
+The MPC reference and the material/shader interpretation of those parameters are
+[Authored asset] / [Not verified in this pass]. This code path changes
+presentation visibility only; it does not disable collision or change combat
+target validity.
+
+### Floor visibility boundary
+
+`AFloorVolume` and `AFloorTriggerVolume` provide Native floor visibility management:
+
+- **`AFloorVolume::SetFloorActive()` Native contract**:
+  - Sets `TargetCutoffZ` from `ActiveCutoffZ` or `InactiveCutoffZ` and pushes the `FloorCutoffZ` scalar to `PlayerGlobalsMPC`.
+  - Toggles `SetActorHiddenInGame(!bActive)` directly on `ManagedInteriorActors`.
+  - When `bHideStructuralActorsWhenInactive` is enabled, structural actors are made visible on activation, and are hidden on deactivation (either immediately or when cutoff interpolation finishes).
+  - This Native path does not call collision modification functions (`SetCollisionEnabled`, etc.); it operates purely through actor visibility and the MPC scalar.
+- **`AFloorVolume::GatherContainedActors()` classification**:
+  - Automatically gathers actors contained within `BoundsBox` on `BeginPlay()`, strictly excluding `APlayerCharacter`, `AController`, `AInfo`, `ALight`, `APostProcessVolume`, other `AFloorVolume`, and actors tagged `Floor.Ignore`.
+  - Classifies contained actors into structural (`ManagedStructuralActors`) vs interior (`ManagedInteriorActors`) using explicit tags (`Floor.Structural` / `Floor.Interior`), interior actor/mesh keywords, presence of `ULightComponent`, positive structural keywords (`Wall`, `Floor`, `Arch`, `Ceiling`, `Roof`, `Stair`, `Pillar`, `Column`, `Bridge`), and specific material names (`M_Tiling_Master`, `M_StoneWall`, `M_Decorative_Arches`).
+- **`AFloorTriggerVolume` Native contract**:
+  - On `BeginPlay()`, if `TargetFloorVolume` is not explicitly assigned, iterates `AFloorVolume` instances in the current `UWorld`, preferring an exact `FloorIndex == TargetFloorIndex` match and otherwise selecting the spatially nearest `AFloorVolume`. If unresolved, logs a warning and subsequent overlap events will not execute a transition.
+  - Listens only to `APlayerCharacter` overlap on its `TriggerBox`.
+  - Upon overlap, calls `TargetFloorVolume->SetFloorActive(TargetFloorIndex >= TargetFloorVolume->FloorIndex)`.
+
+The material-side interpretation of `FloorCutoffZ`, DitherTemporalAA shading, actual level placement of volumes/triggers, real floor indexing, multi-trigger hysteresis setups, and visual fade appearance are [Authored asset] / [Not verified in this pass].
+
+---
+
+## Enemy AI and StateTree
+
+### Controller and attack ownership
+
+AEnemyAIController owns enemy perception, target/focus, home location, attack
+cooldown, pending attack profile, approach/reposition behavior, execution lock,
+and StateTree component lifecycle. It is the tactical owner, while GAS is the
+action-state owner.
+
+UEnemyAttackProfile provides authored montage, damage Effect, range, cooldown,
+and guard-stamina data. UEnemyAttackSet supplies weighted candidate entries and
+engagement range. The controller snapshots its selected pending profile while
+approaching rather than rolling a new attack every update. A requested attack's
+active/completed state is determined by GAS tags such as
+State.Action.Attacking, not by a second AI action enum.
+
+### Attack profile and tactical movement
+
+- `UEnemyAttackProfile` is immutable authored data for one attack: a valid
+  `AttackMontage`, `DamageGameplayEffectClass`, finite positive `AttackRange`,
+  finite non-negative `CooldownAfterAttack`, and finite non-negative
+  `GuardStaminaDamage`. It owns no selector, timer, pending decision, or active
+  runtime state.
+- `UEnemyAttackSet` owns a positive `EngagementRange` and weighted profile
+  entries. Its validation rejects empty entries, invalid profiles, duplicate
+  profile references, non-finite/non-positive weights, and aggregate weight
+  overflow. Weighted selection filters by the set's engagement range and valid
+  entries, but does not pre-filter a profile merely because its own
+  `AttackRange` is shorter; approach movement can close that gap.
+- `UEnemyAIProfile` owns immutable spacing/leash data through
+  `PreferredCombatDistance`, `LateralRepositionDistance`,
+  `RepositionAcceptanceRadius`, `RepositionRetryDelay`, `LeashRadius`, and
+  `ApproachTimeout`. Values must be finite and valid, and preferred combat
+  distance cannot exceed the AttackSet `EngagementRange`.
+- On possession, `AEnemyAIController` validates AttackSet, AIProfile, and the
+  enemy Poise-recovery configuration, then caches `EngagementRange` as the
+  instance-only `MeleeRange` and caches the leash radius. The range check is a
+  horizontal actor-center distance; it is not derived from capsule radii.
+- `PreparePendingAttackProfile()` selects once and retains the profile during
+  approach. `TryRequestApproach()` uses that profile's `AttackRange` as the
+  MoveTo acceptance radius, tracks the moving target, and clears the decision
+  on navigation failure or the configured timeout. `TryRequestMeleeAttack()`
+  directly calls the enemy ASC's `TryActivateAbilitiesByTag()` for
+  `Ability.Attack.Enemy.Melee`; it does not send a `GameplayEvent`.
+- Cooldown reposition is Controller-owned. The target-relative point is
+  clamped so its distance from the target stays within `EngagementRange`; the
+  controller alternates left/right, retries one failed request on the same
+  side, then switches side, while enforcing `RepositionRetryDelay` and one
+  active MoveTo. The temporary tactical pace override is restored on every
+  completion, failure, cancellation, death, and execution lock.
+
+### StateTree boundary
+
+Current Native integration is supplied by the StateTree tasks, conditions, and
+`AEnemyAIController` lifecycle:
+
+- `AEnemyAIController` owns the `UStateTreeAIComponent` start/stop boundary and
+  starts logic only after valid AttackSet, AIProfile/leash constraints, and Poise
+  recovery configuration pass validation. The Controller and StateTree select
+  tactical intent; GAS remains the action-state authority.
+
+#### Native StateTree task lifecycle semantics
+
+- **`FEnemyStateTreeTask_BeginAlert`**: Clears `PendingAttackProfile`, stops
+  movement, and restores valid target focus; succeeds immediately. It does not
+  play an animation Montage.
+- **`FEnemyStateTreeTask_PrepareMeleeAttack`**: Validates living state, absence
+  of hit reaction / active attack, attack cooldown expiry, valid combat target,
+  melee range, and leash boundaries. On validation failure, it clears
+  `PendingAttackProfile` and fails; on success, it selects and caches one
+  weighted `PendingAttackProfile` exactly once without re-rolling during approach.
+- **`FEnemyStateTreeTask_ApproachSelectedMeleeAttack`**: Retains the cached
+  `PendingAttackProfile` and drives dynamic MoveTo toward the target using
+  `SelectedProfile.AttackRange` as the acceptance radius. On timeout, navigation
+  failure, or invalidated controller/target state, it clears
+  `PendingAttackProfile` and fails; on exit, it stops the active approach MoveTo.
+- **`FEnemyStateTreeTask_RequestMeleeAttack`**: Directly requests ability
+  activation through the Controller and ASC (`Ability.Attack.Enemy.Melee`), then
+  observes the ASC-owned `State.Action.Attacking` tag. It must not report
+  completion if attack activation was rejected or not observed; it succeeds only
+  after an observed attack finishes.
+- **`FEnemyStateTreeTask_RepositionDuringCooldown`**: Responsible only for
+  tactical movement during attack cooldown. It returns to `Wait` upon cooldown
+  expiration or when temporarily limited by the minimum request interval; on
+  exit, it stops active reposition MoveTo navigation.
+
+#### Native StateTree conditions
+
+| Native StateTree Condition | Queried Controller Method / Expression | Purpose |
+| --- | --- | --- |
+| `FEnemyStateTreeCondition_HasValidTarget` | `HasValidCombatTarget()` | Living, valid combat target exists |
+| `FEnemyStateTreeCondition_IsTargetInMeleeRange` | `IsCombatTargetInMeleeRange()` | Target horizontal center distance <= `MeleeRange` |
+| `FEnemyStateTreeCondition_IsAttackOnCooldown` | `IsMeleeAttackOnCooldown()` | Melee attack cooldown active |
+| `FEnemyStateTreeCondition_CanRequestReposition` | `CanRequestCooldownReposition()` | Cooldown active, target valid, and interval elapsed |
+| `FEnemyStateTreeCondition_IsAttackReady` | `!IsMeleeAttackOnCooldown()` | Melee attack ready off cooldown |
+| `FEnemyStateTreeCondition_IsTargetOutsideMeleeRange` | `!IsCombatTargetInMeleeRange()` | Target horizontal center distance > `MeleeRange` |
+| `FEnemyStateTreeCondition_HasPendingMeleeAttack` | `HasPendingAttackProfile()` | Valid attack profile cached |
+| `FEnemyStateTreeCondition_IsPendingAttackInRange` | `IsPendingAttackInRange()` | Target within cached profile's `AttackRange` |
+| `FEnemyStateTreeCondition_IsPendingAttackOutOfRange` | `HasPendingAttackProfile() && !IsPendingAttackInRange()` | Profile cached but target out of profile range |
+
+*Note: `CanRequestCooldownReposition()` exists in Native, but the historical asset's `Wait -> Reposition` transition did not use it directly; the minimum retry interval is managed internally by the Controller/Task's `NextAllowedRepositionTime`.*
+
+The behavior-relevant authored graph below is retained as
+`[Historical Editor readback]` from the stable architecture record (`fefdb87`).
+It is useful handoff information for new sessions, but it is not a fresh
+assertion about an untracked or subsequently edited asset. If the asset
+topology, bindings, transition triggers/order, or behavior-changing MoveTo flags
+change, refresh this subsection with a new Editor readback before treating the
+record as current.
+
+#### `ST_Enemy_Goblin_Melee` recorded topology
+
+The readback records `/Game/BP/Characters/Enemy/ST_Enemy_Goblin_Melee` using
+`StateTreeAIComponentSchema`, with the native
+`/Script/PolyQuest.EnemyAIController` as `AIControllerClass` and `Pawn` as
+the Context Actor Class. The inherited Controller `StateTreeComponent.StateTreeRef`
+points to this asset and automatic start is disabled. The Root has five ordered
+leaf states: `Patrol`, `Alert`, `Chase`, `Combat`, and `Return`.
 
 ##### Root
 
-- Transition 1: `OnEvent Event.AI.Target.Acquired -> Alert`; conditions: none. It is enabled, normal-priority, event-consuming, and has no payload.
-- Transition 2: `OnEvent Event.AI.Target.Lost -> Return`; conditions: none. It is enabled, normal-priority, event-consuming, and has no payload.
-- Every current transition in this asset is enabled, uses `Normal` priority, and has no transition delay. The two Root event routes additionally consume their matching event when selected.
-- These are the common target-event entry routes rather than duplicate local transitions on every child state.
+- `OnEvent Event.AI.Target.Acquired -> Alert`; no conditions, normal priority,
+  event-consuming.
+- `OnEvent Event.AI.Target.Lost -> Return`; no conditions, normal priority,
+  event-consuming.
+- These are the common target-event entry routes rather than duplicate local
+  transitions on every child state. The recorded transitions use normal
+  priority and no transition delay.
 
 ##### Patrol
 
-- Uses one `StateTreeDelayTask` with `Run Forever` enabled. It has no local transition and waits for the Root target events.
+- Runs a `StateTreeDelayTask` with `Run Forever`; it has no local transition
+  and waits for the Root target events.
 
 ##### Alert
 
-- Runs native `Enemy Begin Alert`, which stops stale path following and retains valid Controller focus, then succeeds immediately.
-- Transition 1: `OnStateSucceeded -> Combat`; conditions: `Enemy Has Valid Target` AND `Enemy Target Is In Melee Range`.
-- Transition 2: `OnStateSucceeded -> Chase`; conditions: `Enemy Has Valid Target`.
-- Both are enabled normal-priority transitions; their authored order preserves the in-range Combat choice before Chase.
+- Runs `Enemy Begin Alert`, then succeeds immediately.
+- `OnStateSucceeded -> Combat` when `Enemy Has Valid Target` and `Enemy Target
+  Is In Melee Range`.
+- Otherwise, `OnStateSucceeded -> Chase` when `Enemy Has Valid Target`.
+- The authored order keeps the in-range `Combat` branch ahead of `Chase`.
 
 ##### Chase
 
-- Uses `StateTreeMoveToTask` described by the live asset as `Move To AIController.Current Target`. `TargetActor` is bound to the Controller current target; `AcceptableRadius` is the AttackSet-derived Controller `MeleeRange` (`EngagementRange`) contract.
-- `AllowStrafe` is disabled. `AllowPartialPath`, `TrackMovingGoal`, `RequireNavigableEndLocation`, and `ProjectGoalLocation` are enabled. Both `ReachTestIncludesAgentRadius` and `ReachTestIncludesGoalRadius` are disabled so navigation arrival uses the same exact 2D actor-center boundary as Controller and Ability range checks.
-- Transition: `OnStateCompleted -> Alert`; conditions: none. It covers both Move To success and failure, after which Alert selects the next intent from current target/range conditions.
+- Runs `StateTreeMoveToTask` toward `AIController.Current Target`;
+  `TargetActor` is bound to the Controller target and `AcceptableRadius` is the
+  cached AttackSet `MeleeRange/EngagementRange`.
+- `AllowStrafe` is disabled. `AllowPartialPath`, `TrackMovingGoal`,
+  `RequireNavigableEndLocation`, and `ProjectGoalLocation` are enabled.
+  `ReachTestIncludesAgentRadius` and `ReachTestIncludesGoalRadius` are disabled
+  so arrival uses the same actor-center distance rule as the Native checks.
+- `OnStateCompleted -> Alert` covers both MoveTo success and failure.
 
 ##### Combat
 
-- Authored as a compound state with no parent-level task. Transition: `OnStateCompleted -> Alert`; conditions: none (serves as the clean exit / fallback boundary when child state flow ends).
-- **`Decision`** (Child state): runs native `Enemy Prepare Melee Attack` (`FEnemyStateTreeTask_PrepareMeleeAttack`). It selects one weighted attack profile for the current target without re-rolling during approach.
-  - Transition 1: `OnStateSucceeded -> Attack`; condition: `Enemy Pending Melee Attack In Range`.
-  - Transition 2: `OnStateSucceeded -> Approach`; condition: `Enemy Pending Melee Attack Out Of Range`.
-  - Transition 3: `OnStateFailed -> Wait`; conditions: none.
-- **`Approach`** (Child state): runs native `Enemy Approach Selected Melee Attack` (`FEnemyStateTreeTask_ApproachSelectedMeleeAttack`). It drives dynamic MoveTo towards the current target with `SelectedProfile.AttackRange` as the acceptance radius.
-  - Transition 1: `OnStateSucceeded -> Attack`; conditions: none (arrival within attack range).
-  - Transition 2: `OnStateFailed -> Wait`; conditions: none (timeout or navigation failure).
-  - Transition 3: `OnEvent [Event.AI.Target.Lost] -> Alert`; conditions: none.
-- **`Attack`** (Child state): runs native `Enemy Request Melee Attack` (`FEnemyStateTreeTask_RequestMeleeAttack`). It requests `UEnemyMeleeAbility` (which verifies and consumes the pending profile), observes `State.Action.Attacking`, and succeeds only after an observed attack finishes.
-  - Transition 1: `OnStateCompleted -> Reposition`; conditions: none.
-  - Transition 2: `OnStateFailed -> Wait`; conditions: none.
-- **`Reposition`** (Child state): runs native `Enemy Reposition During Cooldown` (`FEnemyStateTreeTask_RepositionDuringCooldown`). It queries Controller repositioning eligibility and drives target-relative navigation during attack cooldown. It completes upon move arrival, move failure, temporary interval gating, or cooldown expiration. Transition: `OnStateCompleted -> Wait`; conditions: none.
-- **`Wait`** (Child state): runs `StateTreeDelayTask` (0.5s polling window).
-  - Transition 1: `OnStateCompleted -> Decision`; conditions: `Enemy Has Valid Target` AND `Enemy Target Is In Melee Range` AND `Enemy Is Attack Ready`.
-  - Transition 2: `OnStateCompleted -> Alert`; conditions: `Enemy Has Valid Target` AND `Enemy Target Is Outside Melee Range` AND `Enemy Is Attack Ready`.
-  - Transition 3: `OnStateCompleted -> Reposition`; condition: `Enemy Is Attack On Cooldown`.
-  - The current asset intentionally does not add `Enemy Can Request Reposition` to this transition. The Controller/task owns the minimum request interval and treats that interval as a temporary wait, so the loop can re-enter `Reposition` until cooldown expiry. The native condition and Controller query remain available for other StateTree assets that need an immediate-request gate.
-  - Transition 4: `OnStateCompleted -> Alert`; conditions: none.
+- Combat is a compound state with no parent-level task and exits to `Alert`
+  when its child flow completes.
+- `Decision` runs `Enemy Prepare Melee Attack`
+  (`FEnemyStateTreeTask_PrepareMeleeAttack`). A successful in-range selection
+  goes to `Attack`; an out-of-range selection goes to `Approach`; failure goes
+  to `Wait`.
+- `Approach` runs `Enemy Approach Selected Melee Attack`
+  (`FEnemyStateTreeTask_ApproachSelectedMeleeAttack`) and keeps the selected
+  profile while moving to its `AttackRange`. Success goes to `Attack`, timeout
+  or navigation failure goes to `Wait`, and `Event.AI.Target.Lost` goes to
+  `Alert`.
+- `Attack` runs `Enemy Request Melee Attack`
+  (`FEnemyStateTreeTask_RequestMeleeAttack`). It directly requests the enemy
+  GAS Ability, observes `State.Action.Attacking`, and succeeds only after an
+  observed attack finishes. Completion goes to `Reposition`; failure goes to
+  `Wait`.
+- `Reposition` runs `Enemy Reposition During Cooldown`
+  (`FEnemyStateTreeTask_RepositionDuringCooldown`) and drives target-relative
+  navigation while the attack cooldown remains active. Completion goes to
+  `Wait`.
+- `Wait` runs the authored `StateTreeDelayTask`. When the target is valid, attack
+  ready, and in range it returns to `Decision`; when attack-ready but outside
+  melee range it returns to `Alert`; while cooldown remains it returns to
+  `Reposition`. The authored loop intentionally leaves the minimum reposition
+  interval to the Controller/task rather than adding that interval as a second
+  StateTree action state. A final unconditional `OnStateCompleted -> Alert`
+  transition is the fallback when no guarded branch is selected.
 
 ##### Return
 
-- Uses `StateTreeMoveToTask` described by the live asset as `Move To AIController.Home Location`. `Destination` is bound to `AIController.HomeLocation`, `TargetActor` is empty, and `AcceptableRadius` is bound to `AIController.HomeAcceptanceRadius`.
-- `AllowStrafe` and `TrackMovingGoal` are disabled. `AllowPartialPath`, `RequireNavigableEndLocation`, `ProjectGoalLocation`, `ReachTestIncludesAgentRadius`, and `ReachTestIncludesGoalRadius` are enabled. This is a home-arrival policy, not the exact melee-range geometry rule used by Chase.
-- Transition: `OnStateCompleted -> Patrol`; conditions: none. Both successful arrival and terminal Move To failure leave the return route cleanly.
+- Runs `StateTreeMoveToTask` toward `AIController.Home Location`;
+  `Destination` is bound to `HomeLocation`, `TargetActor` is empty, and the
+  acceptance radius is `HomeAcceptanceRadius`.
+- `AllowStrafe` and `TrackMovingGoal` are disabled.
+  `AllowPartialPath`, `RequireNavigableEndLocation`, `ProjectGoalLocation`,
+  `ReachTestIncludesAgentRadius`, and `ReachTestIncludesGoalRadius` are enabled
+  by the recorded home-arrival policy.
+- `OnStateCompleted -> Patrol` covers successful arrival and terminal MoveTo
+  failure.
 
-##### Maintenance Rule
+##### Maintenance rule
 
-- When a stage changes this tree's state topology, events, conditions, native tasks, transition trigger/order, property bindings, or behavior-changing Move To flags, update this contract in the same stage. Do not record node layout, color, panel state, transient montage tuning, or other high-frequency presentation WIP here.
+When a stage changes this tree's state topology, events, conditions, Native task
+bindings, transition trigger/order, property bindings, or behavior-changing
+MoveTo flags, update this contract in the same stage. Do not record node layout,
+GUIDs, colors, or other high-frequency Editor presentation data.
 
-#### Enemy Attack Set And Weighted Selection Contract
+---
 
-- `UEnemyAttackProfile` is the immutable authored data asset for one attack configuration: `AttackMontage`, `DamageGameplayEffectClass`, finite positive `AttackRange`, finite non-negative `CooldownAfterAttack`, and finite non-negative `GuardStaminaDamage`. It owns no selector, RNG, cooldown timer, or runtime state.
-- `UEnemyAttackSet` is the immutable authored data asset for one enemy weapon/combat set: owns positive `EngagementRange` and `Entries` (`UEnemyAttackProfile` + positive `SelectionWeight`).
-- `UEnemyAttackSet::IsAttackSetValid` provides pure fail-closed validation: rejects empty entries, non-positive or non-finite `EngagementRange`, null or invalid Profiles (including non-finite Profile scalars), non-positive or non-finite weights, duplicate Profile references, and aggregate weight overflow. Attack sets where all attack profiles have `AttackRange < EngagementRange` (pure short-range profiles) are fully valid and rely on Approach to reach execution distance.
-- `UEnemyAttackSet::SelectAttackProfile` provides pure weighted selection across all valid entries within `EngagementRange` without pre-filtering by individual `AttackRange`, allowing short-range attacks to be selected and executed via dynamic Approach.
-- `AEnemyAIController` validates the possessed enemy's `AttackSet` during `OnPossess()` and caches `EngagementRange` into `MeleeRange`. It owns the `PendingAttackProfile` snapshot, dynamic TargetActor Approach MoveTo, and fail-closed state cleanup.
-- `UEnemyMeleeAbility` consumes the Controller's prepared `PendingAttackProfile` snapshot upon range verification, and ensures unconditional cleanup of the Controller's pending decision upon any completion, cancellation, or abort path.
+## Reaction, death, feedback, and UI
 
-### Hit Reaction Tier Classification, Big, And Launch Contract
+### Reaction and death contracts
 
-- `FHitReactionClassifier` provides pure, context-free, static classification of applied `FGameplayEffectSpec` AssetTags into `EHitReactionTier` (`None`, `Small`, `Big`, `Launch`, `Invalid`). Exactly one valid reaction category tag is permitted; multiple tier tags evaluate to `Invalid` and fail closed (health damage applies, but no reaction event is dispatched).
-- Reaction category tags:
-  - `Data.Reaction.Small`: non-interrupting, non-displacing upper-body reaction layer.
-  - `Data.Reaction.Big`: grounded, interrupting full-body reaction; `Data.Reaction.Interrupt` is retired.
-  - `Data.Reaction.Launch`: nonlethal, full-body physical launch reaction.
-  - Absence of reaction tags: legal `None` result (deals damage with no reaction event).
-- `APlayerCharacter` and `AEnemyCharacter` bind authoritative Health attribute value change delegates (`OnHealthAttributeChanged`) to dispatch reaction events. Priority order: lethal Health first (Enemy triggers Dead state; Player sends no reaction), then non-damage / null `GEModData` filter, existing Dead or Stunned state filter, Enemy Poise-Broken filter, classifier evaluation, and target-specific event dispatch:
-  - `EHitReactionTier::Small` dispatches `Event.Reaction.Player.Small` on Player, and `Event.Reaction.Enemy.Small` on Enemy.
-  - `EHitReactionTier::Big` dispatches `Event.Reaction.Player.Big` on Player and `Event.Reaction.Enemy.Big` on Enemy.
-  - `EHitReactionTier::Launch` dispatches `Event.Reaction.Player.Launch` on Player and `Event.Reaction.Enemy.Launch` on Enemy. `None` remains legal with no reaction event.
-- `UPlayerSmallHitReactionAbility` and `UEnemySmallHitReactionAbility` are `InstancedPerActor`, `ServerOnly` native abilities:
-  - Triggered by `Event.Reaction.Player.Small` and `Event.Reaction.Enemy.Small`, with `bRetriggerInstancedAbility` enabled so a new Small hit can replace the current round.
-  - Own `State.Action.SmallHitReacting` while active; that tag is not in their own `ActivationBlockedTags`, while `State.Status.Dead` and `State.Status.Stunned` remain activation blockers.
-  - Own no movement, input, or attack blocking tags, never call `CancelAbilities`, and do not touch CharacterMovement.
-  - Each round plays the selected directional reaction Montage through its own `UAbilityTask_PlayMontageAndWait` on `ReactionOverlayGroup.ReactionOverlay`; `OnCompleted`, `OnInterrupted`, and `OnCancelled` are the round's end signals. The task is created with interrupt-after-blend-out enabled so a replaced segment still reaches Ability cleanup.
-  - On retrigger or teardown, the old task's Ability callbacks are removed before `EndTask()`/Montage stop. All completion, interruption, cancellation, invalid-start, death, and teardown paths converge on idempotent `EndAbility()`, so a stale task cannot end the successor round. The complete cross-frame ASC event-to-retrigger chain remains a validation debt until an integration fixture or dedicated PIE/Automation scene proves it.
-- `UPlayerBigHitReactionAbility` and `UEnemyHitReactionAbility` are `InstancedPerActor`, `ServerOnly` grounded Big abilities. They own `State.Action.HitReacting`; only after their configured full-body Montage is active do they cancel eligible work, stop current movement, prevent ledge walk-off, and bind a Falling cleanup callback. Montage Root Motion is the only displacement source; they do not use `DisableMovement()`, `SetMovementMode(MOVE_Walking)`, impulses, or Motion Warping.
-- `UPlayerLaunchReactionAbility` and `UEnemyLaunchReactionAbility` are matching `InstancedPerActor`, `ServerOnly` Gameplay Event abilities. Their four phases are `Takeoff -> AwaitingAirborne -> Airborne -> LandingRecovery`. Before Takeoff Montage activation each freezes the target-local impact direction and pre-turn Actor Yaw. A matching `UAnimNotify_ReactionLaunchCommit` identity-checks the avatar and Takeoff Montage/Slot sequence, derives one attacker-facing Yaw plus attacker-away velocity from that immutable pair, preserves current Pitch/Roll, pauses Takeoff at its authored airborne pose, writes Actor Yaw once, and hands all capsule movement to `LaunchCharacter` / `CharacterMovement`. `MovementModeChanged` is the fast path into Falling; a `0.10s` watchdog ends a launch that never enters Falling. Actual grounding sets LandingRecovery, clears residual movement once, stops the paused Takeoff, then starts an in-place prone-to-standing LandingRecovery Montage. Natural completion, interruption, stale events, failed startup/watchdog, death/teardown, and renewed Falling converge through `EndAbility()` with delegate, task, montage, ledge-setting, and snapshot cleanup.
-- `TODO-01C4` extends only Player `LandingRecovery`: `UPlayerLaunchReactionAbility` owns persistent Begin/End listeners for the existing Dodge CancelWindow events, but accepts them only during `LandingRecovery` from the same avatar and an active configured recovery Montage or one of its Slot sequences. It contributes exactly one scoped loose `State.Action.CanCancel.Dodge` tag, clears it before Montage/task cleanup on every end path, and never grants `State.Action.CanCancel.Defense`. `UDodgeAbility` still requires grounded normal preflight and a successful normal `CommitAbility()` before it cancels `Ability.Reaction.Player.Launch`; Attacking, Dodging, and HitReacting each require the scoped cancellation tag. There is no Player air Dodge, Enemy recovery Dodge, input buffering, or generic reaction-cancel layer.
-- `FHitReactionImpactResolver` is the sole pure source of a target-local planar `target -> attacker` snapshot. It prioritizes the finite non-zero actor-center relative line, falls back to a finite `ImpactNormal`, and returns zero for invalid data. `TryBuildLaunchFacingAndVelocity` rotates that frozen direction through the pre-turn Actor Yaw to derive both world-facing attacker Yaw and the negated attacker-away velocity; invalid/zero/non-finite inputs reset both outputs and fail closed. `TryBuildLaunchVelocity` remains a compatibility wrapper around the same calculation. Current Big Root Motion remains authored local backward relative to target facing; the snapshot is not yet used to select directional presentation.
-- `UEnemyStanceBreakAbility` and `UPlayerGuardBreakAbility` explicitly cancel active Small, Big, and Launch reaction abilities before applying their own Stunned movement locks.
-- `TODO-02C3H` extends only the Enemy Launch/Poise boundary. After an Enemy Launch Takeoff Montage has demonstrably started, `AEnemyCharacter` converts a zero-Poise ordinary next-tick Stance Break into one target-owned deferred intent. Natural LandingRecovery completion releases Launch-owned reaction state through `Super::EndAbility()` first, then rechecks the living Enemy's current zero Poise and recovery configuration before dispatching at most one existing Stance Break event. A positive Poise transition clears the intent. Abnormal Launch cleanup, death, and EndPlay clear it; a living Enemy still at zero Poise after an abnormal end restores Poise through the existing recovery GameplayEffect and receives no Stance Break. Same-GameplayEffect modifier ordering is correlated through a copied Effect Definition plus EffectContext and the current Spec's executed Poise modifier; no callback-local `FGameplayEffectSpec*` survives the callback, so a later same-definition or reused-context Launch cannot steal an already-scheduled ordinary Poise break. Player Guard/Parry and immediate Player Guard Break remain outside this route.
-- AnimBP integration: `ABP_Player_Dungeon` and `ABP_Enemy_Goblin` integrate `ReactionOverlayGroup.ReactionOverlay` through `Layered blend per bone (spine_01)` downstream of action generation, allowing Small reactions to visually overlay active locomotion and attack actions without interrupting their gameplay execution or notify windows.
+#### Classification and event dispatch
 
-### Vital HUD And Enemy Bars
+`FHitReactionClassifier` is a pure classifier over exact `Data.Reaction.Small`,
+`Data.Reaction.Big`, and `Data.Reaction.Launch` AssetTags. No matching tag is a
+legal `None` result; more than one matching tier is `Invalid` and suppresses the
+reaction event while leaving the already-applied Health change intact.
 
-- `UPlayerVitalHUDWidget` and `UEnemyHealthBarWidget` are passive native UMG bases. They receive values from their owners, reject non-finite or non-positive-Max input to a zero display, and never own ASC delegates, gameplay mutation, target state, or input behavior.
-- `APolyQuestPlayerController` owns exactly one configured `UPlayerVitalHUDWidget` for a local Controller via `PlayerVitalHUDClass` (configured to `/Game/_UI/HUD/Vitals/WBP_PlayerVitalHUD`). Both `BeginPlay()` and `OnPossess()` use idempotent creation/binding; the bound Player ASC supplies Health, MaxHealth, Stamina, and MaxStamina through four attribute delegates, and dynamically dispatches `State.Status.Exhausted` gameplay tag events to drive HUD exhaustion presentation via `OnExhaustedTagChanged`. Every attribute callback takes one current snapshot for both HUD bars. `OnUnPossess()` removes both attribute and tag delegates, and `EndPlay()` removes the viewport Widget and clears the remaining references. This display subscription is separate from `APlayerCharacter`'s Health-driven reaction listener.
-- `APolyQuestPlayerController` also owns one local `UPlayerSkillBarHUDWidget` instance when its configured class is available. `BeginPlay()` and `OnPossess()` use the same idempotent create-then-bind route; `OnUnPossess()` unbinds it with the current Pawn, and `EndPlay()` removes it from the viewport. The skill bar is `HitTestInvisible`, does not change `GameAndUI` focus ownership, and has no activation, input, or gameplay-write path.
-- `UPlayerSkillBarHUDWidget` is a passive four-slot view over the current `UWeaponEquipmentComponent` and ASC. It holds weak references and delegate handles, subscribes to the Equipment final-composition notification and `State.Status.Dead`, and removes both in `Unbind()`/`NativeDestruct()`. While bound and visible, it re-queries the ASC's authoritative cooldown remaining/duration rather than keeping a local timer. A structurally empty slot remains `Empty`; a nonempty slot whose handle, Spec, ActorInfo, finite values, or class match is invalid becomes `Invalid`; a configured slot is `Cooldown` only for positive finite remaining/duration and otherwise `Ready`. Dead preserves the bar but displays configured slots as `Invalid`.
-- `UPlayerSkillSlotWidget` owns only UMG presentation: fixed number, grey background, optional cooldown overlay, and one lazily created sweep MID using scalar `CooldownPercent`. It clamps finite input to `[0,1]`, creates no timer, and hides the sweep when its material, MID, or binding is unavailable. `UWeaponEquipmentComponent::IsPreparedSlotEmpty()` exposes only the structural-empty question; its exact-handle query rejects stale/PendingRemove specs, and both the query and activation path validate the ability class against the prepared slot class.
-- `UPlayerVitalHUDWidget` implements the dark-fantasy / soul-like flat rectangular health bar and ghost buffer catch-up presentation (Ghost Health Buffer):
-  - **Layered Topology**: Background slot (deep dark bordered box) + Middle `HealthBufferProgressBar` (amber-gold buffer fill) + Top `HealthProgressBar` (deep red fill, transparent background). Text elements retain top Z-Order.
-  - **Damage & Catch-Up Lifecycle**: Strict damage (`DisplayPercent < TargetHealthPercent`) drops the red bar instantly (zero-delay drop snap) and starts `BufferDelayTimer = BufferCatchUpDelay` (defaults to `0.5s`). Once delay expires, `NativeTick` invokes `UpdateBufferHealth` to smoothly interpolate `CurrentBufferPercent` towards `TargetHealthPercent` via `FMath::FInterpTo` (`BufferCatchUpSpeed` defaults to `4.0f`) until convergence. Lethal damage (`DisplayPercent <= 0.001f`) immediately snaps both the health bar and buffer bar to `0.0f` without delay.
-  - **White Impact Crest (受击白光冲击断层)**: On strict damage, `HealthBufferProgressBar` triggers `BufferDamageFlashTimer = BufferDamageFlashDuration` (default `0.15s`) and immediately bursts to peak white (`FLinearColor(2.0f, 2.0f, 2.0f, Alpha)`). In `NativeTick`, `UpdateBufferDamageFlash` is decoupled from `BufferDelayTimer` (preventing freeze bugs during the 0.5s delay) and applies a 2-frame peak hold (`0.03s`) before decaying via quadratic fast decay (`Ratio^2`) back to `HealthBufferBaseColor`. This exposes an intense Sekiro/Wukong-style white crest separating the remaining health from the damage taken before the ghost buffer begins its smooth descent. Healing immediately resets the flash and restores base yellow.
-  - **Dynamic UMG Color Preservation**: In `NativeConstruct`, the widget queries `GetFillColorAndOpacity()` from `HealthBufferProgressBar` and `StaminaProgressBar` to dynamically cache base colors and alphas, ensuring zero hardcoded overwriting of artist-authored UMG asset palettes. If unassigned, defaults safely fall back to `#DDAA00` for buffer and `#2ECC71` for stamina.
-  - **Healing & Idempotent Contract**: Strict healing (`DisplayPercent > TargetHealthPercent`) sets `TargetHealthPercent`, immediately resets `BufferDelayTimer` to zero, and in `NativeTick` invokes `UpdateHealth` to smoothly interpolate `CurrentHealthPercent` towards `TargetHealthPercent` via `FMath::FInterpTo` (`HealthRegenInterpSpeed` defaults to `8.0f`). During healing, `CurrentBufferPercent` follows `CurrentHealthPercent` to ensure the buffer bar never lags behind rising health. When general attribute changes (such as continuous stamina regeneration) trigger redundant updates with unchanged health (`DisplayPercent == TargetHealthPercent`), ongoing buffer delay countdown and catch-up interpolation are strictly preserved without disturbance. When `HealthProgressBar` or `HealthBufferProgressBar` is unassigned, `NativeTick` acts as a safe no-op.
-- `UPlayerVitalHUDWidget` and `APlayerCharacter` implement the fully-decoupled Stamina Exhaustion presentation (Dark Green Fatigue State), Full Charge Flash, and Asymmetric Smooth Interpolation:
-  - **Stamina Topology**: `StaminaBarOverlay` houses `StaminaProgressBar` (base bright green fill) and an optional `StaminaExhaustedOverlay` (`BindWidgetOptional`, semi-transparent dark grey/black overlay with Fill alignment).
-  - **Asymmetric Smooth Interpolation (非对称平滑追赶)**: In `SetStamina`, initial setup snaps directly to current stamina. Subsequent stamina drains (e.g. continuous sprint consumption) update `TargetStaminaPercent`, which `NativeTick::UpdateStamina` catches up to via `FMath::FInterpTo` with fast drain speed `StaminaDrainInterpSpeed` (default `12.0f`) to soften discrete GAS periodic ticks into fluid continuous visual drain; natural recovery interpolates towards higher targets with gentle speed `StaminaRegenInterpSpeed` (default `6.0f`). Both health and stamina smoothing are permanent runtime mechanisms without toggle branches.
-  - **Zero-Snap Invariant (归零极限瞬断保护)**: When stamina depletes to or near zero (`DisplayPercent <= 0.001f`), `SetStamina` immediately overrides interpolation and snaps `TargetStaminaPercent`, `CurrentStaminaPercent`, and `StaminaProgressBar->SetPercent` directly to `0.0f` on the very same frame, guaranteeing zero latency, zero residual fill, and complete immunity to stale ghost stamina during exhaustion or failed actions.
-  - **Full Charge Flash (耐力回满轻充能微光)**: In `SetStamina`, natural recovery reaching full stamina (`LastStaminaPercent < 0.999f` to `DisplayPercent >= 0.999f`) arms `StaminaChargeFlashTimer = StaminaFullChargeFlashDuration` (default `0.20s`) and tints `StaminaProgressBar` to luminous fluorescent white-green (`StaminaFullChargeFlashColor`, default `#D5FFEA`). In `NativeTick`, `UpdateStaminaChargeFlash` smoothly fades out via quadratic ease-out (`Ratio^2`) back to `StaminaBaseColor`. Spawning/initializing at 100% and redundant full-stamina refreshes never trigger the flash; consuming stamina while the flash is active cancels it immediately.
-  - **Decoupled Tag Contract**: The HUD widget owns zero timers or threshold calculations. `APlayerCharacter` acts as the single source of truth for exhaustion duration (`ExhaustionMinimumDurationSeconds`, defaulting to `3.0s` and editable in character defaults). When stamina depletes to zero, `APlayerCharacter` adds loose tag `State.Status.Exhausted`, prompting Controller to call `SetExhausted(true)` which displays `StaminaExhaustedOverlay` (`HitTestInvisible`) to mutely dim the bright green bar into an exhausted dark green.
-  - **Recovery Synchronization**: Once the authoritative duration elapses and stamina recovers (or upon character death/teardown), `APlayerCharacter::ClearExhaustionState` removes the tag; the Controller immediately invokes `SetExhausted(false)`, collapsing the overlay (`Collapsed`) and restoring vibrant green without any hardcoded timing in the UI. When `StaminaExhaustedOverlay` is unassigned, `SetExhausted` safely acts as a no-op.
-- `UPlayerVitalHUDWidget` implements screen-space combat visual feedback via an optional fullscreen vignette layer (`LowHealthVignetteImage` bound via `BindWidgetOptional`):
-  - **Low Health Vignette Pulse (残血心跳呼吸红边)**: Triggered strictly by percentage (`TargetHealthPercent <= LowHealthThreshold`, default `0.25f` / 25%). In `NativeTick`, `UpdateVignette` smoothly ramps `LowHealthPulseWeight` to `1.0` and drives an oscillation wave `[LowHealthPulseMinAlpha (0.08), LowHealthPulseMaxAlpha (0.40)]` using a sine function with period `LowHealthPulsePeriod` (default `1.1s`), starting from trough (`-0.5*PI`) for natural breathing. When health recovers above 25%, `LowHealthPulseWeight` linearly fades out to `0.0` over `LowHealthFadeOutDuration` (default `0.5s`) to eliminate boundary flickering.
-  - **Damage Hit Vignette Flash (受击瞬间红晕闪烁)**: On strict damage (`DisplayPercent < TargetHealthPercent` and initialized), `DamageFlashTimer` arms to `DamageFlashDuration` (default `0.14s`) and executes an asymmetric Attack-Decay curve (fast sine-quarter ease-in ramp during initial 20% window to eliminate 1-frame strobe popping, followed by quadratic ease-out decay over remaining 80% window) with peak `DamageFlashMaxAlpha` (default `0.40f`), providing elastic, physical impact response without abrupt transitions.
-  - **Visual Composition & Center Clarity**: Flash and Pulse alphas are additively combined and clamped to `MaxAllowedVignetteAlpha` (default `0.45f`): `CurrentVignetteAlpha = FMath::Clamp(FlashAlpha + PulseAlpha, 0.0f, MaxAllowedVignetteAlpha)`. When active (`> 0.001f`), the widget sets `HitTestInvisible` and drives `SetRenderOpacity`; when zero, it collapses to `Collapsed` to eliminate full-screen draw calls while keeping center 70% viewport completely unobstructed. When `LowHealthVignetteImage` is unassigned, all vignette calculations safely act as a no-op.
-- `UPlayerVitalHUDWidget` implements micro-shake physics feedback for health impact and stamina action rejection (UI Micro-Shake Dynamics):
-  - **Topology & Fallback**: Binds `HealthBarOverlay` and `StaminaBarOverlay` (`BindWidgetOptional`). If the corresponding Overlay is unassigned, runtime translation falls back directly to `HealthProgressBar` or `StaminaProgressBar`, ensuring zero setup overhead across widget hierarchies.
-  - **Hit & Rejection Triggers**: Strict damage (`DisplayPercent < TargetHealthPercent` and initialized) invokes `PlayHealthShake()`; entering stamina exhaustion (`bIsExhausted && !bWasExhausted`) in `SetExhausted` invokes `PlayStaminaRejectionShake()`. Furthermore, when combat actions (Primary Attack, Sprint Attack, Sprint hold threshold, Prepared Ability Slots 1-4, Dodge) fail activation while `State.Status.Exhausted` or zero-stamina is active, `APlayerCharacter` dispatches `NotifyStaminaActionRejected()` via `APolyQuestPlayerController` to re-trigger `PlayStaminaRejectionShake()`, providing crisp haptic rejection feedback on every rejected input attempt.
-  - **Damped Harmonic Oscillation**: In `NativeTick`, `UpdateShake` calculates vertical displacement (Y-axis) via quadratic-decay damped harmonic oscillation: `OffsetY = ShakeMaxDisplacement * Square(RemainingTimer / ShakeDuration) * Sin((ShakeDuration - RemainingTimer) * ShakeFrequency * 2 * PI)`. Default tuning is parameterized via `ShakeMaxDisplacement = 4.0f` (pixels), `ShakeDuration = 0.16f` (seconds), and `ShakeFrequency = 25.0f` (Hz). Initial displacement jolts downwards (+Y) upon impact/rejection and harmonically dampens back to rest.
-  - **Zero-Drift Invariant**: The final frame of shake evaluation when timer hits zero explicitly resets translation to `(0.0, 0.0)`, guaranteeing complete absence of cumulative subpixel translation drift or layout misalignment. Repeat triggers cleanly re-arm the timer without unbounded displacement stacking.
-- Each `AEnemyCharacter` owns one collision-disabled Screen Space `EnemyHealthBarWidgetComponent` attached to its root, with a native default pivot `(0.5, 1.0)`, relative Z offset `130`, and draw size `160x20`. It binds only Health and MaxHealth, refreshes an optional typed Widget weak reference, and treats an unconfigured/wrong/headless Widget as a display-only fail-closed case. Enemy Blueprint assets own final Widget class and placement tuning. `UEnemyHealthBarWidget` implements subtle hit impact micro-shake and white hit flash (Enemy Hit Micro-Shake & Hit Flash Dynamics):
-  - **Hit Detection & Trigger**: Strict damage (`DisplayPercent < TargetHealthPercent` and initialized) triggers `PlayHitShake()` and arms `HitFlashTimer = HitFlashDuration` (default `0.15s`), instantly setting `HealthProgressBar` to peak white (`FLinearColor(2.0f, 2.0f, 2.0f, Alpha)`); healing and unchanged health do not shake or flash.
-  - **Peak Hold & Decay**: In `NativeTick`, `UpdateHitFlash` applies a 2-frame peak hold (`0.03s`) before decaying via quadratic fast decay (`Ratio^2`) back to `HealthBaseColor` (dynamically captured from UMG via `GetFillColorAndOpacity()`, fallback `#E74C3C`). This delivers immediate tactile hit feedback on existing single-bar enemy widgets without requiring phantom buffer controls.
-  - **Restrained Vertical Kinetics**: In `NativeTick`, `UpdateShake` calculates vertical displacement (Y-axis) via quadratic damped harmonic oscillation with restrained tuning: `ShakeMaxDisplacement = 3.0f` (pixels), `ShakeDuration = 0.12f` (seconds), and `ShakeFrequency = 28.0f` (Hz). It jolts downwards (+Y) on hit to provide immediate tactile impact confirmation before dampening back to `(0.0, 0.0)`.
-  - **Zero-Drift & Fallback**: Binds `HealthBarOverlay` (`BindWidgetOptional`) and falls back directly to `HealthProgressBar`, with explicit zero-reset at expiry ensuring no floating translation offset.
-  - **Overhead Bar Auto-Hide & Tri-State Fade-out Dynamics**:
-    - *Spawn Baseline*: When `bAutoFadeEnabled` is true, an initial full-health state sets `CurrentRenderOpacity = 0.0f` and `AutoFadeTimer = 0.0f`. `NativeConstruct()` and the initial `SetHealth()` path both apply the initial render opacity.
-    - *Damage Wakeup & Lock-On Retention*: Strict damage (`DisplayPercent < TargetHealthPercent`) sets `CurrentRenderOpacity = 1.0f` and `AutoFadeTimer = AutoFadeDelay` (default `4.0s`). While lock-on is active, `UpdateAutoFade()` refreshes `AutoFadeTimer` and keeps opacity at `1.0f`.
-    - *Tri-State Unlock Transition*: When lock-on clears (`SetLockOnHighlighted(false)`), full health (`TargetHealthPercent >= 0.999f`) sets `AutoFadeTimer = 0.0f`; injured health (`TargetHealthPercent < 0.999f`) retains `AutoFadeDelay`. Once the timer expires, opacity interpolates to zero over `FadeOutDuration` (default `0.5s`).
-    - *Idle Gate*: `UpdateAutoFade()` returns when `CurrentRenderOpacity <= 0.0f`, `AutoFadeTimer <= 0.0f`, and `!bIsLockOnHighlighted`. `UpdateShake()` and `UpdateHitFlash()` independently skip work when their timers are inactive.
-    - *Initialization*: `CurrentRenderOpacity` defaults to `0.0f`; `NativeConstruct()` and the initial `SetHealth()` branch provide the native initialization paths.
-- `HandleDeath()` recursively hides the Enemy component before corpse presentation; `EndPlay()` first unbinds its UI delegates, hides the component, and clears the Widget reference. UI therefore has no second Health authority and no surviving callback path after character teardown.
+`APlayerCharacter::OnHealthAttributeChanged()` and
+`AEnemyCharacter::OnHealthAttributeChanged()` are the authoritative dispatch
+boundaries. They require authority, a strict Health decrease, and non-null
+`GEModData`; healing, direct/unchanged writes, and teardown do not enter this
+route. A single `FGameplayEffectSpec` that contains multiple Health modifiers is
+de-duplicated so feedback and reaction are emitted at most once per Spec.
 
-### Combat Hit Feedback
+- Player lethal Health returns without dispatching a reaction (there is no native
+  Player death pipeline in this scope). For a living Player, Small/Big/Launch
+  dispatch `Event.Reaction.Player.Small`, `.Big`, or `.Launch`.
+- Enemy lethal Health is resolved before reaction classification and enters the
+  Dead/DeathPending rules below. For a living Enemy, Small/Big/Launch dispatch
+  `Event.Reaction.Enemy.Small`, `.Big`, or `.Launch`.
+- Enemy reaction dispatch skips an existing `State.Status.Stunned` or broken
+  Poise state. The one exception is a Launch modifier from the same effect that
+  performed the Poise-breaking modifier, allowing that combined GE to finish its
+  intended Launch handoff. Invalid tier combinations are logged and fail closed.
+- Each event carries the effect instigator, the target, the damage delta in
+  `EventMagnitude` (`OldHealth - NewHealth`), and the original
+  `EffectContextHandle`. The target ASC, not the resolver or a Widget, activates
+  the matching reaction Ability.
 
-- `UCombatFeedbackDataAsset` is the abstract authored root for a character feedback profile and contains only the shared Overlay material/duration. `UPlayerCombatFeedbackDataAsset` owns Player received/attacker Camera Shake, received-hit sound, Guard/Parry sound plus Parry Hit-Stop, and the optional Execution attacker-impact Camera Shake; `UEnemyCombatFeedbackDataAsset` owns Enemy impact sound/blood, Small/Big/Launch impact Hit-Stop, and the Execution Hit-Stop duration/dilation pair. These DataAssets store no World, ASC, GameplayEffect, timer, active shake, or other runtime state.
-- `ABaseCharacter` owns the one protected global Mesh Overlay lifecycle shared by Player and Enemy and reads only the profile's Overlay fields. The first eligible hit caches the current global Overlay; repeat hits reset the same Timer. Timer expiry and `EndPlay()` restore the cached value only while B1 still owns the active Overlay, so a newer external presentation Overlay is left intact. Player and Enemy invoke that helper only after their authoritative Health delegate proves a valid nonlethal decrease from `GEModData`; healing, direct Attribute writes, Poise-only effects, lethal/dead state, destruction, and teardown do not flash.
-- `APlayerCharacter` remains the owner of local received-hit, ordinary attacker-impact, and Execution attacker-impact Camera Shake instances plus received-hit sound, reading only through `GetPlayerCombatFeedbackData()`. Same-class hits restart the active shake; a tier/class change stops the prior instance before starting the new one; `UnPossessed()`/`EndPlay()` clear active camera state. Execution shake is requested only after an authorized execution Hit has passed its context/ASC/actor/team/state checks; a missing Execution class is a silent no-op and never borrows a tier class. `None`/`Invalid` received tiers are no-op, and the existing per-Spec Health-modifier de-duplication keeps received-hit sound single-dispatch.
-- `UCameraModifier_FovPunch` is the native camera modifier for hit-impact optical compression:
-  - **Native Pipeline**: Derives from `UCameraModifier` and overrides `ModifyCamera(float DeltaTime, struct FMinimalViewInfo& InOutPOV)`. It adds `CurrentPunchOffset` to `InOutPOV.FOV`; the `FollowCamera->FieldOfView` property is not mutated by the modifier.
-  - **Kinetics & Bounds**: `MaxPunchDegrees` defaults to `3.0f`, so the default cumulative offset range is `[-3.0f, 0.0f]`. `ModifyCamera` recovers toward zero with `FMath::FInterpTo` at the default `RecoveryInterpSpeed = 18.0f`; when `FMath::IsNearlyZero(CurrentPunchOffset, 0.005f)`, it snaps the offset to zero and deactivates the modifier.
-  - **Lifecycle & Find-or-Add**: Registered lazily on the local `APlayerCameraManager` via `APlayerCharacter::TriggerCameraFovPunch(float PunchDegrees)`. The registration path calls `FindCameraModifierByClass(UCameraModifier_FovPunch::StaticClass())` and calls `AddNewCameraModifier` only when no existing modifier is found.
-  - **Leaf-Node Dispatch**: FOV Punch is dispatched at the following presentation leaves:
-    - Player Received Hit (`APlayerCharacter::OnHealthAttributeChanged`): Small tier triggers `0.0f` deg (no optical punch); Big/Launch tier triggers `1.5f` deg.
-    - Player Attacker Hit (`APlayerCharacter::TriggerAttackerImpactCameraShake`): Small tier triggers `0.0f` deg (no optical punch); Big/Launch tier triggers `1.5f` deg.
-    - Player Execution Attacker Hit (`APlayerCharacter::TriggerExecutionImpactCameraShake`): Triggers `2.0f` deg.
-    - Player Parry Success (`APlayerCharacter::TriggerParrySuccessCameraShake`): Triggers `1.8f` deg.
-- `APolyQuestPlayerController` is the single owner of the global Hit-Stop lifecycle. Ordinary and Execution impact paths request hit-stop via `RequestCombatImpactHitStop(DurationSeconds, TimeDilation)` and retain the existing monotonic arbitration, real-time expiry, external-dilation preservation, and teardown cleanup contract.
-- `AEnemyCharacter` owns impact sound and blood Niagara presentation and reads only through `GetEnemyCombatFeedbackData()`. It keeps the exact `Team.Player` boundary, `ImpactPoint`/ActorLocation fallback, `ImpactNormal` validation, lethal-before-Dead ordering, and per-Spec Health-modifier de-duplication; invalid hit-stop values skip only that request. During an authorized execution Hit scope, both lethal and nonlethal Health branches suppress ordinary impact channels, and the post-scope Execution path dispatches the typed Execution Hit-Stop plus the shared sound/blood channels once. `UPlayerGuardAbility` reads `UPlayerCombatFeedbackDataAsset::Defense.GuardSuccessSound`, while `UPlayerParryAbility` reads the Player Defense Parry sound/hit-stop fields and continues to call the Player's Big received-hit Camera Shake wrapper.
-- GameplayCue is deliberately excluded in single-player v1; feedback is driven directly by the authoritative Health delegate, defense contact path, and GE context. A missing or wrong typed profile emits at most one character-local diagnostic and fail-closes only role-specific channels; the shared Base Overlay remains available on a wrong typed profile. Empty optional Sound, Niagara, or Camera Shake fields are silent no-ops. None of these cases alter Health, Poise, damage, death, contact consumption, or Ability cleanup; no cross-character generic dispatcher, per-enemy hierarchy, or compatibility fallback is present.
+`FHitReactionImpactResolver` supplies the target-local planar
+`Target -> Attacker` direction. It prefers the finite actor-center line and
+falls back to a finite `ImpactNormal`; invalid or coincident input returns
+`ZeroVector`. Directional four-way montage selection remains an
+[Authored asset] dependency.
 
-### Gameplay Tags
+#### Small reaction
 
-- Project tags are config-authored in `Config/Tags/PolyQuestGameplayTags.ini`; there is no native tag singleton or Blueprint tag library in this stage.
-- The approved leaf tags are `Ability.Attack.Light`, `Ability.Attack.Primary`, `Ability.Attack.Charged`, `Ability.Attack.Sprint`, `Ability.Attack.Enemy.Melee`, `Ability.Reaction.Enemy.Big`, `Ability.Reaction.Enemy.Launch`, `Ability.Reaction.Enemy.Small`, `Ability.Reaction.Enemy.StanceBreak`, `Ability.Reaction.Player.Big`, `Ability.Reaction.Player.Launch`, `Ability.Reaction.Player.Small`, `Ability.Dodge`, `Ability.Movement.Jump`, `Ability.Movement.Sprint`, `Data.Damage.Charged`, `Data.Poise.Charged`, `Data.Poise.Recovery`, `Data.Reaction.Small`, `Data.Reaction.Big`, `Data.Reaction.Launch`, `Event.AI.Target.Acquired`, `Event.AI.Target.Lost`, `Event.Reaction.Enemy.Big`, `Event.Reaction.Enemy.Launch`, `Event.Reaction.Enemy.Small`, `Event.Reaction.Enemy.StanceBreak`, `Event.Reaction.Launch.Commit`, `Event.Reaction.Player.Big`, `Event.Reaction.Player.Launch`, `Event.Reaction.Player.Small`, `Event.Attack.Bow.DrawReady`, `Event.Attack.Bow.Release`, `Event.Attack.Light.Combo.InputWindow.Begin`, `Event.Attack.Light.Combo.InputWindow.End`, `Event.Attack.Light.Combo.BranchWindow.Begin`, `Event.Attack.Light.Combo.BranchWindow.End`, `Event.Attack.Charged.HoldReady`, `Event.Attack.Charged.ReleaseHandoff`, `Event.Attack.TraceWindow.Begin`, `Event.Attack.TraceWindow.End`, `Event.Action.CancelWindow.Dodge.Begin`, `Event.Action.CancelWindow.Dodge.End`, `Event.Dodge.Invulnerability.Begin`, `Event.Dodge.Invulnerability.End`, `Event.Input.Canceled`, `Event.Input.Pressed`, `Event.Input.Released`, `Input.AbilitySlot.1` through `.4`, `Input.Aim`, `Input.PrimaryAttack`, `State.Action.Attacking`, `State.Action.CanCancel.Dodge`, `State.Action.Charging`, `State.Action.Dodging`, `State.Action.HitReacting`, `State.Action.SmallHitReacting`, `State.Input.Block.Movement`, `State.Input.Block.Jump`, `State.Movement.Sprinting`, `State.Resource.Stamina.RegenBlocked`, `State.Status.Dead`, `State.Status.Exhausted`, `State.Status.Invulnerable`, `State.Status.Stunned`, `Team.Player`, and `Team.Enemy`.
-- D1 additionally registers `Ability.Defense.Guard`, `Ability.Reaction.Player.GuardBreak`, `Data.Stamina.GuardDamage`, `Event.Reaction.Player.GuardBreak`, `Input.Guard`, `State.Action.Guarding`, and `State.Action.CanCancel.Defense`.
-- TODO-03A6B additionally registers `Ability.Defense.Guard.Shield` and `State.Action.Guarding.Shield`. The former identifies the authored Shield Guard Ability; the latter is its active runtime child state, not a persistent equipment tag. It intentionally matches the generic Guard parent through normal GameplayTag hierarchy.
-- D2 additionally registers `Ability.Defense.Parry`, `Cooldown.Parry`, `Data.Poise.Parry`, `Event.Defense.Parry.Window.Begin`, `Event.Defense.Parry.Window.End`, `Input.Parry`, `State.Action.ParryActive`, and `State.Action.Parrying`.
-- D3 additionally registers `Event.Attack.HyperArmor.Begin`, `Event.Attack.HyperArmor.End`, and `State.Status.HyperArmor`.
-- The current project Config contains 111 PolyQuest tags. The compact list above is supplemented by `Ability.Action.CancelableBy.Dodge`, `Ability.Action.CancelableBy.Defense`, `Ability.Action.CancelableBy.Reaction`, `Ability.Action.Teardown.OnUnpossess`, `Ability.Defense.Parry.Shield`, `Ability.Skill.Whirlwind`, `Cooldown.Skill.Whirlwind`, `Event.Action.RateWindow.Begin`, and `Event.Action.RateWindow.End`; `Input.AbilitySlot.1 through .4` denotes all four configured slot tags. The retired `Ability.Skill.Melee` tag is intentionally absent. The complete set remains authoritative in `Config/Tags/PolyQuestGameplayTags.ini`.
-- TODO-05A1 additionally registers `Ability.Action.Execution.Front`, `Ability.Action.Execution.Backstab`, `Ability.Action.Execution.Victim`, `Event.Action.Execution.Hit`, `Event.Action.Execution.Release`, `Event.Action.Execution.Request.Front`, `Event.Action.Execution.Request.Backstab`, `Event.Action.Execution.Request.Release`, `Event.Action.Execution.Request.VictimStart`, `State.Action.Execution.PlayerLocked`, `State.Action.Execution.VictimLocked`, and `State.Status.DeathPending`; these tags remain owned by the corresponding execution Ability/session paths.
-- Plugin and native test tag sources remain engine/plugin-owned and are not part of the PolyQuest taxonomy.
+`UPlayerSmallHitReactionAbility` and `UEnemySmallHitReactionAbility` are
+`InstancedPerActor`, `ServerOnly`, Gameplay-Event abilities triggered by their
+matching Small event. Both set `bRetriggerInstancedAbility = true`, own
+`State.Action.SmallHitReacting`, and block activation while Dead or Stunned.
+They do not change CharacterMovement, cancel an attack, or add movement/input
+locks. A validated four-way Montage is played through
+`UAbilityTask_PlayMontageAndWait`; completion, interruption, cancellation,
+invalid startup, retrigger replacement, and teardown remove the old callbacks
+and converge on idempotent `EndAbility()`. The four Montage references and
+their overlay-slot wiring are [Authored asset] / [Not verified in this pass].
 
-## Explicit Product Boundaries
+#### Big reaction and safe interrupt
 
-This document describes only established runtime ownership and data flow. Player death/reload persistence, durable inventory and rewards, multiplayer/PlayerState ownership, GameplayCue adoption, broad weapon-family targeting, and unbounded Motion Warping are not current architecture contracts. Their adoption criteria and order live in ROADMAP.md; historical rationale and validation receipts live in ROADMAP-archive.md. Nothing in this section authorizes implementation or asset migration.
+`UPlayerBigHitReactionAbility` and `UEnemyHitReactionAbility` are grounded,
+`InstancedPerActor`, `ServerOnly` Gameplay-Event abilities. They own
+`State.Action.HitReacting` and require a complete directional Montage set and a
+grounded CharacterMovement state before activation. Only after the selected
+Montage is confirmed active do they stop current velocity, capture and disable
+`bCanWalkOffLedges`, bind `MovementModeChanged`, and cancel their permitted
+active abilities (Enemy melee/Small reaction; Player's configured action set).
+Falling ends the reaction and restores only the captured ledge setting. Montage
+Root Motion is the presentation displacement source; these abilities do not use
+`DisableMovement()`, force `MOVE_Walking`, impulses, or Motion Warping as a
+replacement movement path. Montage/task delegates and all abnormal exits are
+cleaned by `EndAbility()`.
+
+#### Notify-timed Hyper Armor
+
+`UAnimNotifyState_EnemyHyperArmor` is timing-only. It emits
+`Event.Attack.HyperArmor.Begin` / `.End` through the mesh owner's ASC and puts
+the source Animation in `OptionalObject`; it does not mutate Attributes,
+Movement, Collision, Controller, or AI directly.
+
+The active `UEnemyMeleeAbility` is the sole owner of the loose
+`State.Status.HyperArmor` contribution. It accepts a Begin/End only when the
+event belongs to the current started attack, the current Avatar is both
+Instigator and Target, and the source Animation matches the active attack
+Montage (or its accepted sequence identity). EndAbility, Montage end, and
+duplicate/late events clear the contribution before attack task cleanup.
+Enemy Big and Launch reactions are blocked while this tag is present; Stance
+Break and terminal Dead teardown are not blocked by it and cancel the melee
+owner, which clears the tag. Hyper Armor has no separate Trace, Resolver,
+StateTree, or Player-side state machine.
+
+#### Poise recovery and Stance Break
+
+`UCharacterAttributeSet` only clamps Poise. `AEnemyCharacter::OnPoiseAttributeChanged()`
+owns the server-side recovery and zero-crossing dispatch. A nonlethal partial
+depletion clears/restarts one recovery timer, governed by `PoiseRecoveryDelaySeconds`,
+`PoiseRecoveryRate`, and `PoiseRecoveryTickIntervalSeconds`. Each tick applies the
+configured Instant GameplayEffect with SetByCaller `Data.Poise.Recovery` and
+stops when Poise is full/zero, the enemy is Dead/Stunned, configuration is
+invalid, or the effect fails to advance the value. Poise is never restored by a
+direct Attribute write in this path.
+
+A positive-to-zero crossing schedules one next-tick
+`Event.Reaction.Enemy.StanceBreak` dispatch, allowing all modifiers of the same
+GE to settle first. The deferred check requires authority, a living enemy with
+positive Health, still-broken Poise, and a valid recovery configuration. The
+effect definition/context pair is copied only as a short-lived correlation
+key; no callback-local `FGameplayEffectSpec*` is retained. Lethal Health wins
+over Stance Break under any modifier order. If no Stance Break Ability accepts
+the event, the character logs and restores Poise through the same recovery GE so
+it cannot remain permanently broken.
+
+`UEnemyStanceBreakAbility` is `InstancedPerActor`, `ServerOnly`, and
+Gameplay-Event triggered. It owns `Ability.Reaction.Enemy.StanceBreak` and
+`State.Status.Stunned`, blocks Dead/Stunned/VictimLocked activation, and only
+after its Montage is confirmed active disables movement and cancels Enemy
+Melee, Big, Small, and Launch reaction Abilities. Its optional
+`Event.Action.RateWindow.Begin/End` listeners change Montage playback rate only;
+`FAbilityMontageRateWindowLifecycle` validates source identity and restores the
+captured baseline. EndAbility invalidates the callback token, restores rate,
+stops/ends tasks, restores walking and full Poise only while this Ability still
+owns those locks, and leaves movement/Poise recovery to the execution Victim
+Ability when `State.Action.Execution.VictimLocked` is present. Unpossession
+selects only Abilities carrying `Ability.Action.Teardown.OnUnpossess`.
+
+#### Launch reaction
+
+`UPlayerLaunchReactionAbility` and `UEnemyLaunchReactionAbility` are matching
+`InstancedPerActor`, `ServerOnly` Gameplay-Event abilities. Their actual Native
+phase enum is:
+
+~~~text
+None -> Takeoff -> TurningToLaunch -> AwaitingAirborne -> Airborne -> LandingRecovery
+~~~
+
+Before the Takeoff Montage starts, each freezes the target-local impact
+direction and reference Yaw. `Event.Reaction.Launch.Commit` is accepted only
+from the current Avatar and the active Takeoff Montage or its contained
+sequence. The event pauses the Takeoff Montage; a facing task completes the
+frozen turn, then `LaunchCharacter()` and CharacterMovement own capsule
+displacement. `MovementModeChanged` is the fast path into Falling, with a
+watchdog governed by `AirborneTransitionGraceSeconds` /
+`EnemyAirborneTransitionGraceSeconds` for a commit that never becomes airborne.
+Landing stops the paused Takeoff, clears residual movement once, and starts the
+authored LandingRecovery Montage. No repeated direct actor-location writes are
+used for flight.
+
+Only the Player launch Ability listens to the existing Dodge cancel-window
+events, and only during `LandingRecovery` from the matching recovery Montage.
+It exposes one scoped `State.Action.CanCancel.Dodge` contribution; there is no
+Player air Dodge, Enemy recovery Dodge, or generic reaction-cancel layer.
+Montage/task/delegate cleanup, ledge-setting restoration, frozen snapshots,
+watchdog failure, renewed Falling, death, destruction, and teardown all converge
+on `EndAbility()`. A natural Enemy LandingRecovery end releases the pending
+Poise/Stance-Break deferral; an abnormal end clears it and restores Poise when
+the living enemy remains at zero.
+
+#### Enemy death and teardown
+
+`State.Status.Dead` is the Enemy terminal source of truth. On an ordinary lethal
+Health change, `AEnemyCharacter` keeps Health at `0`, sets the Dead loose-tag
+count to one, stops StateTree/navigation/target/focus, cancels all enemy ASC
+Abilities, stops and disables CharacterMovement, and then optionally starts
+ragdoll. Dead handling is idempotent and clears Poise recovery, pending Stance
+Break timers/deferrals, lock-on highlight, UI bindings, and invalidated Player
+Motion-Warp targets. The AttributeSet clamps Health but does not choose this
+terminal path.
+
+An authorized paired execution hit follows a delayed route: Health remains `0`,
+the Victim owns `State.Status.DeathPending`, and only the authenticated
+`Release` calls `CommitExecutionDeath()`, which then enters the same
+`SetDeadState -> HandleDeath -> CancelAllAbilities -> StartDeathRagdoll` chain.
+DeathPending is not a revival state; healing is reset to zero and ordinary
+non-execution lethal damage still dies immediately.
+
+Ragdoll is attempted only when enabled and a SkeletalMesh Physics Asset exists.
+The Capsule becomes `NoCollision`, the mesh uses the `Ragdoll` profile and
+simulates physics, and the optional directional velocity change is consumed at
+most once. `DeathRagdollImpulseBoneName == NAME_None` or a missing/non-simulated
+bone applies no extra impulse; the code does not assume a pelvis/torso bone.
+Bone choice, Physics Asset contents, death Montage/AnimBP, and final corpse
+appearance are [Authored asset] / [Not verified in this pass].
+
+Player has no native terminal death teardown in this scope; its lethal Health
+callback intentionally emits no reaction event.
+
+### Feedback boundary
+
+#### Profiles and overlay
+
+`UCombatFeedbackDataAsset` is the abstract shared profile root. It owns only the
+optional hit Overlay material and its duration governed by
+`HitFeedbackOverlayDurationSeconds`, while `UPlayerCombatFeedbackDataAsset` and
+`UEnemyCombatFeedbackDataAsset` add role-specific camera shake, sound, hit-stop,
+and blood/Niagara references. These assets store no ASC, GameplayEffect, timer,
+or active presentation state.
+
+`ABaseCharacter::TriggerHitFeedbackOverlay()` is a short-lived presentation
+bridge. On a valid nonlethal Health decrease the character caches the previous
+mesh Overlay, applies the configured material, and restores the cached value on
+timer expiry only if the character still owns that Overlay. EndPlay clears the
+timer and state. Missing or invalid shared profile data is a presentation
+no-op; it never changes Health, Poise, damage, or Ability cleanup.
+
+#### Player impact channels
+
+`APlayerCharacter::OnHealthAttributeChanged()` drives received-hit Overlay,
+typed tier Camera Shake, FOV punch, and (once per Health-modifier Spec)
+received-hit sound after the authority, living-target, and enemy-team checks.
+`None` and `Invalid` tiers do not start a reaction Camera Shake. Big/Launch
+received and attacker impacts request an FOV punch; Parry success requests the
+typed Big shake plus FOV punch; authorized execution impact uses the dedicated
+execution shake plus FOV punch. A missing or wrongly typed Player profile
+suppresses only these typed channels.
+
+`UCameraModifier_FovPunch` is a local presentation leaf. It adds a bounded
+negative offset to `FMinimalViewInfo::FOV` during `ModifyCamera()` and never
+mutates `FollowCamera->FieldOfView`. The cumulative punch is clamped by
+`MaxPunchDegrees` and recovers toward zero at `RecoveryInterpSpeed`. The Player
+finds or adds one modifier on its local camera manager and the modifier
+deactivates at a near-zero offset.
+
+#### Enemy impact channels
+
+`AEnemyCharacter::HandleCombatImpactFeedback()` accepts only an exact
+`Team.Player` instigator. It dispatches Player attacker impact shake, then reads
+the typed Enemy profile for tier hit-stop, impact sound, and blood Niagara. Each
+tier and Execution defines `ImpactHitStopDurationSeconds` and
+`ImpactHitStopTimeDilation` on the profile.
+Sound uses a finite `ImpactPoint` when available and otherwise ActorLocation;
+blood requires a finite non-zero ImpactNormal and orients the system from that
+normal. A single Spec's multiple Health modifiers are de-duplicated. During an
+authorized execution Hit scope, ordinary impact channels are suppressed and
+the typed execution channels are dispatched once after the scope validates.
+
+#### Global hit-stop ownership
+
+`APolyQuestPlayerController` is the sole global hit-stop owner. Valid requests
+reject non-finite values, arbitrate overlapping requests monotonically (lower
+time dilation wins and the later real-time expiry wins), and use unscaled real
+time for expiry. If another system changes global dilation, the controller
+relinquishes its old request without overwriting that external value; teardown
+restores the recorded baseline only when the controller still owns the applied
+dilation.
+
+GameplayCue is not the current Native feedback route. Concrete sound, Niagara,
+material, color, rendering, and timing assignments remain [Authored asset] /
+[Not verified in this pass].
+
+### UI ownership
+
+`APolyQuestPlayerController` idempotently creates the local Player Vital HUD,
+Skill Bar HUD, and World Interaction Prompt in `BeginPlay()`/`OnPossess()`. It
+skips creation on a dedicated server, binds the current Player ASC, and removes
+all attribute/tag/equipment delegates plus viewport widgets on UnPossess and
+EndPlay. The Controller also forwards rejected-stamina feedback to the Vital
+widget; it does not own gameplay state.
+
+| UI type | Responsibility |
+| --- | --- |
+| UPlayerVitalHUDWidget | Passive display/animation layer; reads Controller snapshots and owns no ASC, input, or gameplay mutation |
+| UPlayerSkillBarHUDWidget | Reads prepared slots/cooldowns from Equipment and ASC; no independent gameplay timer |
+| UWorldInteractionPromptWidget | Passive candidate text/view; no input or equipment mutation |
+| Enemy health bar component | Enemy-owned screen-space component with configured draw size, relative Z, and collision disabled |
+
+`UPlayerVitalHUDWidget` rejects non-finite or non-positive-Max inputs to a zero
+display:
+- **Health smoothing & zero-snap**: Health damage snaps the main bar immediately.
+  The optional buffer bar waits for `BufferCatchUpDelay` then catches up via
+  `FMath::FInterpTo` at `BufferCatchUpSpeed`. Healing interpolates the main bar at
+  `HealthRegenInterpSpeed`, while the buffer bar leads or matches healing and never
+  lags behind it. When Health reaches or drops below the zero threshold, both
+  main and buffer bars snap to zero immediately on the same frame.
+- **Stamina asymmetric interpolation & Zero-Snap Invariant**: Stamina drains
+  catch up via `FMath::FInterpTo` at `StaminaDrainInterpSpeed` to soften discrete
+  GAS periodic ticks into fluid continuous visual drain; natural recovery
+  interpolates toward higher targets at `StaminaRegenInterpSpeed`. When Stamina
+  depletes to or below the zero threshold, `SetStamina` overrides interpolation
+  and immediately snaps `TargetStaminaPercent`, `CurrentStaminaPercent`, and the
+  progress bar directly to zero on the very same frame (Zero-Snap Invariant),
+  guaranteeing zero latency, zero residual fill, and complete immunity to stale
+  ghost stamina during exhaustion or failed actions.
+- **Exhaustion & feedback**: Reaching full stamina arms the optional charge flash.
+  The `StaminaExhaustedOverlay` is toggled strictly by the Controller's
+  `State.Status.Exhausted` tag callback, not a UI timer. Optional low-health
+  vignette and vertical micro-shake are display-only, governed by
+  `LowHealthThreshold`, `LowHealthPulsePeriod`, `DamageFlashDuration`, and
+  micro-shake tuning properties.
+
+Each Enemy owns one collision-disabled Screen-space
+`EnemyHealthBarWidgetComponent` with pivot `(0.5, 1.0)`. It binds only
+Health/MaxHealth, exposes lock-on highlight, and hides/unbinds on death or
+EndPlay. The widget's optional hit flash/shake and auto-fade are display
+behavior: damage wakes the bar, lock-on keeps it visible, and full-health unlock
+can enter the auto-fade path governed by `AutoFadeDelay` and `FadeOutDuration`.
+The configured Widget classes, hierarchy, bindings, animations, fonts, colors,
+and final appearance are [Authored asset] / [Not verified in this pass].
+
+The Skill Bar (`UPlayerSkillBarHUDWidget`) manages four index-aligned slots. Each
+refresh validates the Equipment slot's exact prepared handle, current component
+ownership, class identity, ASC actor info, and Dead state before evaluating one
+of four discrete display states (`EPlayerSkillSlotDisplayState`):
+- **`Empty`**: Structurally empty prepared slot (`IsPreparedSlotEmpty(SlotIndex) == true`).
+  When the bar itself does not yet have both a bound Equipment component and
+  ASC, all slots also use Empty as the safe neutral reset state.
+- **`Invalid`**: A non-empty slot whose binding is invalid, including a dead
+  Player, invalid ASC or ActorInfo, missing Spec, Spec marked `PendingRemove`,
+  Ability class mismatch, or non-finite / implementation-rejected cooldown query
+  results.
+- **`Cooldown`**: Evaluated when `Duration > 0` and `Remaining` exceeds the
+  implementation zero-threshold; displays the normalized cooldown progress ratio
+  (`Remaining / Duration`).
+- **`Ready`**: Evaluated when `Remaining` is within the implementation
+  zero-threshold and `Duration >= 0`.
+
+Cooldown time remaining and duration are queried through the bound Ability,
+exact Handle, and ASC ActorInfo; the widget maintains no local gameplay logic
+timer.
+
+---
+
+## Gameplay Tag taxonomy
+
+`Config/Tags/PolyQuestGameplayTags.ini` is the sole authority for tag spelling
+and membership. This architecture document does not maintain aggregate tag
+totals or counts per family.
+
+| Family | Role |
+| --- | --- |
+| Ability | Ability identity and activation/cancellation policy |
+| State | Runtime action, input, movement, resource, and status state |
+| Event | Semantic gameplay event ingress/egress |
+| Input | Input intent routing |
+| Data | SetByCaller / Effect payload data |
+| Cooldown | Effect-granted cooldown state |
+| Team | Combat team identity |
+
+Important ownership distinctions:
+
+| Contract | Tag form |
+| --- | --- |
+| Victim execution ability identity | Ability.Action.Execution.Victim |
+| Victim paired-lock state | State.Action.Execution.VictimLocked |
+| Player paired-lock state | State.Action.Execution.PlayerLocked |
+| Player exhaustion state | State.Status.Exhausted |
+| Delayed lethal execution state | State.Status.DeathPending |
+| Combat team identity | Team.Player, Team.Enemy |
+
+New C++ requests and authored Ability/Effect data must use exact config tags.
+Do not create spelling variants or turn an Ability.* identity tag into a State.*
+lifetime tag.
+
+---
+
+## Non-goals and authored dependencies
+
+### Current non-goals
+
+- This ledger establishes no multiplayer runtime contract and does not introduce
+  replication, prediction, rollback, or server/client ownership layers for
+  future use.
+- GAS remains the only combat-state authority. A controller, StateTree,
+  Blueprint variable, or AnimBP flag cannot become a parallel action state
+  machine.
+- Lock-on retention hysteresis is not a global target-acquisition relaxation,
+  target-cycle relaxation, or projectile-homing rule.
+- ARCHITECTURE.md is not a TODO list, an implementation diary, an execution
+  record, or proof of a successful user validation run.
+
+### Dependencies requiring separate evidence
+
+The following are intentionally not represented as verified Native runtime
+truth in this pass:
+
+- A fresh Editor readback of the current StateTree asset tree and transition
+  wiring, including ST_Enemy_Goblin_Melee; the historical behavior topology
+  above is retained as qualified authored-asset evidence.
+- Blueprint parentage/graphs, Enhanced Input Mapping Context topology, and
+  placed map actors.
+- Gameplay Ability, Gameplay Effect, Montage, AnimBP, DataAsset, Niagara,
+  material, sound, widget, and imported-content values or links.
+- Exact visual composition, timing, color, VFX behavior, camera framing,
+  floor fade result, and user input feel.
+- Asset removal, migration, or retirement claims that require Editor reference
+  inspection rather than a Native source scan.
+
+Editor readback, compilation, Automation execution, PIE, and visual validation
+remain separate evidence gates. When one of those gates is completed, only its
+stable resulting contract belongs here; the validation receipt itself belongs in
+the appropriate stage or handoff record.
