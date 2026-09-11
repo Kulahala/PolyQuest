@@ -52,6 +52,7 @@ UEnemyStanceBreakAbility::UEnemyStanceBreakAbility()
 	RateWindowBeginEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Action.RateWindow.Begin")), false);
 	RateWindowEndEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Action.RateWindow.End")), false);
 	TeardownOnUnpossessTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Action.Teardown.OnUnpossess")), false);
+	FacingBlockedStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Block.Facing")), false);
 
 	AbilityTags.AddTag(StanceBreakAbilityTag);
 	if (TeardownOnUnpossessTag.IsValid())
@@ -60,6 +61,10 @@ UEnemyStanceBreakAbility::UEnemyStanceBreakAbility()
 	}
 
 	ActivationOwnedTags.AddTag(StunnedStateTag);
+	if (FacingBlockedStateTag.IsValid())
+	{
+		ActivationOwnedTags.AddTag(FacingBlockedStateTag);
+	}
 	ActivationBlockedTags.AddTag(FGameplayTag::RequestGameplayTag(FName(TEXT("State.Status.Dead")), false));
 	ActivationBlockedTags.AddTag(StunnedStateTag);
 	if (VictimLockedStateTag.IsValid())
@@ -415,7 +420,7 @@ bool UEnemyStanceBreakAbility::ValidateActivationSetup(const FGameplayAbilityAct
 		&& StanceBreakAbilityTag.IsValid() && StanceBreakEventTag.IsValid() && StunnedStateTag.IsValid() && HitReactingStateTag.IsValid()
 		&& EnemyMeleeAbilityTag.IsValid() && EnemyHitReactionAbilityTag.IsValid() && EnemySmallHitReactionAbilityTag.IsValid()
 		&& EnemyLaunchReactionAbilityTag.IsValid() && RateWindowBeginEventTag.IsValid() && RateWindowEndEventTag.IsValid()
-		&& TeardownOnUnpossessTag.IsValid() && AbilitiesToCancel.Num() == 4;
+		&& TeardownOnUnpossessTag.IsValid() && FacingBlockedStateTag.IsValid() && AbilitiesToCancel.Num() == 4;
 }
 
 void UEnemyStanceBreakAbility::EndFromMontage(bool bWasCancelled)

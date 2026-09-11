@@ -82,6 +82,7 @@ APlayerCharacter::APlayerCharacter()
 	DeadStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Status.Dead")), false);
 	ExhaustedStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Status.Exhausted")), false);
 	StunnedStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Status.Stunned")), false);
+	FacingBlockStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Block.Facing")), false);
 	GuardAbilityTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Defense.Guard")), false);
 	ParryAbilityTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Defense.Parry")), false);
 	SmallHitReactionEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Reaction.Player.Small")), false);
@@ -269,6 +270,7 @@ void APlayerCharacter::UnPossessed()
 
 	OnCharacterMovementUpdated.RemoveDynamic(this, &APlayerCharacter::HandleCharacterMovementUpdated);
 	ClearWorldPickupInteractionState();
+	UnbindSprintStateEvents();
 	Super::UnPossessed();
 }
 
@@ -2227,8 +2229,9 @@ void APlayerCharacter::UpdateActionFacingRotationMode()
 	const bool bIsSmallHitReacting = CharacterASC && SmallHitReactingStateTag.IsValid() && CharacterASC->HasMatchingGameplayTag(SmallHitReactingStateTag);
 	const bool bIsDead = CharacterASC && DeadStateTag.IsValid() && CharacterASC->HasMatchingGameplayTag(DeadStateTag);
 	const bool bIsStunned = CharacterASC && StunnedStateTag.IsValid() && CharacterASC->HasMatchingGameplayTag(StunnedStateTag);
+	const bool bIsFacingBlocked = CharacterASC && FacingBlockStateTag.IsValid() && CharacterASC->HasMatchingGameplayTag(FacingBlockStateTag);
 	const bool bActionOwnsRotation = bIsAttacking || bIsDodging || bIsHitReacting || bIsSmallHitReacting
-		|| bIsDead || bIsStunned || HasActiveBowAimRequester() || HasAnyRootMotion();
+		|| bIsDead || bIsStunned || bIsFacingBlocked || HasActiveBowAimRequester() || HasAnyRootMotion();
 	MovementComponent->bOrientRotationToMovement = !bActionOwnsRotation && !CanApplyLockedLocomotionFacing();
 }
 
@@ -2248,7 +2251,8 @@ bool APlayerCharacter::CanApplyLockedLocomotionFacing() const
 	const bool bIsSmallHitReacting = SmallHitReactingStateTag.IsValid() && CharacterASC->HasMatchingGameplayTag(SmallHitReactingStateTag);
 	const bool bIsDead = DeadStateTag.IsValid() && CharacterASC->HasMatchingGameplayTag(DeadStateTag);
 	const bool bIsStunned = StunnedStateTag.IsValid() && CharacterASC->HasMatchingGameplayTag(StunnedStateTag);
-	if (bIsAttacking || bIsDodging || bIsHitReacting || bIsSmallHitReacting || bIsDead || bIsStunned)
+	const bool bIsFacingBlocked = FacingBlockStateTag.IsValid() && CharacterASC->HasMatchingGameplayTag(FacingBlockStateTag);
+	if (bIsAttacking || bIsDodging || bIsHitReacting || bIsSmallHitReacting || bIsDead || bIsStunned || bIsFacingBlocked)
 	{
 		return false;
 	}
@@ -2419,6 +2423,11 @@ void APlayerCharacter::BindSprintStateEvents()
 		StunnedStateTagChangedHandle = CharacterASC->RegisterGameplayTagEvent(StunnedStateTag)
 			.AddUObject(this, &APlayerCharacter::OnSprintRelevantTagChanged);
 	}
+	if (FacingBlockStateTag.IsValid())
+	{
+		FacingBlockTagChangedHandle = CharacterASC->RegisterGameplayTagEvent(FacingBlockStateTag, EGameplayTagEventType::NewOrRemoved)
+			.AddUObject(this, &APlayerCharacter::OnFacingBlockTagChanged);
+	}
 
 	UpdateActionFacingRotationMode();
 }
@@ -2456,6 +2465,10 @@ void APlayerCharacter::UnbindSprintStateEvents()
 		{
 			CharacterASC->UnregisterGameplayTagEvent(StunnedStateTagChangedHandle, StunnedStateTag);
 		}
+		if (FacingBlockTagChangedHandle.IsValid())
+		{
+			CharacterASC->UnregisterGameplayTagEvent(FacingBlockTagChangedHandle, FacingBlockStateTag);
+		}
 	}
 
 	MovementInputBlockedTagChangedHandle.Reset();
@@ -2465,6 +2478,7 @@ void APlayerCharacter::UnbindSprintStateEvents()
 	ParryingStateTagChangedHandle.Reset();
 	DeadStateTagChangedHandle.Reset();
 	StunnedStateTagChangedHandle.Reset();
+	FacingBlockTagChangedHandle.Reset();
 	SprintStateBoundAbilitySystemComponent.Reset();
 }
 
@@ -3130,6 +3144,11 @@ void APlayerCharacter::OnSprintRelevantTagChanged(const FGameplayTag Tag, int32 
 	}
 
 	TryStartSprint();
+}
+
+void APlayerCharacter::OnFacingBlockTagChanged(const FGameplayTag Tag, int32 NewCount)
+{
+	UpdateActionFacingRotationMode();
 }
 
 void APlayerCharacter::ClearSprintJumpAirSpeed()

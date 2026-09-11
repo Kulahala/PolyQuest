@@ -29,9 +29,19 @@ UEnemyMeleeAbility::UEnemyMeleeAbility()
 	HyperArmorStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Status.HyperArmor")), false);
 	HyperArmorBeginEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Attack.HyperArmor.Begin")), false);
 	HyperArmorEndEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Attack.HyperArmor.End")), false);
+	TeardownOnUnpossessTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Action.Teardown.OnUnpossess")), false);
+	FacingBlockedStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Block.Facing")), false);
 
 	AbilityTags.AddTag(EnemyMeleeAbilityTag);
+	if (TeardownOnUnpossessTag.IsValid())
+	{
+		AbilityTags.AddTag(TeardownOnUnpossessTag);
+	}
 	ActivationOwnedTags.AddTag(AttackingStateTag);
+	if (FacingBlockedStateTag.IsValid())
+	{
+		ActivationOwnedTags.AddTag(FacingBlockedStateTag);
+	}
 	ActivationBlockedTags.AddTag(AttackingStateTag);
 	ActivationBlockedTags.AddTag(HitReactingStateTag);
 	ActivationBlockedTags.AddTag(FGameplayTag::RequestGameplayTag(FName(TEXT("State.Status.Dead")), false));
@@ -330,6 +340,7 @@ bool UEnemyMeleeAbility::ValidateActivationSetup(const FGameplayAbilityActorInfo
 	return AbilitySystemComponent && EnemyCharacter && EnemyAIController && AttackSet && AttackSet->IsAttackSetValid(SetValidationReason) && EnemyAIController->HasValidAttackSet() && AnimInstance
 		&& EnemyMeleeAbilityTag.IsValid() && AttackingStateTag.IsValid() && HitReactingStateTag.IsValid() && TraceWindowBeginEventTag.IsValid() && TraceWindowEndEventTag.IsValid()
 		&& HyperArmorStateTag.IsValid() && HyperArmorBeginEventTag.IsValid() && HyperArmorEndEventTag.IsValid()
+		&& TeardownOnUnpossessTag.IsValid() && FacingBlockedStateTag.IsValid()
 		&& EnemyAIController->HasValidCombatTarget() && EnemyAIController->IsCombatTargetInMeleeRange() && EnemyAIController->HasPendingAttackProfile() && EnemyAIController->IsPendingAttackInRange();
 }
 

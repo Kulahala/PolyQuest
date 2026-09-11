@@ -24,9 +24,19 @@ UEnemyHitReactionAbility::UEnemyHitReactionAbility()
 	HyperArmorStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Status.HyperArmor")), false);
 	EnemyMeleeAbilityTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Attack.Enemy.Melee")), false);
 	EnemySmallHitReactionAbilityTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Reaction.Enemy.Small")), false);
+	TeardownOnUnpossessTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Action.Teardown.OnUnpossess")), false);
+	FacingBlockedStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Block.Facing")), false);
 
 	AbilityTags.AddTag(HitReactionAbilityTag);
+	if (TeardownOnUnpossessTag.IsValid())
+	{
+		AbilityTags.AddTag(TeardownOnUnpossessTag);
+	}
 	ActivationOwnedTags.AddTag(HitReactingStateTag);
+	if (FacingBlockedStateTag.IsValid())
+	{
+		ActivationOwnedTags.AddTag(FacingBlockedStateTag);
+	}
 	ActivationBlockedTags.AddTag(FGameplayTag::RequestGameplayTag(FName(TEXT("State.Status.Dead")), false));
 	ActivationBlockedTags.AddTag(FGameplayTag::RequestGameplayTag(FName(TEXT("State.Status.Stunned")), false));
 	ActivationBlockedTags.AddTag(HitReactingStateTag);
@@ -251,7 +261,9 @@ bool UEnemyHitReactionAbility::ValidateActivationSetup(const FGameplayAbilityAct
 	return CharacterASC && EnemyCharacter && !EnemyCharacter->IsDead() && AnimInstance && MontageSet.IsComplete()
 		&& MovementComponent && MovementComponent->IsMovingOnGround()
 		&& HitReactionAbilityTag.IsValid() && HitReactionEventTag.IsValid() && HitReactingStateTag.IsValid() && StunnedStateTag.IsValid() && HyperArmorStateTag.IsValid()
-		&& EnemyMeleeAbilityTag.IsValid() && EnemySmallHitReactionAbilityTag.IsValid() && AbilitiesToCancel.Num() == 2;
+		&& EnemyMeleeAbilityTag.IsValid() && EnemySmallHitReactionAbilityTag.IsValid()
+		&& TeardownOnUnpossessTag.IsValid() && FacingBlockedStateTag.IsValid()
+		&& AbilitiesToCancel.Num() == 2;
 }
 
 void UEnemyHitReactionAbility::EndFromMontage(bool bWasCancelled)

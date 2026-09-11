@@ -681,6 +681,24 @@ Action-facing remains owned by the relevant action ability/root-motion contract.
 Lock-On is not a global authorization to alter projectile targeting or action
 state.
 
+### Action-facing block
+
+`State.Block.Facing` is the Config-registered GAS state used when an active
+action must retain its authored facing. `UEnemyStanceBreakAbility`,
+`UEnemyMeleeAbility`, `UEnemyHitReactionAbility`, and
+`UEnemyLaunchReactionAbility` own the tag through
+`ActivationOwnedTags`; GAS adds and removes those contributions with the
+Ability lifetime. The Enemy Melee, Big Reaction, and Launch Reaction owners
+also carry `Ability.Action.Teardown.OnUnpossess`, while Stance Break retains
+its existing teardown selector. `UEnemySmallHitReactionAbility` and
+`UEnemyVictimExecutionAbility` do not own the facing-block tag.
+
+`APlayerCharacter` is a consumer rather than an owner: its action-facing mode
+and locked-locomotion path treat `State.Block.Facing` as an action-owned
+rotation condition. Its dedicated NewOrRemoved tag delegate only refreshes the
+rotation mode and is bound/unbound with the existing ASC lifecycle; it does not
+start or cancel Sprint.
+
 ### See-through occlusion boundary
 
 `APlayerCharacter::UpdateSeeThroughOcclusion()` is the Native bridge for the
@@ -734,6 +752,12 @@ engagement range. The controller snapshots its selected pending profile while
 approaching rather than rolling a new attack every update. A requested attack's
 active/completed state is determined by GAS tags such as
 State.Action.Attacking, not by a second AI action enum.
+
+`AEnemyAIController::UpdateControlRotation()` queries the controlled Enemy ASC
+for `State.Block.Facing`. While the tag is present it does not hand ordinary
+Gameplay Focus back to `Super::UpdateControlRotation()` or write an Actor yaw.
+Root Motion still owns its existing focus-clear branch; when Root Motion ends,
+the recovery handoff waits until the facing block has cleared.
 
 ### Attack profile and tactical movement
 
@@ -979,8 +1003,9 @@ their overlay-slot wiring are [Authored asset] / [Not verified in this pass].
 
 `UPlayerBigHitReactionAbility` and `UEnemyHitReactionAbility` are grounded,
 `InstancedPerActor`, `ServerOnly` Gameplay-Event abilities. They own
-`State.Action.HitReacting` and require a complete directional Montage set and a
-grounded CharacterMovement state before activation. Only after the selected
+`State.Action.HitReacting`; the Enemy owner also owns `State.Block.Facing`.
+They require a complete directional Montage set and a grounded
+CharacterMovement state before activation. Only after the selected
 Montage is confirmed active do they stop current velocity, capture and disable
 `bCanWalkOffLedges`, bind `MovementModeChanged`, and cancel their permitted
 active abilities (Enemy melee/Small reaction; Player's configured action set).
@@ -1031,9 +1056,10 @@ it cannot remain permanently broken.
 
 `UEnemyStanceBreakAbility` is `InstancedPerActor`, `ServerOnly`, and
 Gameplay-Event triggered. It owns `Ability.Reaction.Enemy.StanceBreak` and
-`State.Status.Stunned`, blocks Dead/Stunned/VictimLocked activation, and only
-after its Montage is confirmed active disables movement and cancels Enemy
-Melee, Big, Small, and Launch reaction Abilities. Its optional
+`State.Status.Stunned` and `State.Block.Facing`, blocks
+Dead/Stunned/VictimLocked activation, and only after its Montage is confirmed
+active disables movement and cancels Enemy Melee, Big, Small, and Launch
+reaction Abilities. Its optional
 `Event.Action.RateWindow.Begin/End` listeners change Montage playback rate only;
 `FAbilityMontageRateWindowLifecycle` validates source identity and restores the
 captured baseline. EndAbility invalidates the callback token, restores rate,
@@ -1076,7 +1102,8 @@ interruption, cancellation, death, destruction, unpossession, or startup
 failure converges on the idempotent `EndAbility()` cleanup. A Root Motion
 startup failure does not switch to `LaunchCharacter()` after the branch has
 been selected; Legacy fallback is decided only before startup. The Root Motion
-branch does not create or require `Event.Reaction.Launch.Commit`.
+branch does not create or require `Event.Reaction.Launch.Commit`; the Enemy
+Launch Ability owns `State.Block.Facing` across both branches.
 
 Only the Player launch Ability listens to the existing Dodge cancel-window
 events, and only during `LandingRecovery` from the matching recovery Montage.
@@ -1088,11 +1115,11 @@ on `EndAbility()`. A natural Enemy LandingRecovery or Root Motion Montage end
 releases the pending Poise/Stance-Break deferral; an abnormal end clears it and
 restores Poise when the living enemy remains at zero.
 
-`AEnemyAIController` currently suppresses focus-driven rotation while actual
-Enemy Root Motion or the Enemy Launch Reaction is active. This is not a generic
-In-Place action lock and there is no adopted `State.Block.Facing` contract in
-the current runtime; the evidence-gated cross-Ability facing contract and
-Player-wide launch alignment are tracked separately in `TODO-07B12`.
+`AEnemyAIController` suppresses focus-driven rotation while actual Enemy Root
+Motion is active or the controlled Enemy ASC owns `State.Block.Facing`. The
+facing block is a cross-Ability lifecycle contract, not a Montage-playing
+heuristic or a controller-side action state machine. Player grounded launch
+alignment remains a separate `TODO-07B13` contract.
 
 #### Enemy death and teardown
 
@@ -1281,6 +1308,8 @@ Important ownership distinctions:
 | Victim execution ability identity | Ability.Action.Execution.Victim |
 | Victim paired-lock state | State.Action.Execution.VictimLocked |
 | Player paired-lock state | State.Action.Execution.PlayerLocked |
+| Action facing block state | State.Block.Facing |
+| UnPossess teardown selector | Ability.Action.Teardown.OnUnpossess |
 | Player exhaustion state | State.Status.Exhausted |
 | Delayed lethal execution state | State.Status.DeathPending |
 | Combat team identity | Team.Player, Team.Enemy |

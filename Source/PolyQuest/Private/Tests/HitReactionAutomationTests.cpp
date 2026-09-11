@@ -8,8 +8,10 @@
 #include "Abilities/Tasks/AbilityTask_PlayMontageAndWait.h"
 #include "AbilitySystem/Abilities/EnemyHitReactionAbility.h"
 #include "AbilitySystem/Abilities/EnemyLaunchReactionAbility.h"
+#include "AbilitySystem/Abilities/EnemyMeleeAbility.h"
 #include "AbilitySystem/Abilities/EnemySmallHitReactionAbility.h"
 #include "AbilitySystem/Abilities/EnemyStanceBreakAbility.h"
+#include "AbilitySystem/Abilities/EnemyVictimExecutionAbility.h"
 #include "AbilitySystem/Abilities/PlayerBigHitReactionAbility.h"
 #include "AbilitySystem/Abilities/PlayerGuardBreakAbility.h"
 #include "AbilitySystem/Abilities/PlayerLaunchReactionAbility.h"
@@ -151,6 +153,8 @@ bool FHitReactionAutomationTest::RunTest(const FString& Parameters)
 	const FGameplayTag TagHyperArmor = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Status.HyperArmor")), false);
 	const FGameplayTag TagBlockMovement = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Input.Block.Movement")), false);
 	const FGameplayTag TagBlockJump = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Input.Block.Jump")), false);
+	const FGameplayTag TagBlockFacing = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Block.Facing")), false);
+	const FGameplayTag TagTeardownOnUnpossess = FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Action.Teardown.OnUnpossess")), false);
 	const FGameplayTag TagEnemyMelee = FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Attack.Enemy.Melee")), false);
 
 	TestTrue(TEXT("Tag Ability.Reaction.Player.Small is valid"), TagAbilityPlayerSmall.IsValid());
@@ -168,6 +172,8 @@ bool FHitReactionAutomationTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("Tag Event.Reaction.Launch.Commit is valid"), TagEventLaunchCommit.IsValid());
 	TestTrue(TEXT("Tag State.Action.SmallHitReacting is valid"), TagSmallHitReacting.IsValid());
 	TestTrue(TEXT("Tag State.Action.HitReacting is valid"), TagHitReacting.IsValid());
+	TestTrue(TEXT("Tag State.Block.Facing is valid"), TagBlockFacing.IsValid());
+	TestTrue(TEXT("Tag Ability.Action.Teardown.OnUnpossess is valid"), TagTeardownOnUnpossess.IsValid());
 
 	// Hierarchy independence check: SmallHitReacting must NOT be a child of HitReacting
 	TestFalse(TEXT("State.Action.SmallHitReacting is not a child of State.Action.HitReacting"),
@@ -372,6 +378,8 @@ bool FHitReactionAutomationTest::RunTest(const FString& Parameters)
 				EnemySmallCDO->GetTestActivationOwnedTags().HasTagExact(TagSmallHitReacting));
 			TestFalse(TEXT("EnemySmall CDO does NOT own State.Action.HitReacting"),
 				EnemySmallCDO->GetTestActivationOwnedTags().HasTagExact(TagHitReacting));
+			TestFalse(TEXT("EnemySmall CDO does NOT own State.Block.Facing"),
+				EnemySmallCDO->GetTestActivationOwnedTags().HasTagExact(TagBlockFacing));
 
 			TestTrue(TEXT("EnemySmall CDO blocked by State.Status.Dead"),
 				EnemySmallCDO->GetTestActivationBlockedTags().HasTagExact(TagDead));
@@ -404,8 +412,12 @@ bool FHitReactionAutomationTest::RunTest(const FString& Parameters)
 		{
 			TestTrue(TEXT("EnemyBig CDO has AbilityTags Ability.Reaction.Enemy.Big"),
 				EnemyBigCDO->AbilityTags.HasTagExact(TagAbilityEnemyBig));
+			TestTrue(TEXT("EnemyBig CDO has AbilityTags Ability.Action.Teardown.OnUnpossess"),
+				EnemyBigCDO->AbilityTags.HasTagExact(TagTeardownOnUnpossess));
 			TestTrue(TEXT("EnemyBig CDO owns State.Action.HitReacting"),
 				EnemyBigCDO->GetTestActivationOwnedTags().HasTagExact(TagHitReacting));
+			TestTrue(TEXT("EnemyBig CDO owns State.Block.Facing"),
+				EnemyBigCDO->GetTestActivationOwnedTags().HasTagExact(TagBlockFacing));
 
 			TestTrue(TEXT("EnemyBig CDO blocked by State.Status.Dead"),
 				EnemyBigCDO->GetTestActivationBlockedTags().HasTagExact(TagDead));
@@ -445,8 +457,12 @@ bool FHitReactionAutomationTest::RunTest(const FString& Parameters)
 
 			TestTrue(TEXT("EnemyLaunch CDO has AbilityTags Ability.Reaction.Enemy.Launch"),
 				EnemyLaunchCDO->AbilityTags.HasTagExact(TagAbilityEnemyLaunch));
+			TestTrue(TEXT("EnemyLaunch CDO has AbilityTags Ability.Action.Teardown.OnUnpossess"),
+				EnemyLaunchCDO->AbilityTags.HasTagExact(TagTeardownOnUnpossess));
 			TestTrue(TEXT("EnemyLaunch CDO owns State.Action.HitReacting"),
 				EnemyLaunchCDO->GetTestActivationOwnedTags().HasTagExact(TagHitReacting));
+			TestTrue(TEXT("EnemyLaunch CDO owns State.Block.Facing"),
+				EnemyLaunchCDO->GetTestActivationOwnedTags().HasTagExact(TagBlockFacing));
 
 			TestTrue(TEXT("EnemyLaunch CDO blocked by State.Status.Dead"),
 				EnemyLaunchCDO->GetTestActivationBlockedTags().HasTagExact(TagDead));
@@ -475,6 +491,30 @@ bool FHitReactionAutomationTest::RunTest(const FString& Parameters)
 			TestEqual(TEXT("EnemyLaunch default vertical speed is 550.0"), EnemyLaunchCDO->GetLaunchVerticalSpeed(), 550.0f);
 			TestEqual(TEXT("EnemyLaunch default facing turn rate is 1440.0"), EnemyLaunchCDO->GetFacingTurnRateDegreesPerSecond(), 1440.0f);
 			TestTrue(TEXT("EnemyLaunch default facing turn rate is finite positive"), FMath::IsFinite(EnemyLaunchCDO->GetFacingTurnRateDegreesPerSecond()) && EnemyLaunchCDO->GetFacingTurnRateDegreesPerSecond() > 0.0f);
+		}
+	}
+
+	// 2.4c UEnemyMeleeAbility CDO checks
+	{
+		const UEnemyMeleeAbility* EnemyMeleeCDO = UEnemyMeleeAbility::StaticClass()->GetDefaultObject<UEnemyMeleeAbility>();
+		TestNotNull(TEXT("UEnemyMeleeAbility CDO exists"), EnemyMeleeCDO);
+		if (EnemyMeleeCDO)
+		{
+			TestTrue(TEXT("EnemyMelee CDO has AbilityTags Ability.Action.Teardown.OnUnpossess"),
+				EnemyMeleeCDO->AbilityTags.HasTagExact(TagTeardownOnUnpossess));
+			TestTrue(TEXT("EnemyMelee CDO owns State.Block.Facing"),
+				EnemyMeleeCDO->GetTestActivationOwnedTags().HasTagExact(TagBlockFacing));
+		}
+	}
+
+	// 2.4d Victim execution negative assertion (does not own State.Block.Facing)
+	{
+		const UEnemyVictimExecutionAbility* VictimCDO = UEnemyVictimExecutionAbility::StaticClass()->GetDefaultObject<UEnemyVictimExecutionAbility>();
+		TestNotNull(TEXT("UEnemyVictimExecutionAbility CDO exists"), VictimCDO);
+		if (VictimCDO)
+		{
+			TestFalse(TEXT("Victim execution CDO does NOT own State.Block.Facing"),
+				VictimCDO->GetTestActivationOwnedTags().HasTagExact(TagBlockFacing));
 		}
 	}
 

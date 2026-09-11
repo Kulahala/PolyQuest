@@ -72,6 +72,7 @@ bool FEnemyStanceBreakRateWindowAutomationTest::RunTest(const FString& Parameter
 	const FGameplayTag TagStanceBreakAbility = FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Reaction.Enemy.StanceBreak")), false);
 	const FGameplayTag TagTeardownOnUnpossess = FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Action.Teardown.OnUnpossess")), false);
 	const FGameplayTag TagStunned = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Status.Stunned")), false);
+	const FGameplayTag TagBlockFacing = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Block.Facing")), false);
 	const FGameplayTag TagDead = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Status.Dead")), false);
 	const FGameplayTag TagRateWindowBegin = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Action.RateWindow.Begin")), false);
 	const FGameplayTag TagRateWindowEnd = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Action.RateWindow.End")), false);
@@ -79,6 +80,7 @@ bool FEnemyStanceBreakRateWindowAutomationTest::RunTest(const FString& Parameter
 	TestTrue(TEXT("Tag Ability.Reaction.Enemy.StanceBreak is valid"), TagStanceBreakAbility.IsValid());
 	TestTrue(TEXT("Tag Ability.Action.Teardown.OnUnpossess is valid"), TagTeardownOnUnpossess.IsValid());
 	TestTrue(TEXT("Tag State.Status.Stunned is valid"), TagStunned.IsValid());
+	TestTrue(TEXT("Tag State.Block.Facing is valid"), TagBlockFacing.IsValid());
 	TestTrue(TEXT("Tag Event.Action.RateWindow.Begin is valid"), TagRateWindowBegin.IsValid());
 	TestTrue(TEXT("Tag Event.Action.RateWindow.End is valid"), TagRateWindowEnd.IsValid());
 
@@ -89,6 +91,8 @@ bool FEnemyStanceBreakRateWindowAutomationTest::RunTest(const FString& Parameter
 
 	TestTrue(TEXT("CDO ActivationOwnedTags has State.Status.Stunned"),
 		StanceBreakCDO->GetTestActivationOwnedTags().HasTagExact(TagStunned));
+	TestTrue(TEXT("CDO ActivationOwnedTags has State.Block.Facing"),
+		StanceBreakCDO->GetTestActivationOwnedTags().HasTagExact(TagBlockFacing));
 	TestTrue(TEXT("CDO ActivationBlockedTags has State.Status.Dead"),
 		StanceBreakCDO->GetTestActivationBlockedTags().HasTagExact(TagDead));
 	TestTrue(TEXT("CDO ActivationBlockedTags has State.Status.Stunned"),
@@ -292,6 +296,7 @@ bool FEnemyStanceBreakRateWindowAutomationTest::RunTest(const FString& Parameter
 			// 4. Verify production path components are live and active
 			TestTrue(TEXT("Ability is active"), StanceBreakAbility->IsActive());
 			TestTrue(TEXT("Enemy ASC has Stunned tag"), EnemyASC->HasMatchingGameplayTag(TagStunned));
+			TestTrue(TEXT("Enemy ASC has State.Block.Facing tag during Stance Break"), EnemyASC->HasMatchingGameplayTag(TagBlockFacing));
 			TestTrue(TEXT("Movement is locked by StanceBreak"), StanceBreakAbility->IsMovementLockedByStanceBreak());
 			TestNotNull(TEXT("ActiveContext exists"), StanceBreakAbility->GetTestActiveContext());
 			TestNotNull(TEXT("MontageTask exists"), StanceBreakAbility->GetMontageTask());
@@ -421,7 +426,34 @@ bool FEnemyStanceBreakRateWindowAutomationTest::RunTest(const FString& Parameter
 				TestFalse(TEXT("Movement lock released"), StanceBreakAbility->IsMovementLockedByStanceBreak());
 				TestFalse(TEXT("RateWindow test bypass reset after EndAbility"), StanceBreakAbility->GetRateWindowLifecycle().GetTestBypassMontageActiveCheck());
 				TestFalse(TEXT("Stunned tag removed from Enemy ASC"), EnemyASC->HasMatchingGameplayTag(TagStunned));
+				TestFalse(TEXT("State.Block.Facing tag removed from Enemy ASC after UnPossessed"), EnemyASC->HasMatchingGameplayTag(TagBlockFacing));
 				TestTrue(TEXT("Poise restored to MaxPoise"), EnemyASC->GetNumericAttribute(UCharacterAttributeSet::GetPoiseAttribute()) >= EnemyASC->GetNumericAttribute(UCharacterAttributeSet::GetMaxPoiseAttribute()));
+			}
+
+			// 8. InstancedPerActor Re-entry Verification
+			{
+				EnemyASC->SetNumericAttributeBase(UCharacterAttributeSet::GetPoiseAttribute(), 0.0f);
+				if (StanceCDO)
+				{
+					StanceCDO->SetTestStanceBreakMontage(ActiveStanceMontage);
+					StanceCDO->SetTestBoundAnimInstance(MockAnimInstance);
+					StanceCDO->SetTestBypassMontageActiveCheck(true);
+				}
+
+				const bool bReactivated = EnemyASC->TryActivateAbility(StanceBreakHandle);
+				if (StanceCDO)
+				{
+					StanceCDO->SetTestStanceBreakMontage(OriginalStanceBreakMontage);
+					StanceCDO->SetTestBoundAnimInstance(OriginalBoundAnimInstance);
+					StanceCDO->SetTestBypassMontageActiveCheck(bOriginalBypassMontageActiveCheck);
+				}
+
+				TestTrue(TEXT("StanceBreak ability successfully re-activated on same instance"), bReactivated);
+				TestTrue(TEXT("FacingBlock tag present on re-activation"), EnemyASC->HasMatchingGameplayTag(TagBlockFacing));
+
+				EnemyASC->CancelAbilityHandle(StanceBreakHandle);
+				TestFalse(TEXT("StanceBreak ability cancelled on manual CancelAbility"), StanceBreakAbility->IsActive());
+				TestFalse(TEXT("FacingBlock tag cleanly removed upon cancellation"), EnemyASC->HasMatchingGameplayTag(TagBlockFacing));
 			}
 		}
 		if (StanceCDO)

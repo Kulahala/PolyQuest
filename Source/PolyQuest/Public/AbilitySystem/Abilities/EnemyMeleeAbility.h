@@ -46,6 +46,10 @@ public:
 		bool bReplicateEndAbility,
 		bool bWasCancelled) override;
 
+#if WITH_DEV_AUTOMATION_TESTS
+	const FGameplayTagContainer& GetTestActivationOwnedTags() const { return ActivationOwnedTags; }
+#endif
+
 private:
 	UPROPERTY(Transient)
 	TObjectPtr<const UEnemyAttackProfile> ActiveAttackProfile;
@@ -85,6 +89,8 @@ private:
 	FGameplayTag HyperArmorStateTag;
 	FGameplayTag HyperArmorBeginEventTag;
 	FGameplayTag HyperArmorEndEventTag;
+	FGameplayTag TeardownOnUnpossessTag;
+	FGameplayTag FacingBlockedStateTag;
 	float ActiveCooldownAfterAttack = 0.0f;
 	float ActiveGuardStaminaDamage = 0.0f;
 	bool bAttackStarted = false;

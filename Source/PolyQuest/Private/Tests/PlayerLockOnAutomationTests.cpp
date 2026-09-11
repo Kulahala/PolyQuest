@@ -537,6 +537,7 @@ bool FPlayerLockOnAutomationTest::RunTest(const FString&)
 				Player->Tick(0.2f);
 				TestTrue(TEXT("Lock Tick does not overwrite active Root Motion yaw"), FMath::IsNearlyZero(FMath::FindDeltaAngleDegrees(Player->GetActorRotation().Yaw, 90.0f)));
 				MovementComponent->RemoveRootMotionSourceByID(RootMotionSourceId);
+				MovementComponent->CurrentRootMotion.Clear();
 
 				UObject* BowRequester = Player->GetFollowCamera();
 				if (TestNotNull(TEXT("Player provides a concrete Bow requester fixture"), BowRequester))
@@ -841,6 +842,108 @@ bool FPlayerLockOnAutomationTest::RunTest(const FString&)
 
 					// Case E: Clear path directly to target actor passes
 					TestTrue(TEXT("Clear path directly to target actor passes"), Player->TriggerTestHasLineOfSightToTarget(EnemyRight));
+				}
+			}
+
+			// 8. Facing Block Contract v1 during Lock-On locomotion
+			{
+				const FGameplayTag TagBlockFacing = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Block.Facing")), false);
+				TestTrue(TEXT("8.0: State.Block.Facing tag is valid"), TagBlockFacing.IsValid());
+
+				UAbilitySystemComponent* PlayerAsc = Player->GetAbilitySystemComponent();
+				UCharacterMovementComponent* MoveComp = Player->GetCharacterMovement();
+				TestNotNull(TEXT("8.0: Player ASC valid"), PlayerAsc);
+				TestNotNull(TEXT("8.0: MoveComp valid"), MoveComp);
+
+				if (PlayerAsc && MoveComp)
+				{
+					MoveComp->CurrentRootMotion.Clear();
+					Player->SetTestLockOnProjectionHook([](const FVector&, FVector2D& OutScreenPosition, FVector2D& OutViewportSize)
+					{
+						OutScreenPosition = FVector2D(960.0f, 540.0f);
+						OutViewportSize = FVector2D(1920.0f, 1080.0f);
+						return true;
+					});
+
+					// Set target at +X (Yaw = 0)
+					EnemyRight->SetActorLocation(FVector(500.0f, 0.0f, 100.0f));
+					Player->SetActorLocation(FVector(0.0f, 0.0f, 100.0f));
+					MoveComp->Velocity = FVector::ZeroVector;
+					Player->SetActorRotation(FRotator(0.0f, 90.0f, 0.0f));
+					Player->SetTestLockedTarget(EnemyRight);
+					TestEqual(TEXT("8.1: Player is locked onto EnemyRight"), Player->GetLockedTarget(), EnemyRight);
+
+					// Without block, normal locked locomotion facing turns towards target
+					MoveComp->SetMovementMode(MOVE_Walking);
+					Player->Tick(0.01f);
+					TestFalse(TEXT("8.2: bOrientRotationToMovement is false during normal lock-on"),
+						MoveComp->bOrientRotationToMovement);
+
+					// Now add State.Block.Facing to Player ASC
+					PlayerAsc->AddLooseGameplayTag(TagBlockFacing);
+
+					// Verify bOrientRotationToMovement remains false (action owns rotation)
+					Player->Tick(0.01f);
+					TestFalse(TEXT("8.3: bOrientRotationToMovement remains false while State.Block.Facing is active"),
+						MoveComp->bOrientRotationToMovement);
+
+					// Set arbitrary yaw (120 deg) while facing is blocked
+					Player->SetActorLocation(FVector(0.0f, 0.0f, 100.0f));
+					MoveComp->Velocity = FVector::ZeroVector;
+					MoveComp->SetMovementMode(MOVE_Walking);
+					Player->SetActorRotation(FRotator(0.0f, 120.0f, 0.0f));
+
+					// Tick with DeltaTime: Yaw must remain untouched (blocked by State.Block.Facing)
+					Player->Tick(0.1f);
+					TestTrue(TEXT("8.4: Player yaw is untouched while State.Block.Facing is active (remains 120 deg)"),
+						FMath::IsNearlyZero(FMath::FindDeltaAngleDegrees(Player->GetActorRotation().Yaw, 120.0f), 0.01f));
+
+					// Remove State.Block.Facing: next tick should resume locked locomotion facing
+					PlayerAsc->RemoveLooseGameplayTag(TagBlockFacing);
+					Player->SetActorLocation(FVector(0.0f, 0.0f, 100.0f));
+					MoveComp->Velocity = FVector::ZeroVector;
+					MoveComp->SetMovementMode(MOVE_Walking);
+					Player->SetActorRotation(FRotator(0.0f, 90.0f, 0.0f));
+					TestEqual(TEXT("8.4b: LockedTarget still valid"), Player->GetLockedTarget(), EnemyRight);
+
+					// Tick to verify rotation resumes towards target (800 deg/s * 0.1s turns 80 deg from 90 to 10)
+					Player->Tick(0.1f);
+					const float ResultYaw = Player->GetActorRotation().Yaw;
+					TestTrue(TEXT("8.5: Player turned towards locked target after State.Block.Facing removed"),
+						FMath::IsNearlyEqual(ResultYaw, 10.0f, 0.01f));
+
+					// 8.6: Tag addition / removal callback does NOT cancel or start Sprint
+					TestFalse(TEXT("8.6a: Player not sprinting initially"), Player->HasActiveSprint());
+					PlayerAsc->AddLooseGameplayTag(TagBlockFacing);
+					TestFalse(TEXT("8.6b: Adding State.Block.Facing does NOT start sprint"), Player->HasActiveSprint());
+					PlayerAsc->RemoveLooseGameplayTag(TagBlockFacing);
+					TestFalse(TEXT("8.6c: Removing State.Block.Facing does NOT affect sprint state"), Player->HasActiveSprint());
+
+					// 8.7: Symmetrical UnPossessed / PossessedBy lifecycle does not crash or leave dangling delegates
+					Player->TriggerTestUnPossessed();
+					PlayerController->Possess(Player);
+					Player->Tick(0.01f);
+					TestTrue(TEXT("8.7: Re-possessed player ticks cleanly with rebound delegate"), true);
+
+					// 8.8: Regression checks: existing action tags also block locked locomotion facing
+					const FGameplayTag TagAttacking = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Action.Attacking")), false);
+					const FGameplayTag TagDodging = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Action.Dodging")), false);
+					const FGameplayTag TagHitReacting = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Action.HitReacting")), false);
+					const FGameplayTag TagSmallHitReacting = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Action.SmallHitReacting")), false);
+
+					for (const FGameplayTag& ActionTag : { TagAttacking, TagDodging, TagHitReacting, TagSmallHitReacting })
+					{
+						if (ActionTag.IsValid())
+						{
+							PlayerAsc->AddLooseGameplayTag(ActionTag);
+							Player->Tick(0.01f);
+							TestFalse(FString::Printf(TEXT("8.8: bOrientRotationToMovement remains false with %s"), *ActionTag.ToString()),
+								MoveComp->bOrientRotationToMovement);
+							PlayerAsc->RemoveLooseGameplayTag(ActionTag);
+						}
+					}
+
+					Player->SetTestLockedTarget(nullptr);
 				}
 			}
 

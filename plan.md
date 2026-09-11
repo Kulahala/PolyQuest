@@ -1,156 +1,160 @@
-# TODO-07B11: Enemy Launch Reaction Root-Motion Knockdown v1
+# TODO-07B12: Action Facing Block Contract v1
 
 ## 1. 阶段定位、基线与路由
 
-- **Target Objective**：为 UEnemyLaunchReactionAbility 增加 Enemy 专属、固定距离的 grounded Root Motion 击倒路径。位移与倒地、滑行、翻滚、恢复表现由作者化 Montage 提供；胶囊碰撞、地面、台阶和边缘仍由 Character Movement Component（CMC）唯一负责。
-- **本阶段范围**：只实施 Slice A。Slice B（Enemy-local Motion Warping）和 Slice C（阻挡命中后的专属水平表现）只作为后续证据触发项，不在本阶段预铺实现。
-- **基线**：main @ 319feb6f8ebf6df9b3fbf70831eeebfc7778bfc0（2026-09-11 当前 HEAD；07B11 只读规划基线）。
-- **当前工作树**：非 clean。现有 Content/**、Config、Blueprint、AnimBP、Montage、地图、插件和其他 WIP 均为用户所有；本阶段必须保留、排除，不得回滚、清理或批量暂存。当前 `ROADMAP.md` 与 `Source/PolyQuest/Public/Combat/Projectile/CombatProjectile.h` 等仍有用户未提交变动；`ARCHITECTURE.md` 的稳定契约更新仅由 Main 在验证收口时完成。
-- **Archive Preflight**：PASS。上一阶段 TODO-07B10 已在 `ROADMAP-archive.md` 保留唯一收口摘要；其被替换的完整旧 `plan.md` 由 Git 历史（`319feb6:plan.md`，同源于 `c708d65`）保留。本次替换不重复归档、不改写历史记录。
+- **Target Objective**：在 GAS 内建立精确的 State.Block.Facing 生命周期，使 Enemy 的 Gameplay Focus 与 Player 的 Lock-On locomotion 在动作期间不能接管角色朝向。
+- **阶段关系**：ROADMAP.md 已排定 TODO-07B11 -> TODO-07B12 -> TODO-07B13；本阶段只处理 facing block 生命周期和两个消费端，不提前实现 Player grounded launch。
+- **基线**：main @ cc2f0de660eaeb3082816c95ffb9f556cf66d915（2026-09-11）。
+- **Archive Preflight**：PASS（实施前）。实施前 `ROADMAP-archive.md` 仅有一个 TODO-07B11 收口章节（第 1459 行）；旧 `plan.md` 仍由 HEAD 的 Git 历史保留。本次收口已追加唯一 TODO-07B12 章节，不重复归档。
+- **当前工作树（实施前快照）**：非 clean。现有 Content/**、Blueprint、AnimBP、Montage、地图、Config 与其他 WIP 均为用户所有；本阶段必须保留、排除，不得回滚、清理、格式化或批量暂存。初始 ROADMAP.md 用户改动不在实施切片范围；收口文档由 Main 按批准边界更新。
+- **初始证据边界**：本计划建立时仅有当前 Source、Config、文档和定向 CodeGraph 静态证据；阶段收口后的用户证据与 Main Review 记录见第 9 节。
 - **技能路由**：
   - Outer: ue-stage-workflow
   - Primary: ue5-cpp-gameplay
-  - Support: ue5-debug-validation
-  - Route reason: 这是现有 GAS Ability 内的局部双路径生命周期改造，需要保留旧物理回退并增加 Root Motion/CMC 状态边界与确定性 Automation。
+  - Support: none
+  - Route reason: native GAS-owned Tag lifecycle plus bounded Enemy Controller and Player Lock-On consumers。
 - **执行路线**：manual/out-of-band Gemini。Implementation executors: 1（Gemini）；in-app delegation: 0。Main 保留架构、范围、验证解释、Fresh Review、文档、暂存和提交所有权；Gemini 不得提交。
 
-## 2. 目标、刻意非目标与所有权
+## 2. 目标、所有权与刻意非目标
 
 ### 目标
 
-- 在有效 Enemy 专属 Root Motion Montage 已配置且角色处于 MOVE_Walking 时，完整击倒表现由一个连续 Montage 驱动。
-- 首帧前完成面向攻击者的 Yaw 对齐，Root Motion 使用本地 -X 固定位移表达远离攻击者的后退/倒地。
-- Root Motion 期间不产生第二套物理 Launch 状态；异常移动模式、取消、死亡、销毁和同步重入均安全收敛到单一 EndAbility() 清理出口。
-- 保留并可显式使用现有 LaunchCharacter() + Falling/LandingRecovery 流程作为兼容 fallback。
+- 注册 State.Block.Facing，并由四个 Enemy Ability 的 ActivationOwnedTags 作为唯一生命周期来源。
+- 覆盖 UEnemyStanceBreakAbility、UEnemyMeleeAbility、UEnemyHitReactionAbility、UEnemyLaunchReactionAbility；Launch 的 Root Motion 与 Legacy 分支共用同一 Ability 生命周期。
+- 让 Enemy Controller 在 Block 期间停止普通 Focus 驱动的朝向接管，同时保留 Root Motion 清除/恢复语义。
+- 让 Player 的 action-facing 与 Lock-On locomotion 消费该 Tag；移除 Tag 后按现有 RotationRate 恢复，不做瞬时 snap。
+- 保留自然结束、取消、死亡、销毁、UnPossess、同步重入和多贡献计数的清理契约。
 
 ### Deliberate Non-goals
 
-- 不改 PlayerLaunchReactionAbility、FLaunchFacingSmoothingState、AEnemyCharacter、AEnemyAIController、FHitReactionImpactResolver 或 UAbilityTask_TurnToFacing。
-- 不改任何 GameplayTag、Input、Config、Build.cs、GAS 权属、伤害/Poise 路径或既有 Enemy cancellation taxonomy。
-- 不修改或迁移共享的 AM_LaunchTakeoff / AM_LaunchLandingRecovery，不编辑 .uasset、.umap、Blueprint、AnimBP 或导入资源。
-- 不加入全局 Motion Warping、Enemy 通用移动框架、Ragdoll/物理击飞重写、网络预测/回滚、空中/大间隙飞行支持。
-- 不在本阶段解决墙体命中后的自定义停顿、滑行转场或骨骼表现问题；若 PIE 证明需要，进入 Slice C。
+- 不迁移或修改任何 Player Ability，包括 UPlayerLaunchReactionAbility；Player 在本阶段只做消费端。
+- 不给 UEnemySmallHitReactionAbility 或 UEnemyVictimExecutionAbility 添加 State.Block.Facing。
+- 不新增 State.Block.Movement、Controller-side action FSM、全局旋转框架、网络复制、预测/回滚或额外模块依赖。
+- 不新增 C++ 每帧强制 Actor 旋转；Enemy 动作中的转向仍由作者化 Montage/既有 Legacy task 负责。
+- 不使用 IsAnyMontagePlaying()、AbilitySpec ActiveCount 或平行 bool 作为生产状态权威。
+- 不引入 Motion Warping；只有在 Editor readback 证明存在真实 Warp Window 和动态目标/距离消费者时，另立后续阶段。
+- 不编辑或迁移 .uasset、.umap、Blueprint、AnimBP、Montage、地图、导入资源或其他用户 WIP。
+- 不改伤害、Poise、移动输入、Stamina、Jump、Target Selection、StateTree 或 Execution Lock。
 
-## 3. Approved Paths 与最小接口
+## 3. 冻结运行时契约
 
-Gemini 只可修改：
+### GAS owner matrix
 
+| Ability owner | ActivationOwnedTags 新增项 | Ability.Action.Teardown.OnUnpossess |
+|---|---|---|
+| UEnemyStanceBreakAbility | State.Block.Facing | 已有，保持 |
+| UEnemyMeleeAbility | State.Block.Facing | 新增到 AbilityTags |
+| UEnemyHitReactionAbility | State.Block.Facing | 新增到 AbilityTags |
+| UEnemyLaunchReactionAbility | State.Block.Facing | 新增到 AbilityTags |
+
+- 依靠 UE 5.8 UGameplayAbility 对 ActivationOwnedTags 的自动加减；禁止手动 AddLooseGameplayTag/RemoveLooseGameplayTag、额外 loose-tag 计数器或手动移除新 Tag。
+- 新增 teardown selector 只能进入 AbilityTags，绝不能进入 AbilitiesToCancel。
+- 保留每个 Ability 现有的 AbilitiesToCancel 内容和数量。尤其是 EnemyHitReactionAbility.cpp 与 EnemyLaunchReactionAbility.cpp 中已有 AbilitiesToCancel.Num() == 2，以及 HitReactionAutomationTests.cpp 的精确数量断言，必须原样成立。
+- 在已有 ValidateActivationSetup() 中只补新 Tag 的 validity 检查；没有现有验证函数的路径不新增共享验证框架。
+- AEnemyCharacter::UnPossessed() 继续通过现有 Ability.Action.Teardown.OnUnpossess 调用 CancelAbilities；不得修改全局取消逻辑。
+
+### Enemy Controller consumer
+
+- 删除 IsEnemyLaunchReactionActive() 的声明、定义、调用及仅供该查询使用的 EnemyLaunchReactionAbilityTag 成员；全局检索确认无外部消费。
+- 新增私有 IsEnemyFacingBlocked()，直接查询受控 Enemy 的 ASC 与 State.Block.Facing。
+- UpdateControlRotation() 固定顺序：死亡/Execution Lock 早退；Root Motion active 时保持清除 Focus；随后检查 Facing Block；Block active 时不调用普通 Super::UpdateControlRotation()、不写 Actor yaw、不清除普通 Focus。
+- Root Motion 结束而 Facing Block 仍在时，不消费 bWasRootMotionActive recovery handoff；Tag 清除后才恢复 Focus 与既有平滑 yaw。
+- 单独存在 State.Action.HitReacting 时仍允许普通 Controller facing，证明新 Tag 才是阻断权威。
+
+### Player consumer
+
+- Player 新增 FacingBlockStateTag 和 FDelegateHandle FacingBlockTagChangedHandle。
+- BindSprintStateEvents() 与 UnbindSprintStateEvents() 是 Sprint/Facing 委托的唯一注册和注销路径；其调用必须对称覆盖 PossessedBy、OnRep_PlayerState、UnPossessed，绑定新 ASC 前先解除旧 ASC。
+- 使用 NewOrRemoved 事件注册 OnFacingBlockTagChanged；该回调只调用 UpdateActionFacingRotationMode()，不得调用 CancelSprintAbility() 或启动 Sprint。
+- UpdateActionFacingRotationMode() 将新 Tag 纳入 action-owned rotation；CanApplyLockedLocomotionFacing() 将新 Tag 作为阻断条件；Tag 移除后只恢复模式，下一 Tick 按现有 RotationRate 转向。
+- 保持 ApplyActionFacing()、ApplyLockAwareActionFacing()、ApplyDodgeFacing()、Bow aim、Root Motion、移动输入和 Stamina 行为不变。
+
+## 4. Approved Paths 与接口边界
+
+Gemini 只可修改以下路径：
+
+- Config/Tags/PolyQuestGameplayTags.ini
+- Source/PolyQuest/Public/AbilitySystem/Abilities/EnemyStanceBreakAbility.h
+- Source/PolyQuest/Private/AbilitySystem/Abilities/EnemyStanceBreakAbility.cpp
+- Source/PolyQuest/Public/AbilitySystem/Abilities/EnemyMeleeAbility.h
+- Source/PolyQuest/Private/AbilitySystem/Abilities/EnemyMeleeAbility.cpp
+- Source/PolyQuest/Public/AbilitySystem/Abilities/EnemyHitReactionAbility.h
+- Source/PolyQuest/Private/AbilitySystem/Abilities/EnemyHitReactionAbility.cpp
 - Source/PolyQuest/Public/AbilitySystem/Abilities/EnemyLaunchReactionAbility.h
 - Source/PolyQuest/Private/AbilitySystem/Abilities/EnemyLaunchReactionAbility.cpp
-- Source/PolyQuest/Private/Tests/EnemyLaunchReactionRootMotionAutomationTests.cpp（新增）
+- Source/PolyQuest/Public/AI/EnemyAIController.h
+- Source/PolyQuest/Private/AI/EnemyAIController.cpp
+- Source/PolyQuest/Public/Character/Player/PlayerCharacter.h
+- Source/PolyQuest/Private/Character/Player/PlayerCharacter.cpp
+- Source/PolyQuest/Private/Tests/EnemyStanceBreakRateWindowAutomationTests.cpp
+- Source/PolyQuest/Private/Tests/HitReactionAutomationTests.cpp
+- Source/PolyQuest/Private/Tests/EnemyLaunchReactionRootMotionAutomationTests.cpp
+- Source/PolyQuest/Private/Tests/EnemyRootMotionFacingAutomationTests.cpp
+- Source/PolyQuest/Private/Tests/PlayerLockOnAutomationTests.cpp
 
-允许的接口/状态变化：
+允许的接口变化只有：
 
-- 增加 EditDefaultsOnly、BlueprintReadOnly 的 RootMotionKnockdownMontage，默认 nullptr。
-- 增加 EditDefaultsOnly、BlueprintReadOnly 的 bUseGroundedRootMotionKnockdown，CDO 默认 true；显式设为 false 时锁定 legacy 物理流程。
-- 在私有 ELaunchPhase 增加 RootMotionKnockdown，与旧 Takeoff、TurningToLaunch、AwaitingAirborne、Airborne、LandingRecovery 隔离。
-- 在 CPP 增加私有 TryResolveRootMotionFacingYaw(...)，只做平面方向归一化、有限值校验和 Yaw 变换；不得改变 Resolver 公共接口或旧速度算法。
-- WITH_DEV_AUTOMATION_TESTS 下可增加只读 getter、测试 setter 和回调触发 seam，用于验证分支、Task、阶段、ledge 恢复和清理；不得把测试 seam 暴露到 Shipping。
-- 现有 CommitEventTask、Launch 速度字段和旧资产字段保留，仅由 legacy 分支使用。
+- Config 中新增精确 Tag State.Block.Facing。
+- 四个 Ability 的私有 FGameplayTag 字段、构造函数注册和已有 setup validity 检查。
+- EnemyMeleeAbility.h 在 WITH_DEV_AUTOMATION_TESTS 下增加最小只读 GetTestActivationOwnedTags()；不增加 Shipping API、UFUNCTION 或反射接口。
+- EnemyAIController 的私有通用查询替换 Launch-specific 查询。
+- Player 的私有 Tag、delegate handle 和回调。
 
-## 4. 冻结运行时契约
+Main-only 文档路径为 plan.md、ARCHITECTURE.md、ROADMAP.md、ROADMAP-archive.md；只有阶段门禁完成后才可更新，Gemini 不得触碰。
 
-### 4.1 分支选择与激活校验
+## 5. 实施顺序
 
-- 公共校验继续要求有效 ASC、存活 Enemy、AnimInstance、所需既有 Tag、有效移动组件和可接受的地面状态。
-- Root Motion 候选必须同时满足：开关为真、Montage 有效、HasRootMotion() 为真、Slot 配置有效、播放长度为有限正值，且移动模式精确为 MOVE_Walking。
-- Legacy 候选必须同时满足：TakeoffMontage 与 LandingRecoveryMontage 有效；LaunchHorizontalSpeed、LaunchVerticalSpeed、FacingTurnRateDegreesPerSecond 为有限正值；保持现有 grounded 约束。
-- CanActivateAbility 只在 Root Motion 候选或 Legacy 候选至少一套有效时通过。Root Motion 候选有效时不再强制要求旧 Takeoff/Landing 资产。
-- Root Motion 开关或资产在启动前无效且 Legacy 候选有效时，选择 Legacy fallback；两套均无效才拒绝激活。
-- Root Motion 已选定后若受击方向、对象、委托或移动状态失败，只能 fail-closed 结束，禁止动态切换到 LaunchCharacter()。
+1. 注册 State.Block.Facing，保持现有 Tag 文件风格，不引入其他 Tag。
+2. 在四个 Enemy Ability 中加入 owned Tag；在 Melee/Big/Launch 中加入 teardown selector 到 AbilityTags；保留所有既有 cancellation 列表、数量断言、callback/token、weak-reference、ReadyForActivation() 重入保护和单一 EndAbility() 清理出口。
+3. 在 Enemy Controller 中删除 Launch-specific active-spec 路径，加入 ASC Tag 查询，并保持 Root Motion recovery handoff 的时序。
+4. 在 Player 中加入独立 Tag delegate 的对称绑定/注销和两个消费门口的判定。
+5. 只扩展既有 Automation 文件，先完成 CDO/契约断言，再完成 transient ASC、Controller 和 Player 行为覆盖。
 
-### 4.2 Root Motion 分支时序
+## 6. Automation 验证矩阵
 
-1. 创建 Root Motion Montage Task；不创建 CommitEventTask。
-2. CommitAbility 成功后设置绑定 Enemy、ActiveMontage 和 CurrentPhase = RootMotionKnockdown。
-3. 停止 AI 导航和当前速度。
-4. 在新 Montage ReadyForActivation() 之前调用 CharacterASC->CancelAbilities(&AbilitiesToCancel, nullptr, this)，取消 Enemy Melee 与 Small Hit Reaction。
-5. 取消后立即检查 EnemyCharacter->HasAnyRootMotion()；仍有残留时 fail-closed，禁止两个 Root Motion 来源在首帧叠加。
-6. 从现有受击上下文读取本地攻击者方向，通过 TryResolveRootMotionFacingYaw 计算面向攻击者的 Yaw。方向缺失、零向量、非有限或无法归一化时，在播放前结束 Ability。
-7. 在 MontageTask->ReadyForActivation() 之前一次性 SetActorRotation；不得调用 UAbilityTask_TurnToFacing，不得依赖旧水平/垂直速度参数。
-8. 在 ReadyForActivation() 之前保存原始 bCanWalkOffLedges，设置为 false 并标记 bLedgeSettingModified；绑定 Montage End 与 MovementModeChanged 委托。
-9. 调用 ReadyForActivation() 后检查 bEndAbilityRequested、Ability Active 状态和 Montage 身份/活动状态。同步重入已经结束时不得恢复旧 Task、Montage 或阶段。
-10. Montage 确认活动后再调用既有 BeginLaunchStanceBreakDeferral()；若此后自然完成则完成 deferral，否则由统一清理出口中止。
+- PolyQuest.Combat.EnemyStanceBreakRateWindow：Stance owned/teardown Tag；真实激活期间 Tag 存在；自然结束、取消、UnPossess 后移除；至少一次 InstancedPerActor re-entry。
+- PolyQuest.Combat.HitReaction：Melee/Big/Launch 的 owned/teardown CDO matrix；Small/Victim negative；AbilitiesToCancel 成员与数量保持原值。
+- PolyQuest.Combat.EnemyLaunchReactionRootMotion：Root Motion 与 Legacy 分支共用 Tag；自然结束、取消、UnPossess、同步重入和清理。
+- PolyQuest.Enemy.RootMotionFacing：删除 LaunchSpec->ActiveCount = 1 的假造状态；Controller fixture 使用 EnemyASC->AddLooseGameplayTag(TagBlockFacing)/RemoveLooseGameplayTag(TagBlockFacing)，并确保测试清理。覆盖无 Block 正常转向、Block 保持 yaw/Focus、Root Motion recovery 延迟、Tag 清除后恢复，以及单独 HitReacting 仍可转向。
+- PolyQuest.Player.LockOn：Block 期间 yaw 与 bOrientRotationToMovement 保持；移除后按 RotationRate 恢复；回调不触发 Sprint cancel/restart；重复 Possess/replication/UnPossess 不产生重复或悬挂 delegate；既有攻击、Dodge、HitReact、SmallHit、Root Motion、Bow aim 回归。
+- 对能够使用现有 transient fixture 的四个 Enemy owner，验证 ASC Tag 的激活/结束计数；不得通过直接修改 AbilitySpec.ActiveCount 伪造生产状态。
 
-### 4.3 Notify、移动模式和自然结束
+## 7. 用户验证与证据门禁
 
-- Root Motion 分支不创建或依赖 CommitEventTask。ReactionLaunchCommit Notify 对该分支是可选观察点，不暂停 Montage、不触发 Launch、不创建 Falling watchdog；缺失或延迟不妨碍自然收尾。
-- RootMotionKnockdown 期间仅接受 MovementMode == MOVE_Walking。任何离开该模式的变化，包括 MOVE_Falling、MOVE_NavWalking 或其他模式，立即 EndFromMontage(true)。
-- OnActiveMontageEnded 只在 Montage 身份匹配时处理：Root Motion Montage 非中断结束标记自然完成并结束 Ability；中断结束按异常路径处理。旧 Takeoff/Landing 的处理保持 legacy 语义。
-- Root Motion Montage 必须自身包含起飞、后退/滑行/翻滚和恢复段；不另行启动 LandingRecovery Montage。
+### Main static gate
 
-### 4.4 单一清理出口与 legacy 保全
+- 检查批准路径 diff、Tag 名称、ASC 权属、生命周期、UnPossess selector 和异步清理；运行 git diff --check。
+- 使用一次有界 ue-strict-review Fresh Review。若 code-review-graph 仍基于旧索引，记录 coverage fallback，不把图谱输出当作运行时证明。
+- 同一根因最多一次有依据修复和一次定向重跑；重复失败即停止并保留首个失败证据。
 
-- EndAbility() 必须幂等，统一解绑所有委托、结束并置空 Task、停止活动 Montage、恢复 bCanWalkOffLedges、清空绑定指针/阶段，并处理 Stance Break deferral。
-- 自然 Root Motion 结束调用 CompleteLaunchStanceBreakDeferral()；中断、Falling、死亡、销毁、UnPossess、播放失败和同步重入调用 AbortLaunchStanceBreakDeferral()。两者均不得产生第二条状态恢复路径。
-- Legacy 分支保留当前 CommitEventTask -> Takeoff pause -> FacingTask -> LaunchCharacter -> Falling/LandingRecovery 生命周期；只将资产校验改为分支兼容，不顺手重构旧路径。
-- 不调用 DisableMovement()，不直接写 Actor Location，不清理或覆盖其他 Ability 的 Root Motion；残留 Root Motion 只允许触发 fail-closed。
+### User-owned Editor readback
 
-## 5. 用户拥有的 Editor 资产门禁
+- 确认 Gameplay Tags 中存在精确 State.Block.Facing。
+- 读取四个 Enemy Ability CDO 的 ActivationOwnedTags、AbilityTags、实际 Montage 引用、Skeleton、Slot、AnimBP、Root Motion/In-Place 状态。
+- 若存在真实 Motion Warp Window，记录其目标/距离消费者；不存在则记录 no-adoption，不新增 Motion Warping。
+- 不修改任何 .uasset、.umap、Blueprint、AnimBP、Montage 或地图。
 
-用户在 Unreal Editor 中创建或确认一个 Enemy-exclusive Knockdown Montage。Codex/Gemini 不得编辑二进制资产。
+### User-owned compile, Automation and PIE
 
-Editor readback 必须确认：
+- 编译 PolyQuestEditor (Development Editor)。
+- 运行 PolyQuest.Combat.EnemyStanceBreakRateWindow、PolyQuest.Combat.HitReaction、PolyQuest.Combat.EnemyLaunchReactionRootMotion、PolyQuest.Enemy.RootMotionFacing、PolyQuest.Player.LockOn。
+- Scene01 PIE 覆盖 Enemy Stance Break、Melee、Big、Launch 的 Focus/yaw 阻断与恢复，取消/死亡/销毁/UnPossess/re-entry，Small Hit 不误阻断，以及 Player Lock-On 回归。
+- 不将本阶段结果扩写为位移、伤害、网络、包装、发布或完整 authored baseline 证明。
 
-- Montage 使用 Enemy Skeleton 和有效 Slot，AnimBP 的 Root Motion 模式能让 CMC 消费该 Montage。
-- 实际 Sequence 已启用 Root Motion，Montage HasRootMotion() 为真，播放长度有效。
-- 根骨骼位移是本地 -X 的固定后退距离；敌人先面向攻击者，再向后倒地/滑行/翻滚。
-- 起飞、位移、恢复在同一 Montage 内完成，并在可行地面状态下自然结束。
-- ReactionLaunchCommit 可存在也可缺失；它不是 Root Motion 生命周期硬门禁。
-- 只在 GA_EnemyLaunchReaction 上赋值新 Montage；旧 Takeoff/Landing 资产仍保留为 fallback。不得修改共享 Player/Enemy Montage。
+## 8. Gemini 交付要求、停止条件与收口
 
-## 6. Focused Automation
+- 首先阅读本 plan.md、目标 Header/CPP、直接调用者和既有 Automation；仅在 Approved Paths 内实现。
+- 首轮交付前完成一次干净、只读的实施自审，明确检查 AbilitiesToCancel.Num() == 2 约束、ActiveCount 假造移除、IsEnemyLaunchReactionActive() 清理、Player delegate 对称生命周期、ReadyForActivation() 重入、UnPossess、销毁和单一 EndAbility() 清理。
+- 交付必须包含批准路径 diff、静态检查结果、Automation 结果/新增覆盖、未运行的用户门禁，以及明确的非目标说明。
+- 不得 git add -A、提交、回滚、删除、导入资产或修改 plan.md、ROADMAP.md、ARCHITECTURE.md、Content/**、Blueprint、AnimBP、Montage、地图、Build.cs。
+- 任何清单外 Source、Tag、Input、Config、共享资产迁移、Motion Warping 组件、网络逻辑或墙体专属表现需求出现时立即停止并报告。
+- 没有真实 Warp Window 与动态消费者时不实现 Motion Warping；没有新增 Player launch 证据时不扩展到 TODO-07B13。
+- 阶段完成后由 Main 解释验证证据、执行 ue-strict-review、同步 ARCHITECTURE.md/ROADMAP.md/ROADMAP-archive.md，并在用户明确批准后才暂存或提交。
 
-新增测试文件并注册：
+## 9. Main 收口记录与提交边界（2026-09-11）
 
-PolyQuest.Combat.EnemyLaunchReactionRootMotion
-
-至少覆盖以下确定性场景：
-
-1. SelectsRootMotionBranchWhenConfigured：有效 Root Motion Montage + 开关开启 + Walking 选择新分支；不创建 CommitEventTask、Facing Task 或 Falling watchdog。
-2. FallsBackToPhysicsLaunchWhenDisabledOrInvalid：开关关闭、Root Motion Montage 缺失/无 Root Motion/Slot 无效时，在 Legacy 配置完整的前提下选择旧流程；两套均无效时 fail-closed。
-3. InstantFacingAppliedBeforeMontageActivation：使用有限平面受击方向，在 Montage Task ReadyForActivation() 前完成面向攻击者的 Yaw；验证不读取旧速度作为 Root Motion 前置。
-4. LedgeProtectionRestoredOnAllExitPaths：自然完成、被动中断、同步重入和对象销毁后均恢复原始 bCanWalkOffLedges，且清理只发生一次。
-5. PrematureFallingAbortsReactionAndStanceBreak：Root Motion 阶段进入 MOVE_Falling 或其他非 Walking 模式时立即异常结束并调用 Abort deferral。
-6. CommitNotifyIsNonBlocking：Root Motion 分支不监听 Commit Task；有 Notify、无 Notify、延迟 Notify 都不阻止 Montage 自然结束。
-
-测试使用 transient 对象和 WITH_DEV_AUTOMATION_TESTS seam；Headless/NullRHI 结果只证明 Native 分支和生命周期，不证明真实动画位移、碰撞或视觉表现。
-
-## 7. 验证矩阵与收口门禁
-
-| 门禁 | 所有者 | 需要的证据 |
-| --- | --- | --- |
-| 最终静态回查 | Gemini / Main | 仅批准路径 diff、Rider 错误级检查（可用时）、git diff --check、实施自审；不得称为 PIE 或视觉证据 |
-| 手动编译 | 用户 | PolyQuestEditor (Development Editor) 实际成功结果 |
-| Focused Automation | 用户 | 新专项全部 Success，并回归 PolyQuest.Combat.HitReaction、PolyQuest.Combat.LaunchFacingSmoothing、PolyQuest.Enemy.RootMotionFacing |
-| Editor readback | 用户 | Enemy GA 新字段、Montage Root Motion/Slot/Skeleton/AnimBP 模式、固定 -X 位移与旧 fallback 配置 |
-| Scene01 PIE | 用户 | 平地、缓坡、台阶、墙/墙角、边缘、Montage 中断、死亡/销毁和 Legacy fallback |
-| Main Fresh Review | Main | 依 ue-strict-review 做批准范围内的一跳影响审查，重点检查取消/销毁/重入/null/委托/移动模式/Tag 回归 |
-| Commit gate | 用户 + Main | 用户明确批准后才可按批准路径暂存和提交；本计划阶段不自动提交 |
-
-Slice A 的 PIE 成功标准：
-
-- 平地固定距离与作者化 Root Motion 一致。
-- 缓坡和台阶保持 CMC 地面跟随，不穿透、不进入空中 Launch。
-- 墙体/墙角由 CMC 阻挡胶囊，不出现穿透；专属阻挡过渡不在本阶段承诺。
-- 边缘不会被伪装成空中击飞；离开 Walking 会异常收敛。
-- 所有退出路径恢复 ledge 设置、Montage/Task/委托和 GAS/Poise 生命周期。
-
-## 8. Gemini 交付要求与停止条件
-
-- 先阅读本 plan.md、目标 Header/CPP、直接调用者和现有相关 Automation；只在批准路径内实现。
-- 首轮交付前完成一次干净、只读的实施自审；明确列出 ReadyForActivation() 同步重入、残留 Root Motion、Montage 身份、MovementMode、销毁/UnPossess、ledge 恢复和单一 EndAbility() 清理检查。
-- 交付内容必须包含批准路径 diff、静态检查结果、Automation 结果/新增覆盖、未运行的用户门禁，以及明确的 fallback 与非目标说明。
-- 不得修改 plan.md、ROADMAP.md、ARCHITECTURE.md、全部 Content/**、Config、Blueprint、AnimBP、Montage、地图或 Build.cs；不得 git add -A、提交、回滚、删除或导入资产。
-- 任何额外 Source 文件、Tag、Input、Config、Build.cs、共享 Montage 迁移、Motion Warping 组件、网络逻辑或墙体专属表现需求出现时立即停止并报告，不自行扩大范围。
-- 同一根因只允许一轮有证据的修复及一次目标重跑；根因重复或连续两轮失败后停止并保留首个失败证据。
-- 没有真实 Warp 窗口及动态距离/目标消费者时，不实现 Slice B；没有墙体 PIE 证据时，不实现 Slice C。
-
-## 9. Main 收口记录与后续排期（2026-09-11）
-
-- **实现范围**：执行者报告确认改动封闭在本计划批准的 Enemy Header/CPP 与专项 Automation 路径；Player Launch 路径未改动，符合本阶段非目标。
-- **用户证据**：用户确认 `PolyQuest.Combat.EnemyLaunchReactionRootMotion`、既有 HitReaction/LaunchFacingSmoothing/RootMotionFacing 回归 Automation、`PolyQuestEditor (Development Editor)` 编译以及 Scene01 PIE 通过；该记录不把执行者静态结果包装成运行时证据。
-- **Main Fresh Review**：批准范围内未发现可由当前 diff/source 证据定级的 P0/P1/P2 缺陷。影响雷达的结构性未覆盖提示保留为残余风险，不触发范围扩张或 Player 修复。
-- **门禁状态**：用户已补充确认 `PolyQuestEditor (Development Editor)` 编译通过，`Debt-07B11-CompileReadback` 关闭；07B11 的实现、静态、编译、Automation、Editor/资产 readback、PIE 与 Main Fresh Review 门禁均已有对应证据，可以进入提交门。
-- **Player 对齐决定**：不把 Player 重构并入 TODO-07B11。未来只在独立、证据触发的 `TODO-07B12` 中评估通用 `State.Block.Facing` 契约及 Player 专属 grounded launch；本阶段不新增该 Tag、不改 AIController/PlayerLaunchReactionAbility，也不把提案写入 `ARCHITECTURE.md`。
-- **后续触发条件**：只有真实 In-Place 动作转向复现、统一 Tag 所有权与清理边界、Player 相机/输入/Tech Roll 契约均冻结后，才进入 TODO-07B12；Motion Warping 仍需真实 Montage Warp Window 与动态目标/距离消费者。
+- **实现结果**：Gemini 交付改动保持在 18 个 Approved Paths 内；`State.Block.Facing` 已注册并由四个 Enemy Ability 的 `ActivationOwnedTags` 管理，Enemy Controller 与 Player Lock-On 消费端已接入。`AbilitiesToCancel.Num() == 2`、UnPossess selector、异步 token/委托和单一 `EndAbility()` 清理契约保持。
+- **用户证据**：用户确认 `PolyQuestEditor (Development Editor)` 编译通过、五组 Focused Automation（StanceBreak、HitReaction、Enemy Launch Root Motion、Enemy RootMotionFacing、Player LockOn）通过，以及 Scene01 PIE 通过。该记录不扩写为视觉、网络或包装证明。
+- **Main Fresh Review**：Main 依据 `ue-strict-review` 完成有界两批审查；正常与对抗性核对均未发现可由批准 diff/source 证据定级的 P0/P1/P2 缺陷。`code-review-graph` 与当前 HEAD 对齐；其未覆盖提示保留为静态残余风险。
+- **验证债务**：本阶段未形成独立用户-owned Editor readback 收据来逐项记录精确 Tag 注册及四个 Enemy Ability CDO/Montage 设置，归口为 `Debt-07B12-AuthoredReadback`。该债务不阻塞源码、编译、Automation、PIE 与 Review closeout，但在关闭前不宣称 clean authored baseline 或 packaging readiness。
+- **文档与提交**：Main 已同步 `ARCHITECTURE.md`、`ROADMAP.md` 与 `ROADMAP-archive.md`；提交只包含批准的 Config/Source/Test 路径和上述文档，所有其他用户 WIP 排除。用户已明确批准提交，提交哈希以 Git 历史为准。

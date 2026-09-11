@@ -27,6 +27,9 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 
 namespace
 {
+	const FGameplayTag TagBlockFacing = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Block.Facing")), false);
+	const FGameplayTag TagTeardownOnUnpossess = FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Action.Teardown.OnUnpossess")), false);
+
 	struct FEnemyRootMotionTestWorldScopeCleanup
 	{
 		UWorld* World = nullptr;
@@ -36,6 +39,24 @@ namespace
 			{
 				GEngine->DestroyWorldContext(World);
 				World->DestroyWorld(false);
+			}
+		}
+	};
+
+	class UTestLaunchAbilityAccessHelper : public UEnemyLaunchReactionAbility
+	{
+	public:
+		static void CallAbilityActivation(
+			UEnemyLaunchReactionAbility* Ability,
+			const FGameplayAbilitySpecHandle Handle,
+			const FGameplayAbilityActorInfo* ActorInfo,
+			const FGameplayAbilityActivationInfo ActivationInfo,
+			const FGameplayEventData* TriggerEventData)
+		{
+			if (Ability)
+			{
+				static_cast<UTestLaunchAbilityAccessHelper*>(Ability)->CallActivateAbility(
+					Handle, ActorInfo, ActivationInfo, nullptr, TriggerEventData);
 			}
 		}
 	};
@@ -57,6 +78,15 @@ namespace
 				{
 					AbilityInstance = Cast<UEnemyLaunchReactionAbility>(FoundSpec->GetPrimaryInstance());
 				}
+			}
+		}
+
+		void Activate(const FGameplayEventData* TriggerPayload = nullptr)
+		{
+			if (AbilityInstance && ASC)
+			{
+				UTestLaunchAbilityAccessHelper::CallAbilityActivation(
+					AbilityInstance, Handle, ASC->AbilityActorInfo.Get(), FGameplayAbilityActivationInfo(), TriggerPayload);
 			}
 		}
 
@@ -118,6 +148,16 @@ bool FEnemyLaunchReactionRootMotionAutomationTest::RunTest(const FString& Parame
 		{
 			TestTrue(TEXT("1.2: CDO bUseGroundedRootMotionKnockdown defaults to true"), EnemyLaunchCDO->GetUseGroundedRootMotionKnockdown());
 			TestNull(TEXT("1.3: CDO RootMotionKnockdownMontage defaults to nullptr"), EnemyLaunchCDO->GetTestRootMotionKnockdownMontage());
+			TestTrue(TEXT("1.4: TagBlockFacing is valid"), TagBlockFacing.IsValid());
+			TestTrue(TEXT("1.5: TagTeardownOnUnpossess is valid"), TagTeardownOnUnpossess.IsValid());
+			TestTrue(TEXT("1.6: EnemyLaunch CDO ActivationOwnedTags contains State.Block.Facing"),
+				EnemyLaunchCDO->GetTestActivationOwnedTags().HasTagExact(TagBlockFacing));
+			TestTrue(TEXT("1.7: EnemyLaunch CDO AbilityTags contains Ability.Action.Teardown.OnUnpossess"),
+				EnemyLaunchCDO->GetAssetTags().HasTagExact(TagTeardownOnUnpossess));
+			TestEqual(TEXT("1.8: EnemyLaunch CDO AbilitiesToCancel has exactly 2 entries"),
+				EnemyLaunchCDO->GetTestAbilitiesToCancel().Num(), 2);
+			TestFalse(TEXT("1.9: EnemyLaunch CDO AbilitiesToCancel does NOT contain TeardownOnUnpossess"),
+				EnemyLaunchCDO->GetTestAbilitiesToCancel().HasTag(TagTeardownOnUnpossess));
 		}
 	}
 
@@ -206,16 +246,20 @@ bool FEnemyLaunchReactionRootMotionAutomationTest::RunTest(const FString& Parame
 				Scope.AbilityInstance->CanActivateAbility(Scope.Handle, EnemyASC->AbilityActorInfo.Get()));
 
 			// Activate Ability
-			Scope.AbilityInstance->ActivateAbility(Scope.Handle, EnemyASC->AbilityActorInfo.Get(), FGameplayAbilityActivationInfo(), &DefaultTriggerPayload);
+			Scope.Activate(&DefaultTriggerPayload);
 
 			TestTrue(TEXT("2.5: Ability entered RootMotionKnockdown phase"),
 				Scope.AbilityInstance->IsTestPhaseRootMotionKnockdown());
+			TestTrue(TEXT("2.5b: Root Motion branch grants State.Block.Facing"),
+				EnemyASC->HasMatchingGameplayTag(TagBlockFacing));
 
 			TestFalse(TEXT("2.6: Root Motion branch does NOT create CommitEventTask"), Scope.AbilityInstance->GetTestCommitEventTaskActive());
 			TestFalse(TEXT("2.7: Root Motion branch does NOT create FacingTurnTask"), Scope.AbilityInstance->GetTestFacingTurnTaskActive());
 			TestFalse(TEXT("2.8: Root Motion branch does NOT create FallValidationTask"), Scope.AbilityInstance->GetTestFallValidationTaskActive());
 
 			Scope.AbilityInstance->EndAbility(Scope.Handle, EnemyASC->AbilityActorInfo.Get(), FGameplayAbilityActivationInfo(), false, false);
+			TestFalse(TEXT("2.9: Root Motion branch EndAbility removes State.Block.Facing"),
+				EnemyASC->HasMatchingGameplayTag(TagBlockFacing));
 		}
 	}
 
@@ -240,13 +284,17 @@ bool FEnemyLaunchReactionRootMotionAutomationTest::RunTest(const FString& Parame
 				Scope.AbilityInstance->SetTestBoundAnimInstance(MockAnimInstance);
 				Scope.AbilityInstance->SetTestBypassMontageActiveCheck(true);
 
-				Scope.AbilityInstance->ActivateAbility(Scope.Handle, EnemyASC->AbilityActorInfo.Get(), FGameplayAbilityActivationInfo(), nullptr);
+				Scope.Activate(nullptr);
 
 				TestTrue(TEXT("3.1: Disabled Root Motion falls back to Legacy Takeoff phase"),
 					Scope.AbilityInstance->IsTestPhaseTakeoff());
-				TestTrue(TEXT("3.1: Legacy branch creates CommitEventTask"), Scope.AbilityInstance->GetTestCommitEventTaskActive());
+				TestTrue(TEXT("3.1b: Legacy branch grants State.Block.Facing"),
+					EnemyASC->HasMatchingGameplayTag(TagBlockFacing));
+				TestTrue(TEXT("3.1c: Legacy branch creates CommitEventTask"), Scope.AbilityInstance->GetTestCommitEventTaskActive());
 
 				Scope.AbilityInstance->EndAbility(Scope.Handle, EnemyASC->AbilityActorInfo.Get(), FGameplayAbilityActivationInfo(), false, true);
+				TestFalse(TEXT("3.1d: Legacy branch EndAbility removes State.Block.Facing"),
+					EnemyASC->HasMatchingGameplayTag(TagBlockFacing));
 			}
 		}
 
@@ -263,7 +311,7 @@ bool FEnemyLaunchReactionRootMotionAutomationTest::RunTest(const FString& Parame
 				Scope.AbilityInstance->SetTestBoundAnimInstance(MockAnimInstance);
 				Scope.AbilityInstance->SetTestBypassMontageActiveCheck(true);
 
-				Scope.AbilityInstance->ActivateAbility(Scope.Handle, EnemyASC->AbilityActorInfo.Get(), FGameplayAbilityActivationInfo(), nullptr);
+				Scope.Activate(nullptr);
 
 				TestTrue(TEXT("3.2: Null Root Motion montage falls back to Legacy Takeoff phase"),
 					Scope.AbilityInstance->IsTestPhaseTakeoff());
@@ -286,7 +334,7 @@ bool FEnemyLaunchReactionRootMotionAutomationTest::RunTest(const FString& Parame
 				Scope.AbilityInstance->SetTestBoundAnimInstance(MockAnimInstance);
 				Scope.AbilityInstance->SetTestBypassMontageActiveCheck(true);
 
-				Scope.AbilityInstance->ActivateAbility(Scope.Handle, EnemyASC->AbilityActorInfo.Get(), FGameplayAbilityActivationInfo(), nullptr);
+				Scope.Activate(nullptr);
 
 				TestTrue(TEXT("3.3: Montage without root motion falls back to Legacy Takeoff phase"),
 					Scope.AbilityInstance->IsTestPhaseTakeoff());
@@ -366,7 +414,7 @@ bool FEnemyLaunchReactionRootMotionAutomationTest::RunTest(const FString& Parame
 			TriggerPayload.Instigator = Player;
 			TriggerPayload.Target = Enemy;
 
-			Scope.AbilityInstance->ActivateAbility(Scope.Handle, EnemyASC->AbilityActorInfo.Get(), FGameplayAbilityActivationInfo(), &TriggerPayload);
+			Scope.Activate(&TriggerPayload);
 
 			TestTrue(TEXT("4.2: Enemy yaw rotated to face attacker directly"),
 				FMath::IsNearlyEqual(Enemy->GetActorRotation().Yaw, 90.0f, 1.0f));
@@ -400,10 +448,11 @@ bool FEnemyLaunchReactionRootMotionAutomationTest::RunTest(const FString& Parame
 				Scope.AbilityInstance->SetTestBoundAnimInstance(MockAnimInstance);
 				Scope.AbilityInstance->SetTestBypassMontageActiveCheck(true);
 
-				Scope.AbilityInstance->ActivateAbility(Scope.Handle, EnemyASC->AbilityActorInfo.Get(), FGameplayAbilityActivationInfo(), &DefaultTriggerPayload);
+				Scope.Activate(&DefaultTriggerPayload);
 
 				TestFalse(TEXT("5.1a: bCanWalkOffLedges disabled upon activation"), MovementComponent->bCanWalkOffLedges);
 				TestTrue(TEXT("5.1b: bLedgeSettingModified marked true"), Scope.AbilityInstance->GetTestLedgeSettingModified());
+				TestTrue(TEXT("5.1b2: State.Block.Facing active during reaction"), EnemyASC->HasMatchingGameplayTag(TagBlockFacing));
 
 				// Natural montage end
 				Scope.AbilityInstance->SetTestLandingRecoveryCompletedNaturally(true);
@@ -411,6 +460,7 @@ bool FEnemyLaunchReactionRootMotionAutomationTest::RunTest(const FString& Parame
 
 				TestTrue(TEXT("5.1c: bCanWalkOffLedges restored to true on natural end"), MovementComponent->bCanWalkOffLedges);
 				TestFalse(TEXT("5.1d: bLedgeSettingModified reset to false"), Scope.AbilityInstance->GetTestLedgeSettingModified());
+				TestFalse(TEXT("5.1e: State.Block.Facing removed on natural end"), EnemyASC->HasMatchingGameplayTag(TagBlockFacing));
 			}
 		}
 
@@ -427,14 +477,16 @@ bool FEnemyLaunchReactionRootMotionAutomationTest::RunTest(const FString& Parame
 				Scope.AbilityInstance->SetTestBoundAnimInstance(MockAnimInstance);
 				Scope.AbilityInstance->SetTestBypassMontageActiveCheck(true);
 
-				Scope.AbilityInstance->ActivateAbility(Scope.Handle, EnemyASC->AbilityActorInfo.Get(), FGameplayAbilityActivationInfo(), &DefaultTriggerPayload);
+				Scope.Activate(&DefaultTriggerPayload);
 
 				TestFalse(TEXT("5.2a: bCanWalkOffLedges disabled upon activation"), MovementComponent->bCanWalkOffLedges);
+				TestTrue(TEXT("5.2a2: State.Block.Facing active during reaction"), EnemyASC->HasMatchingGameplayTag(TagBlockFacing));
 
 				// Interrupted cancel
 				Scope.AbilityInstance->EndAbility(Scope.Handle, EnemyASC->AbilityActorInfo.Get(), FGameplayAbilityActivationInfo(), false, true);
 
 				TestTrue(TEXT("5.2b: bCanWalkOffLedges restored to true on interrupted cancel"), MovementComponent->bCanWalkOffLedges);
+				TestFalse(TEXT("5.2c: State.Block.Facing removed on interrupted cancel"), EnemyASC->HasMatchingGameplayTag(TagBlockFacing));
 			}
 		}
 	}
@@ -453,7 +505,7 @@ bool FEnemyLaunchReactionRootMotionAutomationTest::RunTest(const FString& Parame
 			Scope.AbilityInstance->SetTestBoundAnimInstance(MockAnimInstance);
 			Scope.AbilityInstance->SetTestBypassMontageActiveCheck(true);
 
-			Scope.AbilityInstance->ActivateAbility(Scope.Handle, EnemyASC->AbilityActorInfo.Get(), FGameplayAbilityActivationInfo(), &DefaultTriggerPayload);
+			Scope.Activate(&DefaultTriggerPayload);
 
 			TestTrue(TEXT("6.1: Active phase is RootMotionKnockdown"),
 				Scope.AbilityInstance->IsTestPhaseRootMotionKnockdown());
@@ -493,7 +545,7 @@ bool FEnemyLaunchReactionRootMotionAutomationTest::RunTest(const FString& Parame
 			Scope.AbilityInstance->SetTestBoundAnimInstance(MockAnimInstance);
 			Scope.AbilityInstance->SetTestBypassMontageActiveCheck(true);
 
-			Scope.AbilityInstance->ActivateAbility(Scope.Handle, EnemyASC->AbilityActorInfo.Get(), FGameplayAbilityActivationInfo(), &DefaultTriggerPayload);
+			Scope.Activate(&DefaultTriggerPayload);
 
 			TestTrue(TEXT("7.1: Active phase is RootMotionKnockdown"),
 				Scope.AbilityInstance->IsTestPhaseRootMotionKnockdown());
@@ -518,6 +570,64 @@ bool FEnemyLaunchReactionRootMotionAutomationTest::RunTest(const FString& Parame
 				Scope.AbilityInstance->IsTestPhaseNone());
 			TestFalse(TEXT("7.5: Stance break completed naturally and deferral cleared"),
 				Enemy->IsLaunchStanceBreakDeferralActive());
+		}
+	}
+
+	// -------------------------------------------------------------------------
+	// SECTION 8: State.Block.Facing Lifecycle, UnPossess Teardown, and Cancel
+	// -------------------------------------------------------------------------
+	{
+		UAnimMontage* ValidRootMontage = CreateSyntheticKnockdownMontage(Enemy, 2.0f, true);
+
+		// 8.1 UnPossess Teardown cancels ability and removes State.Block.Facing
+		{
+			FTestAbilityFixtureScope Scope(EnemyASC, Enemy);
+			TestNotNull(TEXT("8.1: TeardownAbility created"), Scope.AbilityInstance);
+			if (Scope.AbilityInstance)
+			{
+				Scope.AbilityInstance->SetTestRootMotionKnockdownMontage(ValidRootMontage);
+				Scope.AbilityInstance->SetTestUseGroundedRootMotionKnockdown(true);
+				Scope.AbilityInstance->SetTestBoundAnimInstance(MockAnimInstance);
+				Scope.AbilityInstance->SetTestBypassMontageActiveCheck(true);
+
+				Scope.Activate(&DefaultTriggerPayload);
+
+				TestTrue(TEXT("8.1a: Ability active"), Scope.AbilityInstance->IsActive());
+				TestTrue(TEXT("8.1b: State.Block.Facing granted upon activation"), EnemyASC->HasMatchingGameplayTag(TagBlockFacing));
+
+				// Re-entrancy blocked while reaction is active
+				TestFalse(TEXT("8.1c: Re-entry blocked while reaction is active"),
+					Scope.AbilityInstance->CanActivateAbility(Scope.Handle, EnemyASC->AbilityActorInfo.Get()));
+
+				// UnPossess Teardown
+				Enemy->TriggerTestUnPossessed();
+
+				TestFalse(TEXT("8.1d: Ability cancelled by UnPossessed via TeardownOnUnpossess"), Scope.AbilityInstance->IsActive());
+				TestFalse(TEXT("8.1e: State.Block.Facing removed upon UnPossess"), EnemyASC->HasMatchingGameplayTag(TagBlockFacing));
+			}
+		}
+
+		// 8.2 Explicit cancel cleans up State.Block.Facing
+		{
+			FTestAbilityFixtureScope Scope2(EnemyASC, Enemy);
+			TestNotNull(TEXT("8.2: Scope2 Ability created"), Scope2.AbilityInstance);
+			if (Scope2.AbilityInstance)
+			{
+				Scope2.AbilityInstance->SetTestRootMotionKnockdownMontage(ValidRootMontage);
+				Scope2.AbilityInstance->SetTestUseGroundedRootMotionKnockdown(true);
+				Scope2.AbilityInstance->SetTestBoundAnimInstance(MockAnimInstance);
+				Scope2.AbilityInstance->SetTestBypassMontageActiveCheck(true);
+
+				Scope2.Activate(&DefaultTriggerPayload);
+
+				TestTrue(TEXT("8.2a: Ability active"), Scope2.AbilityInstance->IsActive());
+				TestTrue(TEXT("8.2b: State.Block.Facing granted"), EnemyASC->HasMatchingGameplayTag(TagBlockFacing));
+
+				EnemyASC->CancelAbilityHandle(Scope2.Handle);
+
+				TestFalse(TEXT("8.2c: Ability cancelled"), Scope2.AbilityInstance->IsActive());
+				TestFalse(TEXT("8.2d: State.Block.Facing removed on cancel"), EnemyASC->HasMatchingGameplayTag(TagBlockFacing));
+			}
 		}
 	}
 

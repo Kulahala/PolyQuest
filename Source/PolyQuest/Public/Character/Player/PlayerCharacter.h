@@ -453,6 +453,7 @@ private:
 	void BindSprintStateEvents();
 	void UnbindSprintStateEvents();
 	void OnSprintRelevantTagChanged(const FGameplayTag Tag, int32 NewCount);
+	void OnFacingBlockTagChanged(const FGameplayTag Tag, int32 NewCount);
 	void GetCameraPlanarAxes(FVector& OutForwardDirection, FVector& OutRightDirection) const;
 	void UpdateActionFacingRotationMode();
 	bool CanApplyLockedLocomotionFacing() const;
@@ -500,6 +501,7 @@ private:
 	FGameplayTag DeadStateTag;
 	FGameplayTag ExhaustedStateTag;
 	FGameplayTag StunnedStateTag;
+	FGameplayTag FacingBlockStateTag;
 	FGameplayTag GuardAbilityTag;
 	FGameplayTag ParryAbilityTag;
 	FGameplayTag SmallHitReactionEventTag;
@@ -514,6 +516,7 @@ private:
 	FDelegateHandle ParryingStateTagChangedHandle;
 	FDelegateHandle DeadStateTagChangedHandle;
 	FDelegateHandle StunnedStateTagChangedHandle;
+	FDelegateHandle FacingBlockTagChangedHandle;
 	FDelegateHandle HealthAttributeChangedHandle;
 	FDelegateHandle StaminaAttributeChangedHandle;
 	FDelegateHandle ExhaustionDeadStateTagChangedHandle;

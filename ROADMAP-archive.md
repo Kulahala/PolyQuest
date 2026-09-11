@@ -1466,3 +1466,15 @@ TODO-03A3E World Pickup Interaction Prompt v1
 - **Main Fresh Review**：Main 在批准范围内未发现可由当前 diff/source 证据定级的 P0/P1/P2 缺陷；Player 未改动符合本阶段非目标。结构性影响雷达提示保留为残余风险，不触发范围扩张。
 - **债务与后续指针**：`Debt-07B11-CompileReadback` 已由用户确认的编译结果关闭。后续候选路线为条件性 `TODO-07B12`：先验证 Ability-owned `State.Block.Facing` 的通用生命周期与 AI/Player 消费，再另行评估 Player 专属 grounded launch；不在本阶段预铺该 Tag、全局 Motion Warping 或 Player 重构。
 - **提交边界**：本阶段收口提交仅包含批准的 Enemy Header/CPP、专项 Automation、`ARCHITECTURE.md`、`ROADMAP.md`、`ROADMAP-archive.md` 与 `plan.md`；全部用户-owned Content/Config/Blueprint/AnimBP/Montage/地图/插件及其他 WIP 均排除。提交哈希以 Git 历史为准。
+
+## TODO-07B12 Action Facing Block Contract v1 Closeout (2026-09-11)
+
+> 本节记录 TODO-07B12 的源码、配置、Automation、编译、PIE 与 Main Fresh Review 收口证据。它保留证据类型边界，不替代实时 Source、配置、资产或 Unreal Editor 状态作为运行时权威。
+
+- **范围与实际结果**：实现限定于批准的 `Config/Tags/PolyQuestGameplayTags.ini`、四个 Enemy Ability Header/CPP、`AEnemyAIController`、`APlayerCharacter` 与五个既有 Automation 入口；所有用户-owned Content、Blueprint、AnimBP、Montage、地图和其他 WIP 均排除。新增精确 `State.Block.Facing`，未引入新的 Movement/网络/预测状态。
+- **稳定契约**：`UEnemyStanceBreakAbility`、`UEnemyMeleeAbility`、`UEnemyHitReactionAbility`、`UEnemyLaunchReactionAbility` 通过 GAS `ActivationOwnedTags` 拥有 facing block 生命周期；Melee/Big/Launch 同时携带 `Ability.Action.Teardown.OnUnpossess`，但 `AbilitiesToCancel` 成员及 `Num() == 2` 约束保持不变。Small Hit 与 Victim Execution 不拥有该 Tag。
+- **消费端**：`AEnemyAIController` 改用受控 Enemy ASC 的 `State.Block.Facing` 查询，移除 Launch-specific active-spec 查询，并保留 Root Motion Focus 清除及延迟 recovery handoff。`APlayerCharacter` 在 action-facing 与 Lock-On locomotion 两个入口消费该 Tag，使用独立的对称 NewOrRemoved delegate，不触发 Sprint 副作用。
+- **验证证据**：执行者报告批准路径 `git diff --check` 通过；用户确认 `PolyQuestEditor (Development Editor)` 编译通过、`PolyQuest.Combat.EnemyStanceBreakRateWindow`、`PolyQuest.Combat.HitReaction`、`PolyQuest.Combat.EnemyLaunchReactionRootMotion`、`PolyQuest.Enemy.RootMotionFacing`、`PolyQuest.Player.LockOn` 五组 Automation 成功，以及 Scene01 PIE 通过。上述证据不扩写为视觉、网络或包装证明。
+- **Main Fresh Review**：Main 依据 `ue-strict-review` 完成有界两批审查；正常与对抗性核对均未发现可由批准 diff/source 证据定级的 P0/P1/P2 缺陷。`code-review-graph` 与当前 HEAD 对齐，影响雷达的未覆盖提示作为静态残余风险处理，不触发范围扩张。
+- **债务与后续指针**：`Debt-07B12-AuthoredReadback` 保持非阻塞状态：本次未形成独立用户-owned Editor 收据来逐项记录 Tag 注册、四个 Ability CDO 与实际 Montage 设置。关闭条件为可追溯 Editor readback 或 evidence-backed no-adoption；该债务不阻塞本阶段源码/编译/Automation/PIE closeout。下一排期为 `TODO-07B13`，不因本阶段自动扩大 Player Ability 范围。
+- **提交边界**：本阶段提交仅包含批准的 Config/Source/Test 路径与 `ARCHITECTURE.md`、`ROADMAP.md`、`ROADMAP-archive.md`、`plan.md`；其他用户 WIP 不暂存。提交哈希以 Git 历史为准。

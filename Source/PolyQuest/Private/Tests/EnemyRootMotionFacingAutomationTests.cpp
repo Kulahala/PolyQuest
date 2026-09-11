@@ -12,7 +12,6 @@
 #include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/RootMotionSource.h"
 #include "AbilitySystemComponent.h"
-#include "AbilitySystem/Abilities/EnemyLaunchReactionAbility.h"
 #include "GameplayEffect.h"
 #include "GameplayTagContainer.h"
 #include "Tests/CombatAutomationFixture.h"
@@ -287,7 +286,7 @@ bool FEnemyRootMotionFacingAutomationTest::RunTest(const FString& Parameters)
 	}
 
 	// -------------------------------------------------------------------------
-	// SECTION 6: Active Hit Reaction Facing Arbitration & Launch Spec Isolation
+	// SECTION 6: Active Hit Reaction Facing Arbitration & Tag-Based Facing Block
 	// -------------------------------------------------------------------------
 	{
 		AIController->SetTestTargetForAutomation(Player);
@@ -299,11 +298,15 @@ bool FEnemyRootMotionFacingAutomationTest::RunTest(const FString& Parameters)
 		if (EnemyASC)
 		{
 			const FGameplayTag TagHitReacting = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Action.HitReacting")), false);
+			const FGameplayTag TagBlockFacing = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Block.Facing")), false);
 			TestTrue(TEXT("State.Action.HitReacting tag is valid"), TagHitReacting.IsValid());
+			TestTrue(TEXT("State.Block.Facing tag is valid"), TagBlockFacing.IsValid());
 
-			// 6.1 Loose State.Action.HitReacting does NOT suppress Controller target-facing (locks exclusion of Enemy Big from Launch gate)
+			// 6.1 Loose State.Action.HitReacting does NOT suppress Controller target-facing
 			EnemyASC->AddLooseGameplayTag(TagHitReacting);
 			Enemy->SetActorRotation(FRotator(0.0f, 90.0f, 0.0f));
+			TestFalse(TEXT("Facing is not blocked when only HitReacting is present"),
+				AIController->IsEnemyFacingBlockedForTest());
 
 			AIController->TriggerTestUpdateControlRotation(0.1f, true);
 
@@ -312,38 +315,76 @@ bool FEnemyRootMotionFacingAutomationTest::RunTest(const FString& Parameters)
 
 			EnemyASC->RemoveLooseGameplayTag(TagHitReacting);
 
-			// 6.2 Grant real UEnemyLaunchReactionAbility Spec and test active Spec arbitration
-			const FGameplayAbilitySpecHandle LaunchHandle = EnemyASC->GiveAbility(
-				FGameplayAbilitySpec(UEnemyLaunchReactionAbility::StaticClass(), 1, INDEX_NONE, Enemy));
-			FGameplayAbilitySpec* LaunchSpec = EnemyASC->FindAbilitySpecFromHandle(LaunchHandle);
-			TestNotNull(TEXT("Launch ability spec granted successfully"), LaunchSpec);
+			// 6.2 State.Block.Facing actively blocks Controller rotation while preserving focus
+			EnemyASC->AddLooseGameplayTag(TagBlockFacing);
+			TestTrue(TEXT("Facing is blocked when State.Block.Facing is present"),
+				AIController->IsEnemyFacingBlockedForTest());
 
-			if (LaunchSpec)
+			// Set non-target Yaw
+			Enemy->SetActorRotation(FRotator(0.0f, 135.0f, 0.0f));
+
+			AIController->TriggerTestUpdateControlRotation(0.1f, true);
+
+			// Yaw and Focus must remain untouched while Facing is blocked
+			TestTrue(TEXT("Enemy yaw is untouched while State.Block.Facing is active (remains 135 deg)"),
+				FMath::IsNearlyZero(FMath::FindDeltaAngleDegrees(Enemy->GetActorRotation().Yaw, 135.0f), 0.01f));
+			TestEqual(TEXT("Gameplay focus is preserved during active Facing block"),
+				AIController->GetFocusActor(), Cast<AActor>(Player));
+
+			// 6.3 Remove State.Block.Facing and verify target-facing resumes
+			EnemyASC->RemoveLooseGameplayTag(TagBlockFacing);
+			TestFalse(TEXT("Facing is unblocked after removing State.Block.Facing tag"),
+				AIController->IsEnemyFacingBlockedForTest());
+
+			AIController->TriggerTestUpdateControlRotation(0.5f, true);
+
+			TestTrue(TEXT("Enemy faces Player target again after State.Block.Facing is removed"),
+				FMath::IsNearlyZero(FMath::FindDeltaAngleDegrees(Enemy->GetActorRotation().Yaw, 0.0f), 1.0f));
+
+			// 6.4 Root Motion recovery delayed while State.Block.Facing remains active
 			{
-				LaunchSpec->ActiveCount = 1;
-				TestTrue(TEXT("Launch spec is active"), LaunchSpec->IsActive());
+				TSharedPtr<FRootMotionSource_ConstantForce> RM_Block = MakeShared<FRootMotionSource_ConstantForce>();
+				RM_Block->InstanceName = TEXT("RMS_FacingBlockHandoff");
+				RM_Block->Priority = 500;
+				RM_Block->Duration = 5.0f;
+				RM_Block->AccumulateMode = ERootMotionAccumulateMode::Override;
+				RM_Block->Force = FVector(100.0f, 0.0f, 0.0f);
+				const uint16 RM_Block_Id = EnemyMovement->ApplyRootMotionSource(RM_Block);
 
-				// Set non-target Yaw
-				Enemy->SetActorRotation(FRotator(0.0f, 135.0f, 0.0f));
+				Enemy->SetActorRotation(FRotator(0.0f, 90.0f, 0.0f));
+				AIController->TriggerTestUpdateControlRotation(0.1f, true); // Active RM, sets bWasRootMotionActive = true
+				TestNull(TEXT("Focus cleared during active Root Motion"), AIController->GetFocusActor());
+
+				// Root Motion ends, but State.Block.Facing becomes active
+				EnemyMovement->RemoveRootMotionSourceByID(RM_Block_Id);
+				EnemyMovement->CurrentRootMotion.Clear();
+				TestFalse(TEXT("Root Motion cleared"), Enemy->HasAnyRootMotion());
+
+				EnemyASC->AddLooseGameplayTag(TagBlockFacing);
+
+				// Update while Block is active: should early-out without consuming bWasRootMotionActive
+				AIController->TriggerTestUpdateControlRotation(0.1f, true);
+				TestFalse(TEXT("Facing recovery NOT started while State.Block.Facing is active"),
+					AIController->IsFacingRecoveryActiveForTest());
+				TestTrue(TEXT("Yaw remains untouched during facing block handoff (90 deg)"),
+					FMath::IsNearlyZero(FMath::FindDeltaAngleDegrees(Enemy->GetActorRotation().Yaw, 90.0f), 0.01f));
+
+				// Now remove State.Block.Facing: next update must consume bWasRootMotionActive and initiate smooth recovery
+				EnemyASC->RemoveLooseGameplayTag(TagBlockFacing);
 
 				AIController->TriggerTestUpdateControlRotation(0.1f, true);
+				TestTrue(TEXT("Facing recovery starts after State.Block.Facing is removed"),
+					AIController->IsFacingRecoveryActiveForTest());
+				TestEqual(TEXT("Focus restored to Player"), AIController->GetFocusActor(), Cast<AActor>(Player));
+				TestNearlyEqual(TEXT("Enemy turned bounded ~80 deg in 0.1s recovery"),
+					Enemy->GetActorRotation().Yaw, 10.0, 1.5);
 
-				// Yaw and Focus must remain untouched while Launch spec is active
-				TestTrue(TEXT("Enemy yaw is untouched while Launch spec is active (remains 135 deg)"),
-					FMath::IsNearlyZero(FMath::FindDeltaAngleDegrees(Enemy->GetActorRotation().Yaw, 135.0f), 0.01f));
-				TestEqual(TEXT("Gameplay focus is preserved during active Launch spec"),
-					AIController->GetFocusActor(), Cast<AActor>(Player));
-
-				// 6.3 Reset ActiveCount and verify target-facing resumes
-				LaunchSpec->ActiveCount = 0;
-				TestFalse(TEXT("Launch spec is inactive after reset"), LaunchSpec->IsActive());
-
-				AIController->TriggerTestUpdateControlRotation(0.5f, true);
-
-				TestTrue(TEXT("Enemy faces Player target again after Launch spec becomes inactive"),
-					FMath::IsNearlyZero(FMath::FindDeltaAngleDegrees(Enemy->GetActorRotation().Yaw, 0.0f), 1.0f));
-
-				EnemyASC->ClearAbility(LaunchHandle);
+				// Converge
+				AIController->TriggerTestUpdateControlRotation(0.05f, true);
+				TestTrue(TEXT("Enemy converged to Player target after recovery"),
+					FMath::IsNearlyZero(FMath::FindDeltaAngleDegrees(Enemy->GetActorRotation().Yaw, 0.0f), 0.05f));
+				TestFalse(TEXT("Facing recovery ended after convergence"),
+					AIController->IsFacingRecoveryActiveForTest());
 			}
 		}
 	}

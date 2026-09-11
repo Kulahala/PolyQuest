@@ -85,6 +85,8 @@ private:
 	FGameplayTag HyperArmorStateTag;
 	FGameplayTag EnemyMeleeAbilityTag;
 	FGameplayTag EnemySmallHitReactionAbilityTag;
+	FGameplayTag TeardownOnUnpossessTag;
+	FGameplayTag FacingBlockedStateTag;
 	FGameplayTagContainer AbilitiesToCancel;
 
 	FVector ImpactDirectionSnapshot = FVector::ZeroVector;

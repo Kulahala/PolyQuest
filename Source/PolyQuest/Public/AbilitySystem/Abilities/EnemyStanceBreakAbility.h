@@ -163,6 +163,9 @@ private:
 	FGameplayTag TeardownOnUnpossessTag;
 
 	UPROPERTY(Transient)
+	FGameplayTag FacingBlockedStateTag;
+
+	UPROPERTY(Transient)
 	FGameplayTagContainer AbilitiesToCancel;
 
 	bool bMovementLockedByStanceBreak = false;

@@ -175,6 +175,8 @@ private:
 	FGameplayTag HyperArmorStateTag;
 	FGameplayTag EnemyMeleeAbilityTag;
 	FGameplayTag EnemySmallHitReactionAbilityTag;
+	FGameplayTag TeardownOnUnpossessTag;
+	FGameplayTag FacingBlockedStateTag;
 	FGameplayTagContainer AbilitiesToCancel;
 
 	FLaunchFacingSmoothingState SmoothingState;

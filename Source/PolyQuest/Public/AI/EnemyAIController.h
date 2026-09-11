@@ -219,6 +219,9 @@ public:
 
 	/** Automation inspector: checks whether facing recovery state is active. */
 	bool IsFacingRecoveryActiveForTest() const { return bIsFacingRecoveryActive; }
+
+	/** Automation inspector: checks whether enemy facing is blocked. */
+	bool IsEnemyFacingBlockedForTest() const { return IsEnemyFacingBlocked(); }
 #endif
 
 protected:
@@ -245,7 +248,7 @@ private:
 	void SendStateTreeEvent(const FGameplayTag& EventTag) const;
 
 	bool HasControlledEnemyRootMotion() const;
-	bool IsEnemyLaunchReactionActive() const;
+	bool IsEnemyFacingBlocked() const;
 	void ApplyTargetFocus(APlayerCharacter* TargetToFocus);
 	void ClearTargetFocus();
 	void ResetRootMotionFacingHandoff();
@@ -285,7 +288,7 @@ private:
 	FVector HomeLocation = FVector::ZeroVector;
 
 	FGameplayTag EnemyMeleeAbilityTag;
-	FGameplayTag EnemyLaunchReactionAbilityTag;
+	FGameplayTag FacingBlockedStateTag;
 	FGameplayTag AttackingStateTag;
 	FGameplayTag HitReactingStateTag;
 	FGameplayTag StunnedStateTag;
