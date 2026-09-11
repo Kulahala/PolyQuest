@@ -1,173 +1,169 @@
-# TODO-07B13-RET: Player Legacy Launch Retirement v1
+# TODO-07B11-RET: Enemy Legacy Launch Retirement v1
 
 ## 1. 阶段定位、基线与路由
 
-- Target Objective：删除 Player Launch Reaction 中已不被当前作者化 CDO 使用的 Physics Launch 兼容路径及已失去分支选择意义的 bUseGroundedRootMotionKnockdown，使 UPlayerLaunchReactionAbility 成为单一 grounded Root Motion knockdown/recovery 生命周期。Root candidate 无效或 Root Montage 启动失败时一律 fail-closed，不得恢复 Physics fallback。
-- 阶段关系：TODO-07B13 已归档至 ROADMAP-archive.md，Archive Preflight 为 PASS。本阶段只退休 Player；TODO-07B11-RET Enemy Legacy Launch Retirement 保持独立，后续另立 active plan。
-- 基线：main @ 9a01d3ceb8ad074b4e9a478f2aa2bac5f0601d63（2026-09-11），外加用户保留的非干净工作树和 Main 未提交的 ROADMAP.md 排期更新。
-- 用户前置证据：GA_PlayerLaunchReaction 已是 Root Motion-only，RootMotionKnockdownMontage = AM_TakeOff、Legacy Takeoff/LandingRecovery 字段为空；原 bUseGroundedRootMotionKnockdown 为 true，现由本切片一并退休。07B13 的编译、Automation 和 Scene01 PIE 是前置事实，不等同于本退休切片已经验证。
-- 工作树约束：所有 Content、Config、Blueprint、AnimBP、Montage、地图、导入资源、tmp 及其他 WIP 均保留；不得回滚、清理、格式化、批量暂存或归因。
+- Target Objective：删除 UEnemyLaunchReactionAbility 中已被 grounded Root Motion 路径取代的 Physics Launch 兼容分支及其 Enemy-only reflected/test surface，使 Enemy Launch Reaction 只接受有效 grounded Root Motion knockdown。Root candidate 无效或 Montage 启动失败时一律 fail-closed，不得恢复 Physics fallback。
+- 阶段关系：TODO-07B11 已在 ROADMAP-archive.md 收口；TODO-07B13-RET 的历史收口已追加归档，Archive Preflight 为 PASS。本切片只退休 Enemy Legacy Launch；不回溯 Player，也不启动条件性 TODO-07B14。
+- 基线：main @ aab8ef630ec49575fff3d82f0e0fd845bf7d44f1（2026-09-11）。工作树仍含用户保留的 Content/**、Config/**、Blueprint、AnimBP、Montage、地图、导入资源与其他 WIP；它们不属于本阶段，必须保留。
+- 已有源码证据：Enemy Ability 当前同时拥有 RootMotionKnockdown 与 Takeoff -> TurningToLaunch -> AwaitingAirborne -> Airborne -> LandingRecovery Physics 分支。后者独占 LaunchCharacter、Commit listener、FLaunchFacingSmoothingState、UAbilityTask_TurnToFacing、fall watchdog、Takeoff/Landing Recovery Montage 及速度/转向字段；Root 分支已拥有 AI stop、一次性 facing、StopMovementImmediately()、CMC ledge guard、State.Block.Facing、stance-break deferral 和幂等 EndAbility()。
+- 已有路线图证据：用户此前 readback 的 Enemy CDO 已按 Root Motion-only 作者化，但该事实不足以替代本阶段对所有实际 Enemy Launch 资产与派生类的独立 readback。
 - 技能路由：
   - Outer: ue-stage-workflow
   - Primary: ue5-cpp-gameplay
-  - Support: ue5-debug-validation
-  - Route reason: GAS Ability 生命周期窄删除，必须保留 Root Motion、Dodge window、CMC/ledge 和 EndAbility 清理契约。
-- 执行路线：manual/out-of-band Gemini。Implementation executors: 1（Gemini）；in-app delegation: 0。Main 保留架构、计划、验证解释、Fresh Review、文档、暂存和提交所有权；Gemini 不得提交。
+  - Support: none
+  - Route reason: 这是 GAS UGameplayAbility 的窄生命周期退休，必须精确保留 ASC-owned tags、CMC/ledge、AI stop、Poise/stance-break handoff 与异步任务收敛。
+- 执行路线：manual/out-of-band Gemini。Implementation executors: 1（Gemini）；in-app delegation: 0。Main（Codex）拥有架构、计划、用户验证解释、Fresh Review、文档、暂存和提交；Gemini 不得提交。首次实施交付前，Gemini 必须安排一名干净只读子代理完成实施自审；后续窄修复回路不得再派发子代理。
 
 ## 2. 目标、完成标准与刻意非目标
 
 ### Target Objective
 
-1. 删除 Player Takeoff -> TurningToLaunch -> AwaitingAirborne -> Airborne -> LandingRecovery Physics Launch 分支，以及只服务该分支的 reflected fields、Task、回调、测试 seam、正向兼容测试和已失去分支选择意义的 bUseGroundedRootMotionKnockdown。
-2. 保留唯一 RootMotionKnockdown phase：Root Montage、持续 Dodge cancel-window listeners、一次性 facing、StopMovementImmediately、CMC Walking、ledge 保护与幂等 EndAbility。
-3. activation 门禁改为 common validation 加 IsRootMotionKnockdownCandidate；没有 Root candidate 时拒绝激活，不读取旧 Montage 或速度参数。
-4. 将 PlayerActionWindow 的旧 LandingRecovery cancel-window fixture 迁移为 RootMotionKnockdown fixture，保留 payload identity、重复 Begin/End 幂等和 EndAbility 清理。
+1. 将 Enemy Ability 生命周期收敛为 None -> RootMotionKnockdown -> EndAbility，删除 dormant Physics Launch、paused Takeoff、真实 Falling、Landing Recovery 和平滑转向链路。
+2. 删除已失去分支选择意义的 bUseGroundedRootMotionKnockdown。Root Motion、Slot、有效有限播放长度和精确 MOVE_Walking 是唯一合法 candidate；该开关不再替代动画资产的 Root Motion 事实来源。
+3. 保留 Enemy Root Motion 的既有行为顺序与所有权：AI navigation stop、速度清零、竞争 Ability cancel、残余 Root Motion fail-closed、一次性 target-local facing、ledge 保存/恢复、MovementMode/Montage delegate、ReadyForActivation() 重入保护、State.Block.Facing 生命周期和 Stance Break deferral。
+4. 将 Enemy Launch 自动化从 Legacy fallback 正向用例改为 Root-only invalid-config fail-closed、Commit 无副作用、自然/打断/取消/Destroy/UnPossess 收敛和 deferral 回归。
 
 ### Completion Criteria
 
-- UPlayerLaunchReactionAbility 不再声明、复制、校验、播放或停止 Player TakeoffMontage / LandingRecoveryMontage，不再调用 LaunchCharacter、创建 CommitEventTask / FacingTurnTask / FallValidationTask，也不再保留旧 phase。
-- Player 不再请求或验证 Event.Reaction.Launch.Commit；全局 Tag、UAnimNotify_ReactionLaunchCommit 和 Enemy 消费路径完整保留。
-- Root branch 仍不创建 Commit/Facing/Falling task；Commit gameplay event 对活跃 Player Root Motion Ability 无 Player 生命周期副作用。
-- Montage 为空/无 Root Motion/无 Slot/长度非法或非 MOVE_Walking 时 fail-closed，不存在 Legacy fallback。
-- Player 不再声明或读取 bUseGroundedRootMotionKnockdown；Root Motion、Slot、播放长度与 Walking 是唯一 Root candidate 合法性门禁。Enemy 同名开关仍属 TODO-07B11-RET 前的独立 Enemy 兼容面，不在本阶段修改。
-- Player scoped Legacy Source/Test 引用为零；Enemy Legacy、共享 FLaunchFacingSmoothingState 和全局 Commit Notify/Tag 是允许残留。
-- 用户确认 Development Editor 编译、focused Automation 与 Scene01 PIE；Main Fresh Review 无 P0-P2 blocker。
+- ELaunchPhase 仅保留 None 与 RootMotionKnockdown；没有 Takeoff、Turning、AwaitingAirborne、Airborne 或 LandingRecovery phase。
+- Enemy Ability 不再声明、读取、复制、验证、播放或停止 TakeoffMontage、LandingRecoveryMontage、LaunchHorizontalSpeed、LaunchVerticalSpeed、FacingTurnRateDegreesPerSecond 或 bUseGroundedRootMotionKnockdown。
+- Enemy Ability 不再创建或清理 CommitEventTask、FacingTurnTask、FallValidationTask，不再调用 LaunchCharacter()、Montage_Pause() 或 UAbilityTask_WaitDelay。
+- Enemy Ability 不再请求、校验或监听 LaunchCommitEventTag，不再拥有 FLaunchFacingSmoothingState、bCommitHandled、OnLaunchCommitEventReceived、OnFacingTurnCompleted、OnFacingTurnFailed、CommitFrozenLaunch、OnFallValidationFinished、IsLegacyLaunchCandidate 或 IsEventFromTakeoffMontage。
+- Root candidate 必须同时具备：非空 RootMotionKnockdownMontage、HasRootMotion()、至少一个 Slot track、有限且大于零的播放长度，以及 CMC 精确 MOVE_Walking。任一条件失败时，在创建 Task、Commit、停止 AI、修改 velocity/rotation/ledge 或绑定 delegate 前拒绝激活。
+- Root Montage 自然结束将 bRootMotionKnockdownCompletedNaturally 置真并走 CompleteLaunchStanceBreakDeferral()；非自然结束、取消、Falling、Destroy、死亡或 UnPossess 走 AbortLaunchStanceBreakDeferral()。旧 bLandingRecoveryCompletedNaturally 及其 GetTestLandingRecoveryCompletedNaturally / SetTestLandingRecoveryCompletedNaturally seam 必须分别改为 bRootMotionKnockdownCompletedNaturally、GetTestRootMotionKnockdownCompletedNaturally 与 SetTestRootMotionKnockdownCompletedNaturally，不能残留为 Root 语义。
+- ActivationOwnedTags 中的 State.Action.HitReacting 与 State.Block.Facing、Ability.Action.Teardown.OnUnpossess、既有 blocked tags、AbilitiesToCancel 的两个 Enemy action tag 与其数量契约均不变。
+- 用户确认 Development Editor 编译、指定 Automation、Editor readback 和 Enemy Scene01 PIE；Main Fresh Review 无 P0/P1/P2 blocker。
 
 ### Deliberate Non-goals
 
-- 不修改 EnemyLaunchReactionAbility、Enemy 测试、Enemy CDO、AIController、State.Block.Facing、Enemy StanceBreak handoff 或 TODO-07B11-RET。
-- 不删除或修改 LaunchFacingSmoothingState、AbilityTask_TurnToFacing、UAnimNotify_ReactionLaunchCommit、Event.Reaction.Launch.Commit 或 Config Tag；它们仍由 Enemy 路径使用。
-- 不修改 DodgeAbility、PlayerGuardBreakAbility、PlayerCharacter、HitReactionImpactResolver、Build.cs、uproject、Config、网络/预测或死亡架构。
-- 不编辑或自动迁移任何 uasset / umap、Blueprint、AnimBP、Montage 或地图；不批量 resave 用户资产。
-- 不引入 Motion Warping、空中保护、Tech-Roll、State.Block.Movement、通用 reaction framework 或新 Gameplay Tag。
-- 不合并 Player 和 Enemy retirement，也不做共享重构。
+- 不修改 Player Launch、Dodge、Player Lock-On、Player/Enemy Air-Reaction policy、Motion Warping、Tech-Roll、网络/预测、死亡架构或 TODO-07B14。
+- 不修改 AEnemyAIController、AEnemyCharacter、UEnemyStanceBreakAbility、UEnemyMeleeAbility、UEnemyHitReactionAbility、State.Block.Facing 的生产所有权或 AbilitiesToCancel.Num() == 2/4 的既有契约。
+- 不删除或修改全局 Event.Reaction.Launch.Commit Tag、UAnimNotify_ReactionLaunchCommit、FLaunchFacingSmoothingState、UAbilityTask_TurnToFacing、LaunchFacingSmoothingAutomationTests 或 test-only host ability。它们可能仍被用户资产或独立测试引用；本切片只移除 Enemy Ability 对它们的消费，不假设全局零引用。
+- 不编辑、迁移、重存或删除任何 .uasset、.umap、Blueprint、AnimBP、Montage、地图、Config、Build.cs 或 uproject；不自动移除旧 Commit Notify。
+- 不引入新 Gameplay Tag、State.Block.Movement、平行动作状态机、通用 Reaction framework 或新的测试框架。
 
 ## 3. Approved Paths 与所有权
 
 ### Gemini 可修改
 
-1. Source/PolyQuest/Public/AbilitySystem/Abilities/PlayerLaunchReactionAbility.h
-   - 删除 Player Legacy data、phase、Task、callback/helper、test seam 与 bUseGroundedRootMotionKnockdown reflected field/test getter/setter；类注释和测试 seam 收敛为 Root-only。
-2. Source/PolyQuest/Private/AbilitySystem/Abilities/PlayerLaunchReactionAbility.cpp
-   - 删除 Legacy activation、commit/facing/falling/landing 生命周期与其 cleanup，以及 Root candidate 的 bUseGroundedRootMotionKnockdown predicate；保留既有 Root branch 运行顺序与 EndAbility 所有权。
-3. Source/PolyQuest/Private/Tests/PlayerLaunchReactionRootMotionAutomationTests.cpp
-   - 删除 Legacy candidate/fallback 正向测试与 Player flag-specific test setup/assertions，改为 Root-only invalid-config fail-closed、task-isolation 与无 Commit 消费覆盖。
-4. Source/PolyQuest/Private/Tests/PlayerActionWindowAutomationTests.cpp
-   - 仅将 Section 10 从 LandingRecovery Dodge-window fixture 迁移为 RootMotionKnockdown fixture。
-5. Source/PolyQuest/Private/Tests/HitReactionAutomationTests.cpp
-   - 仅删除 Player Launch 已退休的 Physics Launch CDO 默认 horizontal/vertical speed 与 facing turn-rate 四条断言；不新增重复 Root CDO 断言，不改 Enemy Launch 断言或该套件其他逻辑。
-
-### Main 批准的 Unity Build hygiene 例外
-
-6. Source/PolyQuest/Private/Tests/EnemyLaunchReactionRootMotionAutomationTests.cpp
-   - 仅将匿名命名空间的 TagTeardownOnUnpossess 定义移入 FEnemyLaunchReactionRootMotionAutomationTest::RunTest() 局部作用域，与既有局部 TagBlockFacing 并列；保留变量名、Tag 值和全部断言语义，不修改 EnemyStanceBreakRateWindowAutomationTests.cpp 或任何 Enemy 运行时逻辑。
+1. Source/PolyQuest/Public/AbilitySystem/Abilities/EnemyLaunchReactionAbility.h
+   - 删除 Enemy Legacy UPROPERTY、Legacy enum phase、Legacy tasks/tags/state/callback/helper 和只服务它们的 test seams/getter/setter；删除 bUseGroundedRootMotionKnockdown。
+   - 将自然完成的私有状态/test seam 从 Landing Recovery 语义收敛为 Root Motion knockdown 语义；保留 Root-only test seams、State.Block.Facing、BoundEnemyCharacter、ledge 与 stance-break 所需状态。
+2. Source/PolyQuest/Private/AbilitySystem/Abilities/EnemyLaunchReactionAbility.cpp
+   - 删除 Legacy activation block、Commit/Facing/Falling/Landing 生命周期、Physics cleanup 和 OR Legacy validation；将既有 Root branch 平铺为唯一分支，但不得改变其既有副作用顺序或 EndAbility() 单一收敛出口。
+   - 删除已不再需要的 AbilityTask_WaitGameplayEvent、AbilityTask_WaitDelay、AbilityTask_TurnToFacing、Animation/AnimSequenceBase.h 和 smoothing include；其中 AnimSequenceBase 只服务于已退休的 IsEventFromTakeoffMontage。保留 Root Montage、AI/CMC、impact resolver、Montage/MovementMode delegate 和 EndAbility 的防御检查。
+3. Source/PolyQuest/Private/Tests/EnemyLaunchReactionRootMotionAutomationTests.cpp
+   - 删除 Legacy fallback、switch-disabled、Takeoff/Landing fixture 和直接 Commit callback 测试；新增/保留 Root-only candidate、激活、Commit event 无副作用、phase/ledge/facing/stance-break、自然/中断/取消/Falling/Destroy/UnPossess 覆盖。
+   - 不在匿名命名空间重新声明会污染 Unity blob 的 gameplay tag；现有局部 TagBlockFacing 与 TagTeardownOnUnpossess 作用域保持局部。
+4. Source/PolyQuest/Private/Tests/HitReactionAutomationTests.cpp
+   - 仅删除 Enemy Launch 已退休的 horizontal speed、vertical speed 和 facing turn-rate CDO 断言。
+   - 保留全局 Event.Reaction.Launch.Commit Tag 与 UAnimNotify_ReactionLaunchCommit CDO 测试，因为它们不在本切片删除范围。
 
 ### Main-only
 
 - plan.md、ARCHITECTURE.md、ROADMAP.md、ROADMAP-archive.md。
-- 仅在用户门禁与 Fresh Review 完成后可归档、同步文档、暂存或提交。
+- 用户门禁完成且 Fresh Review 通过后，Main 才能处理文档、暂存和提交。
 
 ### Explicitly Excluded
 
 - Source/PolyQuest/Public/AbilitySystem/Abilities/LaunchFacingSmoothingState.h
 - Source/PolyQuest/Private/AbilitySystem/Abilities/LaunchFacingSmoothingState.cpp
+- Source/PolyQuest/Public/AbilitySystem/Tasks/AbilityTask_TurnToFacing.h
+- Source/PolyQuest/Private/AbilitySystem/Tasks/AbilityTask_TurnToFacing.cpp
 - Source/PolyQuest/Public/Animation/Combat/AnimNotify_ReactionLaunchCommit.h
 - Source/PolyQuest/Private/Animation/Combat/AnimNotify_ReactionLaunchCommit.cpp
-- Source/PolyQuest/Public/AbilitySystem/Abilities/EnemyLaunchReactionAbility.h
-- Source/PolyQuest/Private/AbilitySystem/Abilities/EnemyLaunchReactionAbility.cpp
 - Source/PolyQuest/Private/Tests/LaunchFacingSmoothingAutomationTests.cpp
-- Content/**、Config/**、Build.cs、uproject 和全部二进制资产。
+- Source/PolyQuest/Private/Tests/TestLaunchFacingSmoothingAbility.h
+- Source/PolyQuest/Private/Tests/TestLaunchFacingSmoothingAbility.cpp
+- Source/PolyQuest/Private/Tests/EnemyRootMotionFacingAutomationTests.cpp
+- Source/PolyQuest/Private/Tests/EnemyStanceBreakRateWindowAutomationTests.cpp
+- Source/PolyQuest/Private/Tests/CombatHitFeedbackAutomationTests.cpp
+- Source/PolyQuest/Private/Character/Enemy/EnemyCharacter.cpp、Source/PolyQuest/Private/AI/EnemyAIController.cpp、所有其他 Source、Content/**、Config/**、Build.cs、uproject 和全部二进制资产。
 
-若编译或测试暴露清单外文件的直接依赖，Gemini 必须停止，报告完整错误、最小候选路径及原因，不得自行扩大白名单。
+若编译、Automation 或 Unity Build 暴露清单外文件，Gemini 必须停止，保留首个错误并报告完整触发条件、最小候选修复路径与影响；不得创建 hygiene 例外、修改清单外文件或扩大白名单。
 
 ## 4. 冻结的运行时与 API 契约
 
-### Root-only activation
+### Root-only Enemy activation
 
-- ELaunchPhase 仅保留 None 和 RootMotionKnockdown。
-- ValidateActivationSetup 只接受 common validation 加 Root candidate；不得保留 OR Legacy candidate。
-- Root candidate 条件：RootMotionKnockdownMontage 非空、HasRootMotion、存在 Slot track、有限正播放长度、CMC 精确为 MOVE_Walking。
-- 无效 Root 配置在任何副作用之前 fail-closed，不创建 Task、不 Commit、不改 ledge、不回退 Physics Launch。
+- CanActivateAbility() 继续调用 Super 和 ValidateActivationSetup()；ValidateActivationSetup() 从 common Enemy/ASC/AnimInstance/CMC/tag/cancel-count 验证加唯一 Root candidate 构成，绝不保留 Root || Legacy。
+- RootMotionKnockdownMontage 仍是唯一作者化 UPROPERTY。动画资产上的 Root Motion 与 Slot 是运动表现的唯一事实来源，不以 bool policy 开关覆盖。
+- 既有 Root 活化顺序必须保持：创建 Montage Task -> CommitAbility() -> 绑定 avatar/AnimInstance/montage/phase -> 停 AI navigation 与速度 -> cancel Enemy melee/small hit -> 检查残余 Root Motion -> 解析并一次性写 yaw -> 保存/关闭 ledge walk-off -> 绑定 Montage/MovementMode -> ReadyForActivation() -> 立即检查 bEndAbilityRequested 和 montage active。
+- ReadyForActivation() 是同步重入边界。任何同步 EndAbility() 后只允许立即返回；一旦 bLedgeSettingModified 为真，后续所有失败出口必须通过 EndAbility() 恢复 CMC 值。
+- Root phase 任何非 MOVE_Walking 变化均 fail-closed；CMC 继续拥有碰撞、墙、台阶、坡面、边缘和 Falling 的物理权威，不承诺 Root Motion 绕过胶囊。
 
-### 删除的 Player Legacy surface
+### GAS、AI、Stance Break 与 cleanup
 
-- 删除 TakeoffMontage、LandingRecoveryMontage、LaunchHorizontalSpeed、LaunchVerticalSpeed、FacingTurnRateDegreesPerSecond、bUseGroundedRootMotionKnockdown 及其 Player-only test getter/setter。
-- 删除 CommitEventTask、FacingTurnTask、FallValidationTask、LaunchCommitEventTag、FLaunchFacingSmoothingState 成员、bCommitHandled 与 Legacy phase。
-- 删除 OnLaunchCommitEventReceived、OnFacingTurnCompleted、OnFacingTurnFailed、CommitFrozenLaunch、OnFallValidationFinished、IsLegacyLaunchCandidate、IsEventFromTakeoffMontage、IsEventFromLandingRecoveryMontage 及其 Player-only seams。
-- 删除 Player 对 UAbilityTask_TurnToFacing / UAbilityTask_WaitDelay 的依赖；不删除共享类型或 Enemy 使用者。
+- Enemy Ability 仍为 InstancedPerActor / ServerOnly，由 Ability.Reaction.Enemy.Launch 的 Event.Reaction.Enemy.Launch trigger 启动；不改变 ASC 归属。
+- State.Block.Facing 仍由该 Ability 的 ActivationOwnedTags 覆盖整个 Root lifecycle；AEnemyAIController 仍消费该 GAS tag，而不是旧的 Launch-specific active-spec 查询。
+- Ability.Action.Teardown.OnUnpossess 继续位于 AbilityTags，且 UnPossess 通过既有 ASC cancellation 收敛；不改变 UEnemyStanceBreakAbility 对 Enemy Launch tag 的 cancel relationship。
+- AEnemyCharacter::BeginLaunchStanceBreakDeferral()、CompleteLaunchStanceBreakDeferral() 和 AbortLaunchStanceBreakDeferral() 的所有权不移动。只把 Enemy Ability 的自然完成标记改为与 Root Montage 名称一致，确保状态完成/中断仍选择原有 handoff。
+- EndAbility() 保留 bEndAbilityRequested 幂等保护，解绑 delegate、停止本 Ability 的 Root Montage、结束 Montage Task、恢复 ledge、清空 snapshot/phase/weak owner，并只在有效未销毁 Enemy 上调用 deferral complete/abort。Destroy、死亡、取消与 UnPossess 后的迟到回调不得解引用无效 owner。
 
-### 保留的 Root lifecycle
+### Commit 与共享 Legacy facilities
 
-- 保留 RootMotionKnockdownMontage、MontageTask、CancelBeginTask、CancelEndTask、BoundAnimInstance、BoundPlayerCharacter、impact snapshots、MovementMode delegate、ledge 保存/恢复和 bEndAbilityRequested。
-- 仍遵循：创建 Root Montage / persistent cancel listeners -> CommitAbility -> 取消竞争 Ability -> 残留 Root Motion 拒绝 -> StopMovementImmediately -> 一次性 Yaw -> ledge guard -> delegate -> ReadyForActivation。
-- 每个 ReadyForActivation 后检查 bEndAbilityRequested。Montage 启动失败、方向无效、非 Walking、取消、死亡、Destroy、UnPossess、自然结束和中断统一经过 EndAbility。
-- EndAbility 仅清理仍存在的 Root task/listener、Montage、Dodge tag、delegate、ledge 值、snapshots 和 phase；不得因删除 Legacy 破坏 Root teardown。
+- Enemy Root Ability 不再创建 UAbilityTask_WaitGameplayEvent 来消费 Event.Reaction.Launch.Commit；实际 ASC->HandleGameplayEvent() 的同名事件在 Root phase 不得暂停 Montage、发射速度、切 phase 或结束 Ability。
+- Event.Reaction.Launch.Commit、Notify class、tag 配置、smoothing struct 和 turn task 保持不变。Montage 仍含 Commit Notify 时，这是可记录但非阻塞的 no-op authored residue；不得在本切片删除 Notify 或资产。
+- 本阶段的 zero-reference 只要求 Enemy Ability Header/CPP 与批准的 Enemy Launch/HitReaction tests 中不存在 retired Enemy symbols。全局 shared/test-only references 是刻意允许残留，不能误判为本切片失败。
 
-### Dodge 与 Commit event
+## 5. 用户拥有的 Editor readback（Source 实施前硬门禁）
 
-- WaitGameplayEvent(CancelWindowTag, nullptr, false, true) 继续持续监听，非法 payload 不消费 listener，重复 Begin/End 幂等。
-- Cancel window 只接受当前 Root Montage 或其 Slot 中 SequenceBase payload，并校验 Avatar、Instigator、Target。
-- Player 不再监听 Event.Reaction.Launch.Commit。该事件不能暂停 Player Montage、发射速度或改 phase；Notify/Tag 留给 Enemy。
-- bTestBypassAnimInstanceActiveCheck 与 bTestBypassMontageActiveCheck 仍是 Root 自动化的窄 seam，保留且只绕过既有 active assertion。
+Gemini 开始 Source 修改前，用户在 Unreal Editor 中完成只读检查并反馈结果；Codex/Gemini 不直接编辑二进制资产。
 
-## 5. 实施顺序与测试设计
+1. 定位实际使用 UEnemyLaunchReactionAbility 的 Enemy Launch Gameplay Ability 及所有派生/覆写资产，记录实际 package path 与父类链。
+2. 对每个实际 CDO/覆写检查：RootMotionKnockdownMontage 已配置且可用；bUseGroundedRootMotionKnockdown 为 true；TakeoffMontage、LandingRecoveryMontage、Launch speed 与 facing turn rate 没有需要保留的非默认作者化值。
+3. 打开实际 Root Montage/Sequence，确认 Root Motion、可播放 Slot 和有限正长度；记录是否仍含 Reaction Launch Commit Notify，但不删除它。
+4. 通过 Reference Viewer/资产引用检查确认没有需要手动迁移的 Enemy Launch 派生资产或 Blueprint default override。不得把“主 CDO 看起来为空”替代为全体派生类检查。
 
-1. Gemini 阅读本 plan、两份 Player Ability、两个批准测试、DodgeAbility 的 Player Launch cancel consumer，以及 Enemy/shared/Notify 的只读边界。
-2. Header 先移除 Legacy API/phase/fields/tasks/helpers/test seams 及 Player bUseGroundedRootMotionKnockdown reflected field/test getter/setter；必须以最窄的 SetTestCurrentPhaseToRootMotionKnockdown 替换 SetTestCurrentPhaseToLandingRecovery，且只保留 Root-specific test seam。
-3. CPP 删除 Legacy activation block、旧 callbacks、旧 MovementMode/Montage-end 分支、只服务 Legacy 的 cleanup/validation，以及 Root candidate 对 bUseGroundedRootMotionKnockdown 的判断。不得重排或重构 Root path。
-4. PlayerLaunchReactionRootMotionAutomationTests 删除 CreateSyntheticLegacyMontage、Legacy candidate 与 7.5/7.6 fallback 用例，并删除 Player CDO flag default、flag-disabled candidate/activation 断言及其机械 SetTestUseGroundedRootMotionKnockdown 调用；保留 Montage/Slot/长度/Walking invalid-config fail-closed。验证 Commit ignore 时必须通过真实 ASC 的 HandleGameplayEvent(Event.Reaction.Launch.Commit, Payload) 派发，并断言 Root phase 不变；不得保留已删 handler 专用入口。
-5. PlayerActionWindowAutomationTests Section 10 改用 Root Montage/inner Sequence/root phase，保留 malformed payload、nested sequence、duplicate Begin/End 与 EndAbility cleanup。
-6. Gemini 做批准路径静态自审和一次干净只读实施自审；Main 再做 diff-first Fresh Review。
+通过条件：所有已发现的 Enemy Launch consumer 均可接受 Root-only 合同，且没有需迁移的 Legacy property 值。失败条件：发现非空 Legacy value、派生类 override、缺失 Root Montage 或不明确消费者时，立即停止 Source 实施，报告资产/属性/引用；用户决定手动迁移或放弃退休，本计划不授权自动资产修改。
 
-## 6. 验证矩阵
+实施后复做 readback：旧反射字段和 toggle 消失，所有已发现 GA/派生资产可打开且无 Missing Property/Missing Class 警告；这不是 clean-checkout asset baseline 或 packaging 证明。
 
-### 静态与零引用
+## 6. 实施顺序
+
+1. Main 确认第 5 节用户 readback 的通过证据，保留该证据类型边界与现有脏工作树。
+2. Gemini 先改 Enemy Header：收敛 enum、UPROPERTY、tags/tasks/state、callback/helper 与 test seams；将自然完成状态重命名为 Root Motion 语义。不得修改 shared facilities。
+3. Gemini 改 Enemy CPP：删除 Legacy branch，并将原 Root branch 直接保留为唯一 activation flow；删除 Legacy callbacks/cleanup/validation、Physics includes 和 CDO fallback copy。不得重排 Root side-effect order。
+4. Gemini 更新专项 Automation：删除 Legacy positive fallback，新增 invalid Root fail-closed 与真实 ASC Commit event no-op；保留/扩展 Root lifecycle、facing block、ledge、stance-break、external cancel、Destroy 和 UnPossess。
+5. Gemini 对 HitReactionAutomationTests.cpp 做四条 CDO legacy speed 断言的窄删除；Tag/Notify shared-contract 断言不动。
+6. Gemini 运行批准范围静态自审、一次干净只读实施自审和 git diff --check，交付限定 diff、zero-reference、Automation 结果与未运行的用户门禁。Main 后续执行 ue-strict-review、文档归档与提交门禁。
+
+## 7. 验证矩阵
+
+### 静态与范围
 
 - git diff --check。
-- 在批准 Player Header/CPP/Tests 中不再出现 TakeoffMontage、LandingRecoveryMontage、LaunchCharacter、TurningToLaunch、AwaitingAirborne、Airborne、CommitEventTask、FacingTurnTask、FallValidationTask、IsLegacyLaunchCandidate、OnLaunchCommitEventReceived、bUseGroundedRootMotionKnockdown 或 Player Legacy seam。
-- 全局允许 Enemy、共享 smoothing 和 Commit Notify/Tag 保留同类概念；不得把它们误判为 Player retirement 失败。
-- Player 仍保留 Ability.Reaction.Player.Launch、Ability.Action.Teardown.OnUnpossess、State.Action.HitReacting、State.Input.Block.Movement、State.Input.Block.Jump、BlockAbilitiesWithTag.Num() == 10、AbilitiesToCancel.Num() == 11。
+- git diff --name-status 只能包含第 3 节四个 Gemini paths；无 Source 外溢、无 Content/Config/asset 写入、无 Unity hygiene 例外。
+- Enemy Ability 与批准测试 scoped zero-reference：TakeoffMontage、LandingRecoveryMontage、LaunchHorizontalSpeed、LaunchVerticalSpeed、FacingTurnRateDegreesPerSecond、bUseGroundedRootMotionKnockdown、CommitEventTask、FacingTurnTask、FallValidationTask、LaunchCommitEventTag、FLaunchFacingSmoothingState、bCommitHandled、Legacy phase 和相关 callback/helper 均为零。
+- 验证保留：Enemy launch/trigger tags、State.Action.HitReacting、State.Block.Facing、Ability.Action.Teardown.OnUnpossess、AbilitiesToCancel.Num() == 2、Root candidate 与 Enemy Character deferral API 均保持可用。
+- Rider 诊断可用时，四个批准路径必须无错误；不可用时记录 coverage fallback，不把静态检查说成编译或 PIE。
 
 ### Focused Automation
 
-- PolyQuest.Combat.PlayerLaunchReactionRootMotion：
-  - valid Root candidate；
-  - null、non-root、no-slot、非法长度、non-Walking 均 fail-closed；
-  - Root-only activation、task isolation、Commit event 无 Player 生命周期副作用；
-  - natural/interrupted completion、ledge、external cancel、Destroy、UnPossess 清理。
-- PolyQuest.Player.ActionWindows：
-  - Root Montage / inner Sequence cancel payload identity；
-  - malformed avatar/montage/sequence 拒绝；
-  - duplicate Begin/End 幂等；
-  - EndAbility 清除 State.Action.CanCancel.Dodge。
-- PolyQuest.Combat.HitReaction：Player Launch CDO Tag/Input 合同回归。
-- PolyQuest.Combat.EnemyLaunchReactionRootMotion：共享 Commit Notify/Tag 与 Enemy 路径回归。
+- PolyQuest.Combat.EnemyLaunchReactionRootMotion：
+  - CDO tag/cancel contract 与 Root-only reflection surface；
+  - valid Root candidate；null、no-root-motion、no-slot、zero/NaN/Inf length、non-Walking 均 fail-closed。每个 invalid activation 必须回到 None / inactive，保持 velocity、State.Block.Facing 和 bCanWalkOffLedges 无副作用；不得留下 MontageTask 或其他 AbilityTask；
+  - Root activation 的 AI/velocity/facing/State.Block.Facing 行为、真实 ASC Commit event no-op、无 Physics launch；
+  - natural/interrupted montage、external ASC cancel、Falling、ledge、stance-break complete/abort、UnPossess、Destroy/迟到 callback 安全收敛。
+- PolyQuest.Combat.HitReaction：Enemy Launch CDO 更新后仍保留 global Commit Tag/Notify 与其余 Hit Reaction contract。
+- 回归：PolyQuest.Combat.EnemyStanceBreakRateWindow、PolyQuest.Enemy.RootMotionFacing，以及现有与 AEnemyCharacter stance-break/feedback handoff 直接相关的 Automation。未修改的 shared PolyQuest.Combat.LaunchFacingSmoothing 只作为可选回归，不把其存在当作 Enemy Legacy 尚未退休的失败。
 
-### User-owned Editor Readback
+### 用户拥有的 Compile 与 PIE
 
-- 打开 GA_PlayerLaunchReaction：类正确、Root Montage 正确，旧 Takeoff/Landing/速度/平滑转向/bUseGroundedRootMotionKnockdown 字段均消失，无 Missing Property / Missing Class 警告。
-- 打开 Root Montage：Root Motion、Slot 与 Dodge cancel-window 仍存在。若 Player Montage 含旧 Reaction Launch Commit Notify，只记录 readback；本 C++ 切片不删除共享 Notify 或二进制资产。
-- 对 Player Launch GA 与已知派生/使用入口做 Reference Viewer/readback，确认不需要资产迁移。用户 WIP 不构成 clean-checkout asset baseline。
+- PolyQuestEditor (Development Editor) 手动编译。
+- 第 5 节实施后 Editor readback。
+- Scene01 PIE：Enemy 在平地、轻坡/台阶、墙角和边缘触发 Root Motion knockdown；确认无 LaunchCharacter 弹跳/滞空 fallback，Root animation 与 capsule 行为自然。
+- Scene01 PIE：Montage 自然完成、外部取消/打断、Falling/ledge fail-closed、UnPossess/敌人销毁后均清理 State.Block.Facing、ledge 与 stance-break deferral；AI 可按既有所有权恢复。
+- 编译、Automation、Editor readback、PIE、视觉、网络与包装证据必须分别记录，不能互相替代。
 
-### User-owned Compile 与 PIE
+## 8. 收口记录与当前状态
 
-- 手动编译 PolyQuestEditor (Development Editor)。
-- Scene01 PIE：Player grounded Root Motion、自然结束、Dodge window、取消/打断、边缘失败恢复、普通 locomotion；确认不存在 Physics airborne fallback。
-- 复测一项 Enemy Launch，确认 Player retirement 未影响 Enemy Commit/Launch 链路。
-- 编译、Automation、Editor readback、PIE、视觉和包装证据必须分开记录。
-
-## 7. Gemini Handoff、停止条件与收口
-
-- 工作目录：E:\GameDevelop\PolyQuest。
-- Gemini 只能修改第 3 节五个 Player Source/Test 路径和唯一批准的 EnemyLaunchReactionRootMotionAutomationTests.cpp Unity Build hygiene 例外，不得修改 docs、Content、Config、Build.cs、uproject、EnemyStanceBreakRateWindowAutomationTests.cpp 或其他 Enemy 文件。
-- 首次实现交付前，Gemini 必须派发一个干净只读子代理做实施自审；后续窄修复回路不再派发子代理。
-- 交付必须附：批准路径 diff、git diff --check、Player scoped zero-reference、Automation 结果、未运行的用户门禁、以及 ReadyForActivation、Dodge listener、ledge、external cancel/Destroy/UnPossess 自审。
-- 出现清单外 Source/Test 依赖、资产迁移、Enemy 修改、Config/Tag 改动、Motion Warping、网络或死亡架构需求时立即停止报告。
-- 每个根因最多一次有证据修复和一次定向重跑；重复失败交由 Main/用户裁定。
-- Gemini 不得提交。Main 在用户门禁与 Fresh Review 后更新文档；仅用户明确批准时按路径暂存/提交。
-
-## 8. 当前计划状态与已知债务
-
-- 本文件记录的 TODO-07B13-RET 已完成：07B13 收口已在 ROADMAP-archive.md，Archive Preflight PASS；本阶段的 Player Physics Launch 路径和 bUseGroundedRootMotionKnockdown 均已退休。
-- 用户确认 Development Editor 编译、五项 focused Automation、GA_PlayerLaunchReaction 无 Missing Property/Missing Class 的 Editor readback 与 Scene01 PIE 通过；Main Fresh Review 未发现 P0/P1/P2 blocker。上述证据不扩写为 clean authored asset baseline、网络或包装证明。
-- 本计划作为最近完成切片的交接记录保留，直至下一阶段通过 Archive Preflight 后正式替换。下一推荐执行切片为独立的 TODO-07B11-RET；届时必须重新建立 Approved Paths、资产 readback、Automation、compile、PIE、Fresh Review 和提交门禁。
+- 工作目录：E:\GameDevelop\PolyQuest；基线：aab8ef630ec49575fff3d82f0e0fd845bf7d44f1。
+- Gemini 仅可修改第 3 节四个 Approved Paths。不得修改本文档、其他文档、任何资产/Config/Build.cs、shared Commit/Facing facilities、EnemyStanceBreakRateWindowAutomationTests.cpp、EnemyRootMotionFacingAutomationTests.cpp 或任何清单外文件。
+- 第 5 节 readback 未通过或不存在时，不得开始 C++ 修改。发现共享 consumer、资产迁移、Motion Warping、网络、死亡架构、墙体新表现或清单外依赖时立即停止并报告。
+- 每个静态、编译、Automation 或运行时根因最多一次有证据修复加一次定向重跑；重复根因或两轮连续修复失败必须交回 Main/用户。
+- Gemini 不得提交。Main 仅在用户 readback、编译、Automation、PIE 与 Fresh Review 有证据后更新 ARCHITECTURE.md、ROADMAP.md、ROADMAP-archive.md 并等待用户明确提交批准。
+- 当前状态：已完成。Enemy Launch 仅保留 `None -> RootMotionKnockdown -> EndAbility`；Physics Launch、旧反射字段、Commit/Facing/Falling 生命周期、Legacy 正向测试和 `bUseGroundedRootMotionKnockdown` 已退休。下一候选为条件性 `TODO-07B14`；`TODO-03C` 不被本切片阻塞。
+- 用户确认的门禁：Development Editor 编译、Enemy Launch/HitReaction/StanceBreak/Facing Focused Automation、Enemy Launch Editor readback 与 Scene01 PIE 通过。Main Fresh Review 及其一次定向修复后的 delta review 未发现 P0/P1/P2 blocker；静态、编译、Automation、readback 与 PIE 证据不互相替代。
+- 定向修复收据：Destroy 路径无条件清理 Ability 内部 delegate/ledge latch，而仅在有效未销毁 Enemy 上访问 CMC；专项 Automation 覆盖负值、NaN、Infinity 长度、自然/中断 deferral 区分和 Destroy 后迟到 Montage 回调。
+- 本计划作为最近完成切片记录保留，直至下一阶段通过 Archive Preflight 后正式替换。Gemini 未提交；Main 仅在用户明确批准时按批准 Source/Test 路径及本阶段文档暂存和提交。

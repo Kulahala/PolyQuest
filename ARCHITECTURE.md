@@ -1108,37 +1108,34 @@ before Montage playback, stops residual velocity, keeps CMC in `MOVE_Walking`,
 and lets the authored Montage own grounded knockdown/slide/recovery displacement.
 It does not consume `Event.Reaction.Launch.Commit`, and all movement-mode,
 Montage, cancellation, destruction, death-cancellation, and UnPossess exits
-converge on `EndAbility()`. The source still retains the historical
-`Takeoff -> TurningToLaunch -> AwaitingAirborne -> Airborne -> LandingRecovery`
-sequence for dormant compatibility tests until the separately approved Legacy
-retirement slice; it is not the current authored behavior.
+converge on `EndAbility()`. Player has no Physics Launch compatibility branch:
+the historical `Takeoff -> TurningToLaunch -> AwaitingAirborne -> Airborne ->
+LandingRecovery` sequence, its reflected fields, tasks, callbacks, and policy
+toggle are retired. Invalid Root setup fails closed before gameplay side effects.
 
-`UEnemyLaunchReactionAbility` retains that same sequence for its Legacy Physics
-fallback and adds a separate `RootMotionKnockdown` phase. When the opt-in flag,
-Enemy Montage, Root Motion/Slot/length validation, and exact `MOVE_Walking`
-precondition pass, one continuous authored Montage owns the Enemy's takeoff,
-backward displacement, knockdown, and recovery. Before task activation the
-Ability cancels competing Enemy abilities, rejects residual Root Motion,
-applies the resolved attacker-facing Yaw once, and captures
-`bCanWalkOffLedges`; CMC remains the sole capsule, floor, step, and ledge
-authority. Any movement-mode change away from `MOVE_Walking`, Montage
-interruption, cancellation, death, destruction, unpossession, or startup
-failure converges on the idempotent `EndAbility()` cleanup. A Root Motion
-startup failure does not switch to `LaunchCharacter()` after the branch has
-been selected; Legacy fallback is decided only before startup. The Root Motion
-branch does not create or require `Event.Reaction.Launch.Commit`; the Enemy
-Launch Ability owns `State.Block.Facing` across both branches.
+`UEnemyLaunchReactionAbility` is likewise Root Motion-only. Its native phase
+sequence is `None -> RootMotionKnockdown -> EndAbility`; a non-null authored
+Montage with Root Motion, a Slot track, finite positive play length, and exact
+`MOVE_Walking` is the only valid candidate. Before task activation the Ability
+cancels competing Enemy abilities, rejects residual Root Motion, applies the
+resolved attacker-facing Yaw once, and captures `bCanWalkOffLedges`; CMC remains
+the sole capsule, floor, step, and ledge authority. Any movement-mode change
+away from `MOVE_Walking`, Montage interruption, cancellation, death,
+destruction, unpossession, or startup failure converges on idempotent
+`EndAbility()` cleanup. There is no Enemy Physics fallback, opt-in policy flag,
+or `LaunchCharacter()` path. The shared `Event.Reaction.Launch.Commit` Tag and
+Notify remain available for other consumers, but are a no-op for this Ability.
+The Enemy Launch Ability owns `State.Block.Facing` for its full Root lifecycle.
 
 Only the Player launch Ability listens to the existing Dodge cancel-window
-events, during `RootMotionKnockdown` or `LandingRecovery` and only from the
-matching active Montage.
+events during `RootMotionKnockdown` and only from the matching active Montage.
 It exposes one scoped `State.Action.CanCancel.Dodge` contribution; there is no
 Player air Dodge, Enemy recovery Dodge, or generic reaction-cancel layer.
 Montage/task/delegate cleanup, ledge-setting restoration, frozen snapshots,
-watchdog failure, renewed Falling, death, destruction, and teardown all converge
-on `EndAbility()`. A natural Enemy LandingRecovery or Root Motion Montage end
-releases the pending Poise/Stance-Break deferral; an abnormal end clears it and
-restores Poise when the living enemy remains at zero.
+Falling, death, destruction, and teardown all converge on `EndAbility()`. A
+natural Enemy Root Motion Montage end releases the pending Poise/Stance-Break
+deferral; an abnormal end clears it and restores Poise when the living enemy
+remains at zero.
 
 `AEnemyAIController` suppresses focus-driven rotation while actual Enemy Root
 Motion is active or the controlled Enemy ASC owns `State.Block.Facing`. The

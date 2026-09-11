@@ -481,11 +481,6 @@ bool FHitReactionAutomationTest::RunTest(const FString& Parameters)
 				EnemyLaunchCDO->GetTestAbilitiesToCancel().HasTagExact(TagAbilityEnemySmall));
 			TestEqual(TEXT("EnemyLaunch CDO AbilitiesToCancel has exactly 2 tags"),
 				EnemyLaunchCDO->GetTestAbilitiesToCancel().Num(), 2);
-
-			TestEqual(TEXT("EnemyLaunch default horizontal speed is 450.0"), EnemyLaunchCDO->GetLaunchHorizontalSpeed(), 450.0f);
-			TestEqual(TEXT("EnemyLaunch default vertical speed is 550.0"), EnemyLaunchCDO->GetLaunchVerticalSpeed(), 550.0f);
-			TestEqual(TEXT("EnemyLaunch default facing turn rate is 1440.0"), EnemyLaunchCDO->GetFacingTurnRateDegreesPerSecond(), 1440.0f);
-			TestTrue(TEXT("EnemyLaunch default facing turn rate is finite positive"), FMath::IsFinite(EnemyLaunchCDO->GetFacingTurnRateDegreesPerSecond()) && EnemyLaunchCDO->GetFacingTurnRateDegreesPerSecond() > 0.0f);
 		}
 	}
 
@@ -1914,7 +1909,7 @@ bool FHitReactionAutomationTest::RunTest(const FString& Parameters)
 						DeferralASC->SetNumericAttributeBase(UCharacterAttributeSet::GetPoiseAttribute(), 0.0f);
 						TestTrue(TEXT("6.11a: Intent recorded"), DeferralEnemy->HasPendingDeferredStanceBreak());
 
-						LaunchAbilityInstance->SetTestLandingRecoveryCompletedNaturally(true);
+						LaunchAbilityInstance->SetTestRootMotionKnockdownCompletedNaturally(true);
 						LaunchAbilityInstance->EndAbility(SpecHandle, &ActorInfo, ActivationInfo, false, false);
 						TestEqual(TEXT("6.11a: Natural EndAbility called CompleteLaunchStanceBreakDeferral emitting 1 event"), DeferralStanceBreakCount, 1);
 
@@ -1929,7 +1924,7 @@ bool FHitReactionAutomationTest::RunTest(const FString& Parameters)
 						TestNotNull(TEXT("6.11b: AbortedAbilityInstance created"), AbortedAbilityInstance);
 						if (AbortedAbilityInstance)
 						{
-							AbortedAbilityInstance->SetTestLandingRecoveryCompletedNaturally(false);
+							AbortedAbilityInstance->SetTestRootMotionKnockdownCompletedNaturally(false);
 							AbortedAbilityInstance->EndAbility(SpecHandle, &ActorInfo, ActivationInfo, false, true);
 							TestEqual(TEXT("6.11b: Aborted EndAbility emitted 0 events"), DeferralStanceBreakCount, 0);
 							TestEqual(TEXT("6.11b: Aborted EndAbility restored Poise to 100.0"),
