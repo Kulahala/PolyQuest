@@ -351,11 +351,6 @@ bool FHitReactionAutomationTest::RunTest(const FString& Parameters)
 				TestTrue(FString::Printf(TEXT("PlayerLaunch AbilitiesToCancel contains '%s'"), *ActionTagName.ToString()),
 					PlayerLaunchCDO->GetTestAbilitiesToCancel().HasTagExact(ActionTag));
 			}
-
-			TestEqual(TEXT("PlayerLaunch default horizontal speed is 450.0"), PlayerLaunchCDO->GetLaunchHorizontalSpeed(), 450.0f);
-			TestEqual(TEXT("PlayerLaunch default vertical speed is 550.0"), PlayerLaunchCDO->GetLaunchVerticalSpeed(), 550.0f);
-			TestEqual(TEXT("PlayerLaunch default facing turn rate is 1440.0"), PlayerLaunchCDO->GetFacingTurnRateDegreesPerSecond(), 1440.0f);
-			TestTrue(TEXT("PlayerLaunch default facing turn rate is finite positive"), FMath::IsFinite(PlayerLaunchCDO->GetFacingTurnRateDegreesPerSecond()) && PlayerLaunchCDO->GetFacingTurnRateDegreesPerSecond() > 0.0f);
 		}
 	}
 

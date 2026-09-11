@@ -777,7 +777,7 @@ bool FPlayerActionWindowAutomationTest::RunTest(const FString& Parameters)
 	}
 
 	// -------------------------------------------------------------------------
-	// SECTION 10: Player Launch Landing Recovery Dodge Cancel Window Lifecycle
+	// SECTION 10: Player Launch Root Motion Knockdown Dodge Cancel Window Lifecycle
 	// -------------------------------------------------------------------------
 	UPlayerLaunchReactionAbility* LaunchAbility = NewObject<UPlayerLaunchReactionAbility>(Player, TEXT("Test_PlayerLaunchReactionAbilityInstance"));
 	TestNotNull(TEXT("Created PlayerLaunchReactionAbility instance for lifecycle testing"), LaunchAbility);
@@ -785,41 +785,41 @@ bool FPlayerActionWindowAutomationTest::RunTest(const FString& Parameters)
 	{
 		LaunchAbility->SetTestCurrentActorInfo(ASC->AbilityActorInfo.Get());
 
-		UAnimMontage* ValidLandingRecoveryMontage = NewObject<UAnimMontage>(GetTransientPackage(), TEXT("Test_ValidLandingRecoveryMontage"));
-		UAnimMontage* WrongLandingRecoveryMontage = NewObject<UAnimMontage>(GetTransientPackage(), TEXT("Test_WrongLandingRecoveryMontage"));
-		UAnimComposite* InnerLandingSequence = NewObject<UAnimComposite>(GetTransientPackage(), TEXT("Test_LandingInnerSequence"));
-		UAnimComposite* ForeignLandingSequence = NewObject<UAnimComposite>(GetTransientPackage(), TEXT("Test_LandingForeignSequence"));
+		UAnimMontage* ValidRootMotionKnockdownMontage = NewObject<UAnimMontage>(GetTransientPackage(), TEXT("Test_ValidRootMotionKnockdownMontage"));
+		UAnimMontage* WrongRootMotionKnockdownMontage = NewObject<UAnimMontage>(GetTransientPackage(), TEXT("Test_WrongRootMotionKnockdownMontage"));
+		UAnimComposite* InnerKnockdownSequence = NewObject<UAnimComposite>(GetTransientPackage(), TEXT("Test_KnockdownInnerSequence"));
+		UAnimComposite* ForeignKnockdownSequence = NewObject<UAnimComposite>(GetTransientPackage(), TEXT("Test_KnockdownForeignSequence"));
 
 		FSlotAnimationTrack SlotTrack;
 		SlotTrack.SlotName = FName(TEXT("DefaultSlot"));
 		FAnimSegment Segment;
-		Segment.SetAnimReference(InnerLandingSequence);
+		Segment.SetAnimReference(InnerKnockdownSequence);
 		Segment.StartPos = 0.0f;
 		Segment.AnimStartTime = 0.0f;
 		Segment.AnimEndTime = 1.0f;
 		Segment.AnimPlayRate = 1.0f;
 		SlotTrack.AnimTrack.AnimSegments.Add(Segment);
-		ValidLandingRecoveryMontage->SlotAnimTracks.Add(SlotTrack);
+		ValidRootMotionKnockdownMontage->SlotAnimTracks.Add(SlotTrack);
 
-		LaunchAbility->SetTestLandingRecoveryMontage(ValidLandingRecoveryMontage);
-		LaunchAbility->SetTestActiveMontage(ValidLandingRecoveryMontage);
+		LaunchAbility->SetTestRootMotionKnockdownMontage(ValidRootMotionKnockdownMontage);
+		LaunchAbility->SetTestActiveMontage(ValidRootMotionKnockdownMontage);
 
-		// 10.1 Non-LandingRecovery Phase -> Events ignored
+		// 10.1 Non-RootMotionKnockdown Phase -> Events ignored
 		{
 			FGameplayEventData BeginPayload;
 			BeginPayload.EventTag = TagCancelWindowBegin;
 			BeginPayload.Instigator = Player;
 			BeginPayload.Target = Player;
-			BeginPayload.OptionalObject = ValidLandingRecoveryMontage;
+			BeginPayload.OptionalObject = ValidRootMotionKnockdownMontage;
 
 			LaunchAbility->SetTestBypassAnimInstanceActiveCheck(true);
 			LaunchAbility->TestOnCancelWindowBegin(BeginPayload);
-			TestFalse(TEXT("CancelWindowBegin during non-LandingRecovery phase is rejected"), LaunchAbility->GetTestDodgeCancelable());
-			TestFalse(TEXT("Non-LandingRecovery phase does not add CanCancel.Dodge tag to ASC"), ASC->HasMatchingGameplayTag(TagCanCancelDodge));
+			TestFalse(TEXT("CancelWindowBegin during non-RootMotionKnockdown phase is rejected"), LaunchAbility->GetTestDodgeCancelable());
+			TestFalse(TEXT("Non-RootMotionKnockdown phase does not add CanCancel.Dodge tag to ASC"), ASC->HasMatchingGameplayTag(TagCanCancelDodge));
 		}
 
-		// Switch to LandingRecovery phase
-		LaunchAbility->SetTestCurrentPhaseToLandingRecovery();
+		// Switch to RootMotionKnockdown phase
+		LaunchAbility->SetTestCurrentPhaseToRootMotionKnockdown();
 
 		// 10.2 Inactive / Null AnimInstance Check -> Rejected when active check is enforced
 		{
@@ -830,7 +830,7 @@ bool FPlayerActionWindowAutomationTest::RunTest(const FString& Parameters)
 			BeginPayload.EventTag = TagCancelWindowBegin;
 			BeginPayload.Instigator = Player;
 			BeginPayload.Target = Player;
-			BeginPayload.OptionalObject = ValidLandingRecoveryMontage;
+			BeginPayload.OptionalObject = ValidRootMotionKnockdownMontage;
 
 			LaunchAbility->TestOnCancelWindowBegin(BeginPayload);
 			TestFalse(TEXT("Inactive / null AnimInstance fails closed and rejects Begin"), LaunchAbility->GetTestDodgeCancelable());
@@ -846,7 +846,7 @@ bool FPlayerActionWindowAutomationTest::RunTest(const FString& Parameters)
 			BadAvatarPayload.EventTag = TagCancelWindowBegin;
 			BadAvatarPayload.Instigator = nullptr;
 			BadAvatarPayload.Target = nullptr;
-			BadAvatarPayload.OptionalObject = ValidLandingRecoveryMontage;
+			BadAvatarPayload.OptionalObject = ValidRootMotionKnockdownMontage;
 
 			LaunchAbility->TestOnCancelWindowBegin(BadAvatarPayload);
 			TestFalse(TEXT("Bad Avatar payload does not activate DodgeCancelable on Launch"), LaunchAbility->GetTestDodgeCancelable());
@@ -859,7 +859,7 @@ bool FPlayerActionWindowAutomationTest::RunTest(const FString& Parameters)
 			WrongMontagePayload.EventTag = TagCancelWindowBegin;
 			WrongMontagePayload.Instigator = Player;
 			WrongMontagePayload.Target = Player;
-			WrongMontagePayload.OptionalObject = WrongLandingRecoveryMontage;
+			WrongMontagePayload.OptionalObject = WrongRootMotionKnockdownMontage;
 
 			LaunchAbility->TestOnCancelWindowBegin(WrongMontagePayload);
 			TestFalse(TEXT("Wrong Montage payload does not activate DodgeCancelable on Launch"), LaunchAbility->GetTestDodgeCancelable());
@@ -872,7 +872,7 @@ bool FPlayerActionWindowAutomationTest::RunTest(const FString& Parameters)
 			ForeignSeqPayload.EventTag = TagCancelWindowBegin;
 			ForeignSeqPayload.Instigator = Player;
 			ForeignSeqPayload.Target = Player;
-			ForeignSeqPayload.OptionalObject = ForeignLandingSequence;
+			ForeignSeqPayload.OptionalObject = ForeignKnockdownSequence;
 
 			LaunchAbility->TestOnCancelWindowBegin(ForeignSeqPayload);
 			TestFalse(TEXT("Foreign Sequence payload does not activate DodgeCancelable on Launch"), LaunchAbility->GetTestDodgeCancelable());
@@ -885,7 +885,7 @@ bool FPlayerActionWindowAutomationTest::RunTest(const FString& Parameters)
 			InnerSeqBeginPayload.EventTag = TagCancelWindowBegin;
 			InnerSeqBeginPayload.Instigator = Player;
 			InnerSeqBeginPayload.Target = Player;
-			InnerSeqBeginPayload.OptionalObject = InnerLandingSequence;
+			InnerSeqBeginPayload.OptionalObject = InnerKnockdownSequence;
 
 			LaunchAbility->TestOnCancelWindowBegin(InnerSeqBeginPayload);
 			TestTrue(TEXT("Inner Sequence payload activates DodgeCancelable on Launch"), LaunchAbility->GetTestDodgeCancelable());
@@ -903,7 +903,7 @@ bool FPlayerActionWindowAutomationTest::RunTest(const FString& Parameters)
 			InnerSeqEndPayload.EventTag = TagCancelWindowEnd;
 			InnerSeqEndPayload.Instigator = Player;
 			InnerSeqEndPayload.Target = Player;
-			InnerSeqEndPayload.OptionalObject = InnerLandingSequence;
+			InnerSeqEndPayload.OptionalObject = InnerKnockdownSequence;
 
 			LaunchAbility->TestOnCancelWindowEnd(InnerSeqEndPayload);
 			TestFalse(TEXT("Inner Sequence End payload clears DodgeCancelable on Launch"), LaunchAbility->GetTestDodgeCancelable());
@@ -921,7 +921,7 @@ bool FPlayerActionWindowAutomationTest::RunTest(const FString& Parameters)
 			InnerSeqBeginPayload.EventTag = TagCancelWindowBegin;
 			InnerSeqBeginPayload.Instigator = Player;
 			InnerSeqBeginPayload.Target = Player;
-			InnerSeqBeginPayload.OptionalObject = InnerLandingSequence;
+			InnerSeqBeginPayload.OptionalObject = InnerKnockdownSequence;
 
 			LaunchAbility->TestOnCancelWindowBegin(InnerSeqBeginPayload);
 			TestTrue(TEXT("CanCancel.Dodge granted before Launch EndAbility"), ASC->HasMatchingGameplayTag(TagCanCancelDodge));

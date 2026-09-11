@@ -3,26 +3,20 @@
 #include "CoreMinimal.h"
 #include "Abilities/GameplayAbility.h"
 #include "Abilities/GameplayAbilityTypes.h"
-#include "AbilitySystem/Abilities/LaunchFacingSmoothingState.h"
 #include "GameplayTagContainer.h"
 #include "PlayerLaunchReactionAbility.generated.h"
 
 class ACharacter;
 class APlayerCharacter;
 class UAbilityTask_PlayMontageAndWait;
-class UAbilityTask_TurnToFacing;
-class UAbilityTask_WaitDelay;
 class UAbilityTask_WaitGameplayEvent;
 class UAnimInstance;
 class UAnimMontage;
 
 /**
- * Server-authoritative, multi-phase player launch hit reaction.
- * Lifecycle: Takeoff -> TurningToLaunch -> AwaitingAirborne -> Airborne -> LandingRecovery.
- * Takeoff Montage provides full-body takeoff and airborne pose presentation.
- * On Event.Reaction.Launch.Commit, the Takeoff Montage is paused to hold the airborne flight silhouette,
- * while CharacterMovement exclusively drives all capsule displacement and physics falling.
- * Upon landing on ground, the paused Takeoff Montage is stopped and LandingRecovery Montage plays.
+ * Server-authoritative, single-phase grounded Root Motion knockdown and recovery hit reaction.
+ * Plays authored Root Motion knockdown montage under CMC MOVE_Walking, drives Dodge cancel-window listeners,
+ * enforces ledge walk-off protection guard, and converges on an idempotent EndAbility cleanup path.
  */
 UCLASS()
 class POLYQUEST_API UPlayerLaunchReactionAbility : public UGameplayAbility
@@ -59,37 +53,25 @@ public:
 	const FGameplayTagContainer& GetTestAbilitiesToCancel() const { return AbilitiesToCancel; }
 	const TArray<FAbilityTriggerData>& GetTestAbilityTriggers() const { return AbilityTriggers; }
 	const FVector& GetImpactDirectionSnapshot() const { return ImpactDirectionSnapshot; }
-	float GetLaunchHorizontalSpeed() const { return LaunchHorizontalSpeed; }
-	float GetLaunchVerticalSpeed() const { return LaunchVerticalSpeed; }
-	float GetFacingTurnRateDegreesPerSecond() const { return FacingTurnRateDegreesPerSecond; }
 	FGameplayTag GetTestDodgeCancelableStateTag() const { return DodgeCancelableStateTag; }
 	bool GetTestDodgeCancelable() const { return bDodgeCancelable; }
 
-	bool GetUseGroundedRootMotionKnockdown() const { return bUseGroundedRootMotionKnockdown; }
-	void SetTestUseGroundedRootMotionKnockdown(bool bValue) { bUseGroundedRootMotionKnockdown = bValue; }
 	UAnimMontage* GetTestRootMotionKnockdownMontage() const { return RootMotionKnockdownMontage.Get(); }
 	void SetTestRootMotionKnockdownMontage(UAnimMontage* Montage) { RootMotionKnockdownMontage = Montage; }
-	void SetTestTakeoffMontage(UAnimMontage* Montage) { TakeoffMontage = Montage; }
-	void SetTestLandingRecoveryMontage(UAnimMontage* Montage) { LandingRecoveryMontage = Montage; }
 	void SetTestActiveMontage(UAnimMontage* Montage) { ActiveMontage = Montage; }
 	void SetTestBoundAnimInstance(UAnimInstance* AnimInstance) { BoundAnimInstance = AnimInstance; }
-	void SetTestCurrentPhaseToLandingRecovery() { CurrentPhase = ELaunchPhase::LandingRecovery; }
+	void SetTestCurrentPhaseToRootMotionKnockdown() { CurrentPhase = ELaunchPhase::RootMotionKnockdown; }
 	void SetTestCurrentActorInfo(const FGameplayAbilityActorInfo* InActorInfo) { CurrentActorInfo = InActorInfo; }
 	void SetTestBypassAnimInstanceActiveCheck(bool bBypass) { bTestBypassAnimInstanceActiveCheck = bBypass; }
 	void SetTestBypassMontageActiveCheck(bool bBypass) { bTestBypassMontageActiveCheck = bBypass; }
 	bool GetTestBypassMontageActiveCheck() const { return bTestBypassMontageActiveCheck; }
 	bool IsTestPhaseRootMotionKnockdown() const;
-	bool IsTestPhaseTakeoff() const;
-	bool IsTestPhaseLandingRecovery() const;
 	bool IsTestPhaseNone() const;
 	uint8 GetTestCurrentPhaseRaw() const;
 	bool GetTestLedgeSettingModified() const { return bLedgeSettingModified; }
 	void SetTestLedgeSettingModified(bool bModified) { bLedgeSettingModified = bModified; }
 	bool GetTestSavedCanWalkOffLedges() const { return bSavedCanWalkOffLedges; }
 	void SetTestSavedCanWalkOffLedges(bool bValue) { bSavedCanWalkOffLedges = bValue; }
-	bool GetTestCommitEventTaskActive() const { return CommitEventTask != nullptr; }
-	bool GetTestFacingTurnTaskActive() const { return FacingTurnTask != nullptr; }
-	bool GetTestFallValidationTaskActive() const { return FallValidationTask != nullptr; }
 	bool GetTestCancelBeginTaskActive() const { return CancelBeginTask != nullptr; }
 	bool GetTestCancelEndTaskActive() const { return CancelEndTask != nullptr; }
 	UAnimInstance* GetTestBoundAnimInstance() const { return BoundAnimInstance.Get(); }
@@ -97,18 +79,10 @@ public:
 	{
 		return IsRootMotionKnockdownCandidate(InPlayer, InMovement);
 	}
-	bool CallTestIsLegacyLaunchCandidate(const class UCharacterMovementComponent* InMovement) const
-	{
-		return IsLegacyLaunchCandidate(InMovement);
-	}
 	bool CallTestValidateActivationSetup(const FGameplayAbilityActorInfo* ActorInfo) const { return ValidateActivationSetup(ActorInfo); }
 	void TriggerTestMovementModeChanged(ACharacter* Character, EMovementMode PrevMovementMode, uint8 PreviousCustomMode)
 	{
 		OnMovementModeChanged(Character, PrevMovementMode, PreviousCustomMode);
-	}
-	void TriggerTestLaunchCommitEvent(const FGameplayEventData& Payload)
-	{
-		OnLaunchCommitEventReceived(Payload);
 	}
 	void TriggerTestActiveMontageEnded(UAnimMontage* Montage, bool bInterrupted)
 	{
@@ -121,7 +95,6 @@ public:
 	void TestOnCancelWindowBegin(const FGameplayEventData& Payload) { OnCancelWindowBegin(Payload); }
 	void TestOnCancelWindowEnd(const FGameplayEventData& Payload) { OnCancelWindowEnd(Payload); }
 	void TestSetDodgeCancelable(bool bShouldCancel) { SetDodgeCancelable(bShouldCancel); }
-	bool Test_IsEventFromLandingRecoveryMontage(const FGameplayEventData& Payload) const { return IsEventFromLandingRecoveryMontage(Payload); }
 	bool Test_IsEventFromRootMotionKnockdownMontage(const FGameplayEventData& Payload) const { return IsEventFromRootMotionKnockdownMontage(Payload); }
 #endif
 
@@ -129,46 +102,14 @@ private:
 	enum class ELaunchPhase : uint8
 	{
 		None,
-		Takeoff,
-		TurningToLaunch,
-		AwaitingAirborne,
-		Airborne,
-		LandingRecovery,
 		RootMotionKnockdown
 	};
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Player|Reaction", meta = (AllowPrivateAccess = "true", ToolTip = "玩家击飞受击地面 Root Motion 击倒动画 Montage 资产。"))
 	TObjectPtr<UAnimMontage> RootMotionKnockdownMontage;
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Player|Reaction", meta = (AllowPrivateAccess = "true", ToolTip = "是否在地面 MOVE_Walking 下优先使用作者化 Root Motion 击倒而非旧物理 Launch。"))
-	bool bUseGroundedRootMotionKnockdown = true;
-
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Player|Reaction", meta = (AllowPrivateAccess = "true", ToolTip = "玩家击飞受击起飞与滞空姿态动画 Montage 资产。"))
-	TObjectPtr<UAnimMontage> TakeoffMontage;
-
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Player|Reaction", meta = (AllowPrivateAccess = "true", ToolTip = "玩家击飞受击落地恢复动画 Montage 资产。"))
-	TObjectPtr<UAnimMontage> LandingRecoveryMontage;
-
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Player|Reaction", meta = (AllowPrivateAccess = "true", ToolTip = "击飞受击时沿受击水平方向施加的初速度（厘米/秒）。"))
-	float LaunchHorizontalSpeed = 450.0f;
-
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Player|Reaction", meta = (AllowPrivateAccess = "true", ToolTip = "击飞受击时施加的向上垂直初速度（厘米/秒）。"))
-	float LaunchVerticalSpeed = 550.0f;
-
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Player|Reaction", meta = (AllowPrivateAccess = "true", ClampMin = "0.0", ToolTip = "玩家击飞受击起飞阶段朝向攻击者的平滑转向速率（度/秒）。"))
-	float FacingTurnRateDegreesPerSecond = 1440.0f;
-
-	UPROPERTY(Transient)
-	TObjectPtr<UAbilityTask_WaitGameplayEvent> CommitEventTask;
-
 	UPROPERTY(Transient)
 	TObjectPtr<UAbilityTask_PlayMontageAndWait> MontageTask;
-
-	UPROPERTY(Transient)
-	TObjectPtr<UAbilityTask_TurnToFacing> FacingTurnTask;
-
-	UPROPERTY(Transient)
-	TObjectPtr<UAbilityTask_WaitDelay> FallValidationTask;
 
 	UPROPERTY(Transient)
 	TObjectPtr<UAbilityTask_WaitGameplayEvent> CancelBeginTask;
@@ -187,7 +128,6 @@ private:
 
 	FGameplayTag PlayerLaunchReactionAbilityTag;
 	FGameplayTag PlayerLaunchReactionEventTag;
-	FGameplayTag LaunchCommitEventTag;
 	FGameplayTag CancelWindowBeginEventTag;
 	FGameplayTag CancelWindowEndEventTag;
 	FGameplayTag DodgeCancelableStateTag;
@@ -198,11 +138,9 @@ private:
 	FGameplayTag TeardownOnUnpossessTag;
 	FGameplayTagContainer AbilitiesToCancel;
 
-	FLaunchFacingSmoothingState SmoothingState;
 	FVector ImpactDirectionSnapshot = FVector::ZeroVector;
 	float ImpactReferenceYawSnapshot = 0.0f;
 	ELaunchPhase CurrentPhase = ELaunchPhase::None;
-	bool bCommitHandled = false;
 	bool bDodgeCancelable = false;
 	bool bSavedCanWalkOffLedges = true;
 	bool bLedgeSettingModified = false;
@@ -212,16 +150,6 @@ private:
 	bool bTestBypassAnimInstanceActiveCheck = false;
 	bool bTestBypassMontageActiveCheck = false;
 #endif
-
-	UFUNCTION()
-	void OnLaunchCommitEventReceived(FGameplayEventData Payload);
-
-	void OnFacingTurnCompleted();
-	void OnFacingTurnFailed();
-	void CommitFrozenLaunch();
-
-	UFUNCTION()
-	void OnFallValidationFinished();
 
 	UFUNCTION()
 	void OnActiveMontageEnded(UAnimMontage* Montage, bool bInterrupted);
@@ -237,11 +165,8 @@ private:
 
 	bool ValidateActivationSetup(const FGameplayAbilityActorInfo* ActorInfo) const;
 	bool IsRootMotionKnockdownCandidate(const APlayerCharacter* PlayerCharacter, const class UCharacterMovementComponent* MovementComponent) const;
-	bool IsLegacyLaunchCandidate(const class UCharacterMovementComponent* MovementComponent) const;
 	static bool TryResolveRootMotionFacingYaw(const FVector& LocalAttackerDirection, float ImpactReferenceYaw, float& OutFacingYaw);
 	bool IsEventFromMontage(const FGameplayEventData& Payload, const UAnimMontage* ExpectedMontage) const;
-	bool IsEventFromTakeoffMontage(const FGameplayEventData& Payload) const;
-	bool IsEventFromLandingRecoveryMontage(const FGameplayEventData& Payload) const;
 	bool IsEventFromRootMotionKnockdownMontage(const FGameplayEventData& Payload) const;
 	void SetDodgeCancelable(bool bShouldCancel);
 	void EndFromMontage(bool bWasCancelled);

@@ -27,8 +27,6 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 
 namespace
 {
-	const FGameplayTag TagTeardownOnUnpossess = FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Action.Teardown.OnUnpossess")), false);
-
 	struct FEnemyRootMotionTestWorldScopeCleanup
 	{
 		UWorld* World = nullptr;
@@ -138,6 +136,7 @@ bool FEnemyLaunchReactionRootMotionAutomationTest::RunTest(const FString& Parame
 	AddExpectedErrorPlain(TEXT("SequencerDataModel"), EAutomationExpectedErrorFlags::Contains, -1);
 
 	const FGameplayTag TagBlockFacing = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Block.Facing")), false);
+	const FGameplayTag TagTeardownOnUnpossess = FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Action.Teardown.OnUnpossess")), false);
 
 	// -------------------------------------------------------------------------
 	// SECTION 1: CDO Defaults and Static Interface Verification

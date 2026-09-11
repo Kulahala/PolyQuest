@@ -1027,13 +1027,15 @@ Movement/jump blocking, Dodge cancel-window state, Montage completion, movement
 mode interruption, cancellation, destruction, death cancellation, and
 UnPossess converge through the Ability's idempotent `EndAbility()` cleanup.
 
-The current authored `GA_PlayerLaunchReaction` intentionally leaves the legacy
-`TakeoffMontage` and `LandingRecoveryMontage` fields empty, so Root Motion
-candidate failure is fail-closed rather than a Physics Launch fallback. The
-Legacy C++ branch and compatibility tests remain dormant until a separately
-approved retirement slice; they are not part of the current authored behavior
-contract. Player does not own `State.Block.Facing`; existing Lock-On and
-locomotion gates remain the facing consumers.
+`UPlayerLaunchReactionAbility` has no Physics Launch compatibility branch:
+its legacy Takeoff/Landing fields, velocity and facing settings, Commit/Facing/
+Falling tasks, callbacks, positive compatibility tests, and the former
+`bUseGroundedRootMotionKnockdown` policy toggle are retired. Candidate failure
+is fail-closed; a valid Root Motion Montage under the stated CMC conditions is
+the only activation path. `Event.Reaction.Launch.Commit` remains a shared
+Enemy-facing contract but has no Player launch lifecycle effect. Player does
+not own `State.Block.Facing`; existing Lock-On and locomotion gates remain the
+facing consumers.
 
 #### Notify-timed Hyper Armor
 

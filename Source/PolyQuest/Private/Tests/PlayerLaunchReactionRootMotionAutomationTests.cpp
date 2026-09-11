@@ -134,27 +134,6 @@ namespace
 		}
 		return Montage;
 	}
-
-	UAnimMontage* CreateSyntheticLegacyMontage(float Length = 1.0f)
-	{
-		UAnimMontage* Montage = NewObject<UAnimMontage>(GetTransientPackage());
-		UAnimSequence* Seq = NewObject<UAnimSequence>(GetTransientPackage());
-		Seq->bEnableRootMotion = false;
-
-		FSlotAnimationTrack Track;
-		Track.SlotName = FName(TEXT("DefaultSlot"));
-		FAnimSegment Segment;
-		Segment.SetAnimReference(Seq);
-		Segment.StartPos = 0.0f;
-		Segment.AnimStartTime = 0.0f;
-		Segment.AnimEndTime = Length;
-		Segment.AnimPlayRate = 1.0f;
-		Track.AnimTrack.AnimSegments.Add(Segment);
-		Montage->SlotAnimTracks.Add(Track);
-
-		UTestMontageAccessHelper::SetMontageLength(Montage, Length);
-		return Montage;
-	}
 }
 
 bool FPlayerLaunchReactionRootMotionAutomationTest::RunTest(const FString& Parameters)
@@ -178,22 +157,21 @@ bool FPlayerLaunchReactionRootMotionAutomationTest::RunTest(const FString& Param
 		TestNotNull(TEXT("1.1: PlayerLaunch CDO exists"), PlayerLaunchCDO);
 		if (PlayerLaunchCDO)
 		{
-			TestTrue(TEXT("1.2: CDO bUseGroundedRootMotionKnockdown defaults to true"), PlayerLaunchCDO->GetUseGroundedRootMotionKnockdown());
-			TestNull(TEXT("1.3: CDO RootMotionKnockdownMontage defaults to nullptr"), PlayerLaunchCDO->GetTestRootMotionKnockdownMontage());
-			TestTrue(TEXT("1.4: TagTeardownOnUnpossess is valid"), TagTeardownOnUnpossess.IsValid());
-			TestTrue(TEXT("1.5: PlayerLaunch CDO AbilityTags contains Ability.Action.Teardown.OnUnpossess"),
+			TestNull(TEXT("1.2: CDO RootMotionKnockdownMontage defaults to nullptr"), PlayerLaunchCDO->GetTestRootMotionKnockdownMontage());
+			TestTrue(TEXT("1.3: TagTeardownOnUnpossess is valid"), TagTeardownOnUnpossess.IsValid());
+			TestTrue(TEXT("1.4: PlayerLaunch CDO AbilityTags contains Ability.Action.Teardown.OnUnpossess"),
 				PlayerLaunchCDO->GetAssetTags().HasTagExact(TagTeardownOnUnpossess));
-			TestTrue(TEXT("1.6: PlayerLaunch CDO ActivationOwnedTags contains HitReacting"),
+			TestTrue(TEXT("1.5: PlayerLaunch CDO ActivationOwnedTags contains HitReacting"),
 				PlayerLaunchCDO->GetTestActivationOwnedTags().HasTagExact(TagHitReacting));
-			TestTrue(TEXT("1.7: PlayerLaunch CDO ActivationOwnedTags contains Block.Movement"),
+			TestTrue(TEXT("1.6: PlayerLaunch CDO ActivationOwnedTags contains Block.Movement"),
 				PlayerLaunchCDO->GetTestActivationOwnedTags().HasTagExact(TagBlockMovement));
-			TestTrue(TEXT("1.8: PlayerLaunch CDO ActivationOwnedTags contains Block.Jump"),
+			TestTrue(TEXT("1.7: PlayerLaunch CDO ActivationOwnedTags contains Block.Jump"),
 				PlayerLaunchCDO->GetTestActivationOwnedTags().HasTagExact(TagBlockJump));
-			TestEqual(TEXT("1.9: PlayerLaunch CDO BlockAbilitiesWithTag has exactly 10 entries"),
+			TestEqual(TEXT("1.8: PlayerLaunch CDO BlockAbilitiesWithTag has exactly 10 entries"),
 				PlayerLaunchCDO->GetTestBlockAbilitiesWithTag().Num(), 10);
-			TestEqual(TEXT("1.10: PlayerLaunch CDO AbilitiesToCancel has exactly 11 entries"),
+			TestEqual(TEXT("1.9: PlayerLaunch CDO AbilitiesToCancel has exactly 11 entries"),
 				PlayerLaunchCDO->GetTestAbilitiesToCancel().Num(), 11);
-			TestFalse(TEXT("1.11: PlayerLaunch CDO AbilitiesToCancel does NOT contain TeardownOnUnpossess"),
+			TestFalse(TEXT("1.10: PlayerLaunch CDO AbilitiesToCancel does NOT contain TeardownOnUnpossess"),
 				PlayerLaunchCDO->GetTestAbilitiesToCancel().HasTag(TagTeardownOnUnpossess));
 		}
 	}
@@ -263,16 +241,13 @@ bool FPlayerLaunchReactionRootMotionAutomationTest::RunTest(const FString& Param
 	} CDOGuard{ PlayerLaunchCDO, OriginalCDOBoundAnimInstance };
 
 	// -------------------------------------------------------------------------
-	// SECTION 2: Candidate Matrix & Fallback Logic
+	// SECTION 2: Candidate Matrix & Root-Only Fail-Closed Logic
 	// -------------------------------------------------------------------------
 	{
 		UAnimMontage* ValidRootMontage = CreateSyntheticKnockdownMontage(Player, 1.5f, true);
 		UAnimMontage* NonRootMontage = CreateSyntheticKnockdownMontage(Player, 1.5f, false);
 		UAnimMontage* EmptySlotMontage = NewObject<UAnimMontage>(GetTransientPackage());
 		UAnimMontage* ZeroLengthMontage = CreateSyntheticKnockdownMontage(Player, 0.0f, true);
-
-		UAnimMontage* LegacyTakeoff = CreateSyntheticLegacyMontage(1.0f);
-		UAnimMontage* LegacyLanding = CreateSyntheticLegacyMontage(1.0f);
 
 		FTestPlayerAbilityFixtureScope Scope(PlayerASC, Player);
 		TestNotNull(TEXT("2.1: AbilityInstance created"), Scope.AbilityInstance);
@@ -282,54 +257,40 @@ bool FPlayerLaunchReactionRootMotionAutomationTest::RunTest(const FString& Param
 
 			// 2.2: Valid candidate passes
 			Scope.AbilityInstance->SetTestRootMotionKnockdownMontage(ValidRootMontage);
-			Scope.AbilityInstance->SetTestUseGroundedRootMotionKnockdown(true);
 			MovementComponent->SetMovementMode(MOVE_Walking);
 			TestTrue(TEXT("2.2: Valid Root Motion candidate returns true"),
 				Scope.AbilityInstance->CallTestIsRootMotionKnockdownCandidate(Player, MovementComponent));
 
-			// 2.3: Flag disabled returns false
-			Scope.AbilityInstance->SetTestUseGroundedRootMotionKnockdown(false);
-			TestFalse(TEXT("2.3: Disabled flag returns false"),
-				Scope.AbilityInstance->CallTestIsRootMotionKnockdownCandidate(Player, MovementComponent));
-			Scope.AbilityInstance->SetTestUseGroundedRootMotionKnockdown(true);
-
-			// 2.4: Nullptr montage returns false
+			// 2.3: Nullptr montage returns false
 			Scope.AbilityInstance->SetTestRootMotionKnockdownMontage(nullptr);
-			TestFalse(TEXT("2.4: Nullptr montage returns false"),
+			TestFalse(TEXT("2.3: Nullptr montage returns false"),
 				Scope.AbilityInstance->CallTestIsRootMotionKnockdownCandidate(Player, MovementComponent));
 
-			// 2.5: Non root motion montage returns false
+			// 2.4: Non root motion montage returns false
 			Scope.AbilityInstance->SetTestRootMotionKnockdownMontage(NonRootMontage);
-			TestFalse(TEXT("2.5: Non root motion montage returns false"),
+			TestFalse(TEXT("2.4: Non root motion montage returns false"),
 				Scope.AbilityInstance->CallTestIsRootMotionKnockdownCandidate(Player, MovementComponent));
 
-			// 2.6: Empty slot montage returns false
+			// 2.5: Empty slot montage returns false
 			Scope.AbilityInstance->SetTestRootMotionKnockdownMontage(EmptySlotMontage);
-			TestFalse(TEXT("2.6: Empty slot montage returns false"),
+			TestFalse(TEXT("2.5: Empty slot montage returns false"),
 				Scope.AbilityInstance->CallTestIsRootMotionKnockdownCandidate(Player, MovementComponent));
 
-			// 2.7: Zero length montage returns false
+			// 2.6: Zero length montage returns false
 			Scope.AbilityInstance->SetTestRootMotionKnockdownMontage(ZeroLengthMontage);
-			TestFalse(TEXT("2.7: Zero length montage returns false"),
+			TestFalse(TEXT("2.6: Zero length montage returns false"),
 				Scope.AbilityInstance->CallTestIsRootMotionKnockdownCandidate(Player, MovementComponent));
 
-			// 2.8: Non-walking movement mode returns false
+			// 2.7: Non-walking movement mode returns false
 			Scope.AbilityInstance->SetTestRootMotionKnockdownMontage(ValidRootMontage);
 			MovementComponent->SetMovementMode(MOVE_Falling);
-			TestFalse(TEXT("2.8: Falling movement mode returns false for Root Motion candidate"),
+			TestFalse(TEXT("2.7: Falling movement mode returns false for Root Motion candidate"),
 				Scope.AbilityInstance->CallTestIsRootMotionKnockdownCandidate(Player, MovementComponent));
 			MovementComponent->SetMovementMode(MOVE_Walking);
 
-			// 2.9: Legacy candidate validation
-			Scope.AbilityInstance->SetTestTakeoffMontage(LegacyTakeoff);
-			Scope.AbilityInstance->SetTestLandingRecoveryMontage(LegacyLanding);
-			TestTrue(TEXT("2.9: Legacy candidate returns true with valid legacy montages"),
-				Scope.AbilityInstance->CallTestIsLegacyLaunchCandidate(MovementComponent));
-
-			// 2.10: Fail-closed if both are invalid
+			// 2.8: Fail-closed if Root Motion montage is null
 			Scope.AbilityInstance->SetTestRootMotionKnockdownMontage(nullptr);
-			Scope.AbilityInstance->SetTestTakeoffMontage(nullptr);
-			TestFalse(TEXT("2.10: Fail-closed if neither root nor legacy is configured"),
+			TestFalse(TEXT("2.8: Fail-closed activation setup when root montage is null"),
 				Scope.AbilityInstance->CallTestValidateActivationSetup(PlayerASC->AbilityActorInfo.Get()));
 		}
 	}
@@ -345,7 +306,6 @@ bool FPlayerLaunchReactionRootMotionAutomationTest::RunTest(const FString& Param
 		if (Scope.AbilityInstance)
 		{
 			Scope.AbilityInstance->SetTestRootMotionKnockdownMontage(ValidRootMontage);
-			Scope.AbilityInstance->SetTestUseGroundedRootMotionKnockdown(true);
 			Scope.AbilityInstance->SetTestBoundAnimInstance(MockAnimInstance);
 			Scope.AbilityInstance->SetTestBypassMontageActiveCheck(true);
 			MovementComponent->SetMovementMode(MOVE_Walking);
@@ -354,13 +314,6 @@ bool FPlayerLaunchReactionRootMotionAutomationTest::RunTest(const FString& Param
 
 			TestTrue(TEXT("3.2: Entered RootMotionKnockdown phase"),
 				Scope.AbilityInstance->IsTestPhaseRootMotionKnockdown());
-
-			TestFalse(TEXT("3.3: Root Motion branch does NOT create CommitEventTask"),
-				Scope.AbilityInstance->GetTestCommitEventTaskActive());
-			TestFalse(TEXT("3.4: Root Motion branch does NOT create FacingTurnTask"),
-				Scope.AbilityInstance->GetTestFacingTurnTaskActive());
-			TestFalse(TEXT("3.5: Root Motion branch does NOT create FallValidationTask"),
-				Scope.AbilityInstance->GetTestFallValidationTaskActive());
 
 			TestTrue(TEXT("3.6: CancelBeginTask is active"),
 				Scope.AbilityInstance->GetTestCancelBeginTaskActive());
@@ -374,12 +327,12 @@ bool FPlayerLaunchReactionRootMotionAutomationTest::RunTest(const FString& Param
 			TestTrue(TEXT("3.10: Block.Jump state tag is owned"),
 				PlayerASC->HasMatchingGameplayTag(TagBlockJump));
 
-			// Trigger Commit event in Root Motion phase -> should be completely ignored
+			// Trigger Commit event via real ASC dispatch in Root Motion phase -> should be completely ignored
 			FGameplayEventData CommitPayload;
 			CommitPayload.Instigator = Player;
 			CommitPayload.Target = Player;
 			CommitPayload.OptionalObject = ValidRootMontage;
-			Scope.AbilityInstance->TriggerTestLaunchCommitEvent(CommitPayload);
+			PlayerASC->HandleGameplayEvent(TagLaunchCommit, &CommitPayload);
 
 			TestTrue(TEXT("3.11: Commit event was ignored, still in RootMotionKnockdown phase"),
 				Scope.AbilityInstance->IsTestPhaseRootMotionKnockdown());
@@ -412,7 +365,6 @@ bool FPlayerLaunchReactionRootMotionAutomationTest::RunTest(const FString& Param
 		if (Scope.AbilityInstance)
 		{
 			Scope.AbilityInstance->SetTestRootMotionKnockdownMontage(ValidRootMontage);
-			Scope.AbilityInstance->SetTestUseGroundedRootMotionKnockdown(true);
 			Scope.AbilityInstance->SetTestBoundAnimInstance(MockAnimInstance);
 			Scope.AbilityInstance->SetTestBypassMontageActiveCheck(true);
 			MovementComponent->SetMovementMode(MOVE_Walking);
@@ -441,7 +393,6 @@ bool FPlayerLaunchReactionRootMotionAutomationTest::RunTest(const FString& Param
 		if (ScopeFalseLedge.AbilityInstance)
 		{
 			ScopeFalseLedge.AbilityInstance->SetTestRootMotionKnockdownMontage(ValidRootMontage);
-			ScopeFalseLedge.AbilityInstance->SetTestUseGroundedRootMotionKnockdown(true);
 			ScopeFalseLedge.AbilityInstance->SetTestBoundAnimInstance(MockAnimInstance);
 			ScopeFalseLedge.AbilityInstance->SetTestBypassMontageActiveCheck(true);
 
@@ -467,7 +418,6 @@ bool FPlayerLaunchReactionRootMotionAutomationTest::RunTest(const FString& Param
 		if (Scope.AbilityInstance)
 		{
 			Scope.AbilityInstance->SetTestRootMotionKnockdownMontage(ValidRootMontage);
-			Scope.AbilityInstance->SetTestUseGroundedRootMotionKnockdown(true);
 			Scope.AbilityInstance->SetTestBoundAnimInstance(MockAnimInstance);
 			Scope.AbilityInstance->SetTestBypassMontageActiveCheck(true);
 			Scope.AbilityInstance->SetTestBypassAnimInstanceActiveCheck(true);
@@ -569,7 +519,6 @@ bool FPlayerLaunchReactionRootMotionAutomationTest::RunTest(const FString& Param
 		if (Scope.AbilityInstance)
 		{
 			Scope.AbilityInstance->SetTestRootMotionKnockdownMontage(ValidRootMontage);
-			Scope.AbilityInstance->SetTestUseGroundedRootMotionKnockdown(true);
 			Scope.AbilityInstance->SetTestBoundAnimInstance(MockAnimInstance);
 			Scope.AbilityInstance->SetTestBypassMontageActiveCheck(true);
 			MovementComponent->SetMovementMode(MOVE_Walking);
@@ -598,7 +547,6 @@ bool FPlayerLaunchReactionRootMotionAutomationTest::RunTest(const FString& Param
 			if (Scope.AbilityInstance)
 			{
 				Scope.AbilityInstance->SetTestRootMotionKnockdownMontage(ValidRootMontage);
-				Scope.AbilityInstance->SetTestUseGroundedRootMotionKnockdown(true);
 				Scope.AbilityInstance->SetTestBoundAnimInstance(MockAnimInstance);
 				Scope.AbilityInstance->SetTestBypassMontageActiveCheck(true);
 				MovementComponent->SetMovementMode(MOVE_Walking);
@@ -617,7 +565,6 @@ bool FPlayerLaunchReactionRootMotionAutomationTest::RunTest(const FString& Param
 			if (Scope.AbilityInstance)
 			{
 				Scope.AbilityInstance->SetTestRootMotionKnockdownMontage(ValidRootMontage);
-				Scope.AbilityInstance->SetTestUseGroundedRootMotionKnockdown(true);
 				Scope.AbilityInstance->SetTestBoundAnimInstance(MockAnimInstance);
 				Scope.AbilityInstance->SetTestBypassMontageActiveCheck(true);
 				MovementComponent->SetMovementMode(MOVE_Walking);
@@ -627,60 +574,6 @@ bool FPlayerLaunchReactionRootMotionAutomationTest::RunTest(const FString& Param
 
 				Scope.AbilityInstance->TriggerTestActiveMontageEnded(ValidRootMontage, true);
 				TestTrue(TEXT("7.4: Interrupted montage ends ability"), Scope.AbilityInstance->IsTestPhaseNone());
-			}
-		}
-
-		// 7.5: Legacy fallback natural completion
-		{
-			UAnimMontage* LegacyTakeoff = CreateSyntheticLegacyMontage(1.0f);
-			UAnimMontage* LegacyLanding = CreateSyntheticLegacyMontage(1.0f);
-
-			FTestPlayerAbilityFixtureScope ScopeLegacy(PlayerASC, Player);
-			if (ScopeLegacy.AbilityInstance)
-			{
-				ScopeLegacy.AbilityInstance->SetTestTakeoffMontage(LegacyTakeoff);
-				ScopeLegacy.AbilityInstance->SetTestLandingRecoveryMontage(LegacyLanding);
-				ScopeLegacy.AbilityInstance->SetTestRootMotionKnockdownMontage(nullptr);
-				ScopeLegacy.AbilityInstance->SetTestUseGroundedRootMotionKnockdown(false);
-				ScopeLegacy.AbilityInstance->SetTestBoundAnimInstance(MockAnimInstance);
-				ScopeLegacy.AbilityInstance->SetTestBypassMontageActiveCheck(true);
-				MovementComponent->SetMovementMode(MOVE_Walking);
-
-				ScopeLegacy.Activate(&DefaultTriggerPayload);
-				TestTrue(TEXT("7.5a: Legacy fallback activates into Takeoff phase"),
-					ScopeLegacy.AbilityInstance->IsTestPhaseTakeoff());
-
-				// Simulate natural completion of Takeoff before commit
-				ScopeLegacy.AbilityInstance->TriggerTestActiveMontageEnded(LegacyTakeoff, false);
-				TestTrue(TEXT("7.5b: Legacy natural montage completion ends ability"),
-					ScopeLegacy.AbilityInstance->IsTestPhaseNone());
-			}
-		}
-
-		// 7.6: Legacy fallback interrupted completion
-		{
-			UAnimMontage* LegacyTakeoff = CreateSyntheticLegacyMontage(1.0f);
-			UAnimMontage* LegacyLanding = CreateSyntheticLegacyMontage(1.0f);
-
-			FTestPlayerAbilityFixtureScope ScopeLegacy(PlayerASC, Player);
-			if (ScopeLegacy.AbilityInstance)
-			{
-				ScopeLegacy.AbilityInstance->SetTestTakeoffMontage(LegacyTakeoff);
-				ScopeLegacy.AbilityInstance->SetTestLandingRecoveryMontage(LegacyLanding);
-				ScopeLegacy.AbilityInstance->SetTestRootMotionKnockdownMontage(nullptr);
-				ScopeLegacy.AbilityInstance->SetTestUseGroundedRootMotionKnockdown(false);
-				ScopeLegacy.AbilityInstance->SetTestBoundAnimInstance(MockAnimInstance);
-				ScopeLegacy.AbilityInstance->SetTestBypassMontageActiveCheck(true);
-				MovementComponent->SetMovementMode(MOVE_Walking);
-
-				ScopeLegacy.Activate(&DefaultTriggerPayload);
-				TestTrue(TEXT("7.6a: Legacy fallback activates into Takeoff phase"),
-					ScopeLegacy.AbilityInstance->IsTestPhaseTakeoff());
-
-				// Simulate interrupted completion of Takeoff
-				ScopeLegacy.AbilityInstance->TriggerTestActiveMontageEnded(LegacyTakeoff, true);
-				TestTrue(TEXT("7.6b: Legacy interrupted montage ends ability"),
-					ScopeLegacy.AbilityInstance->IsTestPhaseNone());
 			}
 		}
 	}
@@ -697,7 +590,6 @@ bool FPlayerLaunchReactionRootMotionAutomationTest::RunTest(const FString& Param
 			if (Scope.AbilityInstance)
 			{
 				Scope.AbilityInstance->SetTestRootMotionKnockdownMontage(ValidRootMontage);
-				Scope.AbilityInstance->SetTestUseGroundedRootMotionKnockdown(true);
 				Scope.AbilityInstance->SetTestBoundAnimInstance(MockAnimInstance);
 				Scope.AbilityInstance->SetTestBypassMontageActiveCheck(true);
 				MovementComponent->SetMovementMode(MOVE_Walking);
@@ -717,7 +609,6 @@ bool FPlayerLaunchReactionRootMotionAutomationTest::RunTest(const FString& Param
 			if (ScopeNoBypass.AbilityInstance)
 			{
 				ScopeNoBypass.AbilityInstance->SetTestRootMotionKnockdownMontage(ValidRootMontage);
-				ScopeNoBypass.AbilityInstance->SetTestUseGroundedRootMotionKnockdown(true);
 				ScopeNoBypass.AbilityInstance->SetTestBoundAnimInstance(MockAnimInstance);
 				ScopeNoBypass.AbilityInstance->SetTestBypassMontageActiveCheck(false);
 				MovementComponent->SetMovementMode(MOVE_Walking);
@@ -734,7 +625,6 @@ bool FPlayerLaunchReactionRootMotionAutomationTest::RunTest(const FString& Param
 			if (Scope.AbilityInstance)
 			{
 				Scope.AbilityInstance->SetTestRootMotionKnockdownMontage(ValidRootMontage);
-				Scope.AbilityInstance->SetTestUseGroundedRootMotionKnockdown(true);
 				Scope.AbilityInstance->SetTestBoundAnimInstance(MockAnimInstance);
 				Scope.AbilityInstance->SetTestBypassMontageActiveCheck(true);
 				Scope.AbilityInstance->SetTestBypassAnimInstanceActiveCheck(true);
@@ -781,7 +671,6 @@ bool FPlayerLaunchReactionRootMotionAutomationTest::RunTest(const FString& Param
 				if (ScopeTemp.AbilityInstance)
 				{
 					ScopeTemp.AbilityInstance->SetTestRootMotionKnockdownMontage(ValidRootMontage);
-					ScopeTemp.AbilityInstance->SetTestUseGroundedRootMotionKnockdown(true);
 					ScopeTemp.AbilityInstance->SetTestBoundAnimInstance(MockAnimInstance);
 					ScopeTemp.AbilityInstance->SetTestBypassMontageActiveCheck(true);
 					ScopeTemp.AbilityInstance->SetTestBypassAnimInstanceActiveCheck(true);

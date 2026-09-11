@@ -1489,3 +1489,14 @@ TODO-03A3E World Pickup Interaction Prompt v1
 - **Main Fresh Review**：Main 按 `ue-strict-review` 完成有界两批审查，未发现可由批准 diff/source 证据定级的 P0/P1/P2 缺陷；图谱风险分数和未覆盖提示仅作静态导航。
 - **决策与后续指针**：Legacy C++ 分支和兼容测试暂留为 dormant residue，不再作为当前 authored fallback。下一独立 Legacy retirement slice 必须先取得零引用、focused Automation、Development Editor 编译、PIE 回归和明确提交批准；TODO-07B14 的 Dodge Motion Warping/非对称空中反应仍独立门控。
 - **提交边界**：本阶段只提交批准的 Player Header/CPP、Player Automation、Unity Build hygiene 例外测试文件及 `plan.md`、`ARCHITECTURE.md`、`ROADMAP.md`、`ROADMAP-archive.md`；所有用户-owned Content/Config/Blueprint/AnimBP/Montage/地图和其他 WIP 均排除。
+
+## TODO-07B13-RET Player Legacy Launch Retirement v1 Closeout (2026-09-11; source/doc commit)
+
+> 本节记录 TODO-07B13-RET 的源码、用户门禁与 Main Fresh Review 收口。它是历史追溯凭据，不替代当前 Source、资产、配置或 Unreal Editor 状态作为运行时权威。
+
+- **范围与实际结果**：批准路径为 `PlayerLaunchReactionAbility.h/.cpp`、`PlayerLaunchReactionRootMotionAutomationTests.cpp`、`PlayerActionWindowAutomationTests.cpp`、`HitReactionAutomationTests.cpp`，以及唯一的 `EnemyLaunchReactionRootMotionAutomationTests.cpp` Unity Build hygiene 例外。Player 已移除 `Takeoff -> TurningToLaunch -> AwaitingAirborne -> Airborne -> LandingRecovery` Physics Launch 生命周期、Legacy Montage/速度/朝向字段、Commit/Facing/Falling tasks 与回调、正向兼容测试，以及已无分支选择意义的 `bUseGroundedRootMotionKnockdown` reflected field。无资产、Config、Build.cs 或 Enemy 运行时逻辑修改。
+- **稳定运行时契约**：Player 仅在有效 `RootMotionKnockdownMontage`、Root Motion、Slot、有限正长度和 `MOVE_Walking` 下激活；任何无效设置均在副作用前 fail-closed，绝不回退 Physics Launch。Root Motion 生命周期继续保留一次性 facing、`StopMovementImmediately()`、ledge 保存/恢复、persistent Dodge window payload identity、`ReadyForActivation()` 重入检查，以及自然结束、打断、取消、Destroy、UnPossess 统一的幂等 `EndAbility()` 清理。`Event.Reaction.Launch.Commit` 仍供 Enemy 使用，对活跃 Player Ability 无生命周期副作用。
+- **Unity Build hygiene**：仅将 Enemy Launch Automation 的 `TagTeardownOnUnpossess` 从匿名命名空间移入该测试的 `RunTest()` 局部作用域，消除 Unity Blob 下的 C4459 遮蔽；`EnemyStanceBreakRateWindowAutomationTests.cpp` 和所有 Enemy 运行时行为保持零差异。
+- **验证证据**：用户确认 `PolyQuestEditor (Development Editor)` 编译通过，`PolyQuest.Combat.PlayerLaunchReactionRootMotion`、`PolyQuest.Player.ActionWindows`、`PolyQuest.Combat.HitReaction`、`PolyQuest.Combat.EnemyLaunchReactionRootMotion`、`PolyQuest.Combat.EnemyStanceBreakRateWindow` Automation 成功，GA_PlayerLaunchReaction 中 retired fields 消失且无 Missing Property/Missing Class，并确认 Scene01 PIE 的 Player Root Motion、Dodge cancel、ledge/teardown 与 Enemy 回归通过。Main Fresh Review 未发现 P0/P1/P2 blocker；静态检查、编译、Automation、Editor readback 与 PIE 证据保持各自边界。
+- **债务与后续指针**：本切片没有接受的阻塞性债务。下一推荐执行切片为独立的 `TODO-07B11-RET: Enemy Legacy Launch Retirement v1`；它必须保留 Enemy `State.Block.Facing`、AI/stance-break handoff、CMC/ledge 权属和必要的独立资产 readback，不得按 Player 路径直接类推。
+- **提交边界**：本阶段提交仅包含上述六个批准 Source/Test 路径和 `plan.md`、`ARCHITECTURE.md`、`ROADMAP.md`、本归档文档；所有用户-owned Content/Config/Blueprint/AnimBP/Montage/地图、导入资源与其他 WIP 均排除。提交哈希以 Git 历史为准。
