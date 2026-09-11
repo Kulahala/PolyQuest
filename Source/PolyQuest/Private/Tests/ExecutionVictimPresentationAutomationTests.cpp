@@ -10,9 +10,10 @@
 #include "AbilitySystem/Abilities/PlayerFrontExecutionAbility.h"
 #include "AbilitySystem/CharacterAttributeSet.h"
 #include "AI/EnemyAIController.h"
+#include "Animation/AnimInstance.h"
 #include "Animation/AnimMontage.h"
 #include "Animation/AnimSequence.h"
-#include "Animation/Combat/AnimNotify_PlayerExecutionRelease.h"
+#include "Animation/Skeleton.h"
 #include "Animation/Combat/AnimNotify_PlayerExecutionVictimStart.h"
 #include "Character/Enemy/EnemyCharacter.h"
 #include "Character/Player/PlayerCharacter.h"
@@ -20,6 +21,8 @@
 #include "Combat/Equipment/WeaponEquipmentComponent.h"
 #include "Combat/Execution/ExecutionLockContext.h"
 #include "Combat/Melee/MeleeHitResolver.h"
+#include "Components/BoxComponent.h"
+#include "Components/CapsuleComponent.h"
 #include "Engine/Engine.h"
 #include "Engine/World.h"
 #include "Framework/PolyQuestPlayerController.h"
@@ -51,6 +54,59 @@ namespace ExecutionVictimPresentationAutomation
 			}
 		}
 	};
+
+	class UTestMontageAccessHelper : public UAnimMontage
+	{
+	public:
+		static void SetMontageLength(UAnimMontage* Montage, float Length)
+		{
+			if (Montage)
+			{
+				static_cast<UTestMontageAccessHelper*>(Montage)->SequenceLength = Length;
+			}
+		}
+	};
+
+	UAnimMontage* CreateValidRecoveryMontage(
+		UObject* Outer,
+		float Duration = 2.5f,
+		bool bEnableRootMotion = true,
+		USkeleton* Skeleton = nullptr)
+	{
+		UObject* EffectiveOuter = Outer ? Outer : GetTransientPackage();
+		UAnimMontage* Montage = NewObject<UAnimMontage>(EffectiveOuter);
+		if (Skeleton)
+		{
+			Montage->SetSkeleton(Skeleton);
+		}
+		UAnimSequence* Seq = NewObject<UAnimSequence>(EffectiveOuter);
+		if (Skeleton)
+		{
+			Seq->SetSkeleton(Skeleton);
+		}
+		Seq->bEnableRootMotion = bEnableRootMotion;
+
+		FSlotAnimationTrack Track;
+		Track.SlotName = FName(TEXT("DefaultGroup.DefaultSlot"));
+		FAnimSegment Segment;
+		Segment.SetAnimReference(Seq);
+		Segment.StartPos = 0.0f;
+		Segment.AnimStartTime = 0.0f;
+		Segment.AnimEndTime = Duration;
+		Segment.AnimPlayRate = 1.0f;
+		Track.AnimTrack.AnimSegments.Add(Segment);
+		Montage->SlotAnimTracks.Add(Track);
+
+		FCompositeSection DefaultSec;
+		DefaultSec.SectionName = FName(TEXT("Default"));
+		DefaultSec.NextSectionName = NAME_None;
+		DefaultSec.SetTime(0.0f);
+		Montage->CompositeSections.Add(DefaultSec);
+
+		UTestMontageAccessHelper::SetMontageLength(Montage, Duration);
+
+		return Montage;
+	}
 
 	FGameplayAbilitySpecHandle ActivateEnemyStanceBreak(AEnemyCharacter* InEnemy)
 	{
@@ -92,6 +148,8 @@ namespace ExecutionVictimPresentationAutomation
 
 bool FExecutionVictimPresentationAutomationTest::RunTest(const FString& Parameters)
 {
+	AddExpectedErrorPlain(TEXT("SequencerDataModel"), EAutomationExpectedErrorFlags::Contains, -1);
+
 	// =========================================================================
 	// 1. CDO & Tag Contract Verification
 	// =========================================================================
@@ -170,6 +228,23 @@ bool FExecutionVictimPresentationAutomationTest::RunTest(const FString& Paramete
 
 	Controller->Possess(Player);
 
+	AActor* FloorActor = World->SpawnActor<AActor>();
+	if (FloorActor)
+	{
+		UBoxComponent* FloorBox = NewObject<UBoxComponent>(FloorActor);
+		FloorBox->InitBoxExtent(FVector(5000.0f, 5000.0f, 50.0f));
+		FloorBox->SetCollisionProfileName(UCollisionProfile::BlockAll_ProfileName);
+		FloorActor->SetRootComponent(FloorBox);
+		FloorBox->RegisterComponent();
+		const float CapsuleHalfHeight = Enemy->GetCapsuleComponent() ? Enemy->GetCapsuleComponent()->GetScaledCapsuleHalfHeight() : 88.0f;
+		const float CapsuleBottomZ = Enemy->GetActorLocation().Z - CapsuleHalfHeight;
+		FloorActor->SetActorLocation(FVector(0.0f, 0.0f, CapsuleBottomZ - 50.0f));
+		if (Player->GetCapsuleComponent())
+		{
+			Player->GetCapsuleComponent()->IgnoreActorWhenMoving(FloorActor, true);
+		}
+	}
+
 	UAbilitySystemComponent* PlayerASC = Player->GetAbilitySystemComponent();
 	UAbilitySystemComponent* EnemyASC = Enemy->GetAbilitySystemComponent();
 	if (!TestNotNull(TEXT("Player ASC valid"), PlayerASC) || !TestNotNull(TEXT("Enemy ASC valid"), EnemyASC))
@@ -180,13 +255,17 @@ bool FExecutionVictimPresentationAutomationTest::RunTest(const FString& Paramete
 	const FGameplayTag VictimStartTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Action.Execution.Request.VictimStart")), false);
 	const FGameplayTag FrontHitTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Action.Execution.Hit")), false);
 	const FGameplayTag BackstabHitTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Action.Execution.Hit")), false);
-	const FGameplayTag ReleaseRequestTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Action.Execution.Request.Release")), false);
 	const FGameplayTag VictimLockedTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Action.Execution.VictimLocked")), false);
 	const FGameplayTag PlayerLockedTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Action.Execution.PlayerLocked")), false);
 
+	USkeleton* SharedSkeleton = NewObject<USkeleton>(GetTransientPackage());
 	UAnimMontage* PlayerExecutionMontage = NewObject<UAnimMontage>(GetTransientPackage());
-	UAnimMontage* EnemyFrontVictimMontage = NewObject<UAnimMontage>(GetTransientPackage());
-	UAnimMontage* EnemyBackstabVictimMontage = NewObject<UAnimMontage>(GetTransientPackage());
+	UAnimMontage* EnemyFrontVictimMontage = ExecutionVictimPresentationAutomation::CreateValidRecoveryMontage(GetTransientPackage(), 2.5f, true, SharedSkeleton);
+	UAnimMontage* EnemyBackstabVictimMontage = ExecutionVictimPresentationAutomation::CreateValidRecoveryMontage(GetTransientPackage(), 2.5f, true, SharedSkeleton);
+	UAnimInstance* MockAnimInstance = NewObject<UAnimInstance>(Enemy->GetMesh());
+	MockAnimInstance->InitializeMontageOnly();
+	MockAnimInstance->CurrentSkeleton = SharedSkeleton;
+	Enemy->GetMesh()->AnimScriptInstance = MockAnimInstance;
 
 	// Test Notify execution on Player
 	{
@@ -208,21 +287,32 @@ bool FExecutionVictimPresentationAutomationTest::RunTest(const FString& Paramete
 		PlayerASC->GenericGameplayEventCallbacks.FindOrAdd(VictimStartTag).Remove(Handle);
 	}
 
-	auto GrantAndConfigureVictimAbility = [&](AEnemyCharacter* InEnemy, bool bConfigMontages = true) -> TPair<FGameplayAbilitySpecHandle, UEnemyVictimExecutionAbility*>
+	auto GrantAndConfigureVictimAbility = [&](AEnemyCharacter* InEnemy, bool bConfigMontages = true, UAnimMontage* CustomFront = nullptr, UAnimMontage* CustomBackstab = nullptr) -> TPair<FGameplayAbilitySpecHandle, UEnemyVictimExecutionAbility*>
 	{
 		UAbilitySystemComponent* TargetASC = InEnemy->GetAbilitySystemComponent();
 		FGameplayAbilitySpec VictimSpec(UEnemyVictimExecutionAbility::StaticClass(), 1, INDEX_NONE, InEnemy);
 		const FGameplayAbilitySpecHandle VictimHandle = TargetASC->GiveAbility(VictimSpec);
 		FGameplayAbilitySpec* FoundSpec = TargetASC->FindAbilitySpecFromHandle(VictimHandle);
 		UEnemyVictimExecutionAbility* Instance = FoundSpec ? Cast<UEnemyVictimExecutionAbility>(FoundSpec->GetPrimaryInstance()) : nullptr;
-		if (Instance && bConfigMontages)
+		if (Instance)
 		{
-			Instance->SetTestVictimMontages(EnemyFrontVictimMontage, EnemyBackstabVictimMontage);
+			Instance->SetTestBoundAnimInstance(MockAnimInstance);
+			Instance->SetTestBypassMontageActiveCheck(true);
+			if (bConfigMontages)
+			{
+				UAnimMontage* FrontToSet = CustomFront ? CustomFront : EnemyFrontVictimMontage;
+				UAnimMontage* BackstabToSet = CustomBackstab ? CustomBackstab : EnemyBackstabVictimMontage;
+				Instance->SetTestVictimMontages(FrontToSet, BackstabToSet);
+			}
+			else
+			{
+				Instance->SetTestVictimMontages(CustomFront, CustomBackstab);
+			}
 		}
 		return { VictimHandle, Instance };
 	};
 
-	auto SetupFrontExec = [&](float InEnemyHealth = 100.0f, bool bConfigVictimMontage = true) -> TTuple<FGameplayAbilitySpecHandle, UPlayerFrontExecutionAbility*, FGameplayAbilitySpecHandle, UEnemyVictimExecutionAbility*>
+	auto SetupFrontExec = [&](float InEnemyHealth = 100.0f, bool bConfigVictimMontage = true, UAnimMontage* CustomFront = nullptr, UAnimMontage* CustomBackstab = nullptr) -> TTuple<FGameplayAbilitySpecHandle, UPlayerFrontExecutionAbility*, FGameplayAbilitySpecHandle, UEnemyVictimExecutionAbility*>
 	{
 		Player->SetActorLocation(FVector(0.0f, 0.0f, 0.0f));
 		Player->SetActorRotation(FRotator::ZeroRotator);
@@ -244,7 +334,7 @@ bool FExecutionVictimPresentationAutomationTest::RunTest(const FString& Paramete
 
 		Player->SetTestLockedTarget(Enemy);
 
-		auto [VictimHandle, VictimAbility] = GrantAndConfigureVictimAbility(Enemy, bConfigVictimMontage);
+		auto [VictimHandle, VictimAbility] = GrantAndConfigureVictimAbility(Enemy, bConfigVictimMontage, CustomFront, CustomBackstab);
 
 		FGameplayAbilitySpec FrontSpec(UPlayerFrontExecutionAbility::StaticClass(), 1, INDEX_NONE, Player);
 		const FGameplayAbilitySpecHandle FrontHandle = PlayerASC->GiveAbility(FrontSpec);
@@ -263,7 +353,7 @@ bool FExecutionVictimPresentationAutomationTest::RunTest(const FString& Paramete
 		return MakeTuple(FrontHandle, FrontAbility, VictimHandle, VictimAbility);
 	};
 
-	auto SetupBackstabExec = [&](float InEnemyHealth = 100.0f, bool bConfigVictimMontage = true) -> TTuple<FGameplayAbilitySpecHandle, UPlayerBackstabExecutionAbility*, FGameplayAbilitySpecHandle, UEnemyVictimExecutionAbility*>
+	auto SetupBackstabExec = [&](float InEnemyHealth = 100.0f, bool bConfigVictimMontage = true, UAnimMontage* CustomFront = nullptr, UAnimMontage* CustomBackstab = nullptr) -> TTuple<FGameplayAbilitySpecHandle, UPlayerBackstabExecutionAbility*, FGameplayAbilitySpecHandle, UEnemyVictimExecutionAbility*>
 	{
 		Player->SetActorLocation(FVector(0.0f, 0.0f, 0.0f));
 		Player->SetActorRotation(FRotator::ZeroRotator);
@@ -284,7 +374,7 @@ bool FExecutionVictimPresentationAutomationTest::RunTest(const FString& Paramete
 
 		Player->SetTestLockedTarget(Enemy);
 
-		auto [VictimHandle, VictimAbility] = GrantAndConfigureVictimAbility(Enemy, bConfigVictimMontage);
+		auto [VictimHandle, VictimAbility] = GrantAndConfigureVictimAbility(Enemy, bConfigVictimMontage, CustomFront, CustomBackstab);
 
 		FGameplayAbilitySpec BackstabSpec(UPlayerBackstabExecutionAbility::StaticClass(), 1, INDEX_NONE, Player);
 		const FGameplayAbilitySpecHandle BackstabHandle = PlayerASC->GiveAbility(BackstabSpec);
@@ -303,7 +393,7 @@ bool FExecutionVictimPresentationAutomationTest::RunTest(const FString& Paramete
 		return MakeTuple(BackstabHandle, BackstabAbility, VictimHandle, VictimAbility);
 	};
 
-	auto SetupStanceBreakBackstabExec = [&](float InEnemyHealth = 100.0f, bool bConfigVictimMontage = true) -> TTuple<FGameplayAbilitySpecHandle, UPlayerBackstabExecutionAbility*, FGameplayAbilitySpecHandle, UEnemyVictimExecutionAbility*>
+	auto SetupStanceBreakBackstabExec = [&](float InEnemyHealth = 100.0f, bool bConfigVictimMontage = true, UAnimMontage* CustomFront = nullptr, UAnimMontage* CustomBackstab = nullptr) -> TTuple<FGameplayAbilitySpecHandle, UPlayerBackstabExecutionAbility*, FGameplayAbilitySpecHandle, UEnemyVictimExecutionAbility*>
 	{
 		Player->SetActorLocation(FVector(0.0f, 0.0f, 0.0f));
 		Player->SetActorRotation(FRotator::ZeroRotator);
@@ -325,7 +415,7 @@ bool FExecutionVictimPresentationAutomationTest::RunTest(const FString& Paramete
 
 		Player->SetTestLockedTarget(Enemy);
 
-		auto [VictimHandle, VictimAbility] = GrantAndConfigureVictimAbility(Enemy, bConfigVictimMontage);
+		auto [VictimHandle, VictimAbility] = GrantAndConfigureVictimAbility(Enemy, bConfigVictimMontage, CustomFront, CustomBackstab);
 
 		FGameplayAbilitySpec BackstabSpec(UPlayerBackstabExecutionAbility::StaticClass(), 1, INDEX_NONE, Player);
 		const FGameplayAbilitySpecHandle BackstabHandle = PlayerASC->GiveAbility(BackstabSpec);
@@ -389,7 +479,19 @@ bool FExecutionVictimPresentationAutomationTest::RunTest(const FString& Paramete
 		TestEqual(TEXT("PendingVictimMontage cached Front montage"), VictimAbility->GetTestPendingVictimMontage(), EnemyFrontVictimMontage);
 		TestTrue(TEXT("Front execution has handoff from StanceBreak"), VictimAbility->HasTestHandoffFromStanceBreak());
 
-		// Now trigger VictimStart
+		// Step A: Hit arrives first (stab: damage resolution only)
+		FGameplayEventData HitPayload;
+		HitPayload.EventTag = FrontHitTag;
+		HitPayload.Instigator = Player;
+		HitPayload.Target = Player;
+		HitPayload.OptionalObject = PlayerExecutionMontage;
+		FrontAbility->TestTriggerHitEvent(HitPayload);
+
+		TestTrue(TEXT("FrontAbility consumed damage on Hit"), FrontAbility->IsTestDamageEventConsumed());
+		TestTrue(TEXT("Victim remains locked after Hit"), EnemyASC->HasMatchingGameplayTag(VictimLockedTag));
+		TestFalse(TEXT("Victim presentation not yet started after Hit alone"), VictimAbility->IsTestVictimPresentationStarted());
+
+		// Step B: VictimStart arrives second (draw blade: presentation handoff)
 		FGameplayEventData StartPayload;
 		StartPayload.EventTag = VictimStartTag;
 		StartPayload.Instigator = Player;
@@ -403,21 +505,6 @@ bool FExecutionVictimPresentationAutomationTest::RunTest(const FString& Paramete
 		// Idempotency: duplicate VictimStart is ignored
 		FrontAbility->TestTriggerVictimStartEvent(StartPayload);
 		TestTrue(TEXT("VictimAbility still in valid presentation state"), VictimAbility->IsTestVictimPresentationStarted());
-
-		// Release cleanly
-		FGameplayEventData HitPayload;
-		HitPayload.EventTag = FrontHitTag;
-		HitPayload.Instigator = Player;
-		HitPayload.Target = Player;
-		HitPayload.OptionalObject = PlayerExecutionMontage;
-		FrontAbility->TestTriggerHitEvent(HitPayload);
-
-		FGameplayEventData ReleasePayload;
-		ReleasePayload.EventTag = ReleaseRequestTag;
-		ReleasePayload.Instigator = Player;
-		ReleasePayload.Target = Player;
-		ReleasePayload.OptionalObject = PlayerExecutionMontage;
-		FrontAbility->TestTriggerReleaseRequestEvent(ReleasePayload);
 
 		FrontAbility->TestEndAbility(false);
 		CleanupExec(FrontHandle, VictimHandle);
@@ -443,6 +530,19 @@ bool FExecutionVictimPresentationAutomationTest::RunTest(const FString& Paramete
 		TestEqual(TEXT("PendingVictimMontage cached Backstab montage"), VictimAbility->GetTestPendingVictimMontage(), EnemyBackstabVictimMontage);
 		TestFalse(TEXT("Ordinary Backstab has NO handoff from StanceBreak"), VictimAbility->HasTestHandoffFromStanceBreak());
 
+		// Step A: Hit arrives first
+		FGameplayEventData HitPayload;
+		HitPayload.EventTag = BackstabHitTag;
+		HitPayload.Instigator = Player;
+		HitPayload.Target = Player;
+		HitPayload.OptionalObject = PlayerExecutionMontage;
+		BackstabAbility->TestTriggerHitEvent(HitPayload);
+
+		TestTrue(TEXT("Backstab consumed damage on Hit"), BackstabAbility->IsTestDamageEventConsumed());
+		TestTrue(TEXT("Victim remains locked after Hit"), EnemyASC->HasMatchingGameplayTag(VictimLockedTag));
+		TestFalse(TEXT("Victim presentation not yet started after Hit alone"), VictimAbility->IsTestVictimPresentationStarted());
+
+		// Step B: VictimStart arrives second
 		FGameplayEventData StartPayload;
 		StartPayload.EventTag = VictimStartTag;
 		StartPayload.Instigator = Player;
@@ -452,21 +552,6 @@ bool FExecutionVictimPresentationAutomationTest::RunTest(const FString& Paramete
 
 		TestTrue(TEXT("Backstab forwarded VictimStart"), BackstabAbility->IsTestVictimStartForwarded());
 		TestTrue(TEXT("Victim presentation started"), VictimAbility->IsTestVictimPresentationStarted());
-
-		// Complete Hit and Release
-		FGameplayEventData HitPayload;
-		HitPayload.EventTag = BackstabHitTag;
-		HitPayload.Instigator = Player;
-		HitPayload.Target = Player;
-		HitPayload.OptionalObject = PlayerExecutionMontage;
-		BackstabAbility->TestTriggerHitEvent(HitPayload);
-
-		FGameplayEventData ReleasePayload;
-		ReleasePayload.EventTag = ReleaseRequestTag;
-		ReleasePayload.Instigator = Player;
-		ReleasePayload.Target = Player;
-		ReleasePayload.OptionalObject = PlayerExecutionMontage;
-		BackstabAbility->TestTriggerReleaseRequestEvent(ReleasePayload);
 
 		BackstabAbility->TestEndAbility(false);
 		CleanupExec(BackstabHandle, VictimHandle);
@@ -504,7 +589,18 @@ bool FExecutionVictimPresentationAutomationTest::RunTest(const FString& Paramete
 			TestTrue(TEXT("Poise is 0 during execution lock"), FMath::IsNearlyZero(EnemyAttribs->GetPoise(), KINDA_SMALL_NUMBER));
 		}
 
-		// Trigger VictimStart
+		// Step A: Hit arrives first (stab)
+		FGameplayEventData HitPayload;
+		HitPayload.EventTag = BackstabHitTag;
+		HitPayload.Instigator = Player;
+		HitPayload.Target = Player;
+		HitPayload.OptionalObject = PlayerExecutionMontage;
+		BackstabAbility->TestTriggerHitEvent(HitPayload);
+
+		TestTrue(TEXT("Damage consumed on Backstab Hit in Sec 3B"), BackstabAbility->IsTestDamageEventConsumed());
+		TestTrue(TEXT("Victim locked after Hit in Sec 3B"), EnemyASC->HasMatchingGameplayTag(VictimLockedTag));
+
+		// Step B: Trigger VictimStart (draw blade)
 		FGameplayEventData StartPayload;
 		StartPayload.EventTag = VictimStartTag;
 		StartPayload.Instigator = Player;
@@ -515,24 +611,12 @@ bool FExecutionVictimPresentationAutomationTest::RunTest(const FString& Paramete
 		TestTrue(TEXT("Backstab forwarded VictimStart"), BackstabAbility->IsTestVictimStartForwarded());
 		TestTrue(TEXT("Victim presentation started"), VictimAbility->IsTestVictimPresentationStarted());
 
-		// Complete Hit and Release
-		FGameplayEventData HitPayload;
-		HitPayload.EventTag = BackstabHitTag;
-		HitPayload.Instigator = Player;
-		HitPayload.Target = Player;
-		HitPayload.OptionalObject = PlayerExecutionMontage;
-		BackstabAbility->TestTriggerHitEvent(HitPayload);
-
-		FGameplayEventData ReleasePayload;
-		ReleasePayload.EventTag = ReleaseRequestTag;
-		ReleasePayload.Instigator = Player;
-		ReleasePayload.Target = Player;
-		ReleasePayload.OptionalObject = PlayerExecutionMontage;
-		BackstabAbility->TestTriggerReleaseRequestEvent(ReleasePayload);
-
 		BackstabAbility->TestEndAbility(false);
 
-		// Contract: Upon Release & EndAbility for living enemy, Victim restores Poise to MaxPoise,
+		// Complete recovery montage presentation
+		VictimAbility->TestTriggerVictimMontageCompleted();
+
+		// Contract: Upon OnCompleted & EndAbility for living enemy, Victim restores Poise to MaxPoise,
 		// restores MovementMode to MOVE_Walking, and releases AI lock!
 		if (EnemyAttribs)
 		{
@@ -581,19 +665,32 @@ bool FExecutionVictimPresentationAutomationTest::RunTest(const FString& Paramete
 	}
 
 	// =========================================================================
-	// 4. Out-of-Order / Same Frame: Hit before VictimStart
+	// 4. Out-of-Order Gating: VictimStart before Hit is Rejected; Subsequent Hit & VictimStart Succeed
 	// =========================================================================
 	{
 		Enemy->RestorePoiseToMax();
 		Enemy->GetCharacterMovement()->SetMovementMode(MOVE_Walking);
 
 		auto [FrontHandle, FrontAbility, VictimHandle, VictimAbility] = SetupFrontExec(100.0f, true);
-		if (!TestNotNull(TEXT("FrontAbility valid in Sec 4"), FrontAbility))
+		if (!TestNotNull(TEXT("FrontAbility valid in Sec 4"), FrontAbility) ||
+			!TestNotNull(TEXT("VictimAbility valid in Sec 4"), VictimAbility))
 		{
 			return false;
 		}
 
-		// Hit arrives FIRST
+		// Step A: Premature VictimStart arrives BEFORE Hit (Out-of-Order)
+		FGameplayEventData PrematureStartPayload;
+		PrematureStartPayload.EventTag = VictimStartTag;
+		PrematureStartPayload.Instigator = Player;
+		PrematureStartPayload.Target = Player;
+		PrematureStartPayload.OptionalObject = PlayerExecutionMontage;
+		FrontAbility->TestTriggerVictimStartEvent(PrematureStartPayload);
+
+		TestFalse(TEXT("Premature VictimStart before Hit is rejected on Player"), FrontAbility->IsTestVictimStartForwarded());
+		TestFalse(TEXT("Victim presentation NOT started on premature VictimStart"), VictimAbility->IsTestVictimPresentationStarted());
+		TestTrue(TEXT("Victim remains locked in execution"), EnemyASC->HasMatchingGameplayTag(VictimLockedTag));
+
+		// Step B: Hit arrives normally (stab)
 		FGameplayEventData HitPayload;
 		HitPayload.EventTag = FrontHitTag;
 		HitPayload.Instigator = Player;
@@ -601,29 +698,16 @@ bool FExecutionVictimPresentationAutomationTest::RunTest(const FString& Paramete
 		HitPayload.OptionalObject = PlayerExecutionMontage;
 		FrontAbility->TestTriggerHitEvent(HitPayload);
 
-		TestTrue(TEXT("Damage consumed on early Hit"), FrontAbility->IsTestDamageEventConsumed());
+		TestTrue(TEXT("Damage consumed on Hit"), FrontAbility->IsTestDamageEventConsumed());
+		TestFalse(TEXT("Victim presentation NOT auto-started by Hit alone"), VictimAbility->IsTestVictimPresentationStarted());
 		TestTrue(TEXT("Victim remains locked after Hit"), EnemyASC->HasMatchingGameplayTag(VictimLockedTag));
-		TestFalse(TEXT("Victim presentation not yet started"), VictimAbility->IsTestVictimPresentationStarted());
 
-		// VictimStart arrives SECOND
-		FGameplayEventData StartPayload;
-		StartPayload.EventTag = VictimStartTag;
-		StartPayload.Instigator = Player;
-		StartPayload.Target = Player;
-		StartPayload.OptionalObject = PlayerExecutionMontage;
-		FrontAbility->TestTriggerVictimStartEvent(StartPayload);
+		// Step C: Valid VictimStart arrives AFTER Hit (draw blade)
+		FrontAbility->TestTriggerVictimStartEvent(PrematureStartPayload);
 
-		TestTrue(TEXT("Victim presentation successfully started after early Hit"), VictimAbility->IsTestVictimPresentationStarted());
+		TestTrue(TEXT("VictimStart forwarded after Hit resolved"), FrontAbility->IsTestVictimStartForwarded());
+		TestTrue(TEXT("Victim presentation started on valid VictimStart"), VictimAbility->IsTestVictimPresentationStarted());
 
-		// Release arrives LAST
-		FGameplayEventData ReleasePayload;
-		ReleasePayload.EventTag = ReleaseRequestTag;
-		ReleasePayload.Instigator = Player;
-		ReleasePayload.Target = Player;
-		ReleasePayload.OptionalObject = PlayerExecutionMontage;
-		FrontAbility->TestTriggerReleaseRequestEvent(ReleasePayload);
-
-		TestFalse(TEXT("Victim released on Release"), VictimAbility->IsActive());
 		FrontAbility->TestEndAbility(false);
 		CleanupExec(FrontHandle, VictimHandle);
 	}
@@ -641,7 +725,17 @@ bool FExecutionVictimPresentationAutomationTest::RunTest(const FString& Paramete
 			return false;
 		}
 
-		// 5A: Wrong animation object on VictimStart
+		// Step A: Hit arrives first (stab)
+		FGameplayEventData HitPayload;
+		HitPayload.EventTag = FrontHitTag;
+		HitPayload.Instigator = Player;
+		HitPayload.Target = Player;
+		HitPayload.OptionalObject = PlayerExecutionMontage;
+		FrontAbility->TestTriggerHitEvent(HitPayload);
+
+		TestTrue(TEXT("Damage consumed on Hit in Sec 5"), FrontAbility->IsTestDamageEventConsumed());
+
+		// 5A: Wrong animation object on VictimStart (rejected despite Hit resolved)
 		UAnimMontage* WrongMontage = NewObject<UAnimMontage>(GetTransientPackage());
 		FGameplayEventData WrongAnimPayload;
 		WrongAnimPayload.EventTag = VictimStartTag;
@@ -664,22 +758,7 @@ bool FExecutionVictimPresentationAutomationTest::RunTest(const FString& Paramete
 
 		TestFalse(TEXT("Null context rejected on Victim side"), VictimAbility->IsTestVictimPresentationStarted());
 
-		// Now hit and release
-		FGameplayEventData HitPayload;
-		HitPayload.EventTag = FrontHitTag;
-		HitPayload.Instigator = Player;
-		HitPayload.Target = Player;
-		HitPayload.OptionalObject = PlayerExecutionMontage;
-		FrontAbility->TestTriggerHitEvent(HitPayload);
-
-		FGameplayEventData ReleasePayload;
-		ReleasePayload.EventTag = ReleaseRequestTag;
-		ReleasePayload.Instigator = Player;
-		ReleasePayload.Target = Player;
-		ReleasePayload.OptionalObject = PlayerExecutionMontage;
-		FrontAbility->TestTriggerReleaseRequestEvent(ReleasePayload);
-
-		// 5C: Late VictimStart arrival AFTER Release
+		// Step B: Send valid VictimStart to complete presentation handoff
 		FGameplayEventData ValidStartPayload;
 		ValidStartPayload.EventTag = VictimStartTag;
 		ValidStartPayload.Instigator = Player;
@@ -687,9 +766,16 @@ bool FExecutionVictimPresentationAutomationTest::RunTest(const FString& Paramete
 		ValidStartPayload.OptionalObject = PlayerExecutionMontage;
 		FrontAbility->TestTriggerVictimStartEvent(ValidStartPayload);
 
-		TestFalse(TEXT("Late VictimStart rejected after Release"), FrontAbility->IsTestVictimStartForwarded());
+		TestTrue(TEXT("Valid VictimStart accepted and forwarded"), FrontAbility->IsTestVictimStartForwarded());
+		TestTrue(TEXT("Victim presentation started"), VictimAbility->IsTestVictimPresentationStarted());
 
+		// End Player ability
 		FrontAbility->TestEndAbility(false);
+		TestFalse(TEXT("Player ability ended"), FrontAbility->IsActive());
+
+		// 5C: Late VictimStart arrival AFTER Player ability has ended
+		FrontAbility->TestTriggerVictimStartEvent(ValidStartPayload);
+		TestFalse(TEXT("Late VictimStart rejected on inactive ability"), FrontAbility->IsActive());
 		CleanupExec(FrontHandle, VictimHandle);
 	}
 
@@ -709,7 +795,17 @@ bool FExecutionVictimPresentationAutomationTest::RunTest(const FString& Paramete
 
 		TestNull(TEXT("PendingVictimMontage is null when unconfigured"), VictimAbility->GetTestPendingVictimMontage());
 
-		// Send valid VictimStart: should succeed forwarding, but safe no-op on victim side
+		// Step A: Hit arrives first (stab)
+		FGameplayEventData HitPayload;
+		HitPayload.EventTag = FrontHitTag;
+		HitPayload.Instigator = Player;
+		HitPayload.Target = Player;
+		HitPayload.OptionalObject = PlayerExecutionMontage;
+		FrontAbility->TestTriggerHitEvent(HitPayload);
+
+		TestTrue(TEXT("Damage consumed on Hit in Sec 6A"), FrontAbility->IsTestDamageEventConsumed());
+
+		// Step B: Send valid VictimStart: forward succeeds, victim gracefully handles missing montage
 		FGameplayEventData StartPayload;
 		StartPayload.EventTag = VictimStartTag;
 		StartPayload.Instigator = Player;
@@ -719,8 +815,27 @@ bool FExecutionVictimPresentationAutomationTest::RunTest(const FString& Paramete
 
 		TestTrue(TEXT("VictimStart forwarded even when victim has no montage"), FrontAbility->IsTestVictimStartForwarded());
 		TestNull(TEXT("No active montage started when unconfigured"), VictimAbility->GetTestActiveVictimMontage());
+		TestFalse(TEXT("Victim ability safely ended without montage"), VictimAbility->IsActive());
 
-		// Hit & Release proceed naturally
+		FrontAbility->TestEndAbility(false);
+		CleanupExec(FrontHandle, VictimHandle);
+	}
+
+	// =========================================================================
+	// 7. Natural Montage BlendOut & Completion Flow: BlendOut Retains State, Completed Ends Ability
+	// =========================================================================
+	{
+		Enemy->RestorePoiseToMax();
+		Enemy->GetCharacterMovement()->SetMovementMode(MOVE_Walking);
+
+		auto [FrontHandle, FrontAbility, VictimHandle, VictimAbility] = SetupFrontExec(100.0f, true);
+		if (!TestNotNull(TEXT("FrontAbility valid in Sec 7"), FrontAbility) ||
+			!TestNotNull(TEXT("VictimAbility valid in Sec 7"), VictimAbility))
+		{
+			return false;
+		}
+
+		// Step A: Hit arrives first (stab)
 		FGameplayEventData HitPayload;
 		HitPayload.EventTag = FrontHitTag;
 		HitPayload.Instigator = Player;
@@ -728,31 +843,9 @@ bool FExecutionVictimPresentationAutomationTest::RunTest(const FString& Paramete
 		HitPayload.OptionalObject = PlayerExecutionMontage;
 		FrontAbility->TestTriggerHitEvent(HitPayload);
 
-		FGameplayEventData ReleasePayload;
-		ReleasePayload.EventTag = ReleaseRequestTag;
-		ReleasePayload.Instigator = Player;
-		ReleasePayload.Target = Player;
-		ReleasePayload.OptionalObject = PlayerExecutionMontage;
-		FrontAbility->TestTriggerReleaseRequestEvent(ReleasePayload);
+		TestTrue(TEXT("Hit damage resolved in Sec 7"), FrontAbility->IsTestDamageEventConsumed());
 
-		TestFalse(TEXT("Session ended smoothly without victim montage"), VictimAbility->IsActive());
-		FrontAbility->TestEndAbility(false);
-		CleanupExec(FrontHandle, VictimHandle);
-	}
-
-	// =========================================================================
-	// 7. Natural Montage BlendOut / Completion Does Not Terminate Session
-	// =========================================================================
-	{
-		Enemy->RestorePoiseToMax();
-		Enemy->GetCharacterMovement()->SetMovementMode(MOVE_Walking);
-
-		auto [FrontHandle, FrontAbility, VictimHandle, VictimAbility] = SetupFrontExec(100.0f, true);
-		if (!TestNotNull(TEXT("FrontAbility valid in Sec 7"), FrontAbility))
-		{
-			return false;
-		}
-
+		// Step B: VictimStart arrives second (draw blade)
 		FGameplayEventData StartPayload;
 		StartPayload.EventTag = VictimStartTag;
 		StartPayload.Instigator = Player;
@@ -760,28 +853,18 @@ bool FExecutionVictimPresentationAutomationTest::RunTest(const FString& Paramete
 		StartPayload.OptionalObject = PlayerExecutionMontage;
 		FrontAbility->TestTriggerVictimStartEvent(StartPayload);
 
-		// Trigger natural completion
+		TestTrue(TEXT("Victim presentation started in Sec 7"), VictimAbility->IsTestVictimPresentationStarted());
+
+		// Step C: Trigger natural BlendOut (locks must be retained)
+		VictimAbility->TestTriggerVictimMontageBlendOut();
+		TestTrue(TEXT("VictimAbility remains active after BlendOut"), VictimAbility->IsActive());
+		TestTrue(TEXT("Victim locked tag retained during BlendOut"), EnemyASC->HasMatchingGameplayTag(VictimLockedTag));
+
+		// Step D: Trigger natural completion (ability ends cleanly)
 		VictimAbility->TestTriggerVictimMontageCompleted();
+		TestFalse(TEXT("VictimAbility ends on Completed"), VictimAbility->IsActive());
+		TestFalse(TEXT("Victim locked tag cleared on Completed"), EnemyASC->HasMatchingGameplayTag(VictimLockedTag));
 
-		TestTrue(TEXT("VictimAbility remains active after montage completes"), VictimAbility->IsActive());
-		TestTrue(TEXT("Victim locked tag remains after montage completes"), EnemyASC->HasMatchingGameplayTag(VictimLockedTag));
-
-		// Hit and Release naturally
-		FGameplayEventData HitPayload;
-		HitPayload.EventTag = FrontHitTag;
-		HitPayload.Instigator = Player;
-		HitPayload.Target = Player;
-		HitPayload.OptionalObject = PlayerExecutionMontage;
-		FrontAbility->TestTriggerHitEvent(HitPayload);
-
-		FGameplayEventData ReleasePayload;
-		ReleasePayload.EventTag = ReleaseRequestTag;
-		ReleasePayload.Instigator = Player;
-		ReleasePayload.Target = Player;
-		ReleasePayload.OptionalObject = PlayerExecutionMontage;
-		FrontAbility->TestTriggerReleaseRequestEvent(ReleasePayload);
-
-		TestFalse(TEXT("Victim released on formal Release"), VictimAbility->IsActive());
 		FrontAbility->TestEndAbility(false);
 		CleanupExec(FrontHandle, VictimHandle);
 	}
@@ -848,28 +931,31 @@ bool FExecutionVictimPresentationAutomationTest::RunTest(const FString& Paramete
 	}
 
 	// =========================================================================
-	// 9. Launch Fallback & Disabled Launch Verification
+	// 9. Legitimate In-Place Montage (No Root Motion) Plays Presentation And Cleans Up Cleanly
 	// =========================================================================
 	{
 		Enemy->RestorePoiseToMax();
 		Enemy->GetCharacterMovement()->SetMovementMode(MOVE_Walking);
 
-		// 9A: Disabled Launch (bLaunchNonLethalOnRelease = false)
-		auto [FrontHandle, FrontAbility, VictimHandle, VictimAbility] = SetupFrontExec(100.0f, true);
-		if (!TestNotNull(TEXT("FrontAbility valid in Sec 9A"), FrontAbility))
+		UAnimMontage* InPlaceMontage = ExecutionVictimPresentationAutomation::CreateValidRecoveryMontage(GetTransientPackage(), 2.0f, false);
+		TestFalse(TEXT("InPlaceMontage has no root motion"), InPlaceMontage->HasRootMotion());
+
+		auto [FrontHandle, FrontAbility, VictimHandle, VictimAbility] = SetupFrontExec(100.0f, false, InPlaceMontage, nullptr);
+		if (!TestNotNull(TEXT("FrontAbility valid in Sec 9"), FrontAbility) ||
+			!TestNotNull(TEXT("VictimAbility valid in Sec 9"), VictimAbility))
 		{
 			return false;
 		}
 
-		VictimAbility->SetTestLaunchNonLethalOnRelease(false);
+		VictimAbility->SetTestBoundAnimInstance(MockAnimInstance);
+		VictimAbility->SetTestBypassMontageActiveCheck(true);
 
-		FGameplayEventData StartPayload;
-		StartPayload.EventTag = VictimStartTag;
-		StartPayload.Instigator = Player;
-		StartPayload.Target = Player;
-		StartPayload.OptionalObject = PlayerExecutionMontage;
-		FrontAbility->TestTriggerVictimStartEvent(StartPayload);
+		bool bLaunchDispatched = false;
+		const FGameplayTag LaunchEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Reaction.Enemy.Launch")), false);
+		FDelegateHandle LaunchHandle = EnemyASC->GenericGameplayEventCallbacks.FindOrAdd(LaunchEventTag)
+			.AddLambda([&bLaunchDispatched](const FGameplayEventData* InPayload) { bLaunchDispatched = true; });
 
+		// Step A: Hit arrives first
 		FGameplayEventData HitPayload;
 		HitPayload.EventTag = FrontHitTag;
 		HitPayload.Instigator = Player;
@@ -877,18 +963,587 @@ bool FExecutionVictimPresentationAutomationTest::RunTest(const FString& Paramete
 		HitPayload.OptionalObject = PlayerExecutionMontage;
 		FrontAbility->TestTriggerHitEvent(HitPayload);
 
-		FGameplayEventData ReleasePayload;
-		ReleasePayload.EventTag = ReleaseRequestTag;
-		ReleasePayload.Instigator = Player;
-		ReleasePayload.Target = Player;
-		ReleasePayload.OptionalObject = PlayerExecutionMontage;
-		FrontAbility->TestTriggerReleaseRequestEvent(ReleasePayload);
+		TestTrue(TEXT("Hit damage resolved in Sec 9"), FrontAbility->IsTestDamageEventConsumed());
 
-		TestFalse(TEXT("Victim released with disabled launch"), VictimAbility->IsActive());
+		// Step B: VictimStart arrives second
+		FGameplayEventData StartPayload;
+		StartPayload.EventTag = VictimStartTag;
+		StartPayload.Instigator = Player;
+		StartPayload.Target = Player;
+		StartPayload.OptionalObject = PlayerExecutionMontage;
+		FrontAbility->TestTriggerVictimStartEvent(StartPayload);
+
+		// Legitimate in-place montage must start presentation without being rejected for lacking root motion
+		TestTrue(TEXT("In-place victim montage started presentation successfully"), VictimAbility->IsTestVictimPresentationStarted());
+		TestTrue(TEXT("Victim ability active during in-place recovery"), VictimAbility->IsActive());
+		TestFalse(TEXT("Launch reaction NEVER dispatched on in-place recovery"), bLaunchDispatched);
+
+		// Step C: Montage completion finishes ability
+		VictimAbility->TestTriggerVictimMontageCompleted();
+		TestFalse(TEXT("Victim ability cleanly ended after in-place montage completed"), VictimAbility->IsActive());
 		TestEqual(TEXT("Enemy movement mode restored to Walking"), Enemy->GetCharacterMovement()->MovementMode, MOVE_Walking);
 
 		FrontAbility->TestEndAbility(false);
+		EnemyASC->GenericGameplayEventCallbacks.FindOrAdd(LaunchEventTag).Remove(LaunchHandle);
 		CleanupExec(FrontHandle, VictimHandle);
+	}
+
+	// =========================================================================
+	// 10. Default Entry / Time 0 Full Presentation Plays Without Section Manipulation
+	// =========================================================================
+	{
+		Enemy->RestorePoiseToMax();
+		Enemy->GetCharacterMovement()->SetMovementMode(MOVE_Walking);
+
+		const FName Sec1(TEXT("Default"));
+		const FName Sec2(TEXT("RecoveryLoop"));
+
+		UAnimMontage* DefaultMontage = ExecutionVictimPresentationAutomation::CreateValidRecoveryMontage(GetTransientPackage(), 2.5f, true);
+		DefaultMontage->CompositeSections.Empty();
+
+		FCompositeSection S1;
+		S1.SectionName = Sec1;
+		S1.NextSectionName = Sec2;
+		S1.SetTime(0.0f);
+
+		FCompositeSection S2;
+		S2.SectionName = Sec2;
+		S2.NextSectionName = NAME_None;
+		S2.SetTime(1.0f);
+
+		DefaultMontage->CompositeSections.Add(S1);
+		DefaultMontage->CompositeSections.Add(S2);
+
+		TestEqual(TEXT("Shared asset S1 links to S2"), DefaultMontage->CompositeSections[0].NextSectionName, Sec2);
+
+		auto [FrontHandle, FrontAbility, VictimHandle, VictimAbility] = SetupFrontExec(100.0f, false, DefaultMontage, nullptr);
+		if (TestNotNull(TEXT("FrontAbility valid in Sec 10"), FrontAbility) && TestNotNull(TEXT("VictimAbility valid in Sec 10"), VictimAbility))
+		{
+			VictimAbility->SetTestBoundAnimInstance(MockAnimInstance);
+			VictimAbility->SetTestBypassMontageActiveCheck(true);
+
+			// Step A: Hit arrives first
+			FGameplayEventData HitPayload;
+			HitPayload.EventTag = FrontHitTag;
+			HitPayload.Instigator = Player;
+			HitPayload.Target = Player;
+			HitPayload.OptionalObject = PlayerExecutionMontage;
+			FrontAbility->TestTriggerHitEvent(HitPayload);
+
+			// Step B: VictimStart arrives second
+			FGameplayEventData StartPayload;
+			StartPayload.EventTag = VictimStartTag;
+			StartPayload.Instigator = Player;
+			StartPayload.Target = Player;
+			StartPayload.OptionalObject = PlayerExecutionMontage;
+			FrontAbility->TestTriggerVictimStartEvent(StartPayload);
+
+			TestEqual(TEXT("Shared asset S1 still links to S2 without mutation"), DefaultMontage->CompositeSections[0].NextSectionName, Sec2);
+			TestTrue(TEXT("Victim presentation started from default entry"), VictimAbility->IsTestVictimPresentationStarted());
+
+			FrontAbility->TestEndAbility(false);
+			VictimAbility->TestEndAbility(false);
+			CleanupExec(FrontHandle, VictimHandle);
+		}
+	}
+
+	// =========================================================================
+	// 11. Direction Snapshot Strictness: Missing Target Direction Fails Without Fallback
+	// =========================================================================
+	{
+		Enemy->RestorePoiseToMax();
+		Enemy->GetCharacterMovement()->SetMovementMode(MOVE_Walking);
+
+		// Case A: Front execution with Front=None, Backstab=Valid -> Handoff must FAIL (no fallback to Backstab)
+		{
+			auto [FrontHandle, FrontAbility, VictimHandle, VictimAbility] = SetupFrontExec(100.0f, false, nullptr, EnemyBackstabVictimMontage);
+			if (TestNotNull(TEXT("FrontAbility valid in Sec 11A"), FrontAbility) && TestNotNull(TEXT("VictimAbility valid in Sec 11A"), VictimAbility))
+			{
+				VictimAbility->SetTestBoundAnimInstance(MockAnimInstance);
+				VictimAbility->SetTestBypassMontageActiveCheck(true);
+
+				bool bLaunchDispatched = false;
+				const FGameplayTag LaunchEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Reaction.Enemy.Launch")), false);
+				FDelegateHandle LaunchHandle = EnemyASC->GenericGameplayEventCallbacks.FindOrAdd(LaunchEventTag)
+					.AddLambda([&bLaunchDispatched](const FGameplayEventData*) { bLaunchDispatched = true; });
+
+				FGameplayEventData HitPayload;
+				HitPayload.EventTag = FrontHitTag;
+				HitPayload.Instigator = Player;
+				HitPayload.Target = Player;
+				HitPayload.OptionalObject = PlayerExecutionMontage;
+				FrontAbility->TestTriggerHitEvent(HitPayload);
+
+				FGameplayEventData StartPayload;
+				StartPayload.EventTag = VictimStartTag;
+				StartPayload.Instigator = Player;
+				StartPayload.Target = Player;
+				StartPayload.OptionalObject = PlayerExecutionMontage;
+				FrontAbility->TestTriggerVictimStartEvent(StartPayload);
+
+				TestNull(TEXT("Pending victim montage is null when Front is not configured"), VictimAbility->GetTestPendingVictimMontage());
+				TestFalse(TEXT("Victim presentation did NOT start due to null Front montage"), VictimAbility->IsTestVictimPresentationStarted());
+				TestFalse(TEXT("Victim ability ended safely after failed handoff"), VictimAbility->IsActive());
+				TestFalse(TEXT("Launch reaction NEVER dispatched on failed direction handoff"), bLaunchDispatched);
+
+				FrontAbility->TestEndAbility(false);
+				EnemyASC->GenericGameplayEventCallbacks.FindOrAdd(LaunchEventTag).Remove(LaunchHandle);
+				CleanupExec(FrontHandle, VictimHandle);
+			}
+		}
+
+		// Case B: Backstab execution with Backstab=None, Front=Valid -> Handoff must FAIL (no fallback to Front)
+		{
+			Enemy->RestorePoiseToMax();
+			Enemy->GetCharacterMovement()->SetMovementMode(MOVE_Walking);
+
+			auto [BackstabHandle, BackstabAbility, VictimHandle, VictimAbility] = SetupBackstabExec(100.0f, false, EnemyFrontVictimMontage, nullptr);
+			if (TestNotNull(TEXT("BackstabAbility valid in Sec 11B"), BackstabAbility) && TestNotNull(TEXT("VictimAbility valid in Sec 11B"), VictimAbility))
+			{
+				VictimAbility->SetTestBoundAnimInstance(MockAnimInstance);
+				VictimAbility->SetTestBypassMontageActiveCheck(true);
+
+				bool bLaunchDispatched = false;
+				const FGameplayTag LaunchEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Reaction.Enemy.Launch")), false);
+				FDelegateHandle LaunchHandle = EnemyASC->GenericGameplayEventCallbacks.FindOrAdd(LaunchEventTag)
+					.AddLambda([&bLaunchDispatched](const FGameplayEventData*) { bLaunchDispatched = true; });
+
+				FGameplayEventData HitPayload;
+				HitPayload.EventTag = BackstabHitTag;
+				HitPayload.Instigator = Player;
+				HitPayload.Target = Player;
+				HitPayload.OptionalObject = PlayerExecutionMontage;
+				BackstabAbility->TestTriggerHitEvent(HitPayload);
+
+				FGameplayEventData StartPayload;
+				StartPayload.EventTag = VictimStartTag;
+				StartPayload.Instigator = Player;
+				StartPayload.Target = Player;
+				StartPayload.OptionalObject = PlayerExecutionMontage;
+				BackstabAbility->TestTriggerVictimStartEvent(StartPayload);
+
+				TestNull(TEXT("Pending victim montage is null when Backstab is not configured"), VictimAbility->GetTestPendingVictimMontage());
+				TestFalse(TEXT("Victim presentation did NOT start due to null Backstab montage"), VictimAbility->IsTestVictimPresentationStarted());
+				TestFalse(TEXT("Victim ability ended safely"), VictimAbility->IsActive());
+				TestFalse(TEXT("Launch reaction NEVER dispatched"), bLaunchDispatched);
+
+				BackstabAbility->TestEndAbility(false);
+				EnemyASC->GenericGameplayEventCallbacks.FindOrAdd(LaunchEventTag).Remove(LaunchHandle);
+				CleanupExec(BackstabHandle, VictimHandle);
+			}
+		}
+	}
+
+	// =========================================================================
+	// 12. Mutation of Montages After Activation Does Not Mutate Snapshot
+	// =========================================================================
+	{
+		Enemy->RestorePoiseToMax();
+		Enemy->GetCharacterMovement()->SetMovementMode(MOVE_Walking);
+
+		UAnimMontage* AltMontage = ExecutionVictimPresentationAutomation::CreateValidRecoveryMontage(GetTransientPackage(), 3.0f, true);
+
+		auto [FrontHandle, FrontAbility, VictimHandle, VictimAbility] = SetupFrontExec(100.0f, false, EnemyFrontVictimMontage, EnemyBackstabVictimMontage);
+		if (TestNotNull(TEXT("FrontAbility valid in Sec 12"), FrontAbility) && TestNotNull(TEXT("VictimAbility valid in Sec 12"), VictimAbility))
+		{
+			VictimAbility->SetTestBoundAnimInstance(MockAnimInstance);
+			VictimAbility->SetTestBypassMontageActiveCheck(true);
+
+			TestEqual(TEXT("Pending montage is snapshot to EnemyFrontVictimMontage at activation"),
+				VictimAbility->GetTestPendingVictimMontage(), EnemyFrontVictimMontage);
+
+			// Mutate montages after activation
+			VictimAbility->SetTestVictimMontages(AltMontage, nullptr);
+
+			// Pending snapshot must remain unchanged!
+			TestEqual(TEXT("Pending montage snapshot is NOT mutated by post-activation configuration changes"),
+				VictimAbility->GetTestPendingVictimMontage(), EnemyFrontVictimMontage);
+
+			// Hit -> VictimStart
+			FGameplayEventData HitPayload;
+			HitPayload.EventTag = FrontHitTag;
+			HitPayload.Instigator = Player;
+			HitPayload.Target = Player;
+			HitPayload.OptionalObject = PlayerExecutionMontage;
+			FrontAbility->TestTriggerHitEvent(HitPayload);
+
+			FGameplayEventData StartPayload;
+			StartPayload.EventTag = VictimStartTag;
+			StartPayload.Instigator = Player;
+			StartPayload.Target = Player;
+			StartPayload.OptionalObject = PlayerExecutionMontage;
+			FrontAbility->TestTriggerVictimStartEvent(StartPayload);
+
+			// Plays the snapshotted EnemyFrontVictimMontage, NOT AltMontage
+			TestEqual(TEXT("Active victim montage is the snapshotted montage"),
+				VictimAbility->GetTestActiveVictimMontage(), EnemyFrontVictimMontage);
+
+			FrontAbility->TestEndAbility(false);
+			VictimAbility->TestEndAbility(false);
+			CleanupExec(FrontHandle, VictimHandle);
+		}
+	}
+
+	// =========================================================================
+	// 13. Synchronous Cancellation During Startup Movement Mode and ReadyForActivation
+	// =========================================================================
+	{
+		Enemy->RestorePoiseToMax();
+		Enemy->GetCharacterMovement()->SetMovementMode(MOVE_Walking);
+
+		// Case A: Synchronous cancel during movement mode change
+		{
+			auto [FrontHandle, FrontAbility, VictimHandle, VictimAbility] = SetupFrontExec(100.0f, true);
+			if (TestNotNull(TEXT("FrontAbility valid in Sec 13A"), FrontAbility) && TestNotNull(TEXT("VictimAbility valid in Sec 13A"), VictimAbility))
+			{
+				VictimAbility->SetTestBoundAnimInstance(MockAnimInstance);
+				VictimAbility->SetTestBypassMontageActiveCheck(true);
+				VictimAbility->SetTestCancelDuringStartupMovementMode(true);
+
+				FGameplayEventData HitPayload;
+				HitPayload.EventTag = FrontHitTag;
+				HitPayload.Instigator = Player;
+				HitPayload.Target = Player;
+				HitPayload.OptionalObject = PlayerExecutionMontage;
+				FrontAbility->TestTriggerHitEvent(HitPayload);
+
+				FGameplayEventData StartPayload;
+				StartPayload.EventTag = VictimStartTag;
+				StartPayload.Instigator = Player;
+				StartPayload.Target = Player;
+				StartPayload.OptionalObject = PlayerExecutionMontage;
+				FrontAbility->TestTriggerVictimStartEvent(StartPayload);
+
+				TestFalse(TEXT("VictimAbility ended synchronously during movement mode startup"), VictimAbility->IsActive());
+				TestNull(TEXT("No active montage task leaked"), VictimAbility->GetTestVictimMontageTask());
+
+				FrontAbility->TestEndAbility(false);
+				CleanupExec(FrontHandle, VictimHandle);
+			}
+		}
+
+		// Case B: Synchronous cancel during ReadyForActivation
+		{
+			Enemy->RestorePoiseToMax();
+			Enemy->GetCharacterMovement()->SetMovementMode(MOVE_Walking);
+
+			auto [FrontHandle, FrontAbility, VictimHandle, VictimAbility] = SetupFrontExec(100.0f, true);
+			if (TestNotNull(TEXT("FrontAbility valid in Sec 13B"), FrontAbility) && TestNotNull(TEXT("VictimAbility valid in Sec 13B"), VictimAbility))
+			{
+				VictimAbility->SetTestBoundAnimInstance(MockAnimInstance);
+				VictimAbility->SetTestBypassMontageActiveCheck(true);
+				VictimAbility->SetTestCancelDuringStartupReadyForActivation(true);
+
+				FGameplayEventData HitPayload;
+				HitPayload.EventTag = FrontHitTag;
+				HitPayload.Instigator = Player;
+				HitPayload.Target = Player;
+				HitPayload.OptionalObject = PlayerExecutionMontage;
+				FrontAbility->TestTriggerHitEvent(HitPayload);
+
+				FGameplayEventData StartPayload;
+				StartPayload.EventTag = VictimStartTag;
+				StartPayload.Instigator = Player;
+				StartPayload.Target = Player;
+				StartPayload.OptionalObject = PlayerExecutionMontage;
+				FrontAbility->TestTriggerVictimStartEvent(StartPayload);
+
+				TestFalse(TEXT("VictimAbility ended synchronously during ReadyForActivation"), VictimAbility->IsActive());
+				TestNull(TEXT("Active victim montage cleared after synchronous startup cancel"), VictimAbility->GetTestActiveVictimMontage());
+
+				FrontAbility->TestEndAbility(false);
+				CleanupExec(FrontHandle, VictimHandle);
+			}
+		}
+
+		// Case C: Real engine play call via ReadyForActivation: synchronous cancel during OnMontageStarted
+		// and reentrant play of the same montage asset.
+		// Verifies:
+		// 1. Startup instance is captured and stopped cleanly with 0.0s blend.
+		// 2. Reentrant new instance of the same asset is NOT stopped and continues playing!
+		// 3. Ability ends cleanly with no leaked instance or task state.
+		{
+			Enemy->RestorePoiseToMax();
+			Enemy->GetCharacterMovement()->SetMovementMode(MOVE_Walking);
+
+			auto [FrontHandle, FrontAbility, VictimHandle, VictimAbility] = SetupFrontExec(100.0f, true, EnemyFrontVictimMontage, EnemyBackstabVictimMontage);
+			if (TestNotNull(TEXT("FrontAbility valid in Sec 13C"), FrontAbility) && TestNotNull(TEXT("VictimAbility valid in Sec 13C"), VictimAbility))
+			{
+				VictimAbility->SetTestBoundAnimInstance(MockAnimInstance);
+				VictimAbility->SetTestBypassMontageActiveCheck(false);
+
+				FGameplayEventData HitPayload;
+				HitPayload.EventTag = FrontHitTag;
+				HitPayload.Instigator = Player;
+				HitPayload.Target = Player;
+				HitPayload.OptionalObject = PlayerExecutionMontage;
+				FrontAbility->TestTriggerHitEvent(HitPayload);
+
+				int32 OldStartupInstanceID = INDEX_NONE;
+				FAnimMontageInstance* ReentrantNewInstance = nullptr;
+				int32 ReentrantNewInstanceID = INDEX_NONE;
+				bool bStartupCallbackFired = false;
+
+				VictimAbility->SetTestOnMontageStartedHook(
+					[&](UAnimMontage* StartedMontage)
+					{
+						if (StartedMontage == EnemyFrontVictimMontage && !bStartupCallbackFired)
+						{
+							bStartupCallbackFired = true;
+							OldStartupInstanceID = VictimAbility->GetTestStartupVictimMontageInstanceID();
+
+							// Synchronously cancel VictimAbility during instance startup
+							VictimAbility->CancelAbility(VictimAbility->GetCurrentAbilitySpecHandle(),
+								VictimAbility->GetCurrentActorInfo(),
+								VictimAbility->GetCurrentActivationInfo(),
+								true);
+
+							// Immediately re-entrantly play the same montage asset (simulating external system / new ability)
+							const float PlayResult = MockAnimInstance->Montage_Play(EnemyFrontVictimMontage);
+							if (PlayResult > 0.0f)
+							{
+								ReentrantNewInstance = MockAnimInstance->GetActiveInstanceForMontage(EnemyFrontVictimMontage);
+								if (ReentrantNewInstance)
+								{
+									ReentrantNewInstanceID = ReentrantNewInstance->GetInstanceID();
+								}
+							}
+						}
+					});
+
+				FGameplayEventData StartPayload;
+				StartPayload.EventTag = VictimStartTag;
+				StartPayload.Instigator = Player;
+				StartPayload.Target = Player;
+				StartPayload.OptionalObject = PlayerExecutionMontage;
+				FrontAbility->TestTriggerVictimStartEvent(StartPayload);
+
+				TestTrue(TEXT("Startup OnMontageStarted callback fired during ReadyForActivation"), bStartupCallbackFired);
+				TestNotEqual(TEXT("Captured valid OldStartupInstanceID"), OldStartupInstanceID, (int32)INDEX_NONE);
+				TestNotNull(TEXT("ReentrantNewInstance created successfully"), ReentrantNewInstance);
+				TestNotEqual(TEXT("ReentrantNewInstance has distinct ID from old instance"), ReentrantNewInstanceID, OldStartupInstanceID);
+
+				// Assert: Old instance was stopped with 0.0s blend
+				FAnimMontageInstance* OldInstance = MockAnimInstance->GetMontageInstanceForID(OldStartupInstanceID);
+				if (TestNotNull(TEXT("OldInstance found by ID"), OldInstance))
+				{
+					TestTrue(TEXT("OldInstance stopped cleanly after cancel"), OldInstance->IsStopped());
+					TestTrue(TEXT("OldInstance blend desired value is zero"), FMath::IsNearlyZero(OldInstance->GetBlend().GetDesiredValue()));
+				}
+
+				// Assert: Reentrant new instance of same montage asset continues playing!
+				TestNotNull(TEXT("Reentrant new instance still exists"), ReentrantNewInstance);
+				if (ReentrantNewInstance)
+				{
+					TestFalse(TEXT("Reentrant new instance was NOT stopped by old ability cleanup!"), ReentrantNewInstance->IsStopped());
+					TestTrue(TEXT("Reentrant new instance is still playing"), ReentrantNewInstance->IsPlaying());
+				}
+
+				// Assert: VictimAbility state is fully cleaned up
+				TestFalse(TEXT("VictimAbility ended synchronously"), VictimAbility->IsActive());
+				TestFalse(TEXT("Non-lethal recovery inactive after cancel"), VictimAbility->IsTestNonLethalRecoveryActive());
+				TestNull(TEXT("Active victim montage cleared"), VictimAbility->GetTestActiveVictimMontage());
+				TestEqual(TEXT("Active instance ID reset to INDEX_NONE"), VictimAbility->GetTestActiveVictimMontageInstanceID(), (int32)INDEX_NONE);
+				TestEqual(TEXT("Startup instance ID reset to INDEX_NONE"), VictimAbility->GetTestStartupVictimMontageInstanceID(), (int32)INDEX_NONE);
+
+				// Cleanup instances
+				for (FAnimMontageInstance* Inst : MockAnimInstance->MontageInstances)
+				{
+					if (Inst)
+					{
+						Inst->Terminate();
+						delete Inst;
+					}
+				}
+				MockAnimInstance->MontageInstances.Empty();
+
+				FrontAbility->TestEndAbility(false);
+				CleanupExec(FrontHandle, VictimHandle);
+			}
+		}
+
+		// Case D: Real Montage_Play stops the old group before allocating the victim instance.
+		// Cancellation originates from that old instance's native blend-out delegate.
+		{
+			Enemy->RestorePoiseToMax();
+			Enemy->GetCharacterMovement()->SetMovementMode(MOVE_Walking);
+
+			auto [FrontHandle, FrontAbility, VictimHandle, VictimAbility] = SetupFrontExec(100.0f, true);
+			if (TestNotNull(TEXT("FrontAbility valid in Sec 13D"), FrontAbility) &&
+				TestNotNull(TEXT("VictimAbility valid in Sec 13D"), VictimAbility))
+			{
+				VictimAbility->SetTestBoundAnimInstance(MockAnimInstance);
+				VictimAbility->SetTestBypassMontageActiveCheck(false);
+				const bool bOriginalCanWalkOffLedges = Enemy->GetCharacterMovement()->bCanWalkOffLedges;
+
+				FGameplayEventData Payload;
+				Payload.EventTag = FrontHitTag;
+				Payload.Instigator = Player;
+				Payload.Target = Player;
+				Payload.OptionalObject = PlayerExecutionMontage;
+				PlayerASC->HandleGameplayEvent(FrontHitTag, &Payload);
+
+				// Different asset, same group. Start it after pairing so activation cleanup cannot consume the callback.
+				TestEqual(TEXT("13D: Old and incoming montages share the same group"),
+					EnemyBackstabVictimMontage->GetGroupName(), EnemyFrontVictimMontage->GetGroupName());
+				const float OldPlayResult = MockAnimInstance->Montage_Play(EnemyBackstabVictimMontage);
+				FAnimMontageInstance* OldInstance = MockAnimInstance->GetActiveInstanceForMontage(EnemyBackstabVictimMontage);
+				if (TestTrue(TEXT("13D: Old montage really starts"), OldPlayResult > 0.0f) &&
+					TestNotNull(TEXT("13D: Old montage has a real instance"), OldInstance))
+				{
+					bool bOldStopCallbackFired = false;
+					bool bCancelledBeforeInstanceBirth = false;
+					bool bNewbornObservedAfterCancellation = false;
+					int32 NewbornInstanceID = INDEX_NONE;
+					const int32 OldInstanceID = OldInstance->GetInstanceID();
+					const FVector ExternalVelocity(113.0f, 37.0f, 0.0f);
+
+					OldInstance->OnMontageBlendingOutStarted.BindLambda(
+						[&](UAnimMontage* StoppedMontage, bool bInterrupted)
+						{
+							bOldStopCallbackFired = true;
+							TestTrue(TEXT("13D: New playback interrupted the old montage"), bInterrupted);
+							TestEqual(TEXT("13D: Callback belongs to the old asset"), StoppedMontage, EnemyBackstabVictimMontage);
+							bCancelledBeforeInstanceBirth = VictimAbility->IsActive() &&
+								VictimAbility->GetTestStartupVictimMontageInstanceID() == INDEX_NONE &&
+								VictimAbility->GetTestActiveVictimMontageInstanceID() == INDEX_NONE &&
+								VictimAbility->GetTestPendingStartupVictimMontage() == EnemyFrontVictimMontage &&
+								MockAnimInstance->GetActiveInstanceForMontage(EnemyFrontVictimMontage) == nullptr;
+							VictimAbility->CancelAbility(VictimAbility->GetCurrentAbilitySpecHandle(),
+								VictimAbility->GetCurrentActorInfo(), VictimAbility->GetCurrentActivationInfo(), true);
+							// Simulate an external movement owner after cancellation has finished.
+							Enemy->GetCharacterMovement()->Velocity = ExternalVelocity;
+						});
+					VictimAbility->SetTestOnMontageStartedHook([&](UAnimMontage* StartedMontage)
+					{
+						if (StartedMontage == EnemyFrontVictimMontage)
+						{
+							NewbornInstanceID = VictimAbility->GetTestStartupVictimMontageInstanceID();
+							bNewbornObservedAfterCancellation = bOldStopCallbackFired && !VictimAbility->IsActive();
+						}
+					});
+
+					Payload.EventTag = VictimStartTag;
+					PlayerASC->HandleGameplayEvent(VictimStartTag, &Payload);
+
+					TestTrue(TEXT("13D: Native old-montage stop callback ran inside the play call"), bOldStopCallbackFired);
+					TestTrue(TEXT("13D: Cancellation happened before the incoming instance existed"), bCancelledBeforeInstanceBirth);
+					TestTrue(TEXT("13D: Engine created the victim instance after cancellation"), bNewbornObservedAfterCancellation);
+					TestNotEqual(TEXT("13D: Captured the real newborn instance ID"), NewbornInstanceID, static_cast<int32>(INDEX_NONE));
+					FAnimMontageInstance* NewbornInstance = MockAnimInstance->GetMontageInstanceForID(NewbornInstanceID);
+					if (TestNotNull(TEXT("13D: Newborn instance can be resolved by ID"), NewbornInstance))
+					{
+						TestTrue(TEXT("13D: Late newborn was stopped"), NewbornInstance->IsStopped());
+						TestTrue(TEXT("13D: Late newborn has zero blend-out duration"), FMath::IsNearlyZero(NewbornInstance->GetBlend().GetBlendTime()));
+						TestTrue(TEXT("13D: Late newborn has zero desired weight"), FMath::IsNearlyZero(NewbornInstance->GetBlend().GetDesiredValue()));
+						TestTrue(TEXT("13D: Late newborn no longer owns root motion"), MockAnimInstance->GetRootMotionMontageInstance() != NewbornInstance);
+					}
+					TestFalse(TEXT("13D: Ability stays ended after ReadyForActivation returns"), VictimAbility->IsActive());
+					TestNull(TEXT("13D: No montage task restored after cancellation"), VictimAbility->GetTestVictimMontageTask());
+					TestNull(TEXT("13D: Active montage cleared"), VictimAbility->GetTestActiveVictimMontage());
+					TestNull(TEXT("13D: Pending victim montage cleared"), VictimAbility->GetTestPendingVictimMontage());
+					TestNull(TEXT("13D: Pending startup montage cleared"), VictimAbility->GetTestPendingStartupVictimMontage());
+					TestEqual(TEXT("13D: Active ID cleared"), VictimAbility->GetTestActiveVictimMontageInstanceID(), static_cast<int32>(INDEX_NONE));
+					TestEqual(TEXT("13D: Startup ID cleared"), VictimAbility->GetTestStartupVictimMontageInstanceID(), static_cast<int32>(INDEX_NONE));
+					TestFalse(TEXT("13D: No recovery state survived"), VictimAbility->IsTestNonLethalRecoveryActive());
+					TestFalse(TEXT("13D: Cancelled recovery cannot retain lock"), VictimAbility->IsNonLethalRecoveryFrom(Player));
+					TestFalse(TEXT("13D: VictimOwned lock removed"), EnemyASC->HasMatchingGameplayTag(VictimLockedTag));
+					TestTrue(TEXT("13D: Original ledge policy restored"), Enemy->GetCharacterMovement()->bCanWalkOffLedges == bOriginalCanWalkOffLedges);
+					TestTrue(TEXT("13D: Late cleanup preserves external owner's velocity"), Enemy->GetCharacterMovement()->Velocity.Equals(ExternalVelocity));
+
+					// Clear stack captures before ending any remaining fixtures.
+					MockAnimInstance->DispatchQueuedAnimEvents();
+					if (FAnimMontageInstance* RemainingOldInstance = MockAnimInstance->GetMontageInstanceForID(OldInstanceID))
+					{
+						RemainingOldInstance->OnMontageBlendingOutStarted.Unbind();
+					}
+					VictimAbility->SetTestOnMontageStartedHook({});
+				}
+
+				FrontAbility->TestEndAbility(false);
+				CleanupExec(FrontHandle, VictimHandle);
+				for (FAnimMontageInstance* Instance : MockAnimInstance->MontageInstances)
+				{
+					if (Instance)
+					{
+						Instance->Terminate();
+						delete Instance;
+					}
+				}
+				MockAnimInstance->MontageInstances.Empty();
+			}
+		}
+	}
+
+	// =========================================================================
+	// 14. Accurate Instance-Level Stop: Old Fading Out Instance vs New Active Instance
+	// =========================================================================
+	{
+		Enemy->RestorePoiseToMax();
+		Enemy->GetCharacterMovement()->SetMovementMode(MOVE_Walking);
+
+		auto [FrontHandle, FrontAbility, VictimHandle, VictimAbility] = SetupFrontExec(100.0f, true);
+		if (TestNotNull(TEXT("VictimAbility valid in Sec 14"), VictimAbility))
+		{
+			UAnimMontage* SharedMontage = EnemyFrontVictimMontage;
+			VictimAbility->SetTestBoundAnimInstance(MockAnimInstance);
+
+			// Create two real FAnimMontageInstance objects for the same SharedMontage:
+			// OldInstance: represents the instance owned by this ability that needs stopping.
+			// UnrelatedNewInstance: represents an active instance (e.g. newly started by another ability/system).
+			FAnimMontageInstance* OldInstance = new FAnimMontageInstance(MockAnimInstance);
+			OldInstance->Initialize(SharedMontage);
+			OldInstance->Play();
+
+			FAnimMontageInstance* UnrelatedNewInstance = new FAnimMontageInstance(MockAnimInstance);
+			UnrelatedNewInstance->Initialize(SharedMontage);
+			UnrelatedNewInstance->Play();
+
+			MockAnimInstance->MontageInstances.Add(OldInstance);
+			MockAnimInstance->MontageInstances.Add(UnrelatedNewInstance);
+
+			TestTrue(TEXT("OldInstance is playing"), OldInstance->IsPlaying());
+			TestFalse(TEXT("OldInstance is not stopped"), OldInstance->IsStopped());
+			TestTrue(TEXT("UnrelatedNewInstance is playing"), UnrelatedNewInstance->IsPlaying());
+			TestFalse(TEXT("UnrelatedNewInstance is not stopped"), UnrelatedNewInstance->IsStopped());
+
+			const int32 OldInstanceID = OldInstance->GetInstanceID();
+			const int32 UnrelatedNewInstanceID = UnrelatedNewInstance->GetInstanceID();
+			TestNotEqual(TEXT("Instances have distinct IDs"), OldInstanceID, UnrelatedNewInstanceID);
+
+			// Test A: Calling Stop with INDEX_NONE must NOT stop any running instance (guards against stopping unrelated instances)
+			VictimAbility->SetTestActiveVictimMontage(SharedMontage);
+			VictimAbility->SetTestActiveVictimMontageInstanceID(INDEX_NONE);
+			VictimAbility->TestStopVictimMontagePresentation(false);
+
+			TestFalse(TEXT("OldInstance was NOT stopped when ID was INDEX_NONE"), OldInstance->IsStopped());
+			TestFalse(TEXT("UnrelatedNewInstance was NOT stopped when ID was INDEX_NONE"), UnrelatedNewInstance->IsStopped());
+			TestNull(TEXT("ActiveVictimMontage cleared safely with INDEX_NONE"), VictimAbility->GetTestActiveVictimMontage());
+			TestEqual(TEXT("Instance ID remains INDEX_NONE"), VictimAbility->GetTestActiveVictimMontageInstanceID(), (int32)INDEX_NONE);
+
+			// Test B: Calling Stop with OldInstanceID must stop OldInstance specifically, leaving UnrelatedNewInstance untouched
+			VictimAbility->SetTestActiveVictimMontage(SharedMontage);
+			VictimAbility->SetTestActiveVictimMontageInstanceID(OldInstanceID);
+
+			VictimAbility->TestStopVictimMontagePresentation(false);
+
+			TestTrue(TEXT("OldInstance is stopped after StopVictimMontagePresentation"), OldInstance->IsStopped());
+			TestFalse(TEXT("UnrelatedNewInstance remains playing and untouched!"), UnrelatedNewInstance->IsStopped());
+			TestTrue(TEXT("UnrelatedNewInstance is still playing"), UnrelatedNewInstance->IsPlaying());
+			TestNull(TEXT("ActiveVictimMontage cleared after StopVictimMontagePresentation"), VictimAbility->GetTestActiveVictimMontage());
+			TestEqual(TEXT("ActiveVictimMontageInstanceID reset to INDEX_NONE"), VictimAbility->GetTestActiveVictimMontageInstanceID(), (int32)INDEX_NONE);
+
+			// Cleanup instances and array
+			OldInstance->Terminate();
+			delete OldInstance;
+			UnrelatedNewInstance->Terminate();
+			delete UnrelatedNewInstance;
+			MockAnimInstance->MontageInstances.Empty();
+
+			FrontAbility->TestEndAbility(false);
+			VictimAbility->TestEndAbility(false);
+			CleanupExec(FrontHandle, VictimHandle);
+		}
 	}
 
 	return true;

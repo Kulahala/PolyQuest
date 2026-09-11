@@ -6,14 +6,25 @@
 
 #include <limits>
 
+#include "Animation/AnimData/IAnimationDataController.h"
+#include "Animation/AnimInstance.h"
+#include "Animation/AnimMontage.h"
+#include "Animation/AnimSequence.h"
+#include "Animation/Skeleton.h"
 #include "Camera/CameraComponent.h"
 #include "AbilitySystemComponent.h"
+#include "AbilitySystem/CharacterAttributeSet.h"
+#include "AbilitySystem/Abilities/EnemyVictimExecutionAbility.h"
+#include "AbilitySystem/Abilities/PlayerBackstabExecutionAbility.h"
 #include "Character/Enemy/EnemyCharacter.h"
 #include "Character/Player/PlayerCharacter.h"
 #include "Character/Player/PlayerLockOnTargeting.h"
+#include "Combat/Execution/ExecutionLockContext.h"
 #include "Combat/Projectile/CombatProjectileTargeting.h"
 #include "Components/BoxComponent.h"
+#include "Components/CapsuleComponent.h"
 #include "Components/Image.h"
+#include "Components/SkeletalMeshComponent.h"
 #include "Engine/Engine.h"
 #include "Engine/World.h"
 #include "GameFramework/CharacterMovementComponent.h"
@@ -21,8 +32,26 @@
 #include "GameFramework/RootMotionSource.h"
 #include "GameFramework/SpringArmComponent.h"
 #include "GameplayTagContainer.h"
+#include "ReferenceSkeleton.h"
 #include "Tests/CombatAutomationFixture.h"
+#include "Tests/TestProjectileDamageGE.h"
 #include "UI/EnemyHealthBarWidget.h"
+
+namespace PlayerLockOnAutomation
+{
+	class UTestMontageAccessHelper : public UAnimMontage
+	{
+	public:
+		static void SetMontageLength(UAnimMontage* Montage, float Length)
+		{
+			if (Montage)
+			{
+				static_cast<UTestMontageAccessHelper*>(Montage)->SequenceLength = Length;
+			}
+		}
+	};
+
+}
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FPlayerLockOnAutomationTest, "PolyQuest.Player.LockOn", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 
@@ -300,6 +329,347 @@ bool FPlayerLockOnAutomationTest::RunTest(const FString&)
 						Player->SetTestLockedTarget(EnemyBottom);
 						TestFalse(TEXT("Only VictimLocked fails validation on invulnerable target"), Player->TriggerTestValidateCurrentLockedTarget());
 						TestNull(TEXT("Only VictimLocked clears lock on invulnerable target"), Player->GetLockedTarget());
+
+						// Case 2B: Real Native Victim Recovery retention:
+						// Player execution ability has ended (no PlayerLockedTag on PlayerAsc).
+						// Target still holds InvulnerableTag and VictimLockedTag while playing recovery montage.
+						// A real UEnemyVictimExecutionAbility instance is active on BottomAsc and recovering from Player.
+						{
+							FGameplayAbilitySpec VictimSpec(UEnemyVictimExecutionAbility::StaticClass(), 1, INDEX_NONE, EnemyBottom);
+							const FGameplayAbilitySpecHandle VictimHandle = BottomAsc->GiveAbility(VictimSpec);
+							FGameplayAbilitySpec* FoundVictimSpec = BottomAsc->FindAbilitySpecFromHandle(VictimHandle);
+							UEnemyVictimExecutionAbility* VictimInstance = FoundVictimSpec ? Cast<UEnemyVictimExecutionAbility>(FoundVictimSpec->GetPrimaryInstance()) : nullptr;
+
+							if (TestNotNull(TEXT("VictimInstance granted on BottomAsc for Case 2B"), VictimInstance))
+							{
+								VictimInstance->SetTestActorInfo(VictimHandle, BottomAsc->AbilityActorInfo.Get());
+								VictimInstance->SetTestAbilityActive(true);
+								VictimInstance->SetTestNonLethalRecovery(true, Player);
+
+								// Positive test: Target is retained despite player having no PlayerLocked tag and target being Invulnerable
+								Player->SetTestLockedTarget(EnemyBottom);
+								TestTrue(TEXT("Active native victim recovery retains invulnerable locked target when PlayerLocked is absent"),
+									Player->TriggerTestValidateCurrentLockedTarget());
+								TestEqual(TEXT("EnemyBottom retained during active non-lethal recovery"),
+									Player->GetLockedTarget(), EnemyBottom);
+
+								// Negative test: Recovery source actor mismatch (recovering from another actor, e.g. EnemyRight) -> clears lock
+								VictimInstance->SetTestNonLethalRecovery(true, EnemyRight);
+								Player->SetTestLockedTarget(EnemyBottom);
+								TestFalse(TEXT("Recovery from non-matching source fails retention on invulnerable target"),
+									Player->TriggerTestValidateCurrentLockedTarget());
+								TestNull(TEXT("Lock cleared when recovery source is not the local player"),
+									Player->GetLockedTarget());
+
+								// Negative test: DeathPending on victim ability -> clears lock
+								VictimInstance->SetTestNonLethalRecovery(true, Player);
+								VictimInstance->SetTestDeathPending(true);
+								Player->SetTestLockedTarget(EnemyBottom);
+								TestFalse(TEXT("DeathPending victim fails retention"),
+									Player->TriggerTestValidateCurrentLockedTarget());
+								TestNull(TEXT("Lock cleared when victim is DeathPending"),
+									Player->GetLockedTarget());
+								VictimInstance->SetTestDeathPending(false);
+
+								// Negative test: Ability inactive -> clears lock
+								VictimInstance->SetTestAbilityActive(false);
+								Player->SetTestLockedTarget(EnemyBottom);
+								TestFalse(TEXT("Inactive victim ability fails retention"),
+									Player->TriggerTestValidateCurrentLockedTarget());
+								TestNull(TEXT("Lock cleared when victim ability is inactive"),
+									Player->GetLockedTarget());
+								VictimInstance->SetTestAbilityActive(true);
+
+								// Negative test: Target dead -> clears lock
+								BottomAsc->AddLooseGameplayTag(DeadTag);
+								Player->SetTestLockedTarget(EnemyBottom);
+								Player->TriggerTestValidateCurrentLockedTarget();
+								TestTrue(TEXT("Dead target during recovery is cleared"),
+									Player->GetLockedTarget() != EnemyBottom);
+								BottomAsc->RemoveLooseGameplayTag(DeadTag);
+								BottomAsc->SetNumericAttributeBase(UCharacterAttributeSet::GetHealthAttribute(), 100.0f);
+
+								// Positive lifecycle handoff: Recovery finishes (ability ends, Invulnerable removed, normal state)
+								VictimInstance->SetTestNonLethalRecovery(false, nullptr);
+								VictimInstance->SetTestAbilityActive(false);
+								BottomAsc->RemoveLooseGameplayTag(InvulnerableTag);
+								BottomAsc->RemoveLooseGameplayTag(VictimLockedTag);
+								Player->SetTestLockedTarget(EnemyBottom);
+								TestTrue(TEXT("Normal target validation succeeds after recovery finishes"),
+									Player->TriggerTestValidateCurrentLockedTarget());
+								TestEqual(TEXT("Target remains locked as normal candidate after recovery finishes"),
+									Player->GetLockedTarget(), EnemyBottom);
+
+								// Manual lock clear -> does NOT auto-relock
+								Player->TestClearLockedTarget();
+								TestNull(TEXT("Manually cleared lock does not auto-relock"),
+									Player->GetLockedTarget());
+
+								// Clean up ability from BottomAsc
+								BottomAsc->ClearAbility(VictimHandle);
+
+								// Re-apply Invulnerable and VictimLocked for Case 3
+								BottomAsc->AddLooseGameplayTag(VictimLockedTag);
+								BottomAsc->AddLooseGameplayTag(InvulnerableTag);
+							}
+						}
+
+						// Case 2C: Real ASC activation and montage delegates drive both sides of the handoff.
+						{
+							// Separate actors and weapon configuration keep the ordinary candidate cases untouched.
+							APlayerCharacter* RecoveryPlayer = FCombatAutomationFixture::SpawnPlayer(
+								World, FTransform(FRotator::ZeroRotator, FVector(2500.0f, 400.0f, 100.0f)));
+							AEnemyCharacter* RecoveryEnemy = SpawnEnemy(TEXT("LockOn_Case2C"), FVector(2650.0f, 400.0f, 100.0f));
+							APlayerController* RecoveryController = World->SpawnActor<APlayerController>();
+							AActor* RecoveryFloor = World->SpawnActor<AActor>();
+							if (!TestNotNull(TEXT("2C: Recovery player spawned"), RecoveryPlayer) ||
+								!TestNotNull(TEXT("2C: Recovery enemy spawned"), RecoveryEnemy) ||
+								!TestNotNull(TEXT("2C: Recovery controller spawned"), RecoveryController) ||
+								!TestNotNull(TEXT("2C: Recovery floor spawned"), RecoveryFloor))
+							{
+								return false; // The enclosing world scope also cleans up partial fixtures.
+							}
+
+							RecoveryController->Possess(RecoveryPlayer);
+							RecoveryPlayer->SetTestCombatTeamTag(FGameplayTag::RequestGameplayTag(FName(TEXT("Team.Player")), false));
+							RecoveryPlayer->SetTestLockOnProjectionHook([](const FVector& WorldPoint, FVector2D& OutScreenPosition, FVector2D& OutViewportSize)
+							{
+								OutViewportSize = FVector2D(1920.0f, 1080.0f);
+								OutScreenPosition = WorldPoint.X > 2600.0f ? FVector2D(1100.0f, 540.0f) : FVector2D(960.0f, 540.0f);
+								return true;
+							});
+							RecoveryPlayer->SetTestLockedTarget(RecoveryEnemy);
+
+							UAbilitySystemComponent* RecoveryPlayerASC = RecoveryPlayer->GetAbilitySystemComponent();
+							UAbilitySystemComponent* RecoveryEnemyASC = RecoveryEnemy->GetAbilitySystemComponent();
+							if (!TestNotNull(TEXT("2C: Player ASC valid"), RecoveryPlayerASC) ||
+								!TestNotNull(TEXT("2C: Enemy ASC valid"), RecoveryEnemyASC))
+							{
+								return false;
+							}
+							RecoveryEnemyASC->SetNumericAttributeBase(UCharacterAttributeSet::GetMaxHealthAttribute(), 10000.0f);
+							RecoveryEnemyASC->SetNumericAttributeBase(UCharacterAttributeSet::GetHealthAttribute(), 10000.0f);
+							RecoveryEnemy->RestorePoiseToMax();
+
+							UBoxComponent* FloorBox = NewObject<UBoxComponent>(RecoveryFloor);
+							FloorBox->InitBoxExtent(FVector(400.0f, 400.0f, 50.0f));
+							FloorBox->SetCollisionProfileName(UCollisionProfile::BlockAll_ProfileName);
+							RecoveryFloor->SetRootComponent(FloorBox);
+							FloorBox->RegisterComponent();
+							const float CapsuleBottomZ = RecoveryEnemy->GetActorLocation().Z -
+								RecoveryEnemy->GetCapsuleComponent()->GetScaledCapsuleHalfHeight();
+							RecoveryFloor->SetActorLocation(FVector(2650.0f, 400.0f, CapsuleBottomZ - 50.0f));
+							RecoveryPlayer->GetCapsuleComponent()->IgnoreActorWhenMoving(RecoveryFloor, true);
+							RecoveryEnemy->GetCharacterMovement()->SetMovementMode(MOVE_Walking);
+
+							// Create synthetic recovery montage for victim with valid skeleton and root motion
+							USkeleton* SharedSkeleton = NewObject<USkeleton>(GetTransientPackage());
+							const FName RootBoneName(TEXT("root"));
+							{
+								FReferenceSkeletonModifier SkeletonModifier(SharedSkeleton);
+								SkeletonModifier.Add(FMeshBoneInfo(RootBoneName, TEXT("root"), INDEX_NONE), FTransform::Identity);
+							}
+							if (!TestEqual(TEXT("2C: Recovery skeleton contains a root bone before compression"),
+								SharedSkeleton->GetReferenceSkeleton().GetNum(), 1))
+							{
+								return false;
+							}
+							UAnimMontage* SyntheticRecoveryMontage = NewObject<UAnimMontage>(GetTransientPackage());
+							SyntheticRecoveryMontage->SetSkeleton(SharedSkeleton);
+							UAnimSequence* SyntheticSeq = NewObject<UAnimSequence>(GetTransientPackage());
+							SyntheticSeq->SetSkeleton(SharedSkeleton);
+							SyntheticSeq->bEnableRootMotion = true;
+
+#if WITH_EDITOR
+							// SetAnimReference reads the data model immediately; NewObject alone does not initialize its MovieScene.
+							IAnimationDataController& SequenceController = SyntheticSeq->GetController();
+							SequenceController.InitializeModel();
+							{
+								// Defer compression until the frame range and root track are both populated.
+								IAnimationDataController::FScopedBracket PopulateSequence(SequenceController,
+									FText::FromString(TEXT("Populate lock-on recovery fixture")), false);
+								SequenceController.SetFrameRate(FFrameRate(30, 1), false);
+								SequenceController.SetNumberOfFrames(FFrameNumber(60), false);
+								TestTrue(TEXT("2C: Recovery root track added"), SequenceController.AddBoneCurve(RootBoneName, false));
+								TArray<FVector3f> Positions;
+								TArray<FQuat4f> Rotations;
+								TArray<FVector3f> Scales;
+								Positions.Init(FVector3f::ZeroVector, 61);
+								Rotations.Init(FQuat4f::Identity, 61);
+								Scales.Init(FVector3f::OneVector, 61);
+								TestTrue(TEXT("2C: Recovery root keys populated"),
+									SequenceController.SetBoneTrackKeys(RootBoneName, Positions, Rotations, Scales, false));
+								SequenceController.NotifyPopulated();
+							}
+							// Finish this transient sequence's background work before the test can tear down its fixture.
+							SyntheticSeq->WaitOnExistingCompression();
+#endif
+
+							FSlotAnimationTrack SlotTrack;
+							SlotTrack.SlotName = FName(TEXT("DefaultGroup.DefaultSlot"));
+							FAnimSegment AnimSeg;
+							AnimSeg.SetAnimReference(SyntheticSeq);
+							AnimSeg.StartPos = 0.0f;
+							AnimSeg.AnimStartTime = 0.0f;
+							AnimSeg.AnimEndTime = 2.0f;
+							AnimSeg.AnimPlayRate = 1.0f;
+							SlotTrack.AnimTrack.AnimSegments.Add(AnimSeg);
+							// UAnimMontage constructs an empty default slot; replace it with the populated fixture track.
+							SyntheticRecoveryMontage->SlotAnimTracks.Reset();
+							SyntheticRecoveryMontage->SlotAnimTracks.Add(SlotTrack);
+							FCompositeSection DefaultSec;
+							DefaultSec.SectionName = FName(TEXT("Default"));
+							DefaultSec.NextSectionName = NAME_None;
+							DefaultSec.SetTime(0.0f);
+							SyntheticRecoveryMontage->CompositeSections.Add(DefaultSec);
+							PlayerLockOnAutomation::UTestMontageAccessHelper::SetMontageLength(SyntheticRecoveryMontage, 2.0f);
+
+							// The player finishes first; both tasks actually play, advance and dispatch engine events.
+							SyntheticRecoveryMontage->BlendIn.SetBlendTime(0.05f);
+							SyntheticRecoveryMontage->BlendOut.SetBlendTime(0.10f);
+							SyntheticRecoveryMontage->BlendOutTriggerTime = 0.10f;
+							UAnimMontage* PlayerMontage = DuplicateObject<UAnimMontage>(SyntheticRecoveryMontage, GetTransientPackage());
+							if (!TestEqual(TEXT("2C: Player montage has exactly one populated slot"), PlayerMontage->SlotAnimTracks.Num(), 1) ||
+								!TestEqual(TEXT("2C: Player montage slot has exactly one animation segment"), PlayerMontage->SlotAnimTracks[0].AnimTrack.AnimSegments.Num(), 1))
+							{
+								return false;
+							}
+							PlayerMontage->SlotAnimTracks[0].AnimTrack.AnimSegments[0].AnimEndTime = 1.0f;
+							PlayerLockOnAutomation::UTestMontageAccessHelper::SetMontageLength(PlayerMontage, 1.0f);
+
+							USkeletalMeshComponent* PlayerMesh = RecoveryPlayer->GetMesh();
+							USkeletalMeshComponent* VictimMesh = RecoveryEnemy->GetMesh();
+							PlayerMesh->VisibilityBasedAnimTickOption = EVisibilityBasedAnimTickOption::OnlyTickMontagesWhenNotRendered;
+							VictimMesh->VisibilityBasedAnimTickOption = EVisibilityBasedAnimTickOption::OnlyTickMontagesWhenNotRendered;
+							UAnimInstance* PlayerAnim = NewObject<UAnimInstance>(PlayerMesh);
+							UAnimInstance* VictimAnim = NewObject<UAnimInstance>(VictimMesh);
+							PlayerAnim->InitializeMontageOnly();
+							VictimAnim->InitializeMontageOnly();
+							PlayerAnim->CurrentSkeleton = SharedSkeleton;
+							VictimAnim->CurrentSkeleton = SharedSkeleton;
+							PlayerMesh->AnimScriptInstance = PlayerAnim;
+							VictimMesh->AnimScriptInstance = VictimAnim;
+
+							constexpr float StepSeconds = 1.0f / 60.0f;
+							if (!TestTrue(TEXT("2C: Player uses montage-only updates without pose evaluation"), PlayerMesh->ShouldOnlyTickMontages(StepSeconds)) ||
+								!TestTrue(TEXT("2C: Victim uses montage-only updates without pose evaluation"), VictimMesh->ShouldOnlyTickMontages(StepSeconds)))
+							{
+								return false;
+							}
+
+							const FGameplayAbilitySpecHandle VictimHandle = RecoveryEnemyASC->GiveAbility(
+								FGameplayAbilitySpec(UEnemyVictimExecutionAbility::StaticClass(), 1, INDEX_NONE, RecoveryEnemy));
+							FGameplayAbilitySpec* VictimSpec = RecoveryEnemyASC->FindAbilitySpecFromHandle(VictimHandle);
+							UEnemyVictimExecutionAbility* VictimAbility = VictimSpec ? Cast<UEnemyVictimExecutionAbility>(VictimSpec->GetPrimaryInstance()) : nullptr;
+							const FGameplayAbilitySpecHandle BackstabHandle = RecoveryPlayerASC->GiveAbility(
+								FGameplayAbilitySpec(UPlayerBackstabExecutionAbility::StaticClass(), 1, INDEX_NONE, RecoveryPlayer));
+							FGameplayAbilitySpec* BackstabSpec = RecoveryPlayerASC->FindAbilitySpecFromHandle(BackstabHandle);
+							UPlayerBackstabExecutionAbility* BackstabAbility = BackstabSpec ? Cast<UPlayerBackstabExecutionAbility>(BackstabSpec->GetPrimaryInstance()) : nullptr;
+							if (!TestNotNull(TEXT("2C: Native victim ability granted"), VictimAbility) ||
+								!TestNotNull(TEXT("2C: Native player backstab ability granted"), BackstabAbility))
+							{
+								return false;
+							}
+							VictimAbility->SetTestVictimMontages(SyntheticRecoveryMontage, SyntheticRecoveryMontage);
+							VictimAbility->SetTestBypassMontageActiveCheck(false);
+							BackstabAbility->SetTestExecutionMontage(PlayerMontage);
+							BackstabAbility->SetTestDamageGameplayEffectClass(UTestProjectileDamageGE::StaticClass());
+							BackstabAbility->SetTestExecutionDistances(0.0f, 250.0f);
+							BackstabAbility->SetTestMaxBackAngleDegrees(60.0f);
+							BackstabAbility->SetTestSkipMontageTaskActivation(false);
+
+							if (!TestTrue(TEXT("2C: Player backstab activates through ASC"), RecoveryPlayerASC->TryActivateAbility(BackstabHandle)) ||
+								!TestTrue(TEXT("2C: Player ability remains active after real montage startup"), BackstabAbility->IsActive()) ||
+								!TestTrue(TEXT("2C: Paired request activates victim ability"), VictimAbility->IsActive()))
+							{
+								return false;
+							}
+							UExecutionLockContext* ExecContext = BackstabAbility->GetTestExecutionContext();
+							if (!TestNotNull(TEXT("2C: Player created execution context"), ExecContext))
+							{
+								return false;
+							}
+							TestTrue(TEXT("2C: Victim accepted the player's real session"), ExecContext->IsVictimAccepted());
+							TestTrue(TEXT("2C: Player owns PlayerLocked during execution"), RecoveryPlayerASC->HasMatchingGameplayTag(PlayerLockedTag));
+							TestNotNull(TEXT("2C: Player montage has a real engine instance"), PlayerAnim->GetActiveInstanceForMontage(PlayerMontage));
+							TestTrue(TEXT("2C: Paired execution retains the target"), RecoveryPlayer->TriggerTestValidateCurrentLockedTarget());
+
+							// Use the ASC event listeners installed by the real player activation.
+							const FGameplayTag HitTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Action.Execution.Hit")), false);
+							const FGameplayTag VictimStartTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Action.Execution.Request.VictimStart")), false);
+							FGameplayEventData Payload;
+							Payload.EventTag = HitTag;
+							Payload.Instigator = RecoveryPlayer;
+							Payload.Target = RecoveryPlayer;
+							Payload.OptionalObject = PlayerMontage;
+							RecoveryPlayerASC->HandleGameplayEvent(HitTag, &Payload);
+							TestEqual(TEXT("2C: Hit resolves through the real damage scope"), ExecContext->GetHitState(), EExecutionSessionHitState::NonLethal);
+							TestFalse(TEXT("2C: Hit alone does not start victim presentation"), VictimAbility->IsTestVictimPresentationStarted());
+							Payload.EventTag = VictimStartTag;
+							RecoveryPlayerASC->HandleGameplayEvent(VictimStartTag, &Payload);
+							if (!TestTrue(TEXT("2C: VictimStart starts actual native recovery"), VictimAbility->IsNonLethalRecoveryFrom(RecoveryPlayer)))
+							{
+								return false;
+							}
+							TestTrue(TEXT("2C: Victim synchronously acknowledged the handoff"), ExecContext->IsVictimReleased());
+							const int32 VictimInstanceID = VictimAbility->GetTestActiveVictimMontageInstanceID();
+							TestNotEqual(TEXT("2C: Recovery has a real montage instance ID"), VictimInstanceID, static_cast<int32>(INDEX_NONE));
+
+							auto AdvanceMontages = [PlayerAnim, VictimAnim]()
+							{
+								// Public montage-only update path: real weights, advance, blend-out and ended delegates.
+								for (UAnimInstance* Anim : { PlayerAnim, VictimAnim })
+								{
+									Anim->UpdateAnimation(1.0f / 60.0f, false);
+									Anim->DispatchQueuedAnimEvents();
+								}
+							};
+							for (int32 Frame = 0; Frame < 180 && BackstabAbility->IsActive(); ++Frame)
+							{
+								AdvanceMontages();
+							}
+							TestFalse(TEXT("2C: Player naturally ends via its montage delegate"), BackstabAbility->IsActive());
+							TestFalse(TEXT("2C: Player EndAbility removes its owned PlayerLocked"), RecoveryPlayerASC->HasMatchingGameplayTag(PlayerLockedTag));
+							TestFalse(TEXT("2C: Player EndAbility invalidates the shared context"), ExecContext->IsActive());
+							TestTrue(TEXT("2C: Victim continues after the player and context end"), VictimAbility->IsActive());
+							TestTrue(TEXT("2C: Independent recovery still belongs to the source player"), VictimAbility->IsNonLethalRecoveryFrom(RecoveryPlayer));
+							TestTrue(TEXT("2C: Victim still holds Invulnerable during recovery"), RecoveryEnemyASC->HasMatchingGameplayTag(InvulnerableTag));
+							TestTrue(TEXT("2C: Victim still holds VictimLocked during recovery"), RecoveryEnemyASC->HasMatchingGameplayTag(VictimLockedTag));
+							TestTrue(TEXT("2C: Native recovery retains target after PlayerLocked removal"), RecoveryPlayer->TriggerTestValidateCurrentLockedTarget());
+							TestEqual(TEXT("2C: Same target retained while the context is inactive"), RecoveryPlayer->GetLockedTarget(), RecoveryEnemy);
+
+							bool bRetainedDuringVictimBlendOut = false;
+							for (int32 Frame = 0; Frame < 180 && VictimAbility->IsActive(); ++Frame)
+							{
+								AdvanceMontages();
+								FAnimMontageInstance* Instance = VictimAnim->GetMontageInstanceForID(VictimInstanceID);
+								if (VictimAbility->IsActive() && Instance && Instance->IsStopped())
+								{
+									bRetainedDuringVictimBlendOut = true;
+									TestTrue(TEXT("2C: Real victim blend-out retains lock until Completed"), RecoveryPlayer->TriggerTestValidateCurrentLockedTarget());
+								}
+							}
+							TestTrue(TEXT("2C: Observed active recovery during real victim blend-out"), bRetainedDuringVictimBlendOut);
+							TestFalse(TEXT("2C: Victim naturally ends via the actual montage ended delegate"), VictimAbility->IsActive());
+							TestNull(TEXT("2C: Completed victim montage instance was removed by the engine"), VictimAnim->GetMontageInstanceForID(VictimInstanceID));
+							TestFalse(TEXT("2C: Completed recovery no longer qualifies for retention"), VictimAbility->IsNonLethalRecoveryFrom(RecoveryPlayer));
+							TestFalse(TEXT("2C: Invulnerable removed on actual completion"), RecoveryEnemyASC->HasMatchingGameplayTag(InvulnerableTag));
+							TestFalse(TEXT("2C: VictimLocked removed on actual completion"), RecoveryEnemyASC->HasMatchingGameplayTag(VictimLockedTag));
+							TestTrue(TEXT("2C: Ordinary candidate validation takes over after recovery"), RecoveryPlayer->TriggerTestValidateCurrentLockedTarget());
+							TestEqual(TEXT("2C: Ordinary handoff preserves the same target"), RecoveryPlayer->GetLockedTarget(), RecoveryEnemy);
+							RecoveryPlayer->TestClearLockedTarget();
+							TestNull(TEXT("2C: Manual unlock clears the target"), RecoveryPlayer->GetLockedTarget());
+							TestFalse(TEXT("2C: Validation does not auto-relock"), RecoveryPlayer->TriggerTestValidateCurrentLockedTarget());
+
+							RecoveryEnemyASC->ClearAbility(VictimHandle);
+							RecoveryPlayerASC->ClearAbility(BackstabHandle);
+							RecoveryPlayer->SetTestLockOnProjectionHook({});
+							RecoveryController->UnPossess();
+							RecoveryController->Destroy();
+							RecoveryPlayer->Destroy();
+							RecoveryEnemy->Destroy();
+							RecoveryFloor->Destroy();
+						}
 
 						// Case 3: Paired execution lock (PlayerLocked + VictimLocked) + Invulnerable -> succeeds and retains target!
 						PlayerAsc->AddLooseGameplayTag(PlayerLockedTag);

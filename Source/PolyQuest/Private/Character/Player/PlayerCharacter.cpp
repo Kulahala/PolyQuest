@@ -35,6 +35,7 @@
 
 #include "AbilitySystem/Abilities/PlayerGuardAbility.h"
 #include "AbilitySystem/Abilities/PlayerParryAbility.h"
+#include "AbilitySystem/Abilities/EnemyVictimExecutionAbility.h"
 #include "AbilitySystem/CharacterAttributeSet.h"
 #include "Combat/Equipment/MeleeWeaponDefinition.h"
 #include "Combat/Equipment/WeaponEquipmentComponent.h"
@@ -50,6 +51,78 @@
 namespace
 {
 	constexpr float LockOnRetentionMarginRatio = 0.15f;
+
+	bool CanRetainVictimRecoveryLockedTarget(
+		const APlayerCharacter* PlayerCharacter,
+		const AEnemyCharacter* CurrentTarget,
+		const UAbilitySystemComponent* SourceASC)
+	{
+		if (!PlayerCharacter || !CurrentTarget || !SourceASC)
+		{
+			return false;
+		}
+
+		const APlayerController* PlayerController = Cast<APlayerController>(PlayerCharacter->GetController());
+		const UWorld* CurrentWorld = PlayerCharacter->GetWorld();
+		if (!PlayerController || !CurrentWorld || CurrentWorld != CurrentTarget->GetWorld())
+		{
+			return false;
+		}
+
+		if (PlayerCharacter->IsActorBeingDestroyed() || CurrentTarget->IsActorBeingDestroyed())
+		{
+			return false;
+		}
+
+		const UAbilitySystemComponent* TargetASC = CurrentTarget->GetAbilitySystemComponent();
+		if (!TargetASC)
+		{
+			return false;
+		}
+
+		const FGameplayTag DeadTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Status.Dead")), false);
+		if (!DeadTag.IsValid())
+		{
+			return false;
+		}
+
+		if (SourceASC->HasMatchingGameplayTag(DeadTag) || CurrentTarget->IsDead() || TargetASC->HasMatchingGameplayTag(DeadTag))
+		{
+			return false;
+		}
+
+		if (!PlayerCharacter->GetClass()->ImplementsInterface(UCombatTeamAgent::StaticClass())
+			|| !CurrentTarget->GetClass()->ImplementsInterface(UCombatTeamAgent::StaticClass()))
+		{
+			return false;
+		}
+
+		const FGameplayTag SourceTeamTag = ICombatTeamAgent::Execute_GetCombatTeamTag(PlayerCharacter);
+		const FGameplayTag TargetTeamTag = ICombatTeamAgent::Execute_GetCombatTeamTag(CurrentTarget);
+		if (!SourceTeamTag.IsValid() || !TargetTeamTag.IsValid() || SourceTeamTag.MatchesTagExact(TargetTeamTag))
+		{
+			return false;
+		}
+
+		for (const FGameplayAbilitySpec& Spec : TargetASC->GetActivatableAbilities())
+		{
+			const UEnemyVictimExecutionAbility* VictimAbility = Cast<UEnemyVictimExecutionAbility>(Spec.GetPrimaryInstance());
+			if (!VictimAbility)
+			{
+				VictimAbility = Cast<UEnemyVictimExecutionAbility>(Spec.Ability);
+			}
+
+			if (VictimAbility && VictimAbility->IsActive() && VictimAbility->GetAvatarActorFromActorInfo() == CurrentTarget)
+			{
+				if (VictimAbility->IsNonLethalRecoveryFrom(PlayerCharacter))
+				{
+					return true;
+				}
+			}
+		}
+
+		return false;
+	}
 }
 
 APlayerCharacter::APlayerCharacter()
@@ -1551,8 +1624,9 @@ APlayerCharacter::ELockOnValidationResult APlayerCharacter::ValidateCurrentLocke
 
 	const bool bCandidateValid = FCombatProjectileTargeting::IsValidTargetCandidate(this, SourceASC, CurrentTarget);
 	const bool bCanRetainExecution = !bCandidateValid && CanRetainExecutionLockedTarget(CurrentTarget, SourceASC);
+	const bool bCanRetainRecovery = !bCandidateValid && !bCanRetainExecution && CanRetainVictimRecoveryLockedTarget(this, CurrentTarget, SourceASC);
 
-	if ((!bCandidateValid && !bCanRetainExecution) || !CacheCurrentLockedTargetCandidate())
+	if ((!bCandidateValid && !bCanRetainExecution && !bCanRetainRecovery) || !CacheCurrentLockedTargetCandidate())
 	{
 		ClearLockedTarget();
 		return ELockOnValidationResult::Cleared;

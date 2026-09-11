@@ -8,6 +8,7 @@
 class AEnemyCharacter;
 class UAbilityTask_PlayMontageAndWait;
 class UAbilityTask_WaitGameplayEvent;
+class UAnimInstance;
 class UAnimMontage;
 class UExecutionLockContext;
 
@@ -46,6 +47,9 @@ public:
 	/** True if victim has received lethal execution damage and is awaiting Release to finalize death. */
 	bool IsDeathPending() const { return bDeathPending; }
 
+	/** Returns true only if this ability is active and actively in non-lethal recovery from the specified source actor. */
+	bool IsNonLethalRecoveryFrom(const AActor* SourceActor) const;
+
 #if WITH_DEV_AUTOMATION_TESTS
 	const FGameplayTagContainer& GetTestActivationOwnedTags() const { return ActivationOwnedTags; }
 	const FGameplayTagContainer& GetTestActivationBlockedTags() const { return ActivationBlockedTags; }
@@ -66,19 +70,54 @@ public:
 		FrontExecutionVictimMontage = InFront;
 		BackstabExecutionVictimMontage = InBackstab;
 	}
-	void SetTestLaunchNonLethalOnRelease(bool bLaunch) { bLaunchNonLethalOnRelease = bLaunch; }
-	bool GetTestLaunchNonLethalOnRelease() const { return bLaunchNonLethalOnRelease; }
 	UAnimMontage* GetTestActiveVictimMontage() const { return ActiveVictimMontage.Get(); }
 	UAnimMontage* GetTestPendingVictimMontage() const { return PendingVictimMontage.Get(); }
 	UAbilityTask_PlayMontageAndWait* GetTestVictimMontageTask() const { return VictimMontageTask.Get(); }
 	bool IsTestVictimPresentationStarted() const { return bVictimPresentationStarted; }
 	void TestTriggerVictimStartEvent(const FGameplayEventData& Payload) { OnVictimStartReceived(Payload); }
-	void SetTestInvalidateWaitVictimStartTaskAfterReady(bool bInvalidate) { bTestInvalidateWaitVictimStartTaskAfterReady = bInvalidate; }
+	void SetTestInvalidateWaitVictimStartTaskAfterReady(bool bInvalidate);
 	void TestTriggerVictimMontageCompleted() { OnVictimMontageCompleted(); }
 	void TestTriggerVictimMontageBlendOut() { OnVictimMontageBlendOut(); }
+	void TestTriggerVictimMontageInterrupted() { OnVictimMontageInterrupted(); }
+	bool IsTestNonLethalRecoveryActive() const { return bNonLethalRecoveryActive; }
+	bool GetTestHasSavedCanWalkOffLedges() const { return bHasSavedCanWalkOffLedges; }
+	bool GetTestSavedCanWalkOffLedges() const { return bSavedCanWalkOffLedges; }
+	int32 GetTestActiveVictimMontageInstanceID() const { return ActiveVictimMontageInstanceID; }
+	void SetTestActiveVictimMontageInstanceID(int32 InID) { ActiveVictimMontageInstanceID = InID; }
+	void SetTestActiveVictimMontage(UAnimMontage* InMontage) { ActiveVictimMontage = InMontage; }
+	void TestStopVictimMontagePresentation(bool bIsNaturalCompletion) { StopVictimMontagePresentation(bIsNaturalCompletion); }
+	void TestTriggerMovementModeChanged(EMovementMode PrevMode, uint8 PrevCustomMode);
+	void SetTestBypassMontageActiveCheck(bool bBypass) { bTestBypassMontageActiveCheck = bBypass; }
+	bool GetTestBypassMontageActiveCheck() const { return bTestBypassMontageActiveCheck; }
+	void SetTestBoundAnimInstance(UAnimInstance* InAnimInstance) { BoundAnimInstance = InAnimInstance; }
+	UAnimInstance* GetTestBoundAnimInstance() const { return BoundAnimInstance.Get(); }
+	void SetTestCancelDuringStartupMovementMode(bool bCancel) { bTestCancelDuringStartupMovementMode = bCancel; }
+	void SetTestCancelDuringStartupReadyForActivation(bool bCancel) { bTestCancelDuringStartupReadyForActivation = bCancel; }
+	void SetTestNonLethalRecovery(bool bActive, const AActor* InSourceActor)
+	{
+		bNonLethalRecoveryActive = bActive;
+		NonLethalRecoverySourceActor = InSourceActor;
+	}
+	void SetTestDeathPending(bool bInDeathPending) { bDeathPending = bInDeathPending; }
+	void SetTestAbilityActive(bool bInActive)
+	{
+		bIsActive = bInActive;
+	}
+	void SetTestActorInfo(FGameplayAbilitySpecHandle InHandle, const FGameplayAbilityActorInfo* InActorInfo)
+	{
+		SetCurrentActorInfo(InHandle, InActorInfo);
+	}
+	int32 GetTestStartupVictimMontageInstanceID() const { return StartupVictimMontageInstanceID; }
+	UAnimMontage* GetTestPendingStartupVictimMontage() const { return PendingStartupVictimMontage.Get(); }
+	void SetTestOnMontageStartedHook(TFunction<void(UAnimMontage*)> InHook) { TestOnMontageStartedHook = InHook; }
 private:
+	TFunction<void(UAnimMontage*)> TestOnMontageStartedHook;
 	bool bTestInvalidateWaitReleaseTaskAfterReady = false;
 	bool bTestInvalidateWaitVictimStartTaskAfterReady = false;
+	bool bTestBypassMontageActiveCheck = false;
+	bool bTestCancelDuringStartupMovementMode = false;
+	bool bTestCancelDuringStartupReadyForActivation = false;
+	TWeakObjectPtr<UAnimInstance> BoundAnimInstance;
 public:
 #endif
 
@@ -96,14 +135,11 @@ protected:
 		bool bReplicateEndAbility,
 		bool bWasCancelled) override;
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Execution", meta = (ToolTip = "正面处决时受害者播放的可选配合动画 Montage。"))
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Execution", meta = (ToolTip = "正面处决抽刀后受害者播放的唯一作者化恢复动画 Montage（支持原地或 Root Motion 动画）。"))
 	TObjectPtr<UAnimMontage> FrontExecutionVictimMontage;
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Execution", meta = (ToolTip = "背刺处决时受害者播放的可选配合动画 Montage。"))
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Execution", meta = (ToolTip = "背刺处决抽刀后受害者播放的唯一作者化恢复动画 Montage（支持原地或 Root Motion 动画）。"))
 	TObjectPtr<UAnimMontage> BackstabExecutionVictimMontage;
-
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Execution", meta = (ToolTip = "非致死处决释放时是否派发击飞受击反应。默认开启。"))
-	bool bLaunchNonLethalOnRelease = true;
 
 private:
 	UFUNCTION()
@@ -123,6 +159,15 @@ private:
 
 	UFUNCTION()
 	void OnVictimMontageCancelled();
+
+	UFUNCTION()
+	void HandleOnMontageStarted(UAnimMontage* Montage);
+
+	UFUNCTION()
+	void OnMovementModeChanged(
+		ACharacter* Character,
+		EMovementMode PrevMovementMode,
+		uint8 PreviousCustomMode);
 
 	void StopVictimMontagePresentation(bool bIsNaturalCompletion);
 
@@ -149,6 +194,9 @@ private:
 	UPROPERTY(Transient)
 	TObjectPtr<UAnimMontage> ActiveVictimMontage;
 
+	UPROPERTY(Transient)
+	TWeakObjectPtr<const AActor> NonLethalRecoverySourceActor;
+
 	FGameplayTag VictimAbilityTag;
 	FGameplayTag FrontRequestEventTag;
 	FGameplayTag BackstabRequestEventTag;
@@ -174,4 +222,14 @@ private:
 	bool bAddedDeathPendingTag = false;
 	bool bEndAbilityInProgress = false;
 	bool bVictimPresentationStarted = false;
+	bool bNonLethalRecoveryActive = false;
+	bool bSavedCanWalkOffLedges = false;
+	bool bHasSavedCanWalkOffLedges = false;
+	int32 ActiveVictimMontageInstanceID = INDEX_NONE;
+	int32 StartupVictimMontageInstanceID = INDEX_NONE;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UAnimMontage> PendingStartupVictimMontage;
+
+	bool bStartupCancellationPending = false;
 };

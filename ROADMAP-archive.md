@@ -1511,3 +1511,17 @@ TODO-03A3E World Pickup Interaction Prompt v1
 - **验证证据**：执行者报告 Rider 对四个批准路径无错误、批准范围 `git diff --check` 通过；用户确认 `PolyQuestEditor (Development Editor)` 编译、`PolyQuest.Combat.EnemyLaunchReactionRootMotion`、`PolyQuest.Combat.HitReaction`、`PolyQuest.Combat.EnemyStanceBreakRateWindow`、`PolyQuest.Enemy.RootMotionFacing` Automation 成功，Enemy Launch Editor readback 与 Scene01 PIE 通过。Main 按 `ue-strict-review` 完成初审及定向修复后的 delta review，未发现 P0/P1/P2 blocker。上述证据不扩写为 clean-checkout authored baseline、网络或 packaging/发布证明。
 - **债务与后续指针**：本切片没有接受的阻塞性债务。下一 presentation 候选为条件性 `TODO-07B14: Player Dodge Motion-Warp Distance And Asymmetric Air-Reaction Protection v1`；它需要独立的 authored trigger、计划、验证、review 和提交门禁，且不阻塞 `TODO-03C`。
 - **提交边界**：本阶段提交仅包含上述四个批准 Source/Test 路径和 `plan.md`、`ARCHITECTURE.md`、`ROADMAP.md`、本归档文档；所有用户-owned Content/Config/Blueprint/AnimBP/Montage/地图、导入资源与其他 WIP 均排除。提交哈希以 Git 历史为准。
+
+
+## TODO-05A1-F Non-Lethal Execution Victim Root-Motion Handoff v1 Closeout (2026-09-12; user-approved source/documentation commit)
+
+> 本节记录本阶段最终运行时契约与验证收口，基线 HEAD 为 `09db3a05d740efb6cae1d7be53bd4d9a244db080`，实现基于用户已有未提交工作树。历史修订与完整白名单保留在 plan.md；本节不替代 Source、配置、资产或 Editor 状态。
+
+- **最终行为**：处决激活只锁定受害者；Hit 只通过既有 FMeleeHitResolver/Damage GameplayEffect 结算伤害，致死先持有 DeathPending。抽刀处 VictimStart 才同步确认交接：存活目标从时间 0 播放方向快照对应的完整 Victim Montage，致死目标进入原有 CommitExecutionDeath/布娃娃链。原地和 Root Motion 共用一个恢复生命周期；无 Section 跳转/切链、击飞策略开关、Enemy Launch 备用派发或新增 Motion Warp 距离控制。
+- **权属与清理**：GAS 继续拥有锁、无敌与恢复状态，CMC 负责 Walking 下的 Root Motion 消费及碰撞/地面/台阶。真实地面门禁、ledge 保存恢复、离开 Walking 取消和外部运动模式保全保持有效。恢复成功后只依赖 Victim 本地状态与 Montage；Player 自身结束和 Context 失效不提前结束恢复，真正 Completed 才收尾。异常停止按本次实例 ID 零秒执行，启动前取消、创建后取消及同资产重入均不恢复旧 Task 或误停新动作。
+- **锁定保持**：仅已锁定目标的活跃 Native Victim 恢复、且恢复来源为当前 Player 时保留锁定；普通无敌目标获取/切换规则不放宽，恢复期照常受屏幕与遮挡条件约束。恢复结束转回普通候选，主动解锁不自动吸回。
+- **退休范围**：用户确认唯一处决动画已移除旧 Release Notify 后，删除 UAnimNotify_PlayerExecutionRelease 头/源、Event.Action.Execution.Request.Release 注册行及两个 Player Ability 的旧入口 Task/callback/latch。保留仍参与交接与失败收敛的内部 Event.Action.Execution.Release、Context 释放确认及死亡清理；删除 bLaunchNonLethalOnRelease 和其专属派发/测试接口。
+- **真实回归与夹具修复**：Presentation 13C 覆盖新实例创建回调中的同步取消与同资产重入；13D 通过旧 Montage 原生停止回调覆盖新实例创建前取消及迟到新实例清理。Lock-On 2C 通过真实 ASC、合法 Hit/VictimStart 和公开动画更新推进 Player/Victim 的实际结束委托，验证 PlayerLocked 移除/Context 失效后的保锁与 Completed 交接。合成 Sequence 的 root/data-model/骨轨道/压缩等待、公开 BlendTime setter、默认空 Slot 清理及索引保护修复已纳入。
+- **验证证据**：本阶段已有用户编译和修复版 PIE 通过确认；用户此前确认 ExecutionVictimRootMotion、ExecutionReleaseOutcomes、ExecutionImpactFeedback 等相关 Automation 通过。最终附件 `c89f57c8-66fa-4d18-acd5-97f9fd53169b/pasted-text.txt` 的 Test Run 4 明确为 ExecutionVictimPresentation、Player.LockOn 两套 Success。Main 两测试文件 Rider 错误检查为 0，git diff --check 通过；Rider 不替代编译，两套运行结果也不扩写为同轮全量测试、自动化物理位移/视觉或打包证明。最后测试增量没有改变生产逻辑，沿用此前用户 PIE 证据。
+- **Main Fresh Review**：既有 P1/P2 经定向修复与真实回归闭环；本次两批限定 delta review 未发现新的 P0/P1/P2 blocker。有界 code-review-graph 基线与 HEAD 匹配；动态委托测试覆盖使用源码和用户收据，不由图谱 gap/risk 分数定论。无新增延期 blocker；Content authored baseline 沿用现有用户 WIP 边界。
+- **提交与后续**：用户已明确批准，仅提交 plan.md 第 3 节 15 个 Source/Test/Tag 路径及 ARCHITECTURE.md、ROADMAP.md、ROADMAP-archive.md、plan.md，共 19 路径。全部 Content/**、Config/Automation/Presets/1.json 与其他 WIP 排除，提交记录以 Git 历史为准。保留本阶段 plan.md；TODO-07B14 仍为独立条件候选，TODO-03C 仍有独立启动门禁。

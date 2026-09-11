@@ -12,6 +12,7 @@
 #include "Character/Enemy/EnemyCharacter.h"
 #include "Combat/Execution/ExecutionLockContext.h"
 #include "Components/SkeletalMeshComponent.h"
+#include "GameFramework/Character.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "PolyQuest.h"
 
@@ -48,7 +49,13 @@ UEnemyVictimExecutionAbility::UEnemyVictimExecutionAbility()
 {
 	InstancingPolicy = EGameplayAbilityInstancingPolicy::InstancedPerActor;
 	NetExecutionPolicy = EGameplayAbilityNetExecutionPolicy::ServerOnly;
-	bLaunchNonLethalOnRelease = true;
+	bNonLethalRecoveryActive = false;
+	bSavedCanWalkOffLedges = false;
+	bHasSavedCanWalkOffLedges = false;
+	ActiveVictimMontageInstanceID = INDEX_NONE;
+#if WITH_DEV_AUTOMATION_TESTS
+	bTestBypassMontageActiveCheck = false;
+#endif
 
 	VictimAbilityTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Action.Execution.Victim")), false);
 	FrontRequestEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Action.Execution.Request.Front")), false);
@@ -287,6 +294,26 @@ void UEnemyVictimExecutionAbility::ActivateAbility(
 {
 	bEndAbilityInProgress = false;
 	bInAuthorizedHitScope = false;
+	bNonLethalRecoveryActive = false;
+	bSavedCanWalkOffLedges = false;
+	bHasSavedCanWalkOffLedges = false;
+	ActiveVictimMontageInstanceID = INDEX_NONE;
+	StartupVictimMontageInstanceID = INDEX_NONE;
+	NonLethalRecoverySourceActor = nullptr;
+
+#if WITH_DEV_AUTOMATION_TESTS
+	if (const UEnemyVictimExecutionAbility* CDO = Cast<UEnemyVictimExecutionAbility>(GetClass()->GetDefaultObject()))
+	{
+		if (CDO->bTestBypassMontageActiveCheck)
+		{
+			bTestBypassMontageActiveCheck = true;
+		}
+		if (!BoundAnimInstance.IsValid() && CDO->BoundAnimInstance.IsValid())
+		{
+			BoundAnimInstance = CDO->BoundAnimInstance;
+		}
+	}
+#endif
 
 	AEnemyCharacter* EnemyCharacter = Cast<AEnemyCharacter>(ActorInfo ? ActorInfo->AvatarActor.Get() : nullptr);
 	UAbilitySystemComponent* CharacterASC = GetAbilitySystemComponentFromActorInfo();
@@ -384,7 +411,8 @@ void UEnemyVictimExecutionAbility::ActivateAbility(
 		? FrontRequestEventTag
 		: FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Action.Execution.Request.Front")), false);
 
-	PendingVictimMontage = (TriggerEventData && TriggerEventData->EventTag == FrontReqTag)
+	const bool bIsFrontRequest = (TriggerEventData && TriggerEventData->EventTag == FrontReqTag);
+	PendingVictimMontage = bIsFrontRequest
 		? FrontExecutionVictimMontage
 		: BackstabExecutionVictimMontage;
 	bVictimPresentationStarted = false;
@@ -486,7 +514,17 @@ void UEnemyVictimExecutionAbility::OnVictimStartReceived(FGameplayEventData Payl
 		return;
 	}
 
-	if (Context->IsReleaseSent() || Context->IsVictimReleased())
+	// 1. Verify Hit has been resolved before VictimStart
+	const bool bHitResolved = (Context->GetHitState() == EExecutionSessionHitState::NonLethal ||
+		Context->GetHitState() == EExecutionSessionHitState::DeathPending);
+	if (!bHitResolved)
+	{
+		// Out-of-order VictimStart (before Hit) must be rejected without consuming success flag
+		return;
+	}
+
+	// 2. Must have begun release transaction from Player, not already released, not cancelled
+	if (!Context->IsReleaseSent() || Context->IsVictimReleased() || Context->WasReleaseCancelled())
 	{
 		return;
 	}
@@ -518,54 +556,379 @@ void UEnemyVictimExecutionAbility::OnVictimStartReceived(FGameplayEventData Payl
 	}
 
 	bVictimPresentationStarted = true;
+	Context->MarkVictimReleased(this);
 
-	UAnimMontage* MontageToPlay = PendingVictimMontage.Get();
 	AEnemyCharacter* EnemyCharacter = Cast<AEnemyCharacter>(AvatarActor);
-	if (MontageToPlay && EnemyCharacter && !EnemyCharacter->IsActorBeingDestroyed())
+	const bool bCommitDeath = bDeathPending || (EnemyCharacter && EnemyCharacter->IsDeathPending()) || (Context->GetHitState() == EExecutionSessionHitState::DeathPending);
+	if (bCommitDeath)
+	{
+		EndAbility(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, true, false);
+		return;
+	}
+
+	// 3. Non-lethal: full Root Motion recovery montage from time 0 (strictly use snapshot from activation)
+	NonLethalRecoverySourceActor = ContextSourceActor;
+	UAnimMontage* MontageToPlay = PendingVictimMontage.Get();
+	UCharacterMovementComponent* CMC = EnemyCharacter ? EnemyCharacter->GetCharacterMovement() : nullptr;
+	UAnimInstance* AnimInstance = nullptr;
+	if (EnemyCharacter)
 	{
 		if (USkeletalMeshComponent* Mesh = EnemyCharacter->GetMesh())
 		{
-			if (UAnimInstance* AnimInstance = Mesh->GetAnimInstance())
+			AnimInstance = Mesh->GetAnimInstance();
+		}
+	}
+#if WITH_DEV_AUTOMATION_TESTS
+	if (!AnimInstance && BoundAnimInstance.IsValid())
+	{
+		AnimInstance = BoundAnimInstance.Get();
+	}
+	if (!AnimInstance)
+	{
+		if (const UEnemyVictimExecutionAbility* CDO = Cast<UEnemyVictimExecutionAbility>(GetClass()->GetDefaultObject()))
+		{
+			if (CDO->BoundAnimInstance.IsValid())
 			{
-				ActiveVictimMontage = MontageToPlay;
-				VictimMontageTask = UAbilityTask_PlayMontageAndWait::CreatePlayMontageAndWaitProxy(
-					this,
-					NAME_None,
-					MontageToPlay,
-					1.0f,
-					NAME_None,
-					false /* bStopWhenAbilityEnds = false */);
-				if (VictimMontageTask)
-				{
-					VictimMontageTask->OnCompleted.AddDynamic(this, &UEnemyVictimExecutionAbility::OnVictimMontageCompleted);
-					VictimMontageTask->OnBlendOut.AddDynamic(this, &UEnemyVictimExecutionAbility::OnVictimMontageBlendOut);
-					VictimMontageTask->OnInterrupted.AddDynamic(this, &UEnemyVictimExecutionAbility::OnVictimMontageInterrupted);
-					VictimMontageTask->OnCancelled.AddDynamic(this, &UEnemyVictimExecutionAbility::OnVictimMontageCancelled);
-					VictimMontageTask->ReadyForActivation();
-				}
+				AnimInstance = CDO->BoundAnimInstance.Get();
 			}
 		}
+	}
+#endif
+
+	const bool bHasSlotTracks = MontageToPlay && (MontageToPlay->SlotAnimTracks.Num() > 0);
+	const float PlayLength = MontageToPlay ? MontageToPlay->GetPlayLength() : 0.0f;
+	const bool bPlayLengthValid = FMath::IsFinite(PlayLength) && PlayLength > 0.0f;
+
+	const bool bModeAllowedForRecovery = CMC && (
+		(bMovementLockedByVictim && CMC->MovementMode == MOVE_None) ||
+		(CMC->MovementMode == MOVE_Walking)
+	);
+
+	bool bHasValidFloor = false;
+	if (bModeAllowedForRecovery)
+	{
+		const FVector CapsuleLocation = CMC->UpdatedComponent ? CMC->UpdatedComponent->GetComponentLocation() : EnemyCharacter->GetActorLocation();
+		FFindFloorResult FloorResult;
+		CMC->FindFloor(CapsuleLocation, FloorResult, false /* bCanUseCachedLocation = false: force real downward sweep */);
+		bHasValidFloor = FloorResult.IsWalkableFloor();
+	}
+
+	const bool bCanHandoff = MontageToPlay && EnemyCharacter && !EnemyCharacter->IsActorBeingDestroyed() &&
+		AnimInstance && CMC && bModeAllowedForRecovery && bHasSlotTracks && bPlayLengthValid && bHasValidFloor;
+
+	if (!bCanHandoff)
+	{
+		NonLethalRecoverySourceActor = nullptr;
+		UE_LOG(LogPolyQuest, Warning, TEXT("EnemyVictimExecutionAbility for '%s' cannot handoff victim montage '%s' (ModeAllowed: %d, HasSlotTracks: %d, PlayLengthValid: %d [%.2f], ValidFloor: %d). Cleaning up."),
+			*GetNameSafe(EnemyCharacter), *GetNameSafe(MontageToPlay), bModeAllowedForRecovery, bHasSlotTracks, bPlayLengthValid, PlayLength, bHasValidFloor);
+		EndAbility(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, true, false);
+		return;
+	}
+
+	if (WaitReleaseTask)
+	{
+		WaitReleaseTask->EndTask();
+		WaitReleaseTask = nullptr;
+	}
+	if (WaitVictimStartTask)
+	{
+		WaitVictimStartTask->EndTask();
+		WaitVictimStartTask = nullptr;
+	}
+
+	CMC->StopMovementImmediately();
+	bSavedCanWalkOffLedges = CMC->bCanWalkOffLedges;
+	bHasSavedCanWalkOffLedges = true;
+	CMC->bCanWalkOffLedges = false;
+
+	EnemyCharacter->MovementModeChangedDelegate.AddUniqueDynamic(this, &UEnemyVictimExecutionAbility::OnMovementModeChanged);
+	CMC->SetMovementMode(MOVE_Walking);
+
+#if WITH_DEV_AUTOMATION_TESTS
+	if (bTestCancelDuringStartupMovementMode)
+	{
+		CancelAbility(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, true);
+	}
+#endif
+
+	if (!IsActive() || bEndAbilityInProgress)
+	{
+		return;
+	}
+
+	VictimMontageTask = UAbilityTask_PlayMontageAndWait::CreatePlayMontageAndWaitProxy(
+		this,
+		NAME_None,
+		MontageToPlay,
+		1.0f,
+		NAME_None,
+		false /* bStopWhenAbilityEnds = false */,
+		1.0f  /* AnimRootMotionTranslationScale */,
+		0.0f  /* StartTimeSeconds = 0.0f */,
+		true  /* bAllowInterruptAfterBlendOut = true */);
+
+	if (VictimMontageTask)
+	{
+		VictimMontageTask->OnCompleted.AddDynamic(this, &UEnemyVictimExecutionAbility::OnVictimMontageCompleted);
+		VictimMontageTask->OnBlendOut.AddDynamic(this, &UEnemyVictimExecutionAbility::OnVictimMontageBlendOut);
+		VictimMontageTask->OnInterrupted.AddDynamic(this, &UEnemyVictimExecutionAbility::OnVictimMontageInterrupted);
+		VictimMontageTask->OnCancelled.AddDynamic(this, &UEnemyVictimExecutionAbility::OnVictimMontageCancelled);
+
+		// Establish presentation ownership and startup tracking prior to activation so synchronous cancel can cleanly stop the montage
+		PendingStartupVictimMontage = MontageToPlay;
+		bStartupCancellationPending = false;
+		ActiveVictimMontage = MontageToPlay;
+		ActiveVictimMontageInstanceID = INDEX_NONE;
+		StartupVictimMontageInstanceID = INDEX_NONE;
+
+		if (AnimInstance)
+		{
+			AnimInstance->OnMontageStarted.AddUniqueDynamic(this, &UEnemyVictimExecutionAbility::HandleOnMontageStarted);
+		}
+
+#if WITH_DEV_AUTOMATION_TESTS
+		if (bTestCancelDuringStartupReadyForActivation)
+		{
+			CancelAbility(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, true);
+		}
+#endif
+
+		if (!IsActive() || bEndAbilityInProgress || bStartupCancellationPending)
+		{
+			if (AnimInstance)
+			{
+				AnimInstance->OnMontageStarted.RemoveDynamic(this, &UEnemyVictimExecutionAbility::HandleOnMontageStarted);
+			}
+			PendingStartupVictimMontage = nullptr;
+			StartupVictimMontageInstanceID = INDEX_NONE;
+			bStartupCancellationPending = false;
+			ActiveVictimMontage = nullptr;
+			ActiveVictimMontageInstanceID = INDEX_NONE;
+			return;
+		}
+
+#if WITH_DEV_AUTOMATION_TESTS
+		if (!bTestBypassMontageActiveCheck)
+#endif
+		{
+			VictimMontageTask->ReadyForActivation();
+		}
+
+		if (AnimInstance)
+		{
+			AnimInstance->OnMontageStarted.RemoveDynamic(this, &UEnemyVictimExecutionAbility::HandleOnMontageStarted);
+		}
+
+		if (!IsActive() || bEndAbilityInProgress || bStartupCancellationPending)
+		{
+			// Ability was cancelled/ended while inside ReadyForActivation call!
+			// If a new instance was created for this specific startup call, ensure it is cleanly stopped with 0.0s blend.
+			// CONTRACT: Strictly stop only the confirmed instance ID for this activation; NEVER fallback to asset search!
+			if (AnimInstance && PendingStartupVictimMontage)
+			{
+				const int32 TargetInstanceID = (ActiveVictimMontageInstanceID != INDEX_NONE)
+					? ActiveVictimMontageInstanceID
+					: StartupVictimMontageInstanceID;
+
+				if (TargetInstanceID != INDEX_NONE)
+				{
+					FAnimMontageInstance* ResidualInstance = AnimInstance->GetMontageInstanceForID(TargetInstanceID);
+					if (ResidualInstance && ResidualInstance->Montage == PendingStartupVictimMontage && !ResidualInstance->IsStopped())
+					{
+						FMontageBlendSettings BlendOutSettings;
+						BlendOutSettings.Blend = PendingStartupVictimMontage->BlendOut;
+						BlendOutSettings.Blend.BlendTime = 0.0f;
+						BlendOutSettings.BlendMode = PendingStartupVictimMontage->BlendModeOut;
+						BlendOutSettings.BlendProfile = PendingStartupVictimMontage->BlendProfileOut;
+						ResidualInstance->Stop(BlendOutSettings, true);
+					}
+				}
+			}
+
+			PendingStartupVictimMontage = nullptr;
+			StartupVictimMontageInstanceID = INDEX_NONE;
+			bStartupCancellationPending = false;
+			ActiveVictimMontage = nullptr;
+			ActiveVictimMontageInstanceID = INDEX_NONE;
+			return;
+		}
+
+		PendingStartupVictimMontage = nullptr;
+		bStartupCancellationPending = false;
+
+		FAnimMontageInstance* MontageInstance = AnimInstance ? AnimInstance->GetActiveInstanceForMontage(MontageToPlay) : nullptr;
+		const bool bMontagePlaying =
+#if WITH_DEV_AUTOMATION_TESTS
+			bTestBypassMontageActiveCheck ||
+#endif
+			(MontageInstance != nullptr);
+
+		const bool bTaskActive =
+#if WITH_DEV_AUTOMATION_TESTS
+			bTestBypassMontageActiveCheck ||
+#endif
+			(VictimMontageTask && VictimMontageTask->IsActive());
+
+		if (bMontagePlaying && bTaskActive && CMC->MovementMode == MOVE_Walking)
+		{
+			bNonLethalRecoveryActive = true;
+			if (ActiveVictimMontageInstanceID == INDEX_NONE)
+			{
+				ActiveVictimMontageInstanceID = (StartupVictimMontageInstanceID != INDEX_NONE)
+					? StartupVictimMontageInstanceID
+					: (MontageInstance ? MontageInstance->GetInstanceID() : INDEX_NONE);
+			}
+			StartupVictimMontageInstanceID = INDEX_NONE;
+		}
+		else
+		{
+			StopVictimMontagePresentation(false);
+			bNonLethalRecoveryActive = false;
+			ActiveVictimMontage = nullptr;
+			ActiveVictimMontageInstanceID = INDEX_NONE;
+			NonLethalRecoverySourceActor = nullptr;
+			EnemyCharacter->MovementModeChangedDelegate.RemoveDynamic(this, &UEnemyVictimExecutionAbility::OnMovementModeChanged);
+			if (bHasSavedCanWalkOffLedges)
+			{
+				CMC->bCanWalkOffLedges = bSavedCanWalkOffLedges;
+				bHasSavedCanWalkOffLedges = false;
+			}
+			EndAbility(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, true, false);
+		}
+	}
+	else
+	{
+		NonLethalRecoverySourceActor = nullptr;
+		EnemyCharacter->MovementModeChangedDelegate.RemoveDynamic(this, &UEnemyVictimExecutionAbility::OnMovementModeChanged);
+		if (bHasSavedCanWalkOffLedges)
+		{
+			CMC->bCanWalkOffLedges = bSavedCanWalkOffLedges;
+			bHasSavedCanWalkOffLedges = false;
+		}
+		EndAbility(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, true, false);
 	}
 }
 
 void UEnemyVictimExecutionAbility::OnVictimMontageCompleted()
 {
+	if (bNonLethalRecoveryActive)
+	{
+		EndAbility(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, true, false);
+		return;
+	}
 	StopVictimMontagePresentation(true);
 }
 
 void UEnemyVictimExecutionAbility::OnVictimMontageBlendOut()
 {
+	if (bNonLethalRecoveryActive)
+	{
+		// 恢复期间自然 BlendOut 不是完成，不释放锁、不结束 Task
+		return;
+	}
 	StopVictimMontagePresentation(true);
 }
 
 void UEnemyVictimExecutionAbility::OnVictimMontageInterrupted()
 {
+	if (bNonLethalRecoveryActive)
+	{
+		EndAbility(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, true, true);
+		return;
+	}
 	StopVictimMontagePresentation(false);
 }
 
 void UEnemyVictimExecutionAbility::OnVictimMontageCancelled()
 {
+	if (bNonLethalRecoveryActive)
+	{
+		EndAbility(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, true, true);
+		return;
+	}
 	StopVictimMontagePresentation(false);
+}
+
+void UEnemyVictimExecutionAbility::HandleOnMontageStarted(UAnimMontage* Montage)
+{
+	if (StartupVictimMontageInstanceID != INDEX_NONE)
+	{
+		// Already captured an instance for this startup call; do not accept or overwrite with any subsequent instance!
+		return;
+	}
+
+	if (Montage == PendingStartupVictimMontage || Montage == ActiveVictimMontage)
+	{
+		UAnimInstance* AnimInstance = nullptr;
+		if (AEnemyCharacter* EnemyCharacter = Cast<AEnemyCharacter>(GetAvatarActorFromActorInfo()))
+		{
+			if (USkeletalMeshComponent* Mesh = EnemyCharacter->GetMesh())
+			{
+				AnimInstance = Mesh->GetAnimInstance();
+			}
+		}
+#if WITH_DEV_AUTOMATION_TESTS
+		if (!AnimInstance && BoundAnimInstance.IsValid())
+		{
+			AnimInstance = BoundAnimInstance.Get();
+		}
+		if (!AnimInstance)
+		{
+			if (const UEnemyVictimExecutionAbility* CDO = Cast<UEnemyVictimExecutionAbility>(GetClass()->GetDefaultObject()))
+			{
+				if (CDO->BoundAnimInstance.IsValid())
+				{
+					AnimInstance = CDO->BoundAnimInstance.Get();
+				}
+			}
+		}
+#endif
+		if (AnimInstance)
+		{
+			FAnimMontageInstance* Instance = AnimInstance->GetActiveInstanceForMontage(Montage);
+			if (!Instance && AnimInstance->MontageInstances.Num() > 0)
+			{
+				for (int32 Index = AnimInstance->MontageInstances.Num() - 1; Index >= 0; --Index)
+				{
+					if (AnimInstance->MontageInstances[Index] && AnimInstance->MontageInstances[Index]->Montage == Montage)
+					{
+						Instance = AnimInstance->MontageInstances[Index];
+						break;
+					}
+				}
+			}
+			if (Instance)
+			{
+				const int32 NewbornID = Instance->GetInstanceID();
+				ActiveVictimMontageInstanceID = NewbornID;
+				StartupVictimMontageInstanceID = NewbornID;
+
+				// Crucial contract: Once this startup call captures its newborn instance, immediately unbind
+				// from OnMontageStarted to prevent any reentrant montage play from re-triggering this handler!
+				AnimInstance->OnMontageStarted.RemoveDynamic(this, &UEnemyVictimExecutionAbility::HandleOnMontageStarted);
+
+#if WITH_DEV_AUTOMATION_TESTS
+				if (TestOnMontageStartedHook)
+				{
+					TestOnMontageStartedHook(Montage);
+				}
+#endif
+
+				// If ability has been cancelled/ended before or during instance birth, stop this newborn instance immediately!
+				if (bStartupCancellationPending || !IsActive() || bEndAbilityInProgress)
+				{
+					FMontageBlendSettings BlendOutSettings;
+					BlendOutSettings.Blend = Montage->BlendOut;
+					BlendOutSettings.Blend.BlendTime = 0.0f;
+					BlendOutSettings.BlendMode = Montage->BlendModeOut;
+					BlendOutSettings.BlendProfile = Montage->BlendProfileOut;
+					Instance->Stop(BlendOutSettings, true);
+
+					bStartupCancellationPending = false;
+				}
+			}
+		}
+	}
 }
 
 void UEnemyVictimExecutionAbility::StopVictimMontagePresentation(bool bIsNaturalCompletion)
@@ -586,14 +949,43 @@ void UEnemyVictimExecutionAbility::StopVictimMontagePresentation(bool bIsNatural
 		{
 			if (!EnemyCharacter->IsActorBeingDestroyed())
 			{
+				UAnimInstance* AnimInstance = nullptr;
 				if (USkeletalMeshComponent* Mesh = EnemyCharacter->GetMesh())
 				{
-					if (UAnimInstance* AnimInstance = Mesh->GetAnimInstance())
+					AnimInstance = Mesh->GetAnimInstance();
+				}
+#if WITH_DEV_AUTOMATION_TESTS
+				if (!AnimInstance && BoundAnimInstance.IsValid())
+				{
+					AnimInstance = BoundAnimInstance.Get();
+				}
+				if (!AnimInstance)
+				{
+					if (const UEnemyVictimExecutionAbility* CDO = Cast<UEnemyVictimExecutionAbility>(GetClass()->GetDefaultObject()))
 					{
-						if (ActiveVictimMontage && AnimInstance->Montage_IsActive(ActiveVictimMontage) && !AnimInstance->Montage_GetIsStopped(ActiveVictimMontage))
+						if (CDO->BoundAnimInstance.IsValid())
 						{
-							AnimInstance->Montage_Stop(0.2f, ActiveVictimMontage);
+							AnimInstance = CDO->BoundAnimInstance.Get();
 						}
+					}
+				}
+#endif
+				if (AnimInstance && ActiveVictimMontage)
+				{
+					FAnimMontageInstance* InstanceToStop = nullptr;
+					if (ActiveVictimMontageInstanceID != INDEX_NONE)
+					{
+						InstanceToStop = AnimInstance->GetMontageInstanceForID(ActiveVictimMontageInstanceID);
+					}
+
+					if (InstanceToStop && InstanceToStop->Montage == ActiveVictimMontage)
+					{
+						FMontageBlendSettings BlendOutSettings;
+						BlendOutSettings.Blend = ActiveVictimMontage->BlendOut;
+						BlendOutSettings.Blend.BlendTime = 0.0f;
+						BlendOutSettings.BlendMode = ActiveVictimMontage->BlendModeOut;
+						BlendOutSettings.BlendProfile = ActiveVictimMontage->BlendProfileOut;
+						InstanceToStop->Stop(BlendOutSettings, true);
 					}
 				}
 			}
@@ -601,12 +993,19 @@ void UEnemyVictimExecutionAbility::StopVictimMontagePresentation(bool bIsNatural
 	}
 
 	ActiveVictimMontage = nullptr;
+	ActiveVictimMontageInstanceID = INDEX_NONE;
 }
 
 void UEnemyVictimExecutionAbility::OnReleaseReceived(FGameplayEventData Payload)
 {
 	if (!IsActive() || bEndAbilityInProgress)
 	{
+		return;
+	}
+
+	if (bNonLethalRecoveryActive)
+	{
+		// Duplicate or late release has no effect once recovery is active
 		return;
 	}
 
@@ -655,7 +1054,37 @@ void UEnemyVictimExecutionAbility::OnReleaseReceived(FGameplayEventData Payload)
 	}
 
 	Context->MarkVictimReleased(this);
-	EndAbility(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, true, Context->WasReleaseCancelled());
+
+	const bool bWasCancelled = Context->WasReleaseCancelled();
+	EndAbility(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, true, bWasCancelled);
+}
+
+void UEnemyVictimExecutionAbility::OnMovementModeChanged(
+	ACharacter* InCharacter,
+	EMovementMode PrevMovementMode,
+	uint8 PreviousCustomMode)
+{
+	if (!IsActive() || bEndAbilityInProgress || !bNonLethalRecoveryActive)
+	{
+		return;
+	}
+
+	AEnemyCharacter* EnemyCharacter = Cast<AEnemyCharacter>(GetAvatarActorFromActorInfo());
+	if (!EnemyCharacter || InCharacter != EnemyCharacter)
+	{
+		return;
+	}
+
+	const UCharacterMovementComponent* CMC = EnemyCharacter->GetCharacterMovement();
+	if (!CMC)
+	{
+		return;
+	}
+
+	if (CMC->MovementMode != MOVE_Walking)
+	{
+		CancelAbility(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, true);
+	}
 }
 
 void UEnemyVictimExecutionAbility::EndAbility(
@@ -673,19 +1102,35 @@ void UEnemyVictimExecutionAbility::EndAbility(
 	bEndAbilityInProgress = true;
 	bInAuthorizedHitScope = false;
 
+	if (PendingStartupVictimMontage != nullptr)
+	{
+		bStartupCancellationPending = true;
+	}
+
 	AEnemyCharacter* CachedEnemy = Cast<AEnemyCharacter>(ActorInfo ? ActorInfo->AvatarActor.Get() : nullptr);
 	UAbilitySystemComponent* CachedASC = GetAbilitySystemComponentFromActorInfo();
 	UExecutionLockContext* CachedContext = ActiveExecutionContext.Get();
 	AActor* CachedSourceActor = CachedContext ? CachedContext->GetSourceActor() : nullptr;
 
+	if (CachedEnemy)
+	{
+		CachedEnemy->MovementModeChangedDelegate.RemoveDynamic(this, &UEnemyVictimExecutionAbility::OnMovementModeChanged);
+	}
+
+	if (bHasSavedCanWalkOffLedges && CachedEnemy)
+	{
+		if (UCharacterMovementComponent* MovementComponent = CachedEnemy->GetCharacterMovement())
+		{
+			MovementComponent->bCanWalkOffLedges = bSavedCanWalkOffLedges;
+		}
+		bHasSavedCanWalkOffLedges = false;
+	}
+
+	const bool bHadNonLethalRecovery = bNonLethalRecoveryActive;
 	StopVictimMontagePresentation(false);
 
 	const bool bCommitDeath = bDeathPending || (CachedEnemy && CachedEnemy->IsDeathPending());
 	bool bDeathCommittedSuccessfully = false;
-
-	const bool bIsConfirmedNonLethal = !bCommitDeath && !bWasCancelled && CachedContext &&
-		(CachedContext->GetHitState() == EExecutionSessionHitState::NonLethal) &&
-		(CachedContext->IsVictimReleased() || CachedContext->IsReleaseSent());
 
 	const bool bHitResolved = CachedContext && (
 		CachedContext->GetHitState() == EExecutionSessionHitState::NonLethal ||
@@ -740,11 +1185,34 @@ void UEnemyVictimExecutionAbility::EndAbility(
 		const bool bCanRestoreEnemy = CachedEnemy && !CachedEnemy->IsDead() && !CachedEnemy->IsActorBeingDestroyed();
 		if (bCanRestoreEnemy)
 		{
-			if (bMovementLockedByVictim)
+			if (UCharacterMovementComponent* MovementComponent = CachedEnemy->GetCharacterMovement())
 			{
-				if (UCharacterMovementComponent* MovementComponent = CachedEnemy->GetCharacterMovement())
+				if (bHadNonLethalRecovery)
 				{
-					MovementComponent->SetMovementMode(MOVE_Walking);
+					if (bWasCancelled && MovementComponent->MovementMode == MOVE_Walking)
+					{
+						MovementComponent->StopMovementImmediately();
+					}
+				}
+				else if (bMovementLockedByVictim)
+				{
+					if (MovementComponent->MovementMode == MOVE_None)
+					{
+						const FVector CapsuleLocation = MovementComponent->UpdatedComponent
+							? MovementComponent->UpdatedComponent->GetComponentLocation()
+							: CachedEnemy->GetActorLocation();
+						FFindFloorResult FloorResult;
+						MovementComponent->FindFloor(CapsuleLocation, FloorResult, false);
+						if (FloorResult.IsWalkableFloor())
+						{
+							MovementComponent->SetMovementMode(MOVE_Walking);
+						}
+						else
+						{
+							MovementComponent->SetMovementMode(MOVE_Falling);
+						}
+					}
+					// If MovementMode != MOVE_None (e.g. externally changed to Falling or other), preserve external mode ownership!
 				}
 			}
 
@@ -799,6 +1267,9 @@ void UEnemyVictimExecutionAbility::EndAbility(
 
 	PendingVictimMontage = nullptr;
 	bVictimPresentationStarted = false;
+	bNonLethalRecoveryActive = false;
+	ActiveVictimMontageInstanceID = INDEX_NONE;
+	NonLethalRecoverySourceActor = nullptr;
 
 	if (CachedContext && bWasCancelled)
 	{
@@ -808,18 +1279,43 @@ void UEnemyVictimExecutionAbility::EndAbility(
 
 	Super::EndAbility(Handle, ActorInfo, ActivationInfo, bReplicateEndAbility, bWasCancelled);
 
-	if (bIsConfirmedNonLethal && bLaunchNonLethalOnRelease && CachedASC && CachedEnemy && !CachedEnemy->IsDead() && !CachedEnemy->IsActorBeingDestroyed())
-	{
-		const FGameplayTag LaunchReactionEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Reaction.Enemy.Launch")), false);
-		if (LaunchReactionEventTag.IsValid())
-		{
-			FGameplayEventData LaunchPayload;
-			LaunchPayload.EventTag = LaunchReactionEventTag;
-			LaunchPayload.Instigator = CachedSourceActor;
-			LaunchPayload.Target = CachedEnemy;
-			CachedASC->HandleGameplayEvent(LaunchReactionEventTag, &LaunchPayload);
-		}
-	}
-
 	bEndAbilityInProgress = false;
 }
+
+bool UEnemyVictimExecutionAbility::IsNonLethalRecoveryFrom(const AActor* SourceActor) const
+{
+	if (!SourceActor || !IsActive() || bEndAbilityInProgress)
+	{
+		return false;
+	}
+
+	if (!bNonLethalRecoveryActive || bDeathPending)
+	{
+		return false;
+	}
+
+	const AEnemyCharacter* EnemyCharacter = Cast<AEnemyCharacter>(GetAvatarActorFromActorInfo());
+	if (!EnemyCharacter || EnemyCharacter->IsDead() || EnemyCharacter->IsActorBeingDestroyed())
+	{
+		return false;
+	}
+
+	return NonLethalRecoverySourceActor.Get() == SourceActor;
+}
+
+#if WITH_DEV_AUTOMATION_TESTS
+void UEnemyVictimExecutionAbility::SetTestInvalidateWaitVictimStartTaskAfterReady(bool bInvalidate)
+{
+	bTestInvalidateWaitVictimStartTaskAfterReady = bInvalidate;
+	if (bInvalidate && WaitVictimStartTask)
+	{
+		WaitVictimStartTask->EndTask();
+		WaitVictimStartTask = nullptr;
+	}
+}
+
+void UEnemyVictimExecutionAbility::TestTriggerMovementModeChanged(EMovementMode PrevMode, uint8 PrevCustomMode)
+{
+	OnMovementModeChanged(Cast<ACharacter>(GetAvatarActorFromActorInfo()), PrevMode, PrevCustomMode);
+}
+#endif

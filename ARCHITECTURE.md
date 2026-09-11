@@ -510,19 +510,23 @@ back to an unrelated weapon, CDO, or target.
 
 The victim ability identity and its active lock intentionally use different
 namespaces: `Ability.Action.Execution.Victim` identifies the ability, while
-`State.Action.Execution.VictimLocked` identifies the paired-lock lifetime.
+`State.Action.Execution.VictimLocked` covers both the paired lock and the
+victim's independent non-lethal recovery.
 
 The victim ability owns target-side movement/AI lock and cleanup. The Player
 does not write target state tags directly. AEnemyAIController pauses the
 locked Pawn's StateTree/navigation/focus progression and cannot issue fresh
 tactical movement until a legal release or recovery path restores it.
 
-The semantic ingress tags are `Event.Action.Execution.Request.Front`,
-`Event.Action.Execution.Request.Backstab`, and
-`Event.Action.Execution.Request.VictimStart`; the active Player montage emits
-`Event.Action.Execution.Hit` and `Event.Action.Execution.Request.Release`.
-Each request is checked against the active montage, source/target identity,
-session, and activation token before it can advance the pair.
+The paired session begins with `Event.Action.Execution.Request.Front` or
+`Event.Action.Execution.Request.Backstab`. The Player montage emits
+`Event.Action.Execution.Hit` at impact, then
+`Event.Action.Execution.Request.VictimStart` at blade withdrawal. Each event is
+checked against the active montage, source/target identity, session, and token.
+The former `UAnimNotify_PlayerExecutionRelease` and
+`Event.Action.Execution.Request.Release` authoring entry are retired. The
+internal `Event.Action.Execution.Release` protocol and context acknowledgment
+remain responsible for authenticated handoff and failure cleanup.
 
 ### Snap alignment
 
@@ -554,23 +558,50 @@ normal cleanup path.
 ### Semantic event and terminal flow
 
 ~~~text
-paired lock accepted
-    -> VictimStart (presentation handoff)
-    -> Hit (one authorized melee hit)
-    -> Release (terminal decision and recovery/death handoff)
+paired lock accepted (victim locked; no victim montage yet)
+    -> Hit (one authorized melee hit; lethal becomes DeathPending)
+    -> VictimStart at blade withdrawal
+        -> living victim: full authored montage from time 0
+            -> actual Completed -> restore victim AI/poise/state
+        -> DeathPending victim: commit death -> existing ragdoll path
+Player montage ends on its own schedule, independently of victim recovery.
 ~~~
 
-- Hit remains on FMeleeHitResolver -> Damage GameplayEffect; an execution
-  context may bypass the target's temporary invulnerability only when it
-  authorizes the exact active source, target, victim ability, and token.
-- A lethal authorized hit adds State.Status.DeathPending. On legal Release,
-  CommitExecutionDeath() enters SetDeadState -> HandleDeath ->
-  CancelAllAbilities -> StartDeathRagdoll.
-- A non-lethal legal Release restores the victim's recoverable movement/AI/poise
-  state and may dispatch the existing Enemy Launch event.
-- Montage end, cancellation, task startup failure, target invalidation, death,
-  destruction, unpossession, and EndPlay all converge on idempotent context,
-  task, collision-ignore, tag, and delegate cleanup.
+- Hit remains on FMeleeHitResolver -> Damage GameplayEffect. The execution
+  context bypasses temporary invulnerability only for the exact authorized
+  source, target, victim ability, and token. Hit does not start recovery or
+  immediately commit ragdoll.
+- VictimStart performs the synchronous internal release acknowledgment. The
+  victim snapshots its corresponding Front/Backstab montage at activation;
+  an absent direction does not fall back to the other direction.
+- A living victim plays the whole configured montage from time 0. Both a valid
+  in-place montage and a Root Motion montage use the same recovery lifecycle.
+  There is no required recovery section, section jump, automatic-link rewrite,
+  launch policy switch, or Enemy Launch fallback. Knockdown, slide, and stand-up
+  belong to authored animation. Execution recovery adds no Motion Warp target
+  or distance parameter.
+- Recovery requires a valid montage/slot/finite positive length, current
+  walkable support, and an allowed movement mode. CMC consumes authored Root
+  Motion under Walking and retains capsule collision, floor, step, and wall
+  authority. The victim saves/disables `bCanWalkOffLedges` and restores its own
+  contribution at cleanup. Leaving Walking cancels recovery; cleanup does not
+  force an external Falling/Flying/Custom owner back to Walking.
+- Once recovery is successfully active, its local state and source-actor
+  snapshot govern completion and cancellation. Player EndAbility and shared
+  context invalidation do not end it. Victim locks/invulnerability and AI lock
+  persist through natural BlendOut until actual Completed.
+- Startup observes synchronous cancellation before and after montage instance
+  creation. It captures the startup instance identity once and unbinds the
+  start listener; cancellation stops only that confirmed instance with zero
+  blend-out. A reentrant newer instance of the same asset is not stopped by
+  the old cleanup, and an ended activation never restores its old Task/state.
+- A lethal hit holds Health at zero and adds State.Status.DeathPending.
+  VictimStart commits death through CommitExecutionDeath -> SetDeadState ->
+  HandleDeath -> CancelAllAbilities -> StartDeathRagdoll. Missing VictimStart or
+  interrupted pairing still converges on cleanup and cannot leave a zero-health
+  living victim; a non-lethal failure does not start replacement presentation.
+- Completion, interruption, cancellation, failed startup, death, destruction,
+  unpossession, and EndPlay converge on the existing idempotent cleanup boundary.
 
 Victim montages and notify placement are [Authored asset]; their actual graph
 or timing cannot be inferred from the C++ contract alone.
@@ -673,9 +704,13 @@ APlayerCharacter owns one weak AEnemyCharacter lock target.
 - `LockOnRetentionMarginRatio` is retention-only hysteresis. It does not relax
   initial acquisition, cycling, or projectile target-assist rules.
 - `LockOnOcclusionGraceDuration` is the obstruction grace owned by the Player.
-  Paired execution may retain
-  its already-owned valid target through its explicit lock conditions, without
-  relaxing team, ASC, death, or retention checks for other targets.
+  Paired execution may retain its already-owned valid target through its
+  explicit lock conditions. After the Player finishes, an active native victim
+  recovery from that same Player may retain the existing target despite its
+  temporary invulnerability. This does not authorize acquisition or cycling to
+  another invulnerable target. Recovery retains normal screen/occlusion limits;
+  it does not inherit the paired phase's occlusion exemption. Completed recovery
+  returns to ordinary candidate validation, and manual unlock does not auto-relock.
 
 Action-facing remains owned by the relevant action ability/root-motion contract.
 Lock-On is not a global authorization to alter projectile targeting or action
@@ -1155,9 +1190,11 @@ Break timers/deferrals, lock-on highlight, UI bindings, and invalidated Player
 Motion-Warp targets. The AttributeSet clamps Health but does not choose this
 terminal path.
 
-An authorized paired execution hit follows a delayed route: Health remains `0`,
-the Victim owns `State.Status.DeathPending`, and only the authenticated
-`Release` calls `CommitExecutionDeath()`, which then enters the same
+An authorized paired execution hit follows a delayed route: Health remains `0`
+and the Victim owns `State.Status.DeathPending` until authenticated
+`VictimStart` at blade withdrawal commits death through the internal handoff.
+Interrupted or missing-notify cleanup also finalizes a pending lethal outcome.
+`CommitExecutionDeath()` enters the same
 `SetDeadState -> HandleDeath -> CancelAllAbilities -> StartDeathRagdoll` chain.
 DeathPending is not a revival state; healing is reset to zero and ordinary
 non-execution lethal damage still dies immediately.

@@ -182,7 +182,7 @@ bool FExecutionImpactFeedbackAutomationTest::RunTest(const FString& Parameters)
 	Enemy->SetTestCombatFeedbackData(EnemyFeedback);
 
 	const FGameplayTag TagCanonicalHit = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Action.Execution.Hit")), false);
-	const FGameplayTag TagReleaseRequest = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Action.Execution.Request.Release")), false);
+	const FGameplayTag TagVictimStart = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Action.Execution.Request.VictimStart")), false);
 	UAnimMontage* SyntheticMontage = NewObject<UAnimMontage>(GetTransientPackage());
 
 	auto GrantAndConfigureVictimAbility = [&](AEnemyCharacter* InEnemy) -> TPair<FGameplayAbilitySpecHandle, UEnemyVictimExecutionAbility*>
@@ -330,18 +330,18 @@ bool FExecutionImpactFeedbackAutomationTest::RunTest(const FString& Parameters)
 		TestEqual(TEXT("Repeated Hit does not increase sound count"), Enemy->GetTestImpactSoundDispatchCount(), InitialSoundCount + 1);
 		TestEqual(TEXT("Repeated Hit does not increase blood count"), Enemy->GetTestImpactBloodDispatchCount(), InitialBloodCount + 1);
 
-		// Release must not trigger feedback
-		FGameplayEventData ReleasePayload;
-		ReleasePayload.EventTag = TagReleaseRequest;
-		ReleasePayload.Instigator = Player;
-		ReleasePayload.Target = Player;
-		ReleasePayload.OptionalObject = SyntheticMontage;
-		FrontAbility->TestTriggerReleaseRequestEvent(ReleasePayload);
+		// VictimStart handoff must not trigger feedback
+		FGameplayEventData VictimStartPayload;
+		VictimStartPayload.EventTag = TagVictimStart;
+		VictimStartPayload.Instigator = Player;
+		VictimStartPayload.Target = Player;
+		VictimStartPayload.OptionalObject = SyntheticMontage;
+		FrontAbility->TestTriggerVictimStartEvent(VictimStartPayload);
 
-		TestEqual(TEXT("Release does not trigger shake"), Player->GetTestHitFeedbackCameraShakeStartCount(), InitialShakeCount + 1);
-		TestEqual(TEXT("Release does not trigger hit-stop"), Enemy->GetTestCombatImpactHitStopRequestCount(), InitialHitStopCount + 1);
-		TestEqual(TEXT("Release does not trigger sound"), Enemy->GetTestImpactSoundDispatchCount(), InitialSoundCount + 1);
-		TestEqual(TEXT("Release does not trigger blood"), Enemy->GetTestImpactBloodDispatchCount(), InitialBloodCount + 1);
+		TestEqual(TEXT("VictimStart does not trigger shake"), Player->GetTestHitFeedbackCameraShakeStartCount(), InitialShakeCount + 1);
+		TestEqual(TEXT("VictimStart does not trigger hit-stop"), Enemy->GetTestCombatImpactHitStopRequestCount(), InitialHitStopCount + 1);
+		TestEqual(TEXT("VictimStart does not trigger sound"), Enemy->GetTestImpactSoundDispatchCount(), InitialSoundCount + 1);
+		TestEqual(TEXT("VictimStart does not trigger blood"), Enemy->GetTestImpactBloodDispatchCount(), InitialBloodCount + 1);
 
 		FrontAbility->TestEndAbility();
 		if (VictimAbility && VictimAbility->IsActive())
@@ -410,16 +410,16 @@ bool FExecutionImpactFeedbackAutomationTest::RunTest(const FString& Parameters)
 		TestEqual(TEXT("Repeated Backstab Hit does not increment shake count"), Player->GetTestHitFeedbackCameraShakeStartCount(), ShakeCountBefore + 1);
 		TestEqual(TEXT("Repeated Backstab Hit does not increment hit-stop count"), LethalEnemy->GetTestCombatImpactHitStopRequestCount(), HitStopCountBefore + 1);
 
-		// Release must finalize without triggering second feedback
-		FGameplayEventData ReleasePayload;
-		ReleasePayload.EventTag = TagReleaseRequest;
-		ReleasePayload.Instigator = Player;
-		ReleasePayload.Target = Player;
-		ReleasePayload.OptionalObject = SyntheticMontage;
-		BackstabAbility->TestTriggerReleaseRequestEvent(ReleasePayload);
+		// VictimStart must finalize without triggering second feedback
+		FGameplayEventData VictimStartPayload;
+		VictimStartPayload.EventTag = TagVictimStart;
+		VictimStartPayload.Instigator = Player;
+		VictimStartPayload.Target = Player;
+		VictimStartPayload.OptionalObject = SyntheticMontage;
+		BackstabAbility->TestTriggerVictimStartEvent(VictimStartPayload);
 
-		TestEqual(TEXT("Release does not re-trigger feedback"), Player->GetTestHitFeedbackCameraShakeStartCount(), ShakeCountBefore + 1);
-		TestEqual(TEXT("Release does not re-trigger hit-stop"), LethalEnemy->GetTestCombatImpactHitStopRequestCount(), HitStopCountBefore + 1);
+		TestEqual(TEXT("VictimStart does not re-trigger feedback"), Player->GetTestHitFeedbackCameraShakeStartCount(), ShakeCountBefore + 1);
+		TestEqual(TEXT("VictimStart does not re-trigger hit-stop"), LethalEnemy->GetTestCombatImpactHitStopRequestCount(), HitStopCountBefore + 1);
 
 		BackstabAbility->TestEndAbility();
 		if (VictimAbility && VictimAbility->IsActive())
