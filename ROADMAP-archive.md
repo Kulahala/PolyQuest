@@ -1478,3 +1478,14 @@ TODO-03A3E World Pickup Interaction Prompt v1
 - **Main Fresh Review**：Main 依据 `ue-strict-review` 完成有界两批审查；正常与对抗性核对均未发现可由批准 diff/source 证据定级的 P0/P1/P2 缺陷。`code-review-graph` 与当前 HEAD 对齐，影响雷达的未覆盖提示作为静态残余风险处理，不触发范围扩张。
 - **债务与后续指针**：`Debt-07B12-AuthoredReadback` 保持非阻塞状态：本次未形成独立用户-owned Editor 收据来逐项记录 Tag 注册、四个 Ability CDO 与实际 Montage 设置。关闭条件为可追溯 Editor readback 或 evidence-backed no-adoption；该债务不阻塞本阶段源码/编译/Automation/PIE closeout。下一排期为 `TODO-07B13`，不因本阶段自动扩大 Player Ability 范围。
 - **提交边界**：本阶段提交仅包含批准的 Config/Source/Test 路径与 `ARCHITECTURE.md`、`ROADMAP.md`、`ROADMAP-archive.md`、`plan.md`；其他用户 WIP 不暂存。提交哈希以 Git 历史为准。
+
+## TODO-07B13 Player Grounded Launch Reaction Root-Motion Alignment v1 Closeout (2026-09-11)
+
+> 本节记录 TODO-07B13 的源码、Automation、用户 Editor readback、编译、PIE 与 Main Fresh Review 收口证据。它保留证据类型边界，不替代实时 Source、资产或 Unreal Editor 状态作为运行时权威。
+
+- **范围与实际结果**：Player Launch Ability 增加 grounded `MOVE_Walking` Root Motion knockdown/slide/recovery 分支、一次性 target-local facing、Dodge cancel-window listener、ledge/teardown 清理及专项 Automation。实现路径包含 Player Header/CPP、Player Root Motion Automation，以及一份仅为 Unity Build hygiene 移动 `TagBlockFacing` 作用域的 Enemy 测试例外；未修改生产 Enemy 逻辑、Config、Build.cs 或二进制资产。
+- **稳定契约**：当前 authored `GA_PlayerLaunchReaction` 使用 `RootMotionKnockdownMontage = AM_TakeOff` 且开启 Root Motion 开关，Legacy `TakeoffMontage`/`LandingRecoveryMontage` 字段有意置空。Root candidate 失败、Montage 启动失败或开关关闭时 fail-closed；CMC 继续拥有胶囊、地面、台阶、墙和边缘权威，Root 分支不消费 `Event.Reaction.Launch.Commit`。
+- **资产与用户证据**：用户提供 GA CDO、`AM_TakeOff` Montage/Slot/Cancel Window、Root Motion Sequence readback 截图，并亲自确认 `PolyQuestEditor (Development Editor)` 编译及 Scene01 PIE；此前用户报告的 `PolyQuest.Combat.PlayerLaunchReactionRootMotion`、Enemy 回归 Automation 也通过。上述证据不扩写为 clean-checkout authored baseline 或 packaging/发布证明。
+- **Main Fresh Review**：Main 按 `ue-strict-review` 完成有界两批审查，未发现可由批准 diff/source 证据定级的 P0/P1/P2 缺陷；图谱风险分数和未覆盖提示仅作静态导航。
+- **决策与后续指针**：Legacy C++ 分支和兼容测试暂留为 dormant residue，不再作为当前 authored fallback。下一独立 Legacy retirement slice 必须先取得零引用、focused Automation、Development Editor 编译、PIE 回归和明确提交批准；TODO-07B14 的 Dodge Motion Warping/非对称空中反应仍独立门控。
+- **提交边界**：本阶段只提交批准的 Player Header/CPP、Player Automation、Unity Build hygiene 例外测试文件及 `plan.md`、`ARCHITECTURE.md`、`ROADMAP.md`、`ROADMAP-archive.md`；所有用户-owned Content/Config/Blueprint/AnimBP/Montage/地图和其他 WIP 均排除。

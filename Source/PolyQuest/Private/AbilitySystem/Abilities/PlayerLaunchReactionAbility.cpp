@@ -30,8 +30,10 @@ UPlayerLaunchReactionAbility::UPlayerLaunchReactionAbility()
 	StunnedStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Status.Stunned")), false);
 	DeadStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Status.Dead")), false);
 	HyperArmorStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Status.HyperArmor")), false);
+	TeardownOnUnpossessTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Action.Teardown.OnUnpossess")), false);
 
 	AbilityTags.AddTag(PlayerLaunchReactionAbilityTag);
+	AbilityTags.AddTag(TeardownOnUnpossessTag);
 	ActivationOwnedTags.AddTag(HitReactingStateTag);
 	ActivationOwnedTags.AddTag(FGameplayTag::RequestGameplayTag(FName(TEXT("State.Input.Block.Movement")), false));
 	ActivationOwnedTags.AddTag(FGameplayTag::RequestGameplayTag(FName(TEXT("State.Input.Block.Jump")), false));
@@ -91,6 +93,7 @@ void UPlayerLaunchReactionAbility::ActivateAbility(
 	bEndAbilityRequested = false;
 	bCommitHandled = false;
 	bDodgeCancelable = false;
+	bSavedCanWalkOffLedges = true;
 	bLedgeSettingModified = false;
 	bMovementModeDelegateBound = false;
 	CurrentPhase = ELaunchPhase::None;
@@ -100,10 +103,57 @@ void UPlayerLaunchReactionAbility::ActivateAbility(
 	ImpactDirectionSnapshot = FVector::ZeroVector;
 	ImpactReferenceYawSnapshot = 0.0f;
 
-	UAbilitySystemComponent* CharacterASC = GetAbilitySystemComponentFromActorInfo();
-	APlayerCharacter* PlayerCharacter = Cast<APlayerCharacter>(GetAvatarActorFromActorInfo());
+#if WITH_DEV_AUTOMATION_TESTS
+	if (const UPlayerLaunchReactionAbility* CDO = Cast<UPlayerLaunchReactionAbility>(GetClass()->GetDefaultObject()))
+	{
+		if (CDO->RootMotionKnockdownMontage && !RootMotionKnockdownMontage)
+		{
+			RootMotionKnockdownMontage = CDO->RootMotionKnockdownMontage;
+		}
+		if (CDO->TakeoffMontage && !TakeoffMontage)
+		{
+			TakeoffMontage = CDO->TakeoffMontage;
+		}
+		if (CDO->LandingRecoveryMontage && !LandingRecoveryMontage)
+		{
+			LandingRecoveryMontage = CDO->LandingRecoveryMontage;
+		}
+		if (CDO->BoundAnimInstance && !BoundAnimInstance)
+		{
+			BoundAnimInstance = CDO->BoundAnimInstance;
+		}
+	}
+#endif
+
+	if (IsInstantiated())
+	{
+		SetCurrentInfo(Handle, ActorInfo, ActivationInfo);
+	}
+
+	UAbilitySystemComponent* CharacterASC = ActorInfo && ActorInfo->AbilitySystemComponent.IsValid()
+		? ActorInfo->AbilitySystemComponent.Get()
+		: (CurrentActorInfo ? CurrentActorInfo->AbilitySystemComponent.Get() : nullptr);
+	APlayerCharacter* PlayerCharacter = ActorInfo && ActorInfo->AvatarActor.IsValid()
+		? Cast<APlayerCharacter>(ActorInfo->AvatarActor.Get())
+		: (CurrentActorInfo ? Cast<APlayerCharacter>(CurrentActorInfo->AvatarActor.Get()) : nullptr);
 	USkeletalMeshComponent* SkeletalMesh = PlayerCharacter ? PlayerCharacter->GetMesh() : nullptr;
 	UAnimInstance* AnimInstance = SkeletalMesh ? SkeletalMesh->GetAnimInstance() : nullptr;
+#if WITH_DEV_AUTOMATION_TESTS
+	if (!AnimInstance && BoundAnimInstance)
+	{
+		AnimInstance = BoundAnimInstance.Get();
+	}
+	if (!AnimInstance)
+	{
+		if (const UPlayerLaunchReactionAbility* CDO = Cast<UPlayerLaunchReactionAbility>(GetClass()->GetDefaultObject()))
+		{
+			if (CDO->BoundAnimInstance)
+			{
+				AnimInstance = CDO->BoundAnimInstance.Get();
+			}
+		}
+	}
+#endif
 	UCharacterMovementComponent* MovementComponent = PlayerCharacter ? PlayerCharacter->GetCharacterMovement() : nullptr;
 
 	if (!CharacterASC || !PlayerCharacter || !AnimInstance || !MovementComponent || !ValidateActivationSetup(ActorInfo))
@@ -113,6 +163,115 @@ void UPlayerLaunchReactionAbility::ActivateAbility(
 		return;
 	}
 
+	const bool bExecuteRootMotion = IsRootMotionKnockdownCandidate(PlayerCharacter, MovementComponent);
+	if (bExecuteRootMotion)
+	{
+		// 1. Create Root Motion Montage Task and persistent Cancel Window listeners (without CommitEventTask)
+		MontageTask = UAbilityTask_PlayMontageAndWait::CreatePlayMontageAndWaitProxy(this, NAME_None, RootMotionKnockdownMontage);
+		CancelBeginTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, CancelWindowBeginEventTag, nullptr, false, true);
+		CancelEndTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, CancelWindowEndEventTag, nullptr, false, true);
+
+		if (!MontageTask || !CancelBeginTask || !CancelEndTask)
+		{
+			UE_LOG(LogPolyQuest, Warning, TEXT("Player launch reaction activation aborted for '%s': failed to create root motion tasks."), *GetNameSafe(PlayerCharacter));
+			EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
+			return;
+		}
+
+		CancelBeginTask->EventReceived.AddDynamic(this, &UPlayerLaunchReactionAbility::OnCancelWindowBegin);
+		CancelEndTask->EventReceived.AddDynamic(this, &UPlayerLaunchReactionAbility::OnCancelWindowEnd);
+
+		CancelBeginTask->ReadyForActivation();
+		CancelEndTask->ReadyForActivation();
+
+		if (!CommitAbility(Handle, ActorInfo, ActivationInfo))
+		{
+			UE_LOG(LogPolyQuest, Verbose, TEXT("Player launch reaction activation rejected for '%s' because CommitAbility failed."), *GetNameSafe(PlayerCharacter));
+			EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
+			return;
+		}
+
+		BoundAnimInstance = AnimInstance;
+		ActiveMontage = RootMotionKnockdownMontage;
+		BoundPlayerCharacter = PlayerCharacter;
+		CurrentPhase = ELaunchPhase::RootMotionKnockdown;
+
+		// 2. Cancel competing player abilities before starting Root Motion
+		CharacterASC->CancelAbilities(&AbilitiesToCancel, nullptr, this);
+		if (bEndAbilityRequested)
+		{
+			return;
+		}
+
+		// 3. Fail-closed if lingering Root Motion is still active after cancellation
+		if (PlayerCharacter->HasAnyRootMotion())
+		{
+			UE_LOG(LogPolyQuest, Warning, TEXT("Player launch reaction root motion branch aborted for '%s': lingering root motion detected after cancelling competing abilities; fail-closed ending ability."), *GetNameSafe(PlayerCharacter));
+			EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
+			return;
+		}
+
+		// 4. Clear residual velocity before locking facing and launching montage
+		MovementComponent->StopMovementImmediately();
+
+		// 5. Resolve attacker direction and set instant facing yaw
+		ImpactReferenceYawSnapshot = PlayerCharacter->GetActorRotation().Yaw;
+		if (TriggerEventData)
+		{
+			ImpactDirectionSnapshot = FHitReactionImpactResolver::ResolveImpactDirection(*TriggerEventData, PlayerCharacter);
+		}
+
+		float ResolvedFacingYaw = 0.0f;
+		if (!TryResolveRootMotionFacingYaw(ImpactDirectionSnapshot, ImpactReferenceYawSnapshot, ResolvedFacingYaw))
+		{
+			UE_LOG(LogPolyQuest, Warning, TEXT("Player launch reaction root motion branch aborted for '%s': failed to resolve valid facing yaw from impact context."), *GetNameSafe(PlayerCharacter));
+			EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
+			return;
+		}
+		PlayerCharacter->SetActorRotation(FRotator(0.0f, ResolvedFacingYaw, 0.0f));
+
+		// 6. Preserve and disable ledge walk-off protection before ReadyForActivation()
+		bSavedCanWalkOffLedges = MovementComponent->bCanWalkOffLedges;
+		MovementComponent->bCanWalkOffLedges = false;
+		bLedgeSettingModified = true;
+
+		// 7. Bind Montage End and MovementModeChanged delegates
+		if (BoundAnimInstance)
+		{
+			BoundAnimInstance->OnMontageEnded.RemoveDynamic(this, &UPlayerLaunchReactionAbility::OnActiveMontageEnded);
+			BoundAnimInstance->OnMontageEnded.AddDynamic(this, &UPlayerLaunchReactionAbility::OnActiveMontageEnded);
+		}
+		PlayerCharacter->MovementModeChangedDelegate.RemoveDynamic(this, &UPlayerLaunchReactionAbility::OnMovementModeChanged);
+		PlayerCharacter->MovementModeChangedDelegate.AddDynamic(this, &UPlayerLaunchReactionAbility::OnMovementModeChanged);
+		bMovementModeDelegateBound = true;
+
+		// 8. Start Montage Task
+		MontageTask->ReadyForActivation();
+
+		if (bEndAbilityRequested)
+		{
+			return;
+		}
+
+		const bool bMontageActive =
+#if WITH_DEV_AUTOMATION_TESTS
+			bTestBypassMontageActiveCheck ||
+#endif
+			(BoundAnimInstance && ActiveMontage && BoundAnimInstance->Montage_IsActive(ActiveMontage.Get()));
+
+		if (!bMontageActive)
+		{
+			UE_LOG(LogPolyQuest, Warning, TEXT("Player launch reaction activation aborted for '%s': root motion knockdown montage '%s' did not start."), *GetNameSafe(PlayerCharacter), *GetNameSafe(RootMotionKnockdownMontage));
+			EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
+			return;
+		}
+
+		return;
+	}
+
+	// -------------------------------------------------------------------------
+	// Legacy Physics Launch Fallback Branch
+	// -------------------------------------------------------------------------
 	// 1. Create and activate commit and cancel event listeners before starting takeoff montage
 	CommitEventTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, LaunchCommitEventTag, nullptr, false, false);
 	CancelBeginTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, CancelWindowBeginEventTag, nullptr, false, true);
@@ -176,7 +335,13 @@ void UPlayerLaunchReactionAbility::ActivateAbility(
 		return;
 	}
 
-	if (!BoundAnimInstance || !ActiveMontage || !BoundAnimInstance->Montage_IsActive(ActiveMontage.Get()))
+	const bool bTakeoffActive =
+#if WITH_DEV_AUTOMATION_TESTS
+		bTestBypassMontageActiveCheck ||
+#endif
+		(BoundAnimInstance && ActiveMontage && BoundAnimInstance->Montage_IsActive(ActiveMontage.Get()));
+
+	if (!bTakeoffActive)
 	{
 		UE_LOG(LogPolyQuest, Warning, TEXT("Player launch reaction activation aborted for '%s': takeoff montage '%s' did not start."), *GetNameSafe(PlayerCharacter), *GetNameSafe(TakeoffMontage));
 		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
@@ -241,7 +406,18 @@ void UPlayerLaunchReactionAbility::EndAbility(
 	}
 
 	bEndAbilityRequested = true;
-	APlayerCharacter* PlayerCharacter = BoundPlayerCharacter.IsValid() ? BoundPlayerCharacter.Get() : Cast<APlayerCharacter>(GetAvatarActorFromActorInfo());
+
+#if WITH_DEV_AUTOMATION_TESTS
+	bTestBypassMontageActiveCheck = false;
+#endif
+
+	TWeakObjectPtr<APlayerCharacter> LocalPlayerCharacter = BoundPlayerCharacter.IsValid()
+		? BoundPlayerCharacter
+		: (ActorInfo && ActorInfo->AvatarActor.IsValid()
+			? Cast<APlayerCharacter>(ActorInfo->AvatarActor.Get())
+			: Cast<APlayerCharacter>(GetAvatarActorFromActorInfo()));
+
+	APlayerCharacter* PlayerCharacter = LocalPlayerCharacter.Get();
 
 	if (FacingTurnTask)
 	{
@@ -265,6 +441,10 @@ void UPlayerLaunchReactionAbility::EndAbility(
 		if (ActiveMontage && BoundAnimInstance->Montage_IsActive(ActiveMontage.Get()))
 		{
 			BoundAnimInstance->Montage_Stop(0.0f, ActiveMontage.Get());
+		}
+		if (RootMotionKnockdownMontage && BoundAnimInstance->Montage_IsActive(RootMotionKnockdownMontage.Get()))
+		{
+			BoundAnimInstance->Montage_Stop(0.0f, RootMotionKnockdownMontage.Get());
 		}
 		if (TakeoffMontage && BoundAnimInstance->Montage_IsActive(TakeoffMontage.Get()))
 		{
@@ -332,7 +512,7 @@ namespace
 
 void UPlayerLaunchReactionAbility::OnLaunchCommitEventReceived(FGameplayEventData Payload)
 {
-	if (bEndAbilityRequested || bCommitHandled || CurrentPhase != ELaunchPhase::Takeoff)
+	if (bEndAbilityRequested || CurrentPhase == ELaunchPhase::RootMotionKnockdown || bCommitHandled || CurrentPhase != ELaunchPhase::Takeoff)
 	{
 		return;
 	}
@@ -483,7 +663,16 @@ void UPlayerLaunchReactionAbility::OnMovementModeChanged(ACharacter* Character, 
 		return;
 	}
 
-	if (CurrentPhase == ELaunchPhase::Takeoff || CurrentPhase == ELaunchPhase::TurningToLaunch)
+	if (CurrentPhase == ELaunchPhase::RootMotionKnockdown)
+	{
+		if (MovementComponent->MovementMode != MOVE_Walking)
+		{
+			UE_LOG(LogPolyQuest, Warning, TEXT("Player launch reaction root motion knockdown aborted for '%s': movement mode changed from Walking to %d; ending ability."), *GetNameSafe(Character), static_cast<int32>(MovementComponent->MovementMode));
+			EndFromMontage(true);
+			return;
+		}
+	}
+	else if (CurrentPhase == ELaunchPhase::Takeoff || CurrentPhase == ELaunchPhase::TurningToLaunch)
 	{
 		if (MovementComponent->IsFalling())
 		{
@@ -548,7 +737,13 @@ void UPlayerLaunchReactionAbility::OnMovementModeChanged(ACharacter* Character, 
 				return;
 			}
 
-			if (!BoundAnimInstance || !ActiveMontage || !BoundAnimInstance->Montage_IsActive(ActiveMontage.Get()))
+			const bool bLandingActive =
+#if WITH_DEV_AUTOMATION_TESTS
+				bTestBypassMontageActiveCheck ||
+#endif
+				(BoundAnimInstance && ActiveMontage && BoundAnimInstance->Montage_IsActive(ActiveMontage.Get()));
+
+			if (!bLandingActive)
 			{
 				UE_LOG(LogPolyQuest, Warning, TEXT("Player launch reaction landing recovery montage '%s' did not start on '%s'."), *GetNameSafe(LandingRecoveryMontage), *GetNameSafe(Character));
 				EndFromMontage(true);
@@ -598,6 +793,14 @@ void UPlayerLaunchReactionAbility::OnActiveMontageEnded(UAnimMontage* Montage, b
 			return;
 		}
 	}
+	else if (Montage == RootMotionKnockdownMontage.Get())
+	{
+		if (CurrentPhase == ELaunchPhase::RootMotionKnockdown)
+		{
+			EndFromMontage(bInterrupted);
+			return;
+		}
+	}
 }
 
 bool UPlayerLaunchReactionAbility::ValidateActivationSetup(const FGameplayAbilityActorInfo* ActorInfo) const
@@ -606,25 +809,127 @@ bool UPlayerLaunchReactionAbility::ValidateActivationSetup(const FGameplayAbilit
 	const APlayerCharacter* PlayerCharacter = ActorInfo ? Cast<APlayerCharacter>(ActorInfo->AvatarActor.Get()) : nullptr;
 	const USkeletalMeshComponent* SkeletalMesh = PlayerCharacter ? PlayerCharacter->GetMesh() : nullptr;
 	const UAnimInstance* AnimInstance = SkeletalMesh ? SkeletalMesh->GetAnimInstance() : nullptr;
+#if WITH_DEV_AUTOMATION_TESTS
+	if (!AnimInstance && BoundAnimInstance)
+	{
+		AnimInstance = BoundAnimInstance.Get();
+	}
+	if (!AnimInstance)
+	{
+		if (const UPlayerLaunchReactionAbility* CDO = Cast<UPlayerLaunchReactionAbility>(GetClass()->GetDefaultObject()))
+		{
+			if (CDO->BoundAnimInstance)
+			{
+				AnimInstance = CDO->BoundAnimInstance.Get();
+			}
+		}
+	}
+#endif
 	const UCharacterMovementComponent* MovementComponent = PlayerCharacter ? PlayerCharacter->GetCharacterMovement() : nullptr;
 
 	const bool bIsDead = CharacterASC && DeadStateTag.IsValid() && CharacterASC->HasMatchingGameplayTag(DeadStateTag);
 
-	return CharacterASC && PlayerCharacter && !PlayerCharacter->IsActorBeingDestroyed() && !bIsDead && AnimInstance && TakeoffMontage && LandingRecoveryMontage
+	const bool bCommonValid = CharacterASC && PlayerCharacter && !PlayerCharacter->IsActorBeingDestroyed() && !bIsDead && AnimInstance
 		&& MovementComponent && MovementComponent->IsMovingOnGround()
-		&& LaunchHorizontalSpeed > 0.0f && FMath::IsFinite(LaunchHorizontalSpeed)
-		&& LaunchVerticalSpeed > 0.0f && FMath::IsFinite(LaunchVerticalSpeed)
-		&& FacingTurnRateDegreesPerSecond > 0.0f && FMath::IsFinite(FacingTurnRateDegreesPerSecond)
 		&& PlayerLaunchReactionAbilityTag.IsValid() && PlayerLaunchReactionEventTag.IsValid() && LaunchCommitEventTag.IsValid()
 		&& CancelWindowBeginEventTag.IsValid() && CancelWindowEndEventTag.IsValid() && DodgeCancelableStateTag.IsValid()
 		&& HitReactingStateTag.IsValid() && StunnedStateTag.IsValid() && DeadStateTag.IsValid() && HyperArmorStateTag.IsValid()
+		&& TeardownOnUnpossessTag.IsValid()
 		&& BlockAbilitiesWithTag.Num() == 10 && AbilitiesToCancel.Num() == 11;
+
+	if (!bCommonValid)
+	{
+		return false;
+	}
+
+	return IsRootMotionKnockdownCandidate(PlayerCharacter, MovementComponent) || IsLegacyLaunchCandidate(MovementComponent);
 }
 
-bool UPlayerLaunchReactionAbility::IsEventFromTakeoffMontage(const FGameplayEventData& Payload) const
+bool UPlayerLaunchReactionAbility::IsRootMotionKnockdownCandidate(
+	const APlayerCharacter* PlayerCharacter,
+	const UCharacterMovementComponent* MovementComponent) const
+{
+	if (!bUseGroundedRootMotionKnockdown || !RootMotionKnockdownMontage || !MovementComponent)
+	{
+		return false;
+	}
+
+	if (!RootMotionKnockdownMontage->HasRootMotion() || RootMotionKnockdownMontage->SlotAnimTracks.Num() == 0)
+	{
+		return false;
+	}
+
+	const float PlayLength = RootMotionKnockdownMontage->GetPlayLength();
+	if (!FMath::IsFinite(PlayLength) || PlayLength <= 0.0f)
+	{
+		return false;
+	}
+
+	return MovementComponent->MovementMode == MOVE_Walking;
+}
+
+bool UPlayerLaunchReactionAbility::IsLegacyLaunchCandidate(const UCharacterMovementComponent* MovementComponent) const
+{
+	if (!TakeoffMontage || !LandingRecoveryMontage || !MovementComponent)
+	{
+		return false;
+	}
+
+	return MovementComponent->IsMovingOnGround()
+		&& LaunchHorizontalSpeed > 0.0f && FMath::IsFinite(LaunchHorizontalSpeed)
+		&& LaunchVerticalSpeed > 0.0f && FMath::IsFinite(LaunchVerticalSpeed)
+		&& FacingTurnRateDegreesPerSecond > 0.0f && FMath::IsFinite(FacingTurnRateDegreesPerSecond);
+}
+
+bool UPlayerLaunchReactionAbility::TryResolveRootMotionFacingYaw(
+	const FVector& LocalAttackerDirection,
+	float ImpactReferenceYaw,
+	float& OutFacingYaw)
+{
+	OutFacingYaw = 0.0f;
+
+	if (!FMath::IsFinite(LocalAttackerDirection.X) || !FMath::IsFinite(LocalAttackerDirection.Y))
+	{
+		return false;
+	}
+
+	FVector LocalPlanarDir(LocalAttackerDirection.X, LocalAttackerDirection.Y, 0.0f);
+	if (LocalPlanarDir.IsNearlyZero() || !LocalPlanarDir.Normalize())
+	{
+		return false;
+	}
+
+	if (!FMath::IsFinite(LocalPlanarDir.X) || !FMath::IsFinite(LocalPlanarDir.Y))
+	{
+		return false;
+	}
+
+	if (!FMath::IsFinite(ImpactReferenceYaw))
+	{
+		return false;
+	}
+
+	const FRotator TargetRotation(0.0f, ImpactReferenceYaw, 0.0f);
+	const FVector WorldAttackerDir = TargetRotation.RotateVector(LocalPlanarDir);
+	if (!FMath::IsFinite(WorldAttackerDir.X) || !FMath::IsFinite(WorldAttackerDir.Y))
+	{
+		return false;
+	}
+
+	const float ResolvedFacingYaw = WorldAttackerDir.Rotation().Yaw;
+	if (!FMath::IsFinite(ResolvedFacingYaw))
+	{
+		return false;
+	}
+
+	OutFacingYaw = ResolvedFacingYaw;
+	return true;
+}
+
+bool UPlayerLaunchReactionAbility::IsEventFromMontage(const FGameplayEventData& Payload, const UAnimMontage* ExpectedMontage) const
 {
 	const AActor* AvatarActor = GetAvatarActorFromActorInfo();
-	if (bEndAbilityRequested || !TakeoffMontage || !AvatarActor || Payload.Instigator != AvatarActor || Payload.Target != AvatarActor)
+	if (bEndAbilityRequested || !ExpectedMontage || !AvatarActor || Payload.Instigator != AvatarActor || Payload.Target != AvatarActor)
 	{
 		return false;
 	}
@@ -635,14 +940,14 @@ bool UPlayerLaunchReactionAbility::IsEventFromTakeoffMontage(const FGameplayEven
 		return false;
 	}
 
-	if (PayloadObject == TakeoffMontage.Get())
+	if (PayloadObject == ExpectedMontage)
 	{
 		return true;
 	}
 
 	if (const UAnimSequenceBase* Sequence = Cast<UAnimSequenceBase>(PayloadObject))
 	{
-		for (const FSlotAnimationTrack& Track : TakeoffMontage->SlotAnimTracks)
+		for (const FSlotAnimationTrack& Track : ExpectedMontage->SlotAnimTracks)
 		{
 			for (const FAnimSegment& Segment : Track.AnimTrack.AnimSegments)
 			{
@@ -657,14 +962,13 @@ bool UPlayerLaunchReactionAbility::IsEventFromTakeoffMontage(const FGameplayEven
 	return false;
 }
 
+bool UPlayerLaunchReactionAbility::IsEventFromTakeoffMontage(const FGameplayEventData& Payload) const
+{
+	return IsEventFromMontage(Payload, TakeoffMontage.Get());
+}
+
 bool UPlayerLaunchReactionAbility::IsEventFromLandingRecoveryMontage(const FGameplayEventData& Payload) const
 {
-	const AActor* AvatarActor = GetAvatarActorFromActorInfo();
-	if (bEndAbilityRequested || !LandingRecoveryMontage || !AvatarActor || Payload.Instigator != AvatarActor || Payload.Target != AvatarActor)
-	{
-		return false;
-	}
-
 #if WITH_DEV_AUTOMATION_TESTS
 	if (bTestBypassAnimInstanceActiveCheck)
 	{
@@ -679,52 +983,76 @@ bool UPlayerLaunchReactionAbility::IsEventFromLandingRecoveryMontage(const FGame
 		}
 	}
 
-	const UObject* PayloadObject = Payload.OptionalObject.Get();
-	if (!PayloadObject)
-	{
-		return false;
-	}
+	return IsEventFromMontage(Payload, LandingRecoveryMontage.Get());
+}
 
-	if (PayloadObject == LandingRecoveryMontage.Get())
+bool UPlayerLaunchReactionAbility::IsEventFromRootMotionKnockdownMontage(const FGameplayEventData& Payload) const
+{
+#if WITH_DEV_AUTOMATION_TESTS
+	if (bTestBypassAnimInstanceActiveCheck)
 	{
-		return true;
+		// Bypass AnimInstance active check for isolated automation test cases
 	}
-
-	if (const UAnimSequenceBase* Sequence = Cast<UAnimSequenceBase>(PayloadObject))
+	else
+#endif
 	{
-		for (const FSlotAnimationTrack& Track : LandingRecoveryMontage->SlotAnimTracks)
+		if (!BoundAnimInstance || !BoundAnimInstance->Montage_IsActive(RootMotionKnockdownMontage.Get()))
 		{
-			for (const FAnimSegment& Segment : Track.AnimTrack.AnimSegments)
-			{
-				if (Segment.GetAnimReference() == Sequence)
-				{
-					return true;
-				}
-			}
+			return false;
 		}
 	}
 
-	return false;
+	return IsEventFromMontage(Payload, RootMotionKnockdownMontage.Get());
 }
 
 void UPlayerLaunchReactionAbility::OnCancelWindowBegin(FGameplayEventData Payload)
 {
-	if (bEndAbilityRequested || CurrentPhase != ELaunchPhase::LandingRecovery || !IsEventFromLandingRecoveryMontage(Payload))
+	if (bEndAbilityRequested)
 	{
 		return;
 	}
 
-	SetDodgeCancelable(true);
+	if (CurrentPhase == ELaunchPhase::LandingRecovery)
+	{
+		if (!IsEventFromLandingRecoveryMontage(Payload))
+		{
+			return;
+		}
+		SetDodgeCancelable(true);
+	}
+	else if (CurrentPhase == ELaunchPhase::RootMotionKnockdown)
+	{
+		if (!IsEventFromRootMotionKnockdownMontage(Payload))
+		{
+			return;
+		}
+		SetDodgeCancelable(true);
+	}
 }
 
 void UPlayerLaunchReactionAbility::OnCancelWindowEnd(FGameplayEventData Payload)
 {
-	if (bEndAbilityRequested || CurrentPhase != ELaunchPhase::LandingRecovery || !IsEventFromLandingRecoveryMontage(Payload))
+	if (bEndAbilityRequested)
 	{
 		return;
 	}
 
-	SetDodgeCancelable(false);
+	if (CurrentPhase == ELaunchPhase::LandingRecovery)
+	{
+		if (!IsEventFromLandingRecoveryMontage(Payload))
+		{
+			return;
+		}
+		SetDodgeCancelable(false);
+	}
+	else if (CurrentPhase == ELaunchPhase::RootMotionKnockdown)
+	{
+		if (!IsEventFromRootMotionKnockdownMontage(Payload))
+		{
+			return;
+		}
+		SetDodgeCancelable(false);
+	}
 }
 
 void UPlayerLaunchReactionAbility::SetDodgeCancelable(bool bShouldCancel)
@@ -764,3 +1092,30 @@ void UPlayerLaunchReactionAbility::EndFromMontage(bool bWasCancelled)
 		EndAbility(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, true, bWasCancelled);
 	}
 }
+
+#if WITH_DEV_AUTOMATION_TESTS
+bool UPlayerLaunchReactionAbility::IsTestPhaseRootMotionKnockdown() const
+{
+	return CurrentPhase == ELaunchPhase::RootMotionKnockdown;
+}
+
+bool UPlayerLaunchReactionAbility::IsTestPhaseTakeoff() const
+{
+	return CurrentPhase == ELaunchPhase::Takeoff;
+}
+
+bool UPlayerLaunchReactionAbility::IsTestPhaseLandingRecovery() const
+{
+	return CurrentPhase == ELaunchPhase::LandingRecovery;
+}
+
+bool UPlayerLaunchReactionAbility::IsTestPhaseNone() const
+{
+	return CurrentPhase == ELaunchPhase::None;
+}
+
+uint8 UPlayerLaunchReactionAbility::GetTestCurrentPhaseRaw() const
+{
+	return static_cast<uint8>(CurrentPhase);
+}
+#endif

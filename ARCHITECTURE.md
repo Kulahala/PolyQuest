@@ -1015,6 +1015,26 @@ Root Motion is the presentation displacement source; these abilities do not use
 replacement movement path. Montage/task delegates and all abnormal exits are
 cleaned by `EndAbility()`.
 
+#### Player grounded launch reaction
+
+`UPlayerLaunchReactionAbility` uses the authored `RootMotionKnockdownMontage`
+when the Player is exactly in CMC `MOVE_Walking` and the Montage has valid Root
+Motion, Slot tracks, and a finite positive play length. CMC remains the authority
+for capsule collision, floor, steps, walls, and ledges. Before playback the
+Ability clears residual velocity, resolves the target-local `Target -> Attacker`
+direction once, applies one facing yaw, and temporarily disables ledge walk-off.
+Movement/jump blocking, Dodge cancel-window state, Montage completion, movement
+mode interruption, cancellation, destruction, death cancellation, and
+UnPossess converge through the Ability's idempotent `EndAbility()` cleanup.
+
+The current authored `GA_PlayerLaunchReaction` intentionally leaves the legacy
+`TakeoffMontage` and `LandingRecoveryMontage` fields empty, so Root Motion
+candidate failure is fail-closed rather than a Physics Launch fallback. The
+Legacy C++ branch and compatibility tests remain dormant until a separately
+approved retirement slice; they are not part of the current authored behavior
+contract. Player does not own `State.Block.Facing`; existing Lock-On and
+locomotion gates remain the facing consumers.
+
 #### Notify-timed Hyper Armor
 
 `UAnimNotifyState_EnemyHyperArmor` is timing-only. It emits
@@ -1074,20 +1094,22 @@ selects only Abilities carrying `Ability.Action.Teardown.OnUnpossess`.
 `InstancedPerActor`, `ServerOnly` Gameplay-Event abilities, but their grounded
 presentation contracts are now intentionally distinct.
 
-`UPlayerLaunchReactionAbility` retains the Native phase sequence:
+For the current authored `GA_PlayerLaunchReaction` CDO, `UPlayerLaunchReactionAbility`
+uses the Native phase sequence:
 
 ~~~text
-None -> Takeoff -> TurningToLaunch -> AwaitingAirborne -> Airborne -> LandingRecovery
+None -> RootMotionKnockdown
 ~~~
 
-It freezes the target-local impact direction and reference Yaw before the
-Takeoff Montage, accepts `Event.Reaction.Launch.Commit` only from the current
-Avatar and active Takeoff Montage (or its contained sequence), pauses Takeoff,
-completes the facing task, and then lets `LaunchCharacter()` plus
-CharacterMovement own capsule displacement. `MovementModeChanged` is the fast
-path into Falling, with the existing watchdog governed by
-`AirborneTransitionGraceSeconds`. Landing stops the paused Takeoff, clears
-residual movement once, and starts the authored LandingRecovery Montage.
+The Root Motion path freezes the target-local impact direction and reference Yaw
+before Montage playback, stops residual velocity, keeps CMC in `MOVE_Walking`,
+and lets the authored Montage own grounded knockdown/slide/recovery displacement.
+It does not consume `Event.Reaction.Launch.Commit`, and all movement-mode,
+Montage, cancellation, destruction, death-cancellation, and UnPossess exits
+converge on `EndAbility()`. The source still retains the historical
+`Takeoff -> TurningToLaunch -> AwaitingAirborne -> Airborne -> LandingRecovery`
+sequence for dormant compatibility tests until the separately approved Legacy
+retirement slice; it is not the current authored behavior.
 
 `UEnemyLaunchReactionAbility` retains that same sequence for its Legacy Physics
 fallback and adds a separate `RootMotionKnockdown` phase. When the opt-in flag,
@@ -1106,7 +1128,8 @@ branch does not create or require `Event.Reaction.Launch.Commit`; the Enemy
 Launch Ability owns `State.Block.Facing` across both branches.
 
 Only the Player launch Ability listens to the existing Dodge cancel-window
-events, and only during `LandingRecovery` from the matching recovery Montage.
+events, during `RootMotionKnockdown` or `LandingRecovery` and only from the
+matching active Montage.
 It exposes one scoped `State.Action.CanCancel.Dodge` contribution; there is no
 Player air Dodge, Enemy recovery Dodge, or generic reaction-cancel layer.
 Montage/task/delegate cleanup, ledge-setting restoration, frozen snapshots,
@@ -1119,7 +1142,8 @@ restores Poise when the living enemy remains at zero.
 Motion is active or the controlled Enemy ASC owns `State.Block.Facing`. The
 facing block is a cross-Ability lifecycle contract, not a Montage-playing
 heuristic or a controller-side action state machine. Player grounded launch
-alignment remains a separate `TODO-07B13` contract.
+alignment is implemented by `TODO-07B13`; its authored CDO is Root Motion-only
+with fail-closed invalidation and no Physics fallback.
 
 #### Enemy death and teardown
 
