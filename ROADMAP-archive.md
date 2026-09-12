@@ -1594,3 +1594,17 @@ TODO-03A3E World Pickup Interaction Prompt v1
 - 提交内容为H6审计和独立复核证据、修复/共享校验/项目级SHRINK排期、11项测试接口清单，以及FULL-AUDIT全项目范围。全项目审查尚未开始，不把局部H6结论外推。
 - 保留并排除Source、ARCHITECTURE、AGENTS、Config、Content、tmp与其他WIP；本次仅文档静态检查，不重新运行编译/Automation/Editor/PIE，不推送远程。
 - 用户已自行启用Ponytail，配置只读核对为enabled=true、defaultMode=lite。Agent仅评估三项钩子，未更改插件或钩子开关；启用插件不等于启动全项目审查或批准代码删除。
+
+### TODO-03H6 Handoff To TODO-03H6-FULL-AUDIT — Plan Only (2026-09-12)
+
+- H6 三文档提交已核实为 `9f2d8e0b1b8c34dabc4f17bfb6aea6b0a2adb229`；完整 H6 计划、两条 P2、原独立 Fresh Review 收据、绑定重复和 11 项 getter 固定由 `git show 9f2d8e0:plan.md` 第 7/8 节追溯。原有归档正文及各时点授权记录保留，不重复复制。
+- 用户已接受 FULL-AUDIT 修订计划，并在本轮明确收尾范围为“落盘计划、230 文件待审清单及交接指针（沿用原始范围）”。本次替换 `plan.md` 仅建立下一阶段交接；全项目审计尚未启动，新增逐文件覆盖为 0/230，不能把 H6 局部证据外推为整库审阅。
+- 本轮写入白名单只有 `plan.md`、`ROADMAP.md`、`ROADMAP-archive.md`。启动 HEAD 为 `9f2d8e0`，Source 与 H6 源码基线 `759efca` 无差异；现有 WIP 共 2,122 项（Content 2,117、Config 1、tmp 4），保留并排除。数量是启动快照，不是批准修改范围。
+- 后续仍为 FULL-AUDIT → FIX1 → FIX2 → 已接受项目级 SHRINK → 03C。FIX1/FIX2 不重复造单；SHRINK 先按已确认绑定样板和 11 项测试接口分组，其他分组由实际证据产生。静态审计完成不等于修复、瘦身或 03C 放行。
+- 本次不执行源码审计批次、源码/测试/Config/资产改动、编译、Automation、Editor/PIE、子代理或 Fresh Review；不暂存、提交或推送。旧 H6 提交批准不延续为本阶段提交批准。
+
+### TODO-03H6-FULL-AUDIT Plan Commit Approval (2026-09-12)
+
+- 用户明确回复“可以提交”，单独授权提交 plan.md、ROADMAP.md、ROADMAP-archive.md，保留 9f2d8e0 的 H6 历史证据，不 amend、不推送。此前未提交表述保留为各时点历史，最终提交哈希以 Git 历史为准。
+- FULL-AUDIT 是当前阶段，本次提交只包含已批准计划、230 文件待审清单及交接指针；全量审计尚未开始。下一步是本阶段按现有计划执行审计，后续阶段才是 FIX1 → FIX2 → 已接受 SHRINK → 03C。
+- 本次授权不包含源码、测试、Config、Content、tmp 或其他 WIP，不启动审计、编译、Automation、Editor／PIE、子代理或 Fresh Review。
