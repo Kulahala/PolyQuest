@@ -1654,3 +1654,20 @@ TODO-03A3E World Pickup Interaction Prompt v1
 - **证据边界**：全部Findings基于静态路径；F05/F10另有独立标量数学反例，不是UE运行。有效playable Montage/重入/真实StanceBreak测试保留，人工状态或缺前置用例不能冒充真实生产集成。反射/Blueprint/Tag/软引用候选只记录待readback，未删除。历史authored/compile/PIE债务保持ROADMAP原归属。
 - **路线**：FULL-AUDIT静态审计完成→FIX1→FIX2→已接受有限SHRINK→03C。FIX2直接影响03C投射物运行契约；FIX1/已接受SHRINK为排期前置。新增问题各有独立FIX；F04发布构建前关闭、F08采用BP动态阵营前关闭；未接受清理和条件资产迁移不自动扩门禁。下一任务先制定FIX1独立计划，不沿用本轮文档批准改源码。
 - **授权与保护**：用户批准“请继续，完成后可以提交，作为h6审计”；仅plan.md、ROADMAP.md、ROADMAP-archive.md，archive只追加，既有2,122项Content/Config/tmp WIP排除。未改Source/测试/Config/资产/Build.cs/ARCHITECTURE.md，未编译、未运行Automation/Editor/PIE、未派子代理或额外Fresh Review，不推送。最终白名单、Source哈希、WIP状态、归档前缀与文档检查收据见plan.md CP-77。
+
+## TODO-03H6-FULL-AUDIT → TODO-03H6-FIX1 Handoff (2026-09-12)
+
+- 用户接受修订计划落盘并要求提供 Gemini 执行提示词；当前活跃计划转为 TODO-03H6-FIX1。此次仅文档交接，未实施生产修复、编译、运行 Automation 或 Editor/PIE，未提交。
+- FULL-AUDIT 完整台账、14 项 Findings、24 项候选、230 文件覆盖与 CP-77 保护记录固定于 `git show 851c7ac5f01fc470d64469831be40125dd0dece2:plan.md`。本次只追加交接，不改前述历史正文。
+- FIX1 基线 HEAD 为 `851c7ac5f01fc470d64469831be40125dd0dece2`；既有 Source 无未提交差异，2,122 项 Content/Config/tmp WIP 保留并排除。
+- FIX1 只处理 H6-F01 及共享实例授权，采用 manual/out-of-band Gemini。先交付真实 Enemy Melee 双 live 反例及薄 Clear 测试入口，取得用户修复前编译/运行失败收据后再进入生产修复。
+- FIX2、有限 SHRINK 和其余 Findings/债务归属不变；03C 尚不准入。新的 plan.md 为 FIX1 交接凭据，FULL-AUDIT 证据不再引用当前 plan 章节。
+
+## TODO-03H6-FIX1 Main Implementation Closeout (2026-09-13)
+
+- **范围与结果**：基线851c7ac5f01fc470d64469831be40125dd0dece2；H6-F01实例授权修复及共享校验完成。12类Player/Enemy消费者共用FAbilityMontageRateWindowLifecycle中的当前实例规则，校验UObject有效性、当前Montage映射、绑定ID和未停止状态；暂停保留授权。Helper在Begin/End/Restore及重绑定时防止旧实例污染新实例，Clear幂等清空自身状态。各Context/Token、GAS权属和Montage停止策略保留。
+- **实现与复核**：Gemini按manual/out-of-band路线实现并定向修复；Main完成生产审查和后续限定delta review，无未关闭P0–P2。补齐Helper真实双实例负例、StanceBreak真实播放与恢复权属，以及Victim测试CDO合法反射读取和同步作用域RAII恢复。未开展无关重构或扩大审计。
+- **验证证据**：用户回传Gemini执行的PolyQuestEditor Win64 Development编译成功、Exit Code 0；6组Focused Automation共11/11 Success、Exit Code 0。用户在本轮Scene01检查清单之后确认“测试通过，可以开始文档收尾然后提交”。Main仅执行源码/diff与文档检查，未重跑编译、Automation或操作Editor/PIE。
+- **原门禁偏差**：修复前真实Melee RED未实际运行；本次PIE与修复后Automation不能补证历史。用户在获知这一边界后授权收尾和提交，本片按现有代码/验证完成实现验收；未执行RED保留为非阻塞Debt-03H6-FIX1-PreFixProof，唯一后续触发与关闭条件见ROADMAP。原批准计划的测试先行顺序未被追认为已完成，不声称生产资产自然触发过该缺陷。
+- **文档与提交**：提交清单为18份Source文件（12生产cpp、2头文件、4测试cpp）及plan.md、ROADMAP.md、ROADMAP-archive.md、ARCHITECTURE.md。保留原归档正文，仅追加；本plan保留完成态交接。用户明确授权提交，未授权推送。Content/Config/tmp既有WIP全部排除，不暂存资产或Config。
+- **下一阶段**：独立制定TODO-03H6-FIX2计划，其后为已接受有限SHRINK，再进入03C；其他FULL-AUDIT Findings和authored验证债保持原归属。本次不开始FIX2实现。

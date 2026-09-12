@@ -217,12 +217,10 @@ void UEnemyMeleeAbility::ActivateAbility(
 	{
 		ActiveMontageInstanceID = Instance->GetInstanceID();
 	}
-#if WITH_DEV_AUTOMATION_TESTS
-	else if (bTestBypassMontageActiveCheck)
+	else
 	{
-		ActiveMontageInstanceID = 1;
+		ActiveMontageInstanceID = INDEX_NONE;
 	}
-#endif
 
 	RateWindowLifecycle.BindAndCapture(this, BoundAnimInstance.Get(), ActiveMontage.Get(), RateWindowBeginEventTag, RateWindowEndEventTag);
 
@@ -479,20 +477,14 @@ void UEnemyMeleeAbility::OnRateWindowBegin(const FGameplayEventData& Payload)
 		return;
 	}
 
-	if (BoundAnimInstance && ActiveMontage && ActiveMontageInstanceID != INDEX_NONE)
-	{
-		const FAnimMontageInstance* CurrentInst = BoundAnimInstance->GetMontageInstanceForID(ActiveMontageInstanceID);
 #if WITH_DEV_AUTOMATION_TESTS
-		const bool bInstanceValid = bTestBypassMontageActiveCheck || (CurrentInst && CurrentInst->Montage == ActiveMontage && !CurrentInst->IsStopped());
+	const bool bInstanceValid = bTestBypassMontageActiveCheck || FAbilityMontageRateWindowLifecycle::IsCurrentMontageInstance(
+		BoundAnimInstance.Get(), ActiveMontage.Get(), ActiveMontageInstanceID);
 #else
-		const bool bInstanceValid = (CurrentInst && CurrentInst->Montage == ActiveMontage && !CurrentInst->IsStopped());
+	const bool bInstanceValid = FAbilityMontageRateWindowLifecycle::IsCurrentMontageInstance(
+		BoundAnimInstance.Get(), ActiveMontage.Get(), ActiveMontageInstanceID);
 #endif
-		if (!bInstanceValid)
-		{
-			return;
-		}
-	}
-	else
+	if (!bInstanceValid)
 	{
 		return;
 	}
@@ -507,20 +499,14 @@ void UEnemyMeleeAbility::OnRateWindowEnd(const FGameplayEventData& Payload)
 		return;
 	}
 
-	if (BoundAnimInstance && ActiveMontage && ActiveMontageInstanceID != INDEX_NONE)
-	{
-		const FAnimMontageInstance* CurrentInst = BoundAnimInstance->GetMontageInstanceForID(ActiveMontageInstanceID);
 #if WITH_DEV_AUTOMATION_TESTS
-		const bool bInstanceValid = bTestBypassMontageActiveCheck || (CurrentInst && CurrentInst->Montage == ActiveMontage && !CurrentInst->IsStopped());
+	const bool bInstanceValid = bTestBypassMontageActiveCheck || FAbilityMontageRateWindowLifecycle::IsCurrentMontageInstance(
+		BoundAnimInstance.Get(), ActiveMontage.Get(), ActiveMontageInstanceID);
 #else
-		const bool bInstanceValid = (CurrentInst && CurrentInst->Montage == ActiveMontage && !CurrentInst->IsStopped());
+	const bool bInstanceValid = FAbilityMontageRateWindowLifecycle::IsCurrentMontageInstance(
+		BoundAnimInstance.Get(), ActiveMontage.Get(), ActiveMontageInstanceID);
 #endif
-		if (!bInstanceValid)
-		{
-			return;
-		}
-	}
-	else
+	if (!bInstanceValid)
 	{
 		return;
 	}
@@ -551,16 +537,13 @@ void UEnemyMeleeAbility::ClearRateWindow(bool bRestoreRate)
 
 	if (bRestoreRate && RateWindowLifecycle.IsBound())
 	{
-		bool bInstanceValid = false;
-		if (BoundAnimInstance && ActiveMontage && ActiveMontageInstanceID != INDEX_NONE)
-		{
-			const FAnimMontageInstance* CurrentInst = BoundAnimInstance->GetMontageInstanceForID(ActiveMontageInstanceID);
 #if WITH_DEV_AUTOMATION_TESTS
-			bInstanceValid = bTestBypassMontageActiveCheck || (CurrentInst && CurrentInst->Montage == ActiveMontage && !CurrentInst->IsStopped());
+		const bool bInstanceValid = bTestBypassMontageActiveCheck || FAbilityMontageRateWindowLifecycle::IsCurrentMontageInstance(
+			BoundAnimInstance.Get(), ActiveMontage.Get(), ActiveMontageInstanceID);
 #else
-			bInstanceValid = (CurrentInst && CurrentInst->Montage == ActiveMontage && !CurrentInst->IsStopped());
+		const bool bInstanceValid = FAbilityMontageRateWindowLifecycle::IsCurrentMontageInstance(
+			BoundAnimInstance.Get(), ActiveMontage.Get(), ActiveMontageInstanceID);
 #endif
-		}
 
 		if (bInstanceValid)
 		{

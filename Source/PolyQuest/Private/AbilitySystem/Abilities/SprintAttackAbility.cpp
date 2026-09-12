@@ -631,12 +631,8 @@ void USprintAttackRateWindowContext::OnEnd(FGameplayEventData Payload)
 
 bool USprintAttackAbility::HasOwnedRateWindowMontageInstance() const
 {
-	UAnimInstance* AnimInstance = RateWindowAnimInstance.Get();
-	UAnimMontage* Montage = RateWindowMontage.Get();
-	const FAnimMontageInstance* Instance = AnimInstance && Montage
-		? AnimInstance->GetActiveInstanceForMontage(Montage) : nullptr;
-	return Instance && RateWindowMontageInstanceID != INDEX_NONE
-		&& Instance->GetInstanceID() == RateWindowMontageInstanceID && !Instance->IsStopped();
+	return FAbilityMontageRateWindowLifecycle::IsCurrentMontageInstance(
+		RateWindowAnimInstance.Get(), RateWindowMontage.Get(), RateWindowMontageInstanceID);
 }
 
 bool USprintAttackAbility::BindRateWindow(UAnimInstance* AnimInstance, UAnimMontage* Montage)

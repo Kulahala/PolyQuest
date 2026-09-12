@@ -1401,22 +1401,16 @@ void UEnemyVictimExecutionAbility::OnRateWindowBegin(FGameplayEventData Payload)
 	}
 #endif
 
-	if (ActiveVictimMontageInstanceID != INDEX_NONE && AnimInstance)
-	{
-		const FAnimMontageInstance* CurrentInstance = AnimInstance->GetMontageInstanceForID(ActiveVictimMontageInstanceID);
 #if WITH_DEV_AUTOMATION_TESTS
-		const bool bInstanceValid = bTestBypassMontageActiveCheck || (CurrentInstance && CurrentInstance->Montage == ActiveVictimMontage && !CurrentInstance->IsStopped());
+	const bool bInstanceValid = bTestBypassMontageActiveCheck || FAbilityMontageRateWindowLifecycle::IsCurrentMontageInstance(
+		AnimInstance, ActiveVictimMontage, ActiveVictimMontageInstanceID);
 #else
-		const bool bInstanceValid = (CurrentInstance && CurrentInstance->Montage == ActiveVictimMontage && !CurrentInstance->IsStopped());
+	const bool bInstanceValid = FAbilityMontageRateWindowLifecycle::IsCurrentMontageInstance(
+		AnimInstance, ActiveVictimMontage, ActiveVictimMontageInstanceID);
 #endif
-		if (!bInstanceValid)
-		{
-			RateWindowLifecycle = FAbilityMontageRateWindowLifecycle();
-			return;
-		}
-	}
-	else
+	if (!bInstanceValid)
 	{
+		RateWindowLifecycle = FAbilityMontageRateWindowLifecycle();
 		return;
 	}
 
@@ -1455,22 +1449,16 @@ void UEnemyVictimExecutionAbility::OnRateWindowEnd(FGameplayEventData Payload)
 	}
 #endif
 
-	if (ActiveVictimMontageInstanceID != INDEX_NONE && AnimInstance)
-	{
-		const FAnimMontageInstance* CurrentInstance = AnimInstance->GetMontageInstanceForID(ActiveVictimMontageInstanceID);
 #if WITH_DEV_AUTOMATION_TESTS
-		const bool bInstanceValid = bTestBypassMontageActiveCheck || (CurrentInstance && CurrentInstance->Montage == ActiveVictimMontage && !CurrentInstance->IsStopped());
+	const bool bInstanceValid = bTestBypassMontageActiveCheck || FAbilityMontageRateWindowLifecycle::IsCurrentMontageInstance(
+		AnimInstance, ActiveVictimMontage, ActiveVictimMontageInstanceID);
 #else
-		const bool bInstanceValid = (CurrentInstance && CurrentInstance->Montage == ActiveVictimMontage && !CurrentInstance->IsStopped());
+	const bool bInstanceValid = FAbilityMontageRateWindowLifecycle::IsCurrentMontageInstance(
+		AnimInstance, ActiveVictimMontage, ActiveVictimMontageInstanceID);
 #endif
-		if (!bInstanceValid)
-		{
-			RateWindowLifecycle = FAbilityMontageRateWindowLifecycle();
-			return;
-		}
-	}
-	else
+	if (!bInstanceValid)
 	{
+		RateWindowLifecycle = FAbilityMontageRateWindowLifecycle();
 		return;
 	}
 
@@ -1524,16 +1512,13 @@ void UEnemyVictimExecutionAbility::ClearRateWindow(bool bRestoreRate)
 		}
 #endif
 
-		bool bInstanceValid = false;
-		if (AnimInstance && ActiveVictimMontage && ActiveVictimMontageInstanceID != INDEX_NONE)
-		{
-			const FAnimMontageInstance* CurrentInst = AnimInstance->GetMontageInstanceForID(ActiveVictimMontageInstanceID);
 #if WITH_DEV_AUTOMATION_TESTS
-			bInstanceValid = bTestBypassMontageActiveCheck || (CurrentInst && CurrentInst->Montage == ActiveVictimMontage && !CurrentInst->IsStopped());
+		const bool bInstanceValid = bTestBypassMontageActiveCheck || FAbilityMontageRateWindowLifecycle::IsCurrentMontageInstance(
+			AnimInstance, ActiveVictimMontage, ActiveVictimMontageInstanceID);
 #else
-			bInstanceValid = (CurrentInst && CurrentInst->Montage == ActiveVictimMontage && !CurrentInst->IsStopped());
+		const bool bInstanceValid = FAbilityMontageRateWindowLifecycle::IsCurrentMontageInstance(
+			AnimInstance, ActiveVictimMontage, ActiveVictimMontageInstanceID);
 #endif
-		}
 
 		if (bInstanceValid)
 		{

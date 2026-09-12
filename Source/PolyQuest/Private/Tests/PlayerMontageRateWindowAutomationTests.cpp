@@ -373,7 +373,7 @@ bool FPlayerMontageRateWindowAutomationTest::RunTest(const FString& Parameters)
 		{
 			return false;
 		}
-		TestEqual(TEXT("LightAttack: ActiveMontageInstanceID set to 1 under test bypass"), LightAbility->GetTestActiveMontageInstanceID(), 1);
+		TestEqual(TEXT("LightAttack: ActiveMontageInstanceID remains INDEX_NONE under test bypass without real instance"), LightAbility->GetTestActiveMontageInstanceID(), INDEX_NONE);
 
 		// 3.1 Single Window: Begin -> End (Rate changed and restored)
 		FGameplayEventData BeginA;

@@ -446,9 +446,11 @@ previous active window, and ending the last window restores the baseline
 captured after successful playback. The rate is not multiplied by that baseline.
 
 Each consumer owns a transient RateWindow context, binding generation, instance
-ID, and exact-tag event tasks. Before forwarding an event or restoring a rate,
-the consumer verifies that `GetActiveInstanceForMontage()` still returns its
-bound instance ID and that the instance has not stopped. An older instance
+ID, and exact-tag event tasks. Player and Enemy consumers share the native
+`FAbilityMontageRateWindowLifecycle::IsCurrentMontageInstance` rule: both UObjects
+must be valid, the bound ID must not be `INDEX_NONE`, and
+`GetActiveInstanceForMontage()` must return the same Montage and instance ID
+with `!IsStopped()`. Pausing does not revoke ownership. An older instance
 remaining alive is insufficient: the asset-based rate API targets the current
 instance. Cleanup invalidates the context, removes listeners, restores only a
 still-owned current instance, then clears local state. Normal termination
@@ -1156,6 +1158,17 @@ End removes only its matching identity: `A Begin -> B Begin -> A End` keeps B,
 while `A Begin -> B Begin -> B End` restores A. With no windows left, the helper
 restores the actual baseline captured after successful Montage playback.
 Duplicate Begins and unknown Ends leave the active set unchanged.
+
+The helper captures the current Montage instance ID at binding and applies the
+same shared authorization rule before Begin, End, and baseline restoration.
+Rebinding first restores the old baseline only if its instance remains current,
+then clears old windows and identity before capturing the new baseline. A stale
+binding cannot change either windows through Begin/End or the new instance's
+rate; Clear always discards its own state. Development-only bypass preserves
+existing synthetic tests without bypassing UObject validity; without a real
+instance the stored ID remains `INDEX_NONE`. The public static rule has no
+bypass branch. Context/token ownership and Montage stopping policies remain
+specific to each Ability.
 
 The five added consumers own transient RateWindow-only contexts, activation
 tokens, Montage instance checks, and Begin/End AbilityTasks. Their existing

@@ -7,6 +7,42 @@
 #include "Animation/Combat/AnimNotifyState_ActionWindows.h"
 #include "PolyQuest.h"
 
+bool FAbilityMontageRateWindowLifecycle::IsCurrentMontageInstance(
+	const UAnimInstance* AnimInstance,
+	const UAnimMontage* Montage,
+	int32 ExpectedInstanceID)
+{
+	if (!IsValid(AnimInstance) || !IsValid(Montage) || ExpectedInstanceID == INDEX_NONE)
+	{
+		return false;
+	}
+
+	const FAnimMontageInstance* CurrentInstance = AnimInstance->GetActiveInstanceForMontage(Montage);
+	if (!CurrentInstance)
+	{
+		return false;
+	}
+
+	return CurrentInstance->Montage == Montage
+		&& CurrentInstance->GetInstanceID() == ExpectedInstanceID
+		&& !CurrentInstance->IsStopped();
+}
+
+bool FAbilityMontageRateWindowLifecycle::HasAuthorizedMontageInstance() const
+{
+	const UAnimInstance* AnimInstance = WeakAnimInstance.Get();
+	const UAnimMontage* Montage = WeakMontage.Get();
+
+#if WITH_DEV_AUTOMATION_TESTS
+	if (bTestBypassMontageActiveCheck)
+	{
+		return IsValid(AnimInstance) && IsValid(Montage);
+	}
+#endif
+
+	return IsCurrentMontageInstance(AnimInstance, Montage, BoundMontageInstanceID);
+}
+
 void FAbilityMontageRateWindowLifecycle::BindAndCapture(
 	UGameplayAbility* InAbility,
 	UAnimInstance* InAnimInstance,
@@ -22,20 +58,31 @@ void FAbilityMontageRateWindowLifecycle::BindAndCapture(
 	RateWindowBeginEventTag = InBeginTag;
 	RateWindowEndEventTag = InEndTag;
 
-	if (!InAbility || !InAnimInstance || !InMontage || !InBeginTag.IsValid() || !InEndTag.IsValid())
+	if (!IsValid(InAbility) || !IsValid(InAnimInstance) || !IsValid(InMontage) || !InBeginTag.IsValid() || !InEndTag.IsValid())
 	{
 		return;
 	}
 
+	const FAnimMontageInstance* CurrentInstance = InAnimInstance->GetActiveInstanceForMontage(InMontage);
+	if (CurrentInstance && CurrentInstance->Montage == InMontage && !CurrentInstance->IsStopped())
+	{
+		BoundMontageInstanceID = CurrentInstance->GetInstanceID();
+	}
+	else
+	{
+		BoundMontageInstanceID = INDEX_NONE;
+	}
+
 #if WITH_DEV_AUTOMATION_TESTS
-	const bool bMontageIsActive = bTestBypassMontageActiveCheck || InAnimInstance->Montage_IsActive(InMontage);
+	const bool bHasAuthorizedInstance = bTestBypassMontageActiveCheck || (BoundMontageInstanceID != INDEX_NONE);
 #else
-	const bool bMontageIsActive = InAnimInstance->Montage_IsActive(InMontage);
+	const bool bHasAuthorizedInstance = (BoundMontageInstanceID != INDEX_NONE);
 #endif
 
-	if (!bMontageIsActive)
+	if (!bHasAuthorizedInstance)
 	{
-		UE_LOG(LogPolyQuest, Warning, TEXT("RateWindowLifecycle: Montage '%s' is not active during BindAndCapture."), *GetNameSafe(InMontage));
+		UE_LOG(LogPolyQuest, Warning, TEXT("RateWindowLifecycle: Montage '%s' has no authorized active instance during BindAndCapture."), *GetNameSafe(InMontage));
+		BoundMontageInstanceID = INDEX_NONE;
 		return;
 	}
 
@@ -59,7 +106,7 @@ void FAbilityMontageRateWindowLifecycle::HandleBegin(const FGameplayEventData& P
 	UAnimInstance* AnimInstance = WeakAnimInstance.Get();
 	UAnimMontage* Montage = WeakMontage.Get();
 
-	if (!bCaptured || !Ability || !Ability->IsActive() || !AnimInstance || !Montage)
+	if (!bCaptured || !IsValid(Ability) || !Ability->IsActive() || !IsValid(AnimInstance) || !IsValid(Montage))
 	{
 		return;
 	}
@@ -100,13 +147,7 @@ void FAbilityMontageRateWindowLifecycle::HandleBegin(const FGameplayEventData& P
 		return;
 	}
 
-#if WITH_DEV_AUTOMATION_TESTS
-	const bool bMontageIsActive = bTestBypassMontageActiveCheck || AnimInstance->Montage_IsActive(Montage);
-#else
-	const bool bMontageIsActive = AnimInstance->Montage_IsActive(Montage);
-#endif
-
-	if (!bMontageIsActive)
+	if (!HasAuthorizedMontageInstance())
 	{
 		return;
 	}
@@ -136,7 +177,7 @@ void FAbilityMontageRateWindowLifecycle::HandleEnd(const FGameplayEventData& Pay
 	UAnimInstance* AnimInstance = WeakAnimInstance.Get();
 	UAnimMontage* Montage = WeakMontage.Get();
 
-	if (!bCaptured || !Ability || !Ability->IsActive() || !AnimInstance || !Montage)
+	if (!bCaptured || !IsValid(Ability) || !Ability->IsActive() || !IsValid(AnimInstance) || !IsValid(Montage))
 	{
 		return;
 	}
@@ -169,13 +210,7 @@ void FAbilityMontageRateWindowLifecycle::HandleEnd(const FGameplayEventData& Pay
 		return;
 	}
 
-#if WITH_DEV_AUTOMATION_TESTS
-	const bool bMontageIsActive = bTestBypassMontageActiveCheck || AnimInstance->Montage_IsActive(Montage);
-#else
-	const bool bMontageIsActive = AnimInstance->Montage_IsActive(Montage);
-#endif
-
-	if (!bMontageIsActive)
+	if (!HasAuthorizedMontageInstance())
 	{
 		return;
 	}
@@ -193,12 +228,15 @@ void FAbilityMontageRateWindowLifecycle::HandleEnd(const FGameplayEventData& Pay
 	ActiveWindows.RemoveAt(FoundIndex);
 
 	const float TargetRate = ActiveWindows.IsEmpty() ? BaselinePlayRate : ActiveWindows.Last().TargetRate;
-	AnimInstance->Montage_SetPlayRate(Montage, TargetRate);
+	if (IsValid(AnimInstance) && IsValid(Montage))
+	{
+		AnimInstance->Montage_SetPlayRate(Montage, TargetRate);
+	}
 }
 
 bool FAbilityMontageRateWindowLifecycle::IsValidNotifyForSource(const UObject* SourceAnimation, const UAnimNotifyState_MontageRateWindow* RateNotify) const
 {
-	if (!SourceAnimation || !RateNotify)
+	if (!IsValid(SourceAnimation) || !IsValid(RateNotify))
 	{
 		return false;
 	}
@@ -227,7 +265,7 @@ bool FAbilityMontageRateWindowLifecycle::TestApplyBegin(
 	float NewRate,
 	float& OutAppliedRate)
 {
-	if (!bCaptured || !InSource || !InNotify || !FMath::IsFinite(NewRate) || NewRate <= 0.0f)
+	if (!bCaptured || !IsValid(InSource) || !IsValid(InNotify) || !FMath::IsFinite(NewRate) || NewRate <= 0.0f)
 	{
 		return false;
 	}
@@ -266,7 +304,7 @@ bool FAbilityMontageRateWindowLifecycle::TestApplyEnd(
 	const UAnimNotifyState_MontageRateWindow* InNotify,
 	float& OutRestoredRate)
 {
-	if (!bCaptured || !InSource || !InNotify)
+	if (!bCaptured || !IsValid(InSource) || !IsValid(InNotify))
 	{
 		return false;
 	}
@@ -284,20 +322,49 @@ bool FAbilityMontageRateWindowLifecycle::TestApplyEnd(
 	OutRestoredRate = ActiveWindows.IsEmpty() ? BaselinePlayRate : ActiveWindows.Last().TargetRate;
 	return true;
 }
+
+void FAbilityMontageRateWindowLifecycle::SetTestActiveContext(
+	UGameplayAbility* InAbility,
+	UAnimInstance* InAnimInstance,
+	UAnimMontage* InMontage,
+	const FGameplayTag& InBeginTag,
+	const FGameplayTag& InEndTag,
+	float InBaselineRate)
+{
+	WeakAbility = InAbility;
+	WeakAnimInstance = InAnimInstance;
+	WeakMontage = InMontage;
+	RateWindowBeginEventTag = InBeginTag;
+	RateWindowEndEventTag = InEndTag;
+	BaselinePlayRate = FMath::IsFinite(InBaselineRate) && InBaselineRate > KINDA_SMALL_NUMBER ? InBaselineRate : 1.0f;
+	bCaptured = true;
+
+	if (IsValid(InAnimInstance) && IsValid(InMontage))
+	{
+		const FAnimMontageInstance* CurrentInstance = InAnimInstance->GetActiveInstanceForMontage(InMontage);
+		if (CurrentInstance && CurrentInstance->Montage == InMontage && !CurrentInstance->IsStopped())
+		{
+			BoundMontageInstanceID = CurrentInstance->GetInstanceID();
+		}
+		else
+		{
+			BoundMontageInstanceID = INDEX_NONE;
+		}
+	}
+	else
+	{
+		BoundMontageInstanceID = INDEX_NONE;
+	}
+}
 #endif
 
 void FAbilityMontageRateWindowLifecycle::RestoreAndClear()
 {
-	if (bCaptured)
+	if (bCaptured && HasAuthorizedMontageInstance())
 	{
 		UAnimInstance* AnimInstance = WeakAnimInstance.Get();
 		UAnimMontage* Montage = WeakMontage.Get();
-#if WITH_DEV_AUTOMATION_TESTS
-		const bool bMontageIsActive = bTestBypassMontageActiveCheck || (AnimInstance && Montage && AnimInstance->Montage_IsActive(Montage));
-#else
-		const bool bMontageIsActive = AnimInstance && Montage && AnimInstance->Montage_IsActive(Montage);
-#endif
-		if (AnimInstance && Montage && bMontageIsActive)
+		if (IsValid(AnimInstance) && IsValid(Montage))
 		{
 			AnimInstance->Montage_SetPlayRate(Montage, BaselinePlayRate);
 		}
@@ -306,6 +373,7 @@ void FAbilityMontageRateWindowLifecycle::RestoreAndClear()
 	ActiveWindows.Reset();
 	BaselinePlayRate = 1.0f;
 	bCaptured = false;
+	BoundMontageInstanceID = INDEX_NONE;
 	WeakAbility.Reset();
 	WeakAnimInstance.Reset();
 	WeakMontage.Reset();
@@ -316,7 +384,7 @@ void FAbilityMontageRateWindowLifecycle::RestoreAndClear()
 bool FAbilityMontageRateWindowLifecycle::IsMontageOrSequenceMatch(const UObject* OptionalObject) const
 {
 	const UAnimMontage* Montage = WeakMontage.Get();
-	if (!Montage || !OptionalObject)
+	if (!IsValid(Montage) || !IsValid(OptionalObject))
 	{
 		return false;
 	}

@@ -60,6 +60,62 @@ namespace ExecutionVictimRootMotionAutomation
 		}
 	};
 
+	static UAnimMontage* GetVictimMontageViaReflection(const UEnemyVictimExecutionAbility* TargetCDO, const FName PropertyName)
+	{
+		if (!TargetCDO)
+		{
+			return nullptr;
+		}
+		if (FObjectProperty* Prop = FindFProperty<FObjectProperty>(UEnemyVictimExecutionAbility::StaticClass(), PropertyName))
+		{
+			return Cast<UAnimMontage>(Prop->GetObjectPropertyValue_InContainer(TargetCDO));
+		}
+		return nullptr;
+	}
+
+	struct FScopedVictimCDOConfig
+	{
+		UEnemyVictimExecutionAbility* CDO = nullptr;
+		UAnimMontage* SavedFront = nullptr;
+		UAnimMontage* SavedBackstab = nullptr;
+		UAnimInstance* SavedAnimInstance = nullptr;
+		bool bSavedBypass = false;
+		bool bActive = false;
+
+		FScopedVictimCDOConfig(UAnimMontage* InFront, UAnimMontage* InBackstab, UAnimInstance* InAnimInstance, bool bInBypass)
+		{
+			CDO = Cast<UEnemyVictimExecutionAbility>(UEnemyVictimExecutionAbility::StaticClass()->GetDefaultObject());
+			if (CDO)
+			{
+				SavedFront = GetVictimMontageViaReflection(CDO, TEXT("FrontExecutionVictimMontage"));
+				SavedBackstab = GetVictimMontageViaReflection(CDO, TEXT("BackstabExecutionVictimMontage"));
+				SavedAnimInstance = CDO->GetTestBoundAnimInstance();
+				bSavedBypass = CDO->GetTestBypassMontageActiveCheck();
+
+				CDO->SetTestVictimMontages(InFront, InBackstab);
+				CDO->SetTestBoundAnimInstance(InAnimInstance);
+				CDO->SetTestBypassMontageActiveCheck(bInBypass);
+				bActive = true;
+			}
+		}
+
+		void Restore()
+		{
+			if (bActive && CDO)
+			{
+				CDO->SetTestVictimMontages(SavedFront, SavedBackstab);
+				CDO->SetTestBoundAnimInstance(SavedAnimInstance);
+				CDO->SetTestBypassMontageActiveCheck(bSavedBypass);
+				bActive = false;
+			}
+		}
+
+		~FScopedVictimCDOConfig()
+		{
+			Restore();
+		}
+	};
+
 	UAnimMontage* CreateValidRecoveryMontage(
 		UObject* Outer,
 		float Duration = 2.5f,
@@ -269,7 +325,13 @@ bool FExecutionVictimRootMotionAutomationTest::RunTest(const FString& Parameters
 			FrontAbility->SetTestSkipMontageTaskActivation(true);
 		}
 
-		PlayerASC->TryActivateAbility(FrontHandle);
+		// Scope CDO modification strictly to synchronous TryActivateAbility call:
+		{
+			ExecutionVictimRootMotionAutomation::FScopedVictimCDOConfig ScopedCDO(VictimMontage, nullptr, MockAnimInstance, true);
+			PlayerASC->TryActivateAbility(FrontHandle);
+			// ScopedCDO destructor restores CDO immediately after activation copies parameters to instance!
+		}
+
 		return MakeTuple(FrontHandle, FrontAbility, VictimHandle, VictimAbility);
 	};
 

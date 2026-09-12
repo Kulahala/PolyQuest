@@ -625,11 +625,11 @@ bool ULightAttackAbility::StartComboEntry(int32 EntryIndex)
 	{
 		ActiveMontageInstanceID = Instance->GetInstanceID();
 	}
-#if WITH_DEV_AUTOMATION_TESTS
-	else if (bTestBypassMontageActiveCheck)
+	else
 	{
-		ActiveMontageInstanceID = 1;
+		ActiveMontageInstanceID = INDEX_NONE;
 	}
+#if WITH_DEV_AUTOMATION_TESTS
 	RateWindowLifecycle.SetTestBypassMontageActiveCheck(bTestBypassMontageActiveCheck);
 #endif
 
@@ -716,20 +716,14 @@ void ULightAttackAbility::OnRateWindowBegin(const FGameplayEventData& Payload)
 		return;
 	}
 
-	if (BoundAnimInstance && ActiveEntryMontage && ActiveMontageInstanceID != INDEX_NONE)
-	{
-		const FAnimMontageInstance* CurrentInst = BoundAnimInstance->GetActiveInstanceForMontage(ActiveEntryMontage.Get());
 #if WITH_DEV_AUTOMATION_TESTS
-		const bool bInstanceValid = bTestBypassMontageActiveCheck || (CurrentInst && CurrentInst->GetInstanceID() == ActiveMontageInstanceID && !CurrentInst->IsStopped());
+	const bool bInstanceValid = bTestBypassMontageActiveCheck || FAbilityMontageRateWindowLifecycle::IsCurrentMontageInstance(
+		BoundAnimInstance.Get(), ActiveEntryMontage.Get(), ActiveMontageInstanceID);
 #else
-		const bool bInstanceValid = (CurrentInst && CurrentInst->GetInstanceID() == ActiveMontageInstanceID && !CurrentInst->IsStopped());
+	const bool bInstanceValid = FAbilityMontageRateWindowLifecycle::IsCurrentMontageInstance(
+		BoundAnimInstance.Get(), ActiveEntryMontage.Get(), ActiveMontageInstanceID);
 #endif
-		if (!bInstanceValid)
-		{
-			return;
-		}
-	}
-	else
+	if (!bInstanceValid)
 	{
 		return;
 	}
@@ -744,20 +738,14 @@ void ULightAttackAbility::OnRateWindowEnd(const FGameplayEventData& Payload)
 		return;
 	}
 
-	if (BoundAnimInstance && ActiveEntryMontage && ActiveMontageInstanceID != INDEX_NONE)
-	{
-		const FAnimMontageInstance* CurrentInst = BoundAnimInstance->GetActiveInstanceForMontage(ActiveEntryMontage.Get());
 #if WITH_DEV_AUTOMATION_TESTS
-		const bool bInstanceValid = bTestBypassMontageActiveCheck || (CurrentInst && CurrentInst->GetInstanceID() == ActiveMontageInstanceID && !CurrentInst->IsStopped());
+	const bool bInstanceValid = bTestBypassMontageActiveCheck || FAbilityMontageRateWindowLifecycle::IsCurrentMontageInstance(
+		BoundAnimInstance.Get(), ActiveEntryMontage.Get(), ActiveMontageInstanceID);
 #else
-		const bool bInstanceValid = (CurrentInst && CurrentInst->GetInstanceID() == ActiveMontageInstanceID && !CurrentInst->IsStopped());
+	const bool bInstanceValid = FAbilityMontageRateWindowLifecycle::IsCurrentMontageInstance(
+		BoundAnimInstance.Get(), ActiveEntryMontage.Get(), ActiveMontageInstanceID);
 #endif
-		if (!bInstanceValid)
-		{
-			return;
-		}
-	}
-	else
+	if (!bInstanceValid)
 	{
 		return;
 	}
@@ -788,16 +776,13 @@ void ULightAttackAbility::ClearRateWindow(bool bRestoreRate)
 
 	if (bRestoreRate && RateWindowLifecycle.IsBound())
 	{
-		bool bInstanceValid = false;
-		if (BoundAnimInstance && ActiveEntryMontage && ActiveMontageInstanceID != INDEX_NONE)
-		{
-			const FAnimMontageInstance* CurrentInst = BoundAnimInstance->GetActiveInstanceForMontage(ActiveEntryMontage.Get());
 #if WITH_DEV_AUTOMATION_TESTS
-			bInstanceValid = bTestBypassMontageActiveCheck || (CurrentInst && CurrentInst->GetInstanceID() == ActiveMontageInstanceID && !CurrentInst->IsStopped());
+		const bool bInstanceValid = bTestBypassMontageActiveCheck || FAbilityMontageRateWindowLifecycle::IsCurrentMontageInstance(
+			BoundAnimInstance.Get(), ActiveEntryMontage.Get(), ActiveMontageInstanceID);
 #else
-			bInstanceValid = (CurrentInst && CurrentInst->GetInstanceID() == ActiveMontageInstanceID && !CurrentInst->IsStopped());
+		const bool bInstanceValid = FAbilityMontageRateWindowLifecycle::IsCurrentMontageInstance(
+			BoundAnimInstance.Get(), ActiveEntryMontage.Get(), ActiveMontageInstanceID);
 #endif
-		}
 
 		if (bInstanceValid)
 		{

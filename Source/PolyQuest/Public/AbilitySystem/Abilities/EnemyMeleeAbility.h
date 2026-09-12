@@ -90,6 +90,7 @@ public:
 	{
 		SetCurrentActorInfo(InHandle, InActorInfo);
 	}
+	void TestClearRateWindow() { ClearRateWindow(true); }
 #endif
 
 private:

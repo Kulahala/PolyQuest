@@ -12,6 +12,11 @@
 #include "AbilitySystem/Abilities/EnemySmallHitReactionAbility.h"
 #include "AbilitySystem/Abilities/EnemyVictimExecutionAbility.h"
 #include "AbilitySystem/Abilities/MontageRateWindowLifecycle.h"
+#include "AI/EnemyAIController.h"
+#include "AI/EnemyAIProfile.h"
+#include "Combat/Enemy/EnemyAttackProfile.h"
+#include "Combat/Enemy/EnemyAttackSet.h"
+#include "Tests/TestProjectileDamageGE.h"
 #include "Animation/AnimComposite.h"
 #include "Animation/AnimInstance.h"
 #include "Animation/AnimMontage.h"
@@ -352,6 +357,230 @@ bool FEnemyMontageRateWindowAutomationTest::RunTest(const FString& Parameters)
 
 	UAnimMontage* ForeignMontage = EnemyMontageRateWindowAutomation::CreateDummyMontage(World);
 	UAnimInstance* MockAnimInstance = NewObject<UAnimInstance>(Enemy->GetMesh());
+
+	// =========================================================================
+	// 2.1 Helper Seam Verification: Mock Environment Bypass vs Non-Bypass & Invalid Object Tests
+	// =========================================================================
+	{
+		UEnemyMeleeAbility* SeamAbility = NewObject<UEnemyMeleeAbility>(Enemy);
+		SeamAbility->SetTestActorInfo(FGameplayAbilitySpecHandle(), EnemyASC->AbilityActorInfo.Get());
+		SeamAbility->SetTestAbilityActive(true);
+
+		// Finding 1 Negative: Non-null but invalid (MarkAsGarbage) UObject inputs must be rejected
+		{
+			UAnimInstance* GarbageAnimInstance = NewObject<UAnimInstance>(Enemy->GetMesh());
+			GarbageAnimInstance->MarkAsGarbage();
+			TestFalse(TEXT("Helper: IsCurrentMontageInstance rejects garbage AnimInstance"),
+				FAbilityMontageRateWindowLifecycle::IsCurrentMontageInstance(GarbageAnimInstance, ActiveMontage, 1));
+
+			UAnimMontage* GarbageMontage = NewObject<UAnimMontage>(GetTransientPackage());
+			GarbageMontage->MarkAsGarbage();
+			TestFalse(TEXT("Helper: IsCurrentMontageInstance rejects garbage Montage"),
+				FAbilityMontageRateWindowLifecycle::IsCurrentMontageInstance(MockAnimInstance, GarbageMontage, 1));
+
+			FAbilityMontageRateWindowLifecycle GarbageLifecycle;
+			GarbageLifecycle.BindAndCapture(SeamAbility, GarbageAnimInstance, ActiveMontage, TagRateWindowBegin, TagRateWindowEnd);
+			TestFalse(TEXT("Helper: BindAndCapture rejects garbage AnimInstance"), GarbageLifecycle.IsBound());
+
+			GarbageLifecycle.BindAndCapture(SeamAbility, MockAnimInstance, GarbageMontage, TagRateWindowBegin, TagRateWindowEnd);
+			TestFalse(TEXT("Helper: BindAndCapture rejects garbage Montage"), GarbageLifecycle.IsBound());
+		}
+
+		// Finding 2 Negative: Bypass false vs true without real playing instance
+		{
+			FAbilityMontageRateWindowLifecycle NoBypassLifecycle;
+			NoBypassLifecycle.SetTestBypassMontageActiveCheck(false);
+			NoBypassLifecycle.BindAndCapture(SeamAbility, MockAnimInstance, ActiveMontage, TagRateWindowBegin, TagRateWindowEnd);
+			TestFalse(TEXT("Helper: BindAndCapture rejects when bypass is false and no real instance"), NoBypassLifecycle.IsBound());
+			TestEqual(TEXT("Helper: Bound ID is INDEX_NONE when bypass is false"), NoBypassLifecycle.GetBoundMontageInstanceID(), static_cast<int32>(INDEX_NONE));
+
+			FAbilityMontageRateWindowLifecycle BypassLifecycle;
+			BypassLifecycle.SetTestBypassMontageActiveCheck(true);
+			BypassLifecycle.BindAndCapture(SeamAbility, MockAnimInstance, ActiveMontage, TagRateWindowBegin, TagRateWindowEnd);
+			TestTrue(TEXT("Helper: BindAndCapture succeeds when bypass is true"), BypassLifecycle.IsBound());
+			TestEqual(TEXT("Helper: Bound ID remains INDEX_NONE under bypass without real instance"), BypassLifecycle.GetBoundMontageInstanceID(), static_cast<int32>(INDEX_NONE));
+			BypassLifecycle.RestoreAndClear();
+			TestFalse(TEXT("Helper: Lifecycle is not bound after RestoreAndClear"), BypassLifecycle.IsBound());
+		}
+
+		FAbilityMontageRateWindowLifecycle SeamLifecycle;
+		SeamLifecycle.SetTestActiveContext(SeamAbility, MockAnimInstance, ActiveMontage, TagRateWindowBegin, TagRateWindowEnd, 1.0f);
+		TestEqual(TEXT("Seam: Bound ID is INDEX_NONE with mock instance"), SeamLifecycle.GetBoundMontageInstanceID(), static_cast<int32>(INDEX_NONE));
+
+		// When bypass is false, Begin should be rejected without altering collection
+		FGameplayEventData BeginPayload;
+		BeginPayload.EventTag = TagRateWindowBegin;
+		BeginPayload.Instigator = Enemy;
+		BeginPayload.Target = Enemy;
+		BeginPayload.OptionalObject = ActiveMontage;
+		BeginPayload.OptionalObject2 = NotifyA;
+		BeginPayload.EventMagnitude = 0.5f;
+
+		SeamLifecycle.HandleBegin(BeginPayload);
+		TestEqual(TEXT("Seam: active window count remains 0 when bypass is false and no real instance"), SeamLifecycle.GetActiveWindowCount(), 0);
+
+		// When bypass is enabled, Begin succeeds
+		SeamLifecycle.SetTestBypassMontageActiveCheck(true);
+		SeamLifecycle.HandleBegin(BeginPayload);
+		TestEqual(TEXT("Seam: active window count is 1 when bypass is true"), SeamLifecycle.GetActiveWindowCount(), 1);
+
+		// Clear resets state idempotently
+		SeamLifecycle.RestoreAndClear();
+		TestEqual(TEXT("Seam: active window count is 0 after Clear"), SeamLifecycle.GetActiveWindowCount(), 0);
+		TestFalse(TEXT("Seam: lifecycle is not bound after Clear"), SeamLifecycle.IsBound());
+	}
+
+	// =========================================================================
+	// 2.2 Helper Direct Multi-Instance Authorization & Play Rate Protection
+	// =========================================================================
+	{
+		UAnimMontage* DirectPlayableMontage = EnemyMontageRateWindowAutomation::CreatePlayableRateMontage(*this, World);
+		if (TestNotNull(TEXT("Helper Direct: Playable montage created"), DirectPlayableMontage))
+		{
+			USkeletalMeshComponent* Mesh = Enemy->GetMesh();
+			Mesh->VisibilityBasedAnimTickOption = EVisibilityBasedAnimTickOption::OnlyTickMontagesWhenNotRendered;
+			UAnimInstance* RealAnimInstance = NewObject<UAnimInstance>(Mesh);
+			RealAnimInstance->InitializeMontageOnly();
+			RealAnimInstance->CurrentSkeleton = DirectPlayableMontage->GetSkeleton();
+			Mesh->AnimScriptInstance = RealAnimInstance;
+
+			UEnemyMeleeAbility* DirectAbility = NewObject<UEnemyMeleeAbility>(Enemy);
+			DirectAbility->SetTestActorInfo(FGameplayAbilitySpecHandle(), EnemyASC->AbilityActorInfo.Get());
+			DirectAbility->SetTestAbilityActive(true);
+
+			FAbilityMontageRateWindowLifecycle DirectHelper;
+			DirectHelper.SetTestBypassMontageActiveCheck(false); // Strictly NO bypass!
+
+			// Step 1: Play instance 1 at 1.0f
+			const float PlayResult1 = RealAnimInstance->Montage_Play(DirectPlayableMontage, 1.0f, EMontagePlayReturnType::MontageLength, 0.0f, false);
+			TestTrue(TEXT("Helper Direct: Instance 1 started successfully"), PlayResult1 > 0.0f);
+			const FAnimMontageInstance* Instance1 = RealAnimInstance->GetActiveInstanceForMontage(DirectPlayableMontage);
+			if (TestNotNull(TEXT("Helper Direct: Instance 1 exists"), Instance1))
+			{
+				const int32 InstanceID1 = Instance1->GetInstanceID();
+
+				// Finding 1 & 2: Positive control with valid real playing instance
+				TestTrue(TEXT("Helper Direct (Positive Control): IsCurrentMontageInstance returns true for valid playing instance"),
+					FAbilityMontageRateWindowLifecycle::IsCurrentMontageInstance(RealAnimInstance, DirectPlayableMontage, InstanceID1));
+
+				// Negative controls against the positive setup:
+				// If IsValid(AnimInstance) were omitted, an invalid pointer would be queried.
+				UAnimInstance* GarbageAnim = NewObject<UAnimInstance>(Mesh);
+				GarbageAnim->MarkAsGarbage();
+				TestFalse(TEXT("Helper Direct (Negative Control): IsCurrentMontageInstance rejects garbage AnimInstance"),
+					FAbilityMontageRateWindowLifecycle::IsCurrentMontageInstance(GarbageAnim, DirectPlayableMontage, InstanceID1));
+
+				// If IsValid(Montage) were omitted, an invalid pointer would be queried.
+				UAnimMontage* GarbageMont = NewObject<UAnimMontage>(GetTransientPackage());
+				GarbageMont->MarkAsGarbage();
+				TestFalse(TEXT("Helper Direct (Negative Control): IsCurrentMontageInstance rejects garbage Montage"),
+					FAbilityMontageRateWindowLifecycle::IsCurrentMontageInstance(RealAnimInstance, GarbageMont, InstanceID1));
+
+				// Negative control for BindAndCapture with garbage:
+				FAbilityMontageRateWindowLifecycle GarbageBindHelper;
+				GarbageBindHelper.BindAndCapture(DirectAbility, GarbageAnim, DirectPlayableMontage, TagRateWindowBegin, TagRateWindowEnd);
+				TestFalse(TEXT("Helper Direct: BindAndCapture rejects garbage AnimInstance"), GarbageBindHelper.IsBound());
+				GarbageBindHelper.BindAndCapture(DirectAbility, RealAnimInstance, GarbageMont, TagRateWindowBegin, TagRateWindowEnd);
+				TestFalse(TEXT("Helper Direct: BindAndCapture rejects garbage Montage"), GarbageBindHelper.IsBound());
+
+				// Step 2: Bind helper to Instance 1
+				DirectHelper.BindAndCapture(DirectAbility, RealAnimInstance, DirectPlayableMontage, TagRateWindowBegin, TagRateWindowEnd);
+				TestTrue(TEXT("Helper Direct: Helper is bound to Instance 1"), DirectHelper.IsBound());
+				TestEqual(TEXT("Helper Direct: Bound ID matches Instance 1"), DirectHelper.GetBoundMontageInstanceID(), InstanceID1);
+				TestEqual(TEXT("Helper Direct: Captured baseline is 1.0"), DirectHelper.GetBaselinePlayRate(), 1.0f);
+				TestEqual(TEXT("Helper Direct: Initial window count is 0"), DirectHelper.GetActiveWindowCount(), 0);
+
+				// Step 2b: Open Window A on Instance 1 BEFORE replay so window collection is non-empty!
+				FAnimNotifyEvent* EventA = EnemyMontageRateWindowAutomation::FindRateWindowEvent(DirectPlayableMontage, 0);
+				FAnimNotifyEvent* EventB = EnemyMontageRateWindowAutomation::FindRateWindowEvent(DirectPlayableMontage, 1);
+				UAnimNotifyState_MontageRateWindow* RateNotifyA = EventA ? Cast<UAnimNotifyState_MontageRateWindow>(EventA->NotifyStateClass) : nullptr;
+				UAnimNotifyState_MontageRateWindow* RateNotifyB = EventB ? Cast<UAnimNotifyState_MontageRateWindow>(EventB->NotifyStateClass) : nullptr;
+
+				FGameplayEventData WindowAPayload;
+				WindowAPayload.EventTag = TagRateWindowBegin;
+				WindowAPayload.Instigator = Enemy;
+				WindowAPayload.Target = Enemy;
+				WindowAPayload.OptionalObject = DirectPlayableMontage;
+				WindowAPayload.OptionalObject2 = RateNotifyA;
+				WindowAPayload.EventMagnitude = 0.5f;
+
+				DirectHelper.HandleBegin(WindowAPayload);
+				TestEqual(TEXT("Helper Direct: Window A pushes active window count to 1"), DirectHelper.GetActiveWindowCount(), 1);
+				TestEqual(TEXT("Helper Direct: Instance 1 play rate scaled to 0.5 by Window A"),
+					RealAnimInstance->Montage_GetPlayRate(DirectPlayableMontage), 0.5f);
+
+				// Step 3: Replay same Montage at rate 2.0f without stopping existing instances (bStopAllMontages = false)
+				const float PlayResult2 = RealAnimInstance->Montage_Play(DirectPlayableMontage, 2.0f, EMontagePlayReturnType::MontageLength, 0.0f, false);
+				TestTrue(TEXT("Helper Direct: Instance 2 started successfully"), PlayResult2 > 0.0f);
+				const FAnimMontageInstance* Instance2 = RealAnimInstance->GetActiveInstanceForMontage(DirectPlayableMontage);
+				if (TestNotNull(TEXT("Helper Direct: Instance 2 exists"), Instance2))
+				{
+					const int32 InstanceID2 = Instance2->GetInstanceID();
+					TestNotEqual(TEXT("Helper Direct: New instance ID differs from old instance ID"), InstanceID2, InstanceID1);
+
+					const FAnimMontageInstance* OldInstanceCheck = RealAnimInstance->GetMontageInstanceForID(InstanceID1);
+					TestTrue(TEXT("Helper Direct: Old instance 1 still alive"), OldInstanceCheck != nullptr);
+					TestFalse(TEXT("Helper Direct: Old instance 1 is not stopped"), OldInstanceCheck && OldInstanceCheck->IsStopped());
+					TestEqual(TEXT("Helper Direct: Active montage play rate is 2.0"), RealAnimInstance->Montage_GetPlayRate(DirectPlayableMontage), 2.0f);
+					TestEqual(TEXT("Helper Direct: Helper maintains Window A in active collection prior to test"), DirectHelper.GetActiveWindowCount(), 1);
+
+					// Step 4: HandleBegin for old bound instance (Window B) directly on helper - must be rejected
+					FGameplayEventData OldBeginPayload;
+					OldBeginPayload.EventTag = TagRateWindowBegin;
+					OldBeginPayload.Instigator = Enemy;
+					OldBeginPayload.Target = Enemy;
+					OldBeginPayload.OptionalObject = DirectPlayableMontage;
+					OldBeginPayload.OptionalObject2 = RateNotifyB;
+					OldBeginPayload.EventMagnitude = 0.2f;
+
+					DirectHelper.HandleBegin(OldBeginPayload);
+					TestEqual(TEXT("Helper Direct: Old Begin rejected - new instance play rate remains 2.0"), RealAnimInstance->Montage_GetPlayRate(DirectPlayableMontage), 2.0f);
+					TestEqual(TEXT("Helper Direct: Old Begin rejected - active window count remains 1 (Window B not pushed)"), DirectHelper.GetActiveWindowCount(), 1);
+
+					// Step 5: HandleEnd for old bound instance (Window A) directly on helper - must be rejected by instance authorization
+					// (Even though Window A exists in collection, it must NOT pop or alter new instance rate)
+					FGameplayEventData OldEndPayload;
+					OldEndPayload.EventTag = TagRateWindowEnd;
+					OldEndPayload.Instigator = Enemy;
+					OldEndPayload.Target = Enemy;
+					OldEndPayload.OptionalObject = DirectPlayableMontage;
+					OldEndPayload.OptionalObject2 = RateNotifyA;
+
+					DirectHelper.HandleEnd(OldEndPayload);
+					TestEqual(TEXT("Helper Direct: Old End rejected - new instance play rate remains 2.0 (not overwritten)"), RealAnimInstance->Montage_GetPlayRate(DirectPlayableMontage), 2.0f);
+					TestEqual(TEXT("Helper Direct: Old End rejected - active window count remains 1 (Window A not popped)"), DirectHelper.GetActiveWindowCount(), 1);
+
+					// Step 6: RestoreAndClear on stale helper - must NOT overwrite new instance play rate with old baseline 1.0
+					DirectHelper.RestoreAndClear();
+					TestEqual(TEXT("Helper Direct: RestoreAndClear with stale ID does NOT overwrite new instance rate (remains 2.0)"),
+						RealAnimInstance->Montage_GetPlayRate(DirectPlayableMontage), 2.0f);
+					TestFalse(TEXT("Helper Direct: Helper is cleared (not bound)"), DirectHelper.IsBound());
+					TestEqual(TEXT("Helper Direct: Helper bound ID reset to INDEX_NONE"), DirectHelper.GetBoundMontageInstanceID(), static_cast<int32>(INDEX_NONE));
+					TestEqual(TEXT("Helper Direct: Helper active window count is 0"), DirectHelper.GetActiveWindowCount(), 0);
+
+					// Step 7: Rebind helper to new instance 2 (current active instance)
+					DirectHelper.BindAndCapture(DirectAbility, RealAnimInstance, DirectPlayableMontage, TagRateWindowBegin, TagRateWindowEnd);
+					TestTrue(TEXT("Helper Direct: Rebind successfully bound to Instance 2"), DirectHelper.IsBound());
+					TestEqual(TEXT("Helper Direct: Rebound ID matches Instance 2"), DirectHelper.GetBoundMontageInstanceID(), InstanceID2);
+					TestEqual(TEXT("Helper Direct: Rebound captured new baseline rate 2.0"), DirectHelper.GetBaselinePlayRate(), 2.0f);
+
+					// Step 8: Valid Begin on authorized Instance 2
+					DirectHelper.HandleBegin(WindowAPayload);
+					TestEqual(TEXT("Helper Direct: Valid Begin on authorized Instance 2 adds window (count 1)"), DirectHelper.GetActiveWindowCount(), 1);
+					TestEqual(TEXT("Helper Direct: Play rate updated to Window A target rate (0.5) on authorized Instance 2"),
+						RealAnimInstance->Montage_GetPlayRate(DirectPlayableMontage), 0.5f);
+
+					// Step 9: RestoreAndClear on authorized helper restores new baseline 2.0
+					DirectHelper.RestoreAndClear();
+					TestEqual(TEXT("Helper Direct: RestoreAndClear restores baseline rate 2.0 on authorized Instance 2"), RealAnimInstance->Montage_GetPlayRate(DirectPlayableMontage), 2.0f);
+					TestFalse(TEXT("Helper Direct: Helper is cleared after authorized restore"), DirectHelper.IsBound());
+				}
+			}
+
+			RealAnimInstance->Montage_Stop(0.0f, DirectPlayableMontage);
+			Mesh->AnimScriptInstance = MockAnimInstance;
+		}
+	}
 
 	// =========================================================================
 	// 3. Near-Combat Melee (UEnemyMeleeAbility) RateWindow Integration
@@ -1049,6 +1278,274 @@ bool FEnemyMontageRateWindowAutomationTest::RunTest(const FString& Parameters)
 			SendNotify(RightMontage, 0, true, 0, 1.5f);
 			SendNotify(RightMontage, 0, false, 0, 1.5f);
 		}
+	}
+
+	// =========================================================================
+	// 10. Real Enemy Melee same-asset replacement negative proof (H6-F01 reproduction)
+	// =========================================================================
+	{
+		enum class EMeleeNegativeStep : uint8
+		{
+			OldBegin,
+			OldEnd,
+			OldClear
+		};
+
+		auto RunMeleeReplacementNegativeProof = [&](EMeleeNegativeStep StepToTest, const TCHAR* StepName, float EnemyYOffset) -> bool
+		{
+			// 1. Create a playable rate montage without Root Motion.
+			UAnimMontage* PlayableMontage = EnemyMontageRateWindowAutomation::CreatePlayableRateMontage(*this, World);
+			if (!TestNotNull(FString::Printf(TEXT("H6-F01 (%s): playable montage created"), StepName), PlayableMontage))
+			{
+				return false;
+			}
+			PlayableMontage->bEnableRootMotionTranslation = false;
+			PlayableMontage->bEnableRootMotionRotation = false;
+
+			// 2. Author AttackProfile and AttackSet.
+			UEnemyAttackProfile* AttackProfile = NewObject<UEnemyAttackProfile>(World);
+			AttackProfile->SetTestMontage(PlayableMontage);
+			AttackProfile->SetTestDamageEffectClass(UTestProjectileDamageGE::StaticClass());
+			AttackProfile->SetTestAttackRange(200.0f);
+			AttackProfile->SetTestCooldown(0.0f);
+			AttackProfile->SetTestGuardStaminaDamage(10.0f);
+
+			UEnemyAttackSet* AttackSet = NewObject<UEnemyAttackSet>(World);
+			AttackSet->SetTestEngagementRange(250.0f);
+			AttackSet->AddTestEntry(AttackProfile, 1.0f);
+
+			FString SetReason;
+			if (!TestTrue(FString::Printf(TEXT("H6-F01 (%s): attack set is valid"), StepName), AttackSet->IsAttackSetValid(SetReason)))
+			{
+				return false;
+			}
+
+			// 3. Author AIProfile.
+			UEnemyAIProfile* AIProfile = NewObject<UEnemyAIProfile>(World);
+			AIProfile->SetTestPreferredCombatDistance(180.0f);
+			AIProfile->SetTestLateralRepositionDistance(100.0f);
+			AIProfile->SetTestRepositionAcceptanceRadius(50.0f);
+			AIProfile->SetTestRepositionRetryDelay(1.0f);
+			AIProfile->SetTestLeashRadius(1000.0f);
+			AIProfile->SetTestApproachTimeout(5.0f);
+
+			FString ProfileReason;
+			if (!TestTrue(FString::Printf(TEXT("H6-F01 (%s): AI profile is valid"), StepName), AIProfile->IsValidAIProfile(ProfileReason)))
+			{
+				return false;
+			}
+
+			// 4. Spawn Passive Enemy with pre-BeginPlay setup so OnPossess caches valid AttackSet & AIProfile.
+			const FVector EnemyLocation(500.0f, EnemyYOffset, 0.0f);
+			AEnemyCharacter* MeleeEnemy = FCombatAutomationFixture::SpawnPassiveEnemy(
+				World,
+				FTransform(FRotator::ZeroRotator, EnemyLocation),
+				[&](AEnemyCharacter& SpawnedEnemy)
+				{
+					SpawnedEnemy.SetTestAttackSet(AttackSet);
+					SpawnedEnemy.SetTestAIProfile(AIProfile);
+				});
+
+			if (!TestNotNull(FString::Printf(TEXT("H6-F01 (%s): enemy spawned"), StepName), MeleeEnemy))
+			{
+				return false;
+			}
+
+			USkeletalMeshComponent* Mesh = MeleeEnemy->GetMesh();
+			UAbilitySystemComponent* EnemyASC = MeleeEnemy->GetAbilitySystemComponent();
+			if (!TestNotNull(FString::Printf(TEXT("H6-F01 (%s): mesh exists"), StepName), Mesh)
+				|| !TestNotNull(FString::Printf(TEXT("H6-F01 (%s): ASC exists"), StepName), EnemyASC))
+			{
+				return false;
+			}
+
+			// 5. Install Montage-only AnimInstance and refresh ActorInfo.
+			Mesh->VisibilityBasedAnimTickOption = EVisibilityBasedAnimTickOption::OnlyTickMontagesWhenNotRendered;
+			UAnimInstance* Anim = NewObject<UAnimInstance>(Mesh);
+			Anim->InitializeMontageOnly();
+			Anim->CurrentSkeleton = PlayableMontage->GetSkeleton();
+			Mesh->AnimScriptInstance = Anim;
+			EnemyASC->RefreshAbilityActorInfo();
+
+			if (!TestTrue(FString::Printf(TEXT("H6-F01 (%s): ASC resolves montage AnimInstance"), StepName),
+				EnemyASC->AbilityActorInfo.IsValid() && EnemyASC->AbilityActorInfo->GetAnimInstance() == Anim))
+			{
+				return false;
+			}
+
+			// 6. Verify Controller state and set Combat Target.
+			AEnemyAIController* AIController = World->SpawnActor<AEnemyAIController>(AEnemyAIController::StaticClass());
+			if (!TestNotNull(FString::Printf(TEXT("H6-F01 (%s): AIController exists"), StepName), AIController))
+			{
+				return false;
+			}
+			AIController->Possess(MeleeEnemy);
+
+			TestTrue(FString::Printf(TEXT("H6-F01 (%s): controller has valid AttackSet"), StepName), AIController->HasValidAttackSet());
+			TestTrue(FString::Printf(TEXT("H6-F01 (%s): controller has valid AIProfile"), StepName), AIController->HasValidAIProfile());
+
+			// Position Player in front of Enemy (distance 100cm <= AttackRange 200cm <= MeleeRange 250cm).
+			Player->SetActorLocation(EnemyLocation + FVector(100.0f, 0.0f, 0.0f));
+			Player->SetActorRotation(FRotator::ZeroRotator);
+			AIController->SetTestTargetForAutomation(Player);
+
+			TestTrue(FString::Printf(TEXT("H6-F01 (%s): combat target is valid"), StepName), AIController->HasValidCombatTarget());
+			TestTrue(FString::Printf(TEXT("H6-F01 (%s): target in melee range"), StepName), AIController->IsCombatTargetInMeleeRange());
+
+			// 7. Grant EnemyMeleeAbility and prepare pending attack profile.
+			const FGameplayAbilitySpecHandle MeleeHandle = EnemyASC->GiveAbility(
+				FGameplayAbilitySpec(UEnemyMeleeAbility::StaticClass(), 1, INDEX_NONE, MeleeEnemy));
+
+			if (!TestTrue(FString::Printf(TEXT("H6-F01 (%s): PreparePendingAttackProfile succeeds"), StepName),
+				AIController->PreparePendingAttackProfile()))
+			{
+				EnemyASC->ClearAbility(MeleeHandle);
+				return false;
+			}
+
+			TestTrue(FString::Printf(TEXT("H6-F01 (%s): pending attack in range"), StepName), AIController->IsPendingAttackInRange());
+
+			// 8. Real ASC route activation.
+			const bool bRequestSucceeded = AIController->TryRequestMeleeAttack();
+			if (!TestTrue(FString::Printf(TEXT("H6-F01 (%s): TryRequestMeleeAttack succeeds"), StepName), bRequestSucceeded))
+			{
+				EnemyASC->ClearAbility(MeleeHandle);
+				return false;
+			}
+
+			// 9. Inspect active Ability and Context.
+			FGameplayAbilitySpec* Spec = EnemyASC->FindAbilitySpecFromHandle(MeleeHandle);
+			UEnemyMeleeAbility* Ability = Spec ? Cast<UEnemyMeleeAbility>(Spec->GetPrimaryInstance()) : nullptr;
+			if (!TestNotNull(FString::Printf(TEXT("H6-F01 (%s): live ability instance exists"), StepName), Ability))
+			{
+				EnemyASC->ClearAbility(MeleeHandle);
+				return false;
+			}
+
+			TestTrue(FString::Printf(TEXT("H6-F01 (%s): ability is active"), StepName), Ability->IsActive());
+			TestFalse(FString::Printf(TEXT("H6-F01 (%s): ability bypass is false"), StepName), Ability->GetTestBypassMontageActiveCheck());
+			TestFalse(FString::Printf(TEXT("H6-F01 (%s): helper bypass is false"), StepName), Ability->GetTestRateWindowLifecycle().GetTestBypassMontageActiveCheck());
+
+			UEnemyMeleeRateWindowContext* OldContext = Ability->GetTestActiveRateWindowContext();
+			if (!TestNotNull(FString::Printf(TEXT("H6-F01 (%s): live rate context exists"), StepName), OldContext))
+			{
+				EnemyASC->CancelAbilityHandle(MeleeHandle);
+				EnemyASC->ClearAbility(MeleeHandle);
+				return false;
+			}
+
+			const int32 OldInstanceID = Ability->GetTestActiveMontageInstanceID();
+			TestNotEqual(FString::Printf(TEXT("H6-F01 (%s): captured instance ID is valid"), StepName), OldInstanceID, static_cast<int32>(INDEX_NONE));
+			TestTrue(FString::Printf(TEXT("H6-F01 (%s): helper is bound"), StepName), Ability->GetTestRateWindowLifecycle().IsBound());
+
+			// 10. Enter Window A on old instance.
+			FAnimNotifyEvent* EventA = EnemyMontageRateWindowAutomation::FindRateWindowEvent(PlayableMontage, 0);
+			FAnimNotifyEvent* EventB = EnemyMontageRateWindowAutomation::FindRateWindowEvent(PlayableMontage, 1);
+			if (!TestNotNull(FString::Printf(TEXT("H6-F01 (%s): RateWindowA exists"), StepName), EventA)
+				|| !TestNotNull(FString::Printf(TEXT("H6-F01 (%s): RateWindowB exists"), StepName), EventB))
+			{
+				EnemyASC->CancelAbilityHandle(MeleeHandle);
+				EnemyASC->ClearAbility(MeleeHandle);
+				return false;
+			}
+
+			CastChecked<UAnimNotifyState_MontageRateWindow>(EventA->NotifyStateClass)->NotifyBegin(
+				Mesh, PlayableMontage, 1.0f, FAnimNotifyEventReference(EventA, PlayableMontage));
+			TestEqual(FString::Printf(TEXT("H6-F01 (%s): Window A sets rate to 0.5"), StepName), Anim->Montage_GetPlayRate(PlayableMontage), 0.5f);
+
+			// 11. Same-asset replay with rate 2.0 and bStopAllMontages = false.
+			const float ReplayLength = Anim->Montage_Play(PlayableMontage, 2.0f, EMontagePlayReturnType::MontageLength, 0.0f, false);
+			if (!TestTrue(FString::Printf(TEXT("H6-F01 (%s): replay without stopping old instance succeeds"), StepName), ReplayLength > 0.0f))
+			{
+				EnemyASC->CancelAbilityHandle(MeleeHandle);
+				EnemyASC->ClearAbility(MeleeHandle);
+				return false;
+			}
+
+			// 12. Assert dual-instance precondition strictly.
+			const FAnimMontageInstance* OldLiveInstance = Anim->GetMontageInstanceForID(OldInstanceID);
+			const FAnimMontageInstance* NewLiveInstance = Anim->GetActiveInstanceForMontage(PlayableMontage);
+
+			if (!TestNotNull(FString::Printf(TEXT("H6-F01 (%s): old instance still exists"), StepName), OldLiveInstance)
+				|| !TestNotNull(FString::Printf(TEXT("H6-F01 (%s): new active instance exists"), StepName), NewLiveInstance))
+			{
+				EnemyASC->CancelAbilityHandle(MeleeHandle);
+				EnemyASC->ClearAbility(MeleeHandle);
+				return false;
+			}
+
+			TestFalse(FString::Printf(TEXT("H6-F01 (%s): old instance is not stopped"), StepName), OldLiveInstance->IsStopped());
+			TestNotEqual(FString::Printf(TEXT("H6-F01 (%s): new instance ID differs from old ID"), StepName),
+				NewLiveInstance->GetInstanceID(), OldInstanceID);
+			TestEqual(FString::Printf(TEXT("H6-F01 (%s): new instance play rate is 2.0"), StepName),
+				Anim->Montage_GetPlayRate(PlayableMontage), 2.0f);
+			TestTrue(FString::Printf(TEXT("H6-F01 (%s): ability remains active"), StepName), Ability->IsActive());
+			TestTrue(FString::Printf(TEXT("H6-F01 (%s): old context remains bound"), StepName),
+				Ability->GetTestActiveRateWindowContext() == OldContext);
+			TestFalse(FString::Printf(TEXT("H6-F01 (%s): ability bypass remains false"), StepName),
+				Ability->GetTestBypassMontageActiveCheck());
+			TestFalse(FString::Printf(TEXT("H6-F01 (%s): helper bypass remains false"), StepName),
+				Ability->GetTestRateWindowLifecycle().GetTestBypassMontageActiveCheck());
+
+			// 13. Execute the specific negative step under test.
+			if (StepToTest == EMeleeNegativeStep::OldBegin)
+			{
+				FGameplayEventData Payload;
+				Payload.EventTag = TagRateWindowBegin;
+				Payload.Instigator = MeleeEnemy;
+				Payload.Target = MeleeEnemy;
+				Payload.OptionalObject = PlayableMontage;
+				Payload.OptionalObject2 = EventB->NotifyStateClass;
+				Payload.EventMagnitude = 0.2f;
+
+				OldContext->OnRateWindowBegin(Payload);
+				// Unfixed production code will overwrite new instance rate to 0.2f (EXPECTED FAILURE BEFORE FIX).
+				TestEqual(FString::Printf(TEXT("H6-F01 Reproduction (%s): old Begin cannot alter new rate"), StepName),
+					Anim->Montage_GetPlayRate(PlayableMontage), 2.0f);
+			}
+			else if (StepToTest == EMeleeNegativeStep::OldEnd)
+			{
+				FGameplayEventData Payload;
+				Payload.EventTag = TagRateWindowEnd;
+				Payload.Instigator = MeleeEnemy;
+				Payload.Target = MeleeEnemy;
+				Payload.OptionalObject = PlayableMontage;
+				Payload.OptionalObject2 = EventA->NotifyStateClass;
+
+				OldContext->OnRateWindowEnd(Payload);
+				// Unfixed production code will restore new instance to old baseline 1.0f (EXPECTED FAILURE BEFORE FIX).
+				TestEqual(FString::Printf(TEXT("H6-F01 Reproduction (%s): old End cannot alter new rate"), StepName),
+					Anim->Montage_GetPlayRate(PlayableMontage), 2.0f);
+			}
+			else if (StepToTest == EMeleeNegativeStep::OldClear)
+			{
+				Ability->TestClearRateWindow();
+				// Unfixed production code will restore new instance to old baseline 1.0f (EXPECTED FAILURE BEFORE FIX).
+				TestEqual(FString::Printf(TEXT("H6-F01 Reproduction (%s): old Clear cannot alter new rate"), StepName),
+					Anim->Montage_GetPlayRate(PlayableMontage), 2.0f);
+			}
+
+			// 14. Cleanup.
+			EnemyASC->CancelAbilityHandle(MeleeHandle);
+			EnemyASC->ClearAbility(MeleeHandle);
+			if (Anim->Montage_IsActive(PlayableMontage))
+			{
+				Anim->Montage_Stop(0.0f, PlayableMontage);
+			}
+			if (AIController)
+			{
+				AIController->UnPossess();
+				AIController->Destroy();
+			}
+			MeleeEnemy->Destroy();
+
+			return true;
+		};
+
+		// Run all three negative proof steps on independent preconditions.
+		RunMeleeReplacementNegativeProof(EMeleeNegativeStep::OldBegin, TEXT("OldBegin"), 1000.0f);
+		RunMeleeReplacementNegativeProof(EMeleeNegativeStep::OldEnd, TEXT("OldEnd"), 2000.0f);
+		RunMeleeReplacementNegativeProof(EMeleeNegativeStep::OldClear, TEXT("OldClear"), 3000.0f);
 	}
 #endif
 

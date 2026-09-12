@@ -26,8 +26,16 @@
 #include "Tests/CombatAutomationFixture.h"
 #include "Tests/TestLaunchFacingSmoothingAbility.h"
 #include "Tests/TestProjectileDamageGE.h"
+#include "Animation/AnimSequence.h"
+#include "Animation/Skeleton.h"
+#include "Components/SkeletalMeshComponent.h"
+#include "ReferenceSkeleton.h"
 #include "UObject/Package.h"
 #include <limits>
+
+#if WITH_EDITOR
+#include "Animation/AnimData/IAnimationDataController.h"
+#endif
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 	FEnemyStanceBreakRateWindowAutomationTest,
@@ -36,6 +44,91 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 
 namespace
 {
+	struct FTestMontageLengthAccess : public UAnimMontage
+	{
+		static void SetLength(UAnimMontage* Montage, float Length)
+		{
+			if (Montage)
+			{
+				static_cast<FTestMontageLengthAccess*>(Montage)->SequenceLength = Length;
+			}
+		}
+	};
+
+	UAnimMontage* CreatePlayableStanceMontage(FAutomationTestBase& Test, UObject* Outer)
+	{
+		USkeleton* Skeleton = NewObject<USkeleton>(Outer);
+		const FName RootBoneName(TEXT("root"));
+		{
+			FReferenceSkeletonModifier Modifier(Skeleton);
+			Modifier.Add(FMeshBoneInfo(RootBoneName, TEXT("root"), INDEX_NONE), FTransform::Identity);
+		}
+
+		UAnimSequence* Sequence = NewObject<UAnimSequence>(Outer);
+		Sequence->SetSkeleton(Skeleton);
+		IAnimationDataController& Controller = Sequence->GetController();
+		Controller.InitializeModel();
+		bool bPopulated = false;
+		{
+			IAnimationDataController::FScopedBracket Populate(Controller,
+				FText::FromString(TEXT("Populate StanceBreak RateWindow fixture")), false);
+			Controller.SetFrameRate(FFrameRate(30, 1), false);
+			Controller.SetNumberOfFrames(FFrameNumber(60), false);
+			const bool bTrackAdded = Controller.AddBoneCurve(RootBoneName, false);
+			TArray<FVector3f> Positions;
+			TArray<FQuat4f> Rotations;
+			TArray<FVector3f> Scales;
+			Positions.Init(FVector3f::ZeroVector, 61);
+			Rotations.Init(FQuat4f::Identity, 61);
+			Scales.Init(FVector3f::OneVector, 61);
+			bPopulated = bTrackAdded && Controller.SetBoneTrackKeys(RootBoneName, Positions, Rotations, Scales, false);
+			Controller.NotifyPopulated();
+		}
+		Sequence->WaitOnExistingCompression();
+		if (!Test.TestTrue(TEXT("Runtime: synthetic animation has a populated root track"), bPopulated))
+		{
+			return nullptr;
+		}
+
+		UAnimMontage* Montage = NewObject<UAnimMontage>(Outer);
+		Montage->SetSkeleton(Skeleton);
+		FSlotAnimationTrack Track;
+		Track.SlotName = FName(TEXT("DefaultSlot"));
+		FAnimSegment Segment;
+		Segment.SetAnimReference(Sequence);
+		Segment.AnimEndTime = Sequence->GetPlayLength();
+		Track.AnimTrack.AnimSegments.Add(Segment);
+		Montage->SlotAnimTracks.Reset();
+		Montage->SlotAnimTracks.Add(Track);
+		FCompositeSection Section;
+		Section.SectionName = FName(TEXT("Default"));
+		Section.SetTime(0.0f);
+		Montage->CompositeSections.Add(Section);
+		FTestMontageLengthAccess::SetLength(Montage, Sequence->GetPlayLength());
+		Montage->BlendIn.SetBlendTime(0.0f);
+		Montage->BlendOut.SetBlendTime(0.0f);
+
+		for (int32 WindowIndex = 0; WindowIndex < 2; ++WindowIndex)
+		{
+			const FName WindowName(WindowIndex == 0 ? TEXT("StanceRateWindowA") : TEXT("StanceRateWindowB"));
+			UAnimNotifyState_MontageRateWindow* Notify = NewObject<UAnimNotifyState_MontageRateWindow>(Montage, WindowName);
+			Notify->RateMultiplier = WindowIndex == 0 ? 0.5f : 0.2f;
+			FAnimNotifyEvent Event;
+			Event.NotifyStateClass = Notify;
+			Montage->Notifies.Add(Event);
+		}
+		return Montage;
+	}
+
+	FAnimNotifyEvent* FindStanceRateWindowEvent(UAnimMontage* Montage, int32 WindowIndex)
+	{
+		const FName WindowName(WindowIndex == 0 ? TEXT("StanceRateWindowA") : TEXT("StanceRateWindowB"));
+		return Montage->Notifies.FindByPredicate([WindowName](const FAnimNotifyEvent& Event)
+		{
+			return Event.NotifyStateClass && Event.NotifyStateClass->GetFName() == WindowName;
+		});
+	}
+
 	struct FEnemyStanceBreakRateWindowTestWorldScope
 	{
 		UWorld* World = nullptr;
@@ -539,6 +632,384 @@ bool FEnemyStanceBreakRateWindowAutomationTest::RunTest(const FString& Parameter
 
 		EnemyASC->RemoveLooseGameplayTag(TagStunned);
 		TestFalse(TEXT("Enemy Stunned tag removed"), EnemyASC->HasMatchingGameplayTag(TagStunned));
+	}
+
+	// =========================================================================
+	// 3.4 StanceBreak Synthetic Recovery Logic Verification (Movement & Poise Recovery)
+	// =========================================================================
+	{
+		const FGameplayTag TagVictimLocked = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Action.Execution.VictimLocked")), false);
+		TestTrue(TEXT("Tag State.Action.Execution.VictimLocked is valid"), TagVictimLocked.IsValid());
+
+		// Part A: Normal Recovery (StanceBreak restores Poise and MovementMode without VictimLocked)
+		{
+			EnemyASC->SetNumericAttributeBase(UCharacterAttributeSet::GetPoiseAttribute(), 0.0f);
+			TestTrue(TEXT("Synthetic A: Enemy Poise is broken"), Enemy->IsPoiseBroken());
+
+			UAnimMontage* MockMontage = NewObject<UAnimMontage>(GetTransientPackage(), TEXT("Test_NonBypassStanceMontage"));
+			UAnimInstance* MockAnim = NewObject<UAnimInstance>(Enemy->GetMesh());
+
+			FGameplayAbilitySpec Spec(UEnemyStanceBreakAbility::StaticClass(), 1, INDEX_NONE, Enemy);
+			const FGameplayAbilitySpecHandle Handle = EnemyASC->GiveAbility(Spec);
+			FGameplayAbilitySpec* Found = EnemyASC->FindAbilitySpecFromHandle(Handle);
+
+			UEnemyStanceBreakAbility* Ability = nullptr;
+			if (Found)
+			{
+				UEnemyStanceBreakAbility* CDO = Cast<UEnemyStanceBreakAbility>(Found->Ability);
+				const auto OriginalMontage = CDO ? CDO->GetTestStanceBreakMontage() : nullptr;
+				const auto OriginalAnim = CDO ? CDO->GetTestBoundAnimInstance() : nullptr;
+				const bool bOrigBypass = CDO && CDO->GetTestBypassMontageActiveCheck();
+
+				if (CDO)
+				{
+					CDO->SetTestStanceBreakMontage(MockMontage);
+					CDO->SetTestBoundAnimInstance(MockAnim);
+					CDO->SetTestBypassMontageActiveCheck(true);
+				}
+
+				const bool bActivated = EnemyASC->TryActivateAbility(Handle);
+
+				if (CDO)
+				{
+					CDO->SetTestStanceBreakMontage(OriginalMontage);
+					CDO->SetTestBoundAnimInstance(OriginalAnim);
+					CDO->SetTestBypassMontageActiveCheck(bOrigBypass);
+				}
+
+				TestTrue(TEXT("Synthetic A: Ability activated via TryActivateAbility"), bActivated);
+				Ability = Cast<UEnemyStanceBreakAbility>(Found->GetPrimaryInstance());
+			}
+
+			if (TestNotNull(TEXT("Synthetic A: StanceBreak ability instance exists"), Ability))
+			{
+				TestTrue(TEXT("Synthetic A: Ability is active"), Ability->IsActive());
+				TestTrue(TEXT("Synthetic A: Movement locked"), Ability->IsMovementLockedByStanceBreak());
+
+				// Cancel ability normally (no VictimLocked)
+				EnemyASC->CancelAbilityHandle(Handle);
+				TestFalse(TEXT("Synthetic A: Ability ended"), Ability->IsActive());
+				TestFalse(TEXT("Synthetic A: Movement lock released"), Ability->IsMovementLockedByStanceBreak());
+				TestTrue(TEXT("Synthetic A: Poise restored to max on normal recovery"),
+					EnemyASC->GetNumericAttribute(UCharacterAttributeSet::GetPoiseAttribute()) >= EnemyASC->GetNumericAttribute(UCharacterAttributeSet::GetMaxPoiseAttribute()));
+				if (UCharacterMovementComponent* CMC = Enemy->GetCharacterMovement())
+				{
+					TestEqual(TEXT("Synthetic A: Movement mode restored to Walking"), CMC->MovementMode.GetValue(), MOVE_Walking);
+				}
+				TestFalse(TEXT("Synthetic A: Stunned tag removed"), EnemyASC->HasMatchingGameplayTag(TagStunned));
+			}
+
+			EnemyASC->ClearAbility(Handle);
+		}
+
+		// Part B: VictimLocked Handoff (StanceBreak preserves Poise and MovementMode for VictimExecution ownership)
+		{
+			EnemyASC->SetNumericAttributeBase(UCharacterAttributeSet::GetPoiseAttribute(), 0.0f);
+			TestTrue(TEXT("Synthetic B: Enemy Poise is broken"), Enemy->IsPoiseBroken());
+
+			UAnimMontage* MockMontage = NewObject<UAnimMontage>(GetTransientPackage(), TEXT("Test_NonBypassStanceMontage2"));
+			UAnimInstance* MockAnim = NewObject<UAnimInstance>(Enemy->GetMesh());
+
+			FGameplayAbilitySpec Spec(UEnemyStanceBreakAbility::StaticClass(), 1, INDEX_NONE, Enemy);
+			const FGameplayAbilitySpecHandle Handle = EnemyASC->GiveAbility(Spec);
+			FGameplayAbilitySpec* Found = EnemyASC->FindAbilitySpecFromHandle(Handle);
+
+			UEnemyStanceBreakAbility* Ability = nullptr;
+			if (Found)
+			{
+				UEnemyStanceBreakAbility* CDO = Cast<UEnemyStanceBreakAbility>(Found->Ability);
+				const auto OriginalMontage = CDO ? CDO->GetTestStanceBreakMontage() : nullptr;
+				const auto OriginalAnim = CDO ? CDO->GetTestBoundAnimInstance() : nullptr;
+				const bool bOrigBypass = CDO && CDO->GetTestBypassMontageActiveCheck();
+
+				if (CDO)
+				{
+					CDO->SetTestStanceBreakMontage(MockMontage);
+					CDO->SetTestBoundAnimInstance(MockAnim);
+					CDO->SetTestBypassMontageActiveCheck(true);
+				}
+
+				const bool bActivated = EnemyASC->TryActivateAbility(Handle);
+
+				if (CDO)
+				{
+					CDO->SetTestStanceBreakMontage(OriginalMontage);
+					CDO->SetTestBoundAnimInstance(OriginalAnim);
+					CDO->SetTestBypassMontageActiveCheck(bOrigBypass);
+				}
+
+				TestTrue(TEXT("Synthetic B: Ability activated via TryActivateAbility"), bActivated);
+				Ability = Cast<UEnemyStanceBreakAbility>(Found->GetPrimaryInstance());
+			}
+
+			if (TestNotNull(TEXT("Synthetic B: StanceBreak ability instance exists"), Ability))
+			{
+				TestTrue(TEXT("Synthetic B: Ability is active"), Ability->IsActive());
+				TestTrue(TEXT("Synthetic B: Movement locked by StanceBreak"), Ability->IsMovementLockedByStanceBreak());
+
+				// Simulate execution handoff: add VictimLocked tag to EnemyASC
+				EnemyASC->AddLooseGameplayTag(TagVictimLocked);
+				TestTrue(TEXT("Synthetic B: VictimLocked tag added"), EnemyASC->HasMatchingGameplayTag(TagVictimLocked));
+
+				// End StanceBreak ability while VictimLocked is active
+				EnemyASC->CancelAbilityHandle(Handle);
+				TestFalse(TEXT("Synthetic B: StanceBreak ability ended"), Ability->IsActive());
+
+				// Contract: When VictimLocked is active, StanceBreak must NOT restore Poise and must NOT restore Walking movement
+				TestEqual(TEXT("Synthetic B: Poise remains 0 (handed off to VictimExecution)"),
+					EnemyASC->GetNumericAttribute(UCharacterAttributeSet::GetPoiseAttribute()), 0.0f);
+				if (UCharacterMovementComponent* CMC = Enemy->GetCharacterMovement())
+				{
+					TestNotEqual(TEXT("Synthetic B: Movement mode not restored to Walking (handed off)"), CMC->MovementMode.GetValue(), MOVE_Walking);
+				}
+
+				// Cleanup VictimLocked tag and restore Enemy state for test hygiene
+				EnemyASC->RemoveLooseGameplayTag(TagVictimLocked);
+				TestFalse(TEXT("Synthetic B: VictimLocked tag removed"), EnemyASC->HasMatchingGameplayTag(TagVictimLocked));
+				Enemy->RestorePoiseToMax();
+				if (UCharacterMovementComponent* CMC = Enemy->GetCharacterMovement())
+				{
+					CMC->SetMovementMode(MOVE_Walking);
+				}
+			}
+
+			EnemyASC->ClearAbility(Handle);
+		}
+	}
+
+	// =========================================================================
+	// 3.5 StanceBreak Real Dual-Instance Non-Bypass Authorization & Recovery Integration
+	// =========================================================================
+	{
+		const FGameplayTag TagVictimLocked = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Action.Execution.VictimLocked")), false);
+		TestTrue(TEXT("Tag State.Action.Execution.VictimLocked is valid"), TagVictimLocked.IsValid());
+
+		// Subtest A: Real Dual-Instance Rejection on Active StanceBreak Ability & Normal Recovery
+		{
+			EnemyASC->SetNumericAttributeBase(UCharacterAttributeSet::GetPoiseAttribute(), 0.0f);
+			TestTrue(TEXT("StanceBreak Real Dual-Instance A: Enemy Poise is broken"), Enemy->IsPoiseBroken());
+
+			UAnimMontage* PlayableStanceMontage = CreatePlayableStanceMontage(*this, World);
+			if (TestNotNull(TEXT("StanceBreak Real Dual-Instance A: Playable Montage created"), PlayableStanceMontage))
+			{
+				USkeletalMeshComponent* Mesh = Enemy->GetMesh();
+				Mesh->VisibilityBasedAnimTickOption = EVisibilityBasedAnimTickOption::OnlyTickMontagesWhenNotRendered;
+				UAnimInstance* RealAnim = NewObject<UAnimInstance>(Mesh);
+				RealAnim->InitializeMontageOnly();
+				RealAnim->CurrentSkeleton = PlayableStanceMontage->GetSkeleton();
+				Mesh->AnimScriptInstance = RealAnim;
+
+				FGameplayAbilitySpec Spec(UEnemyStanceBreakAbility::StaticClass(), 1, INDEX_NONE, Enemy);
+				const FGameplayAbilitySpecHandle Handle = EnemyASC->GiveAbility(Spec);
+				FGameplayAbilitySpec* Found = EnemyASC->FindAbilitySpecFromHandle(Handle);
+
+				UEnemyStanceBreakAbility* Ability = nullptr;
+				if (Found)
+				{
+					UEnemyStanceBreakAbility* CDO = Cast<UEnemyStanceBreakAbility>(Found->Ability);
+					const auto OriginalMontage = CDO ? CDO->GetTestStanceBreakMontage() : nullptr;
+					const auto OriginalAnim = CDO ? CDO->GetTestBoundAnimInstance() : nullptr;
+					const bool bOrigBypass = CDO && CDO->GetTestBypassMontageActiveCheck();
+
+					if (CDO)
+					{
+						CDO->SetTestStanceBreakMontage(PlayableStanceMontage);
+						CDO->SetTestBoundAnimInstance(RealAnim);
+						CDO->SetTestBypassMontageActiveCheck(false); // NO BYPASS! Real playable montage
+					}
+
+					const bool bActivated = EnemyASC->TryActivateAbility(Handle);
+
+					if (CDO)
+					{
+						CDO->SetTestStanceBreakMontage(OriginalMontage);
+						CDO->SetTestBoundAnimInstance(OriginalAnim);
+						CDO->SetTestBypassMontageActiveCheck(bOrigBypass);
+					}
+
+					TestTrue(TEXT("StanceBreak Real Dual-Instance A: Ability activated without bypass"), bActivated);
+					Ability = Cast<UEnemyStanceBreakAbility>(Found->GetPrimaryInstance());
+				}
+
+				if (TestNotNull(TEXT("StanceBreak Real Dual-Instance A: Active instance exists"), Ability))
+				{
+					TestTrue(TEXT("StanceBreak Real Dual-Instance A: Ability is active"), Ability->IsActive());
+					TestTrue(TEXT("StanceBreak Real Dual-Instance A: Movement locked"), Ability->IsMovementLockedByStanceBreak());
+					TestFalse(TEXT("StanceBreak Real Dual-Instance A: Ability bypass is false"), Ability->GetTestBypassMontageActiveCheck());
+					TestFalse(TEXT("StanceBreak Real Dual-Instance A: Helper bypass is false"), Ability->GetRateWindowLifecycle().GetTestBypassMontageActiveCheck());
+					TestTrue(TEXT("StanceBreak Real Dual-Instance A: Helper is bound to real instance"), Ability->GetRateWindowLifecycle().IsBound());
+
+					const int32 OldInstanceID = Ability->GetRateWindowLifecycle().GetBoundMontageInstanceID();
+					TestNotEqual(TEXT("StanceBreak Real Dual-Instance A: Captured InstanceID is valid"), OldInstanceID, static_cast<int32>(INDEX_NONE));
+
+					// Enter Window A on old instance
+					FAnimNotifyEvent* EventA = FindStanceRateWindowEvent(PlayableStanceMontage, 0);
+					FAnimNotifyEvent* EventB = FindStanceRateWindowEvent(PlayableStanceMontage, 1);
+					TestNotNull(TEXT("StanceBreak Real Dual-Instance A: EventA exists"), EventA);
+					TestNotNull(TEXT("StanceBreak Real Dual-Instance A: EventB exists"), EventB);
+
+					FGameplayEventData WindowAPayload;
+					WindowAPayload.EventTag = TagRateWindowBegin;
+					WindowAPayload.Instigator = Enemy;
+					WindowAPayload.Target = Enemy;
+					WindowAPayload.OptionalObject = PlayableStanceMontage;
+					WindowAPayload.OptionalObject2 = EventA ? EventA->NotifyStateClass : nullptr;
+					WindowAPayload.EventMagnitude = 0.5f;
+
+					EnemyASC->HandleGameplayEvent(TagRateWindowBegin, &WindowAPayload);
+					TestEqual(TEXT("StanceBreak Real Dual-Instance A: Window A sets window count to 1"), Ability->GetRateWindowLifecycle().GetActiveWindowCount(), 1);
+					TestEqual(TEXT("StanceBreak Real Dual-Instance A: Instance 1 rate updated to 0.5f"), RealAnim->Montage_GetPlayRate(PlayableStanceMontage), 0.5f);
+
+					// Replay same Montage at rate 2.0f without stopping existing instance (bStopAllMontages = false)
+					const float ReplayLen = RealAnim->Montage_Play(PlayableStanceMontage, 2.0f, EMontagePlayReturnType::MontageLength, 0.0f, false);
+					TestTrue(TEXT("StanceBreak Real Dual-Instance A: Replay succeeded"), ReplayLen > 0.0f);
+
+					const FAnimMontageInstance* NewActiveInstance = RealAnim->GetActiveInstanceForMontage(PlayableStanceMontage);
+					const FAnimMontageInstance* OldLiveInstance = RealAnim->GetMontageInstanceForID(OldInstanceID);
+					TestNotNull(TEXT("StanceBreak Real Dual-Instance A: New active instance exists"), NewActiveInstance);
+					TestNotNull(TEXT("StanceBreak Real Dual-Instance A: Old live instance exists"), OldLiveInstance);
+					TestFalse(TEXT("StanceBreak Real Dual-Instance A: Old instance is not stopped"), OldLiveInstance && OldLiveInstance->IsStopped());
+					TestNotEqual(TEXT("StanceBreak Real Dual-Instance A: New instance ID differs from old ID"),
+						NewActiveInstance ? NewActiveInstance->GetInstanceID() : INDEX_NONE, OldInstanceID);
+					TestEqual(TEXT("StanceBreak Real Dual-Instance A: New instance play rate is 2.0"), RealAnim->Montage_GetPlayRate(PlayableStanceMontage), 2.0f);
+
+					// Negative 1: Old Begin (Window B) with complete notify identity dispatched to ASC
+					FGameplayEventData OldBeginPayload;
+					OldBeginPayload.EventTag = TagRateWindowBegin;
+					OldBeginPayload.Instigator = Enemy;
+					OldBeginPayload.Target = Enemy;
+					OldBeginPayload.OptionalObject = PlayableStanceMontage;
+					OldBeginPayload.OptionalObject2 = EventB ? EventB->NotifyStateClass : nullptr;
+					OldBeginPayload.EventMagnitude = 0.2f;
+
+					EnemyASC->HandleGameplayEvent(TagRateWindowBegin, &OldBeginPayload);
+					TestEqual(TEXT("StanceBreak Real Dual-Instance A: Old Begin rejected - new instance rate remains 2.0"), RealAnim->Montage_GetPlayRate(PlayableStanceMontage), 2.0f);
+					TestEqual(TEXT("StanceBreak Real Dual-Instance A: Old Begin rejected - window count remains 1"), Ability->GetRateWindowLifecycle().GetActiveWindowCount(), 1);
+
+					// Negative 2: Old End (Window A) with complete notify identity dispatched to ASC
+					FGameplayEventData OldEndPayload;
+					OldEndPayload.EventTag = TagRateWindowEnd;
+					OldEndPayload.Instigator = Enemy;
+					OldEndPayload.Target = Enemy;
+					OldEndPayload.OptionalObject = PlayableStanceMontage;
+					OldEndPayload.OptionalObject2 = EventA ? EventA->NotifyStateClass : nullptr;
+
+					EnemyASC->HandleGameplayEvent(TagRateWindowEnd, &OldEndPayload);
+					TestEqual(TEXT("StanceBreak Real Dual-Instance A: Old End rejected - new instance rate remains 2.0"), RealAnim->Montage_GetPlayRate(PlayableStanceMontage), 2.0f);
+					TestEqual(TEXT("StanceBreak Real Dual-Instance A: Old End rejected - window count remains 1"), Ability->GetRateWindowLifecycle().GetActiveWindowCount(), 1);
+
+					// Cancel ability normally (no VictimLocked)
+					EnemyASC->CancelAbilityHandle(Handle);
+					TestFalse(TEXT("StanceBreak Real Dual-Instance A: Ability ended"), Ability->IsActive());
+					TestFalse(TEXT("StanceBreak Real Dual-Instance A: Movement lock released"), Ability->IsMovementLockedByStanceBreak());
+					TestTrue(TEXT("StanceBreak Real Dual-Instance A: Poise restored to max on normal recovery"),
+						EnemyASC->GetNumericAttribute(UCharacterAttributeSet::GetPoiseAttribute()) >= EnemyASC->GetNumericAttribute(UCharacterAttributeSet::GetMaxPoiseAttribute()));
+					if (UCharacterMovementComponent* CMC = Enemy->GetCharacterMovement())
+					{
+						TestEqual(TEXT("StanceBreak Real Dual-Instance A: Movement mode restored to Walking"), CMC->MovementMode.GetValue(), MOVE_Walking);
+					}
+					TestFalse(TEXT("StanceBreak Real Dual-Instance A: Stunned tag removed"), EnemyASC->HasMatchingGameplayTag(TagStunned));
+				}
+
+				if (RealAnim->Montage_IsActive(PlayableStanceMontage))
+				{
+					RealAnim->Montage_Stop(0.0f, PlayableStanceMontage);
+				}
+				EnemyASC->ClearAbility(Handle);
+			}
+		}
+
+		// Subtest B: Real Dual-Instance with VictimLocked Handoff Ownership
+		{
+			EnemyASC->SetNumericAttributeBase(UCharacterAttributeSet::GetPoiseAttribute(), 0.0f);
+			TestTrue(TEXT("StanceBreak Real Dual-Instance B: Enemy Poise is broken"), Enemy->IsPoiseBroken());
+
+			UAnimMontage* PlayableStanceMontage = CreatePlayableStanceMontage(*this, World);
+			if (TestNotNull(TEXT("StanceBreak Real Dual-Instance B: Playable Montage created"), PlayableStanceMontage))
+			{
+				USkeletalMeshComponent* Mesh = Enemy->GetMesh();
+				Mesh->VisibilityBasedAnimTickOption = EVisibilityBasedAnimTickOption::OnlyTickMontagesWhenNotRendered;
+				UAnimInstance* RealAnim = NewObject<UAnimInstance>(Mesh);
+				RealAnim->InitializeMontageOnly();
+				RealAnim->CurrentSkeleton = PlayableStanceMontage->GetSkeleton();
+				Mesh->AnimScriptInstance = RealAnim;
+
+				FGameplayAbilitySpec Spec(UEnemyStanceBreakAbility::StaticClass(), 1, INDEX_NONE, Enemy);
+				const FGameplayAbilitySpecHandle Handle = EnemyASC->GiveAbility(Spec);
+				FGameplayAbilitySpec* Found = EnemyASC->FindAbilitySpecFromHandle(Handle);
+
+				UEnemyStanceBreakAbility* Ability = nullptr;
+				if (Found)
+				{
+					UEnemyStanceBreakAbility* CDO = Cast<UEnemyStanceBreakAbility>(Found->Ability);
+					const auto OriginalMontage = CDO ? CDO->GetTestStanceBreakMontage() : nullptr;
+					const auto OriginalAnim = CDO ? CDO->GetTestBoundAnimInstance() : nullptr;
+					const bool bOrigBypass = CDO && CDO->GetTestBypassMontageActiveCheck();
+
+					if (CDO)
+					{
+						CDO->SetTestStanceBreakMontage(PlayableStanceMontage);
+						CDO->SetTestBoundAnimInstance(RealAnim);
+						CDO->SetTestBypassMontageActiveCheck(false); // NO BYPASS!
+					}
+
+					const bool bActivated = EnemyASC->TryActivateAbility(Handle);
+
+					if (CDO)
+					{
+						CDO->SetTestStanceBreakMontage(OriginalMontage);
+						CDO->SetTestBoundAnimInstance(OriginalAnim);
+						CDO->SetTestBypassMontageActiveCheck(bOrigBypass);
+					}
+
+					TestTrue(TEXT("StanceBreak Real Dual-Instance B: Ability activated without bypass"), bActivated);
+					Ability = Cast<UEnemyStanceBreakAbility>(Found->GetPrimaryInstance());
+				}
+
+				if (TestNotNull(TEXT("StanceBreak Real Dual-Instance B: Active instance exists"), Ability))
+				{
+					TestTrue(TEXT("StanceBreak Real Dual-Instance B: Ability is active"), Ability->IsActive());
+					TestTrue(TEXT("StanceBreak Real Dual-Instance B: Movement locked by StanceBreak"), Ability->IsMovementLockedByStanceBreak());
+
+					const int32 OldInstanceID = Ability->GetRateWindowLifecycle().GetBoundMontageInstanceID();
+
+					// Replay same Montage at rate 2.0f without stopping existing instance
+					const float ReplayLen = RealAnim->Montage_Play(PlayableStanceMontage, 2.0f, EMontagePlayReturnType::MontageLength, 0.0f, false);
+					TestTrue(TEXT("StanceBreak Real Dual-Instance B: Replay succeeded"), ReplayLen > 0.0f);
+
+					// Simulate execution handoff: add VictimLocked tag to EnemyASC
+					EnemyASC->AddLooseGameplayTag(TagVictimLocked);
+					TestTrue(TEXT("StanceBreak Real Dual-Instance B: VictimLocked tag added"), EnemyASC->HasMatchingGameplayTag(TagVictimLocked));
+
+					// End StanceBreak ability while VictimLocked is active
+					EnemyASC->CancelAbilityHandle(Handle);
+					TestFalse(TEXT("StanceBreak Real Dual-Instance B: StanceBreak ability ended"), Ability->IsActive());
+
+					// Contract: When VictimLocked is active, StanceBreak must NOT restore Poise and must NOT restore Walking movement
+					TestEqual(TEXT("StanceBreak Real Dual-Instance B: Poise remains 0 (handed off to VictimExecution)"),
+						EnemyASC->GetNumericAttribute(UCharacterAttributeSet::GetPoiseAttribute()), 0.0f);
+					if (UCharacterMovementComponent* CMC = Enemy->GetCharacterMovement())
+					{
+						TestNotEqual(TEXT("StanceBreak Real Dual-Instance B: Movement mode not restored to Walking (handed off)"), CMC->MovementMode.GetValue(), MOVE_Walking);
+					}
+
+					// Cleanup VictimLocked tag and restore Enemy state for test hygiene
+					EnemyASC->RemoveLooseGameplayTag(TagVictimLocked);
+					TestFalse(TEXT("StanceBreak Real Dual-Instance B: VictimLocked tag removed"), EnemyASC->HasMatchingGameplayTag(TagVictimLocked));
+					Enemy->RestorePoiseToMax();
+					if (UCharacterMovementComponent* CMC = Enemy->GetCharacterMovement())
+					{
+						CMC->SetMovementMode(MOVE_Walking);
+					}
+				}
+
+				if (RealAnim->Montage_IsActive(PlayableStanceMontage))
+				{
+					RealAnim->Montage_Stop(0.0f, PlayableStanceMontage);
+				}
+				EnemyASC->ClearAbility(Handle);
+			}
+		}
 	}
 
 	return true;

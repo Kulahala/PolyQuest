@@ -32,6 +32,11 @@ struct POLYQUEST_API FRateWindowActiveEntry
 struct POLYQUEST_API FAbilityMontageRateWindowLifecycle
 {
 public:
+	static bool IsCurrentMontageInstance(
+		const UAnimInstance* AnimInstance,
+		const UAnimMontage* Montage,
+		int32 ExpectedInstanceID);
+
 	void BindAndCapture(
 		UGameplayAbility* InAbility,
 		UAnimInstance* InAnimInstance,
@@ -51,6 +56,7 @@ public:
 	int32 GetStackDepth() const { return ActiveWindows.Num(); }
 	float GetCurrentTargetRate() const { return ActiveWindows.IsEmpty() ? BaselinePlayRate : ActiveWindows.Last().TargetRate; }
 	const TArray<FRateWindowActiveEntry>& GetActiveWindows() const { return ActiveWindows; }
+	int32 GetBoundMontageInstanceID() const { return BoundMontageInstanceID; }
 #endif
 
 	bool IsMontageOrSequenceMatch(const UObject* OptionalObject) const;
@@ -75,19 +81,12 @@ public:
 		UAnimMontage* InMontage,
 		const FGameplayTag& InBeginTag,
 		const FGameplayTag& InEndTag,
-		float InBaselineRate)
-	{
-		WeakAbility = InAbility;
-		WeakAnimInstance = InAnimInstance;
-		WeakMontage = InMontage;
-		RateWindowBeginEventTag = InBeginTag;
-		RateWindowEndEventTag = InEndTag;
-		BaselinePlayRate = FMath::IsFinite(InBaselineRate) && InBaselineRate > KINDA_SMALL_NUMBER ? InBaselineRate : 1.0f;
-		bCaptured = true;
-	}
+		float InBaselineRate);
 #endif
 
 private:
+	bool HasAuthorizedMontageInstance() const;
+
 	TWeakObjectPtr<UGameplayAbility> WeakAbility;
 	TWeakObjectPtr<UAnimInstance> WeakAnimInstance;
 	TWeakObjectPtr<UAnimMontage> WeakMontage;
@@ -97,6 +96,7 @@ private:
 
 	TArray<FRateWindowActiveEntry> ActiveWindows;
 	float BaselinePlayRate = 1.0f;
+	int32 BoundMontageInstanceID = INDEX_NONE;
 	bool bCaptured = false;
 
 #if WITH_DEV_AUTOMATION_TESTS
