@@ -1558,3 +1558,39 @@ TODO-03A3E World Pickup Interaction Prompt v1
 
 - 用户在上述文档和审查收口后明确授权“文档已收尾就可以开始提交”。本次提交范围为六类 Ability 的 12 个生产文件、3 个测试文件，以及 plan.md、ARCHITECTURE.md、ROADMAP.md、ROADMAP-archive.md，共 19 个路径；提交哈希以 Git 历史为准。
 - Content／Config、`tmp/` 和其他用户 WIP 保留并排除。沿用已记录的构建、Automation、用户 PIE 与 Review 证据；本提交步骤不重新运行测试、不写入资产、不推送远程，也不自动启动 TODO-03H6。
+
+### TODO-07B8-C Handoff To TODO-03H6 (2026-09-12)
+
+- Git 历史现已确认 C 的批准范围提交为 `759efcad28f0d04e36e9b74ed07f88d8ec60ed9d`。上方 uncommitted / 尚未授权表述保留为当时记录，不代表当前提交状态。
+- 用户现已批准执行 TODO-03H6 修订计划。替换前的完整 C 计划及验证收据固定读取 `git show 759efca:plan.md`；不再以当前工作树的 plan.md 定位 C 证据。C 既有收口不重新审理，独立 authored 收据仍归 `Debt-07B8-AuthoredValidation`。
+
+## TODO-03H6 Combat Architecture And Code Health Audit (2026-09-12)
+
+- **基线与执行**：HEAD `759efcad28f0d04e36e9b74ed07f88d8ec60ed9d`。用户批准修订计划，由Main完成计划落盘、两批只读审计与文档；执行中另授权一个干净只读Fresh Reviewer。生产/测试、ARCHITECTURE、Config、Content和其他WIP未修改，无编译/Automation/Editor/PIE/暂存/提交。
+- **结果**：六组职责/生命周期/数据/命中/反馈/清理覆盖记录保留于H6 plan.md。Main发现两个P2：H6-F01 Enemy RateWindow的旧实例存在性与资产级调速目标不一致；H6-F02投射物Guard及受击方向依赖射手当前位置。清理候选与合理Context隔离均不作为新的运行时blocker。
+- **独立复核**：用户授权的 /root/h6_audit_fresh_review 在两批只读核验后确认两条P2条件性静态反例，审计稿无P0-P2问题；Main采纳F01边界收窄：未证实当前生产资产触发，作为基础实例授权修复门禁优先收口，不是已证明的远程运行时依赖。Reviewer仅核验Findings、直接测试、接入建议和覆盖表述，未重做六组全量审计，未运行编译或测试。
+- **接入建议**：03C复用现有Controller攻击请求/pending/冷却边界，保留局部远程距离/LOS策略；有界扩展EnemyAttackProfile，兼容既有近战校验，远程DamageGE仅从ProjectileDefinition取值。此为审计建议，不是新API/资产迁移授权。
+- **准入**：H6审计交付完成，03C暂不放行；先独立制定TODO-03H6-FIX1/FIX2并修复验证。候选路径需各自计划冻结，不在本轮修复。非阻塞测试接口候选及投射物集成证据边界在ROADMAP唯一归口，原authored/03D/处决teardown债务不自动关闭。
+- **证据与提交边界**：本轮仅静态源码/引擎API/文档证据，未运行新测试；沿用的旧结果通过`759efca:plan.md`按版本和执行者追溯。最终仅plan.md、ROADMAP.md、ROADMAP-archive.md三份文档变动，提交仍需用户单独授权。
+
+### TODO-03H6 Follow-up: Shared Validation And SHRINK Scheduling (2026-09-12)
+
+- 用户指出原交付对冗余停留在候选，并要求正式安排清理/瘦身。最新路线为 FIX1（实例授权修复与公共校验）→ FIX2（投射物命中几何）→ TODO-03H6-SHRINK（战斗代码去重与清理）→ 03C；旧H6归档的排期作为历史保留。
+- FIX1集中Player/Enemy适用消费者的实例授权规则，禁止再复制等价判断；SHRINK处理剩余绑定样板、11项测试getter及有证据的退休残留，不重复处理FIX1已收敛部分。补充静态对照确认Charged/Sprint的BindRateWindow类型名归一后完全一致，Bow有结束状态字段差异，构成实际提取依据。
+- SHRINK不得仅删除getter就宣称完成；须交付真实共享实现/迁移及全部候选裁决，保留Context与各动作生命周期。未发现可删除的旧分支明确记零；资产兼容未解除的路径不强删。
+- 验证按影响面确定：测试getter删除无须PIE，共享绑定/委托/重入/清理提取需要对应Automation和适用PIE。原H6 Fresh Review只覆盖原审计，不被外推为本排期或未来实现已复核。
+- 本次只更新plan.md、ROADMAP.md与本append-only记录；无源码/资产修改，无编译/Automation/Editor/PIE，无暂存/提交。后续每片仍需独立冻结Source/Test白名单。
+
+### TODO-03H6 Follow-up: Whole-Project Scope Clarification (2026-09-12)
+
+- 用户明确要求整个项目当前代码库的审查与瘦身，不限近几次提交。此前H6是有界战斗审计，SHRINK示例是已知首批，二者不能宣称全项目覆盖。
+- 新路线为TODO-03H6-FULL-AUDIT → FIX1 → FIX2 → 项目级SHRINK → 03C。FULL-AUDIT先建立Source所有自有模块、测试、构建/配置及自有工具的覆盖/候选台账；SHRINK按模块/契约逐片实施已接受项，保持白名单与验证，不一次性全库改写。
+- 本地Ponytail 4.9.0的Audit适合辅助全仓库复杂度检查，但不含正确性审查且不执行修复；持续模式与子代理钩子须与项目契约区分。本轮仅检查文件，未启用或修改插件。
+- 当前Source干净，三份阶段文档未提交，原Content/Config/tmp WIP保留。建议三份文档单独提交形成交接基线；用户尚未授权提交，本次仅文档范围对齐，未开始全项目审计。
+
+### TODO-03H6 Documentation Commit Approval (2026-09-12)
+
+- 用户明确回复“可以提交”，授权本次仅提交plan.md、ROADMAP.md、ROADMAP-archive.md。此前未授权/未提交表述作为各时点历史保留；提交哈希以Git历史为准。
+- 提交内容为H6审计和独立复核证据、修复/共享校验/项目级SHRINK排期、11项测试接口清单，以及FULL-AUDIT全项目范围。全项目审查尚未开始，不把局部H6结论外推。
+- 保留并排除Source、ARCHITECTURE、AGENTS、Config、Content、tmp与其他WIP；本次仅文档静态检查，不重新运行编译/Automation/Editor/PIE，不推送远程。
+- 用户已自行启用Ponytail，配置只读核对为enabled=true、defaultMode=lite。Agent仅评估三项钩子，未更改插件或钩子开关；启用插件不等于启动全项目审查或批准代码删除。
