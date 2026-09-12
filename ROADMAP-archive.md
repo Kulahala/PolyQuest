@@ -1542,3 +1542,19 @@ TODO-03A3E World Pickup Interaction Prompt v1
 - **验证证据**：用户确认身份补修后的 PIE/Automation 通过；最终 EnemyMontageRateWindow Test Run 3 为 Success，明确包含 initial front、same front、switch right。Gemini 身份补修交付报告另列 StanceBreak、ExecutionVictimPresentation 与 Scene01 PIE 成功，保持执行者证据归属。Main 最终测试 Rider errors 为 0，Source diff/测试空白检查通过；最终有界 delta review 无新增 P0-P2。手动 Notify 序列不冒充时间轴自动派发，瞬时 Enemy Retrigger 不冒充 Player/跨帧证据。
 - **后续与收据**：窗口身份 blocker 已关闭；独立 authored readback/编译日志收据仅在 ROADMAP.md 的 Debt-07B8-AuthoredValidation 跟踪，既有 07B5 Player/跨帧债务保留。TODO-07B8-C 为下一项已排期工作，需独立计划冻结 Player 计数/固定恢复率与 Enemy 身份集合/捕获基线的迁移语义，不能据 B 收口自动批准批量迁移。
 - **提交边界**：用户已批准 16 个 Source/Test 文件与 plan.md、ARCHITECTURE.md、ROADMAP.md、ROADMAP-archive.md，共 20 路径提交；ROADMAP.md 同时纳入新排期 07B8-C → 03H6 架构/代码健康审查 → 必要有界修复 → 03C → 03C-B。Content/**、Config、其他用户 WIP 保留并排除。此次排期不等于提前启动 C/H6 或授权其实现范围。
+
+## TODO-07B8-C Player RateWindow Lifecycle Unification Closeout (2026-09-12; uncommitted)
+
+> 基线 HEAD：`9ae684cea97e682bc98c58c8776dc0f61639719c`。本条记录源码、验证及审查收口；完整 12 个生产文件和 3 个测试文件白名单、失败记录及证据路径保留在 plan.md。用户尚未授权 Git 提交。
+
+- **最终行为**：Light、MeleeSkill、Sprint、Charged、Bow、Dodge 采用既有 `FAbilityMontageRateWindowLifecycle`，按来源动画和 Notify 身份选择最后开始且仍活跃的窗口，最后一个窗口结束恢复本次播放捕获的 baseline。删除本地计数／布尔调速与固定恢复速率，保留各动作的 GAS、输入、伤害和移动所有权。共享 helper／Notify、Enemy、Tag、Build.cs 和资产均未修改。
+- **生命周期**：各消费者持有独立 Context、绑定代次与实例 ID；转发和恢复只授权当前 `GetActiveInstanceForMontage()` 返回的绑定实例。清理先使 Context 失效并移除监听，再恢复仍持有的实例。Light 逐 Combo Entry 重绑；MeleeSkill 保留播放确认后 Commit 再绑定；Charged 暂停／释放与 Bow Section 跳转不重捕获 baseline；Dodge 保留真实 ASC 重触发和原实例任务结束契约。
+- **实施与验证**：Light 试点由 Gemini 交付并完成此前补修；用户随后授权 Codex 完成剩余五类。Codex Development Editor 构建成功，组合 Automation `Saved/Automation/Codex07B8C/Final/index.json` 为 12/12 Success，覆盖六类 Player 专项、ActionWindows、PlayerMeleeMotionWarping、MobileBow、ChargedAttackNiagaraFeedback 和两组 Enemy RateWindow。用户在获得 Scene01 最小清单后明确确认“测试通过”，作为新增五类及代表性窗口／Enemy 对照的用户 PIE 证据，不声称 Main 独立观察了 Editor。
+- **独立 Fresh Review 与修复**：用户授权一个干净的只读子代理 `/root/ratewindow_fresh_review`。两批限定审查发现唯一 P2：Light 只按旧 ID 查询存活实例，可能对同资产的新当前实例调速。Main 添加真实双实例用例，旧实例未停止时复现旧 Begin／End 将新速率 `2.0` 改为 `0.2`、旧清理改为 `1.0`，失败报告保留在 `ReviewP2Red/index.json`。随后在 Light 三处检查当前实例 ID，补修后构建 `Codex-07B8C-ReviewP2-Build.log` 成功，`ReviewP2Green/index.json` 的 Light／PlayerMeleeMotionWarping 两项均 Success。Main delta 复核关闭该 P2，无新增 P0-P2，不再次派发子代理。
+- **证据边界**：12 项组合与用户 PIE 属于 P2 补修前版本；补修后的受影响路径由上述两项定向回归覆盖，不宣称重新跑了全量组合或 PIE。手工 Notify／委托测试不替代资产时间轴，跨帧表现以用户 PIE 记录为准。逐项 GA／Montage、窗口／倍率／Tick Type 的独立 readback 未提供，非阻塞收据债务继续唯一归 `Debt-07B8-AuthoredValidation`；不构成 clean-checkout authored baseline 或 packaging 证明。
+- **文档与后续**：ARCHITECTURE 已更新六类 Player 的稳定 RateWindow 契约，ROADMAP 指向 TODO-03H6 → 必要有界修复 → TODO-03C；不自动启动新阶段。Player 致死入口尚未实现，TODO-03D 接入时验证活跃窗口的 Cancel／EndPlay 收口。Content／Config、`tmp/` 和其他用户 WIP 保留；源码、测试及四份阶段文档均未暂存、未提交。
+
+### TODO-07B8-C Commit Approval (2026-09-12)
+
+- 用户在上述文档和审查收口后明确授权“文档已收尾就可以开始提交”。本次提交范围为六类 Ability 的 12 个生产文件、3 个测试文件，以及 plan.md、ARCHITECTURE.md、ROADMAP.md、ROADMAP-archive.md，共 19 个路径；提交哈希以 Git 历史为准。
+- Content／Config、`tmp/` 和其他用户 WIP 保留并排除。沿用已记录的构建、Automation、用户 PIE 与 Review 证据；本提交步骤不重新运行测试、不写入资产、不推送远程，也不自动启动 TODO-03H6。

@@ -4,6 +4,7 @@
 #include "AbilitySystem/Abilities/StaminaActionAbility.h"
 #include "Abilities/GameplayAbilityTypes.h"
 #include "Combat/Melee/MeleeMotionWarping.h"
+#include "AbilitySystem/Abilities/MontageRateWindowLifecycle.h"
 #include "SprintAttackAbility.generated.h"
 
 class UAbilityTask_PlayMontageAndWait;
@@ -12,6 +13,25 @@ class UAbilityTask_WaitGameplayEvent;
 class UAnimInstance;
 class UAnimMontage;
 class UGameplayEffect;
+
+class USprintAttackAbility;
+
+/** Transient receiver scoped to one RateWindow playback binding. */
+UCLASS(Transient)
+class POLYQUEST_API USprintAttackRateWindowContext : public UObject
+{
+	GENERATED_BODY()
+
+public:
+	TWeakObjectPtr<USprintAttackAbility> OwningAbility;
+	uint32 Token = 0;
+
+	UFUNCTION()
+	void OnBegin(FGameplayEventData Payload);
+
+	UFUNCTION()
+	void OnEnd(FGameplayEventData Payload);
+};
 
 /**
  * A Root Motion attack that may begin only from a real active Sprint state.
@@ -116,7 +136,6 @@ private:
 	FGameplayTag DefenseCancelableStateTag;
 	bool bDodgeCancelable = false;
 	bool bRuntimeActionTagsApplied = false;
-	bool bRateWindowApplied = false;
 	bool bEndAbilityRequested = false;
 
 	UFUNCTION()
@@ -134,11 +153,9 @@ private:
 	UFUNCTION()
 	void OnDodgeCancelWindowEnd(FGameplayEventData Payload);
 
-	UFUNCTION()
-	void OnRateWindowBegin(FGameplayEventData Payload);
+	void OnRateWindowBegin(const FGameplayEventData& Payload);
 
-	UFUNCTION()
-	void OnRateWindowEnd(FGameplayEventData Payload);
+	void OnRateWindowEnd(const FGameplayEventData& Payload);
 
 	void EndFromMontage(bool bWasCancelled);
 	bool IsGameplayEventFromActiveMontage(const FGameplayEventData& Payload) const;
@@ -146,7 +163,6 @@ private:
 	void CloseTraceWindow();
 	void SetDodgeCancelable(bool bShouldBeCancelable);
 	void SetRuntimeActionTags(bool bShouldApply);
-	void RestoreBaselineMontageRate();
 	void TryApplyMeleeMotionWarpTarget(class APlayerCharacter* PlayerCharacter);
 	void ResetMeleeMotionWarpState();
 
@@ -182,5 +198,31 @@ public:
 
 private:
 	bool bTestBypassMontageActiveCheck = false;
+#endif
+
+private:
+	friend class USprintAttackRateWindowContext;
+
+	UPROPERTY(Transient)
+	TObjectPtr<USprintAttackRateWindowContext> RateWindowContext;
+
+	FAbilityMontageRateWindowLifecycle RateWindowLifecycle;
+	TWeakObjectPtr<UAnimInstance> RateWindowAnimInstance;
+	TWeakObjectPtr<UAnimMontage> RateWindowMontage;
+	uint32 RateWindowBindingToken = 0;
+	int32 RateWindowMontageInstanceID = INDEX_NONE;
+
+	bool BindRateWindow(UAnimInstance* AnimInstance, UAnimMontage* Montage);
+	bool HasOwnedRateWindowMontageInstance() const;
+	void ClearRateWindow();
+
+#if WITH_DEV_AUTOMATION_TESTS
+public:
+	const FAbilityMontageRateWindowLifecycle& GetTestRateWindowLifecycle() const { return RateWindowLifecycle; }
+	FAbilityMontageRateWindowLifecycle& GetTestRateWindowLifecycle_Mutable() { return RateWindowLifecycle; }
+	USprintAttackRateWindowContext* GetTestRateWindowContext() const { return RateWindowContext.Get(); }
+	int32 GetTestRateWindowMontageInstanceID() const { return RateWindowMontageInstanceID; }
+	bool HasTestRateWindowTasks() const { return RateWindowBeginTask != nullptr || RateWindowEndTask != nullptr; }
+	void TestClearRateWindow() { ClearRateWindow(); }
 #endif
 };

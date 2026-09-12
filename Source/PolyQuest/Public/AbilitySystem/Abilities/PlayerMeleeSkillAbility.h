@@ -5,6 +5,7 @@
 #include "Abilities/GameplayAbilityTypes.h"
 #include "Combat/Melee/MeleeMotionWarping.h"
 #include "GameplayTagContainer.h"
+#include "AbilitySystem/Abilities/MontageRateWindowLifecycle.h"
 #include "PlayerMeleeSkillAbility.generated.h"
 
 class UAbilityTask_PlayMontageAndWait;
@@ -13,6 +14,25 @@ class UAbilityTask_WaitGameplayEvent;
 class UAnimInstance;
 class UAnimMontage;
 class UGameplayEffect;
+
+class UPlayerMeleeSkillAbility;
+
+/** Transient receiver scoped to one RateWindow playback binding. */
+UCLASS(Transient)
+class POLYQUEST_API UPlayerMeleeSkillRateWindowContext : public UObject
+{
+	GENERATED_BODY()
+
+public:
+	TWeakObjectPtr<UPlayerMeleeSkillAbility> OwningAbility;
+	uint32 Token = 0;
+
+	UFUNCTION()
+	void OnBegin(FGameplayEventData Payload);
+
+	UFUNCTION()
+	void OnEnd(FGameplayEventData Payload);
+};
 
 /**
  * A reusable one-shot prepared-slot melee skill: one Montage, exactly one
@@ -130,8 +150,6 @@ private:
 	FGameplayTag TeardownOnUnpossessTag;
 	bool bDodgeCancelable = false;
 	bool bRuntimeActionTagsApplied = false;
-	int32 ActiveRateWindowCount = 0;
-	bool bRateWindowApplied = false;
 	bool bEndAbilityRequested = false;
 
 	UFUNCTION()
@@ -149,11 +167,9 @@ private:
 	UFUNCTION()
 	void OnDodgeCancelWindowEnd(FGameplayEventData Payload);
 
-	UFUNCTION()
-	void OnRateWindowBegin(FGameplayEventData Payload);
+	void OnRateWindowBegin(const FGameplayEventData& Payload);
 
-	UFUNCTION()
-	void OnRateWindowEnd(FGameplayEventData Payload);
+	void OnRateWindowEnd(const FGameplayEventData& Payload);
 
 	void EndFromMontage(bool bWasCancelled);
 	bool IsGameplayEventFromActiveMontage(const FGameplayEventData& Payload) const;
@@ -162,7 +178,6 @@ private:
 	void CloseTraceWindow();
 	void SetDodgeCancelable(bool bShouldBeCancelable);
 	void SetRuntimeActionTags(bool bShouldApply);
-	void RestoreBaselineMontageRate();
 	void TryApplyMeleeMotionWarpTarget(class APlayerCharacter* PlayerCharacter);
 	void ResetMeleeMotionWarpState();
 
@@ -198,5 +213,31 @@ public:
 
 private:
 	bool bTestBypassMontageActiveCheck = false;
+#endif
+
+private:
+	friend class UPlayerMeleeSkillRateWindowContext;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UPlayerMeleeSkillRateWindowContext> RateWindowContext;
+
+	FAbilityMontageRateWindowLifecycle RateWindowLifecycle;
+	TWeakObjectPtr<UAnimInstance> RateWindowAnimInstance;
+	TWeakObjectPtr<UAnimMontage> RateWindowMontage;
+	uint32 RateWindowBindingToken = 0;
+	int32 RateWindowMontageInstanceID = INDEX_NONE;
+
+	bool BindRateWindow(UAnimInstance* AnimInstance, UAnimMontage* Montage);
+	bool HasOwnedRateWindowMontageInstance() const;
+	void ClearRateWindow();
+
+#if WITH_DEV_AUTOMATION_TESTS
+public:
+	const FAbilityMontageRateWindowLifecycle& GetTestRateWindowLifecycle() const { return RateWindowLifecycle; }
+	FAbilityMontageRateWindowLifecycle& GetTestRateWindowLifecycle_Mutable() { return RateWindowLifecycle; }
+	UPlayerMeleeSkillRateWindowContext* GetTestRateWindowContext() const { return RateWindowContext.Get(); }
+	int32 GetTestRateWindowMontageInstanceID() const { return RateWindowMontageInstanceID; }
+	bool HasTestRateWindowTasks() const { return RateWindowBeginTask != nullptr || RateWindowEndTask != nullptr; }
+	void TestClearRateWindow() { ClearRateWindow(); }
 #endif
 };

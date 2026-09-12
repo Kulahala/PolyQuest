@@ -4,6 +4,7 @@
 #include "AbilitySystem/Abilities/StaminaActionAbility.h"
 #include "Abilities/GameplayAbilityTypes.h"
 #include "ActiveGameplayEffectHandle.h"
+#include "AbilitySystem/Abilities/MontageRateWindowLifecycle.h"
 #include "DodgeAbility.generated.h"
 
 class UAbilityTask_PlayMontageAndWait;
@@ -11,6 +12,25 @@ class UAbilityTask_WaitGameplayEvent;
 class UAnimInstance;
 class UAnimMontage;
 class UGameplayEffect;
+
+class UDodgeAbility;
+
+/** Transient receiver scoped to one RateWindow playback binding. */
+UCLASS(Transient)
+class POLYQUEST_API UDodgeRateWindowContext : public UObject
+{
+	GENERATED_BODY()
+
+public:
+	TWeakObjectPtr<UDodgeAbility> OwningAbility;
+	uint32 Token = 0;
+
+	UFUNCTION()
+	void OnBegin(FGameplayEventData Payload);
+
+	UFUNCTION()
+	void OnEnd(FGameplayEventData Payload);
+};
 
 /**
  * Ground-only Root Motion Dodge with NotifyState-timed invulnerability.
@@ -52,17 +72,13 @@ public:
 	FGameplayTag GetTestHitReactingStateTag() const { return HitReactingStateTag; }
 	FGameplayTag GetTestPlayerLaunchReactionAbilityTag() const { return PlayerLaunchReactionAbilityTag; }
 	bool GetTestDodgeCancelable() const { return bDodgeCancelable; }
-	bool GetTestRateWindowApplied() const { return bRateWindowApplied; }
 	bool GetTestRetriggerInstancedAbility() const { return bRetriggerInstancedAbility; }
 	void SetTestActiveMontage(UAnimMontage* Montage) { ActiveMontage = Montage; }
 	void SetTestBoundAnimInstance(UAnimInstance* AnimInstance) { BoundAnimInstance = AnimInstance; }
 	void SetTestCurrentActorInfo(const FGameplayAbilityActorInfo* InActorInfo) { CurrentActorInfo = InActorInfo; }
 	void TestOnCancelWindowBegin(const FGameplayEventData& Payload) { OnCancelWindowBegin(Payload); }
 	void TestOnCancelWindowEnd(const FGameplayEventData& Payload) { OnCancelWindowEnd(Payload); }
-	void TestOnRateWindowBegin(const FGameplayEventData& Payload) { OnRateWindowBegin(Payload); }
-	void TestOnRateWindowEnd(const FGameplayEventData& Payload) { OnRateWindowEnd(Payload); }
 	void TestSetDodgeCancelable(bool bShouldCancel) { SetDodgeCancelable(bShouldCancel); }
-	void TestRestoreBaselineMontageRate() { RestoreBaselineMontageRate(); }
 	bool Test_IsGameplayEventFromActiveMontage(const FGameplayEventData& Payload) const { return IsGameplayEventFromActiveMontage(Payload); }
 #endif
 
@@ -90,10 +106,10 @@ private:
 	TObjectPtr<UAbilityTask_WaitGameplayEvent> CancelEndTask;
 
 	UPROPERTY(Transient)
-	TObjectPtr<UAbilityTask_WaitGameplayEvent> RateBeginTask;
+	TObjectPtr<UAbilityTask_WaitGameplayEvent> RateWindowBeginTask;
 
 	UPROPERTY(Transient)
-	TObjectPtr<UAbilityTask_WaitGameplayEvent> RateEndTask;
+	TObjectPtr<UAbilityTask_WaitGameplayEvent> RateWindowEndTask;
 
 	UPROPERTY(Transient)
 	TObjectPtr<UAnimInstance> BoundAnimInstance;
@@ -120,7 +136,6 @@ private:
 	FActiveGameplayEffectHandle InvulnerabilityEffectHandle;
 	bool bEndAbilityRequested = false;
 	bool bDodgeCancelable = false;
-	bool bRateWindowApplied = false;
 
 	UFUNCTION()
 	void OnMontageCompleted();
@@ -143,15 +158,38 @@ private:
 	UFUNCTION()
 	void OnCancelWindowEnd(FGameplayEventData Payload);
 
-	UFUNCTION()
-	void OnRateWindowBegin(FGameplayEventData Payload);
+	void OnRateWindowBegin(const FGameplayEventData& Payload);
 
-	UFUNCTION()
-	void OnRateWindowEnd(FGameplayEventData Payload);
+	void OnRateWindowEnd(const FGameplayEventData& Payload);
 
 	void EndFromMontage(bool bWasCancelled);
 	void ClearInvulnerabilityEffect();
 	void SetDodgeCancelable(bool bShouldCancel);
-	void RestoreBaselineMontageRate();
 	bool IsGameplayEventFromActiveMontage(const FGameplayEventData& Payload) const;
+
+private:
+	friend class UDodgeRateWindowContext;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UDodgeRateWindowContext> RateWindowContext;
+
+	FAbilityMontageRateWindowLifecycle RateWindowLifecycle;
+	TWeakObjectPtr<UAnimInstance> RateWindowAnimInstance;
+	TWeakObjectPtr<UAnimMontage> RateWindowMontage;
+	uint32 RateWindowBindingToken = 0;
+	int32 RateWindowMontageInstanceID = INDEX_NONE;
+
+	bool BindRateWindow(UAnimInstance* AnimInstance, UAnimMontage* Montage);
+	bool HasOwnedRateWindowMontageInstance() const;
+	void ClearRateWindow();
+
+#if WITH_DEV_AUTOMATION_TESTS
+public:
+	const FAbilityMontageRateWindowLifecycle& GetTestRateWindowLifecycle() const { return RateWindowLifecycle; }
+	FAbilityMontageRateWindowLifecycle& GetTestRateWindowLifecycle_Mutable() { return RateWindowLifecycle; }
+	UDodgeRateWindowContext* GetTestRateWindowContext() const { return RateWindowContext.Get(); }
+	int32 GetTestRateWindowMontageInstanceID() const { return RateWindowMontageInstanceID; }
+	bool HasTestRateWindowTasks() const { return RateWindowBeginTask != nullptr || RateWindowEndTask != nullptr; }
+	void TestClearRateWindow() { ClearRateWindow(); }
+#endif
 };

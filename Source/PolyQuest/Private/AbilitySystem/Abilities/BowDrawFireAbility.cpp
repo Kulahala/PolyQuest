@@ -106,11 +106,11 @@ void UBowDrawFireAbility::ActivateAbility(
 	const FGameplayAbilityActivationInfo ActivationInfo,
 	const FGameplayEventData* TriggerEventData)
 {
+	ClearRateWindow();
 	// 1. Reset transient runtime state first before any early return/failure branch
 	bEndAbilityInProgress = false;
 	bDodgeCancelable = false;
 	bChargingApplied = false;
-	bRateWindowApplied = false;
 	bSpawnedProjectile = false;
 	bReleaseRequested = false;
 	MobileBowMoveSpeedEffectHandle.Invalidate();
@@ -190,11 +190,9 @@ void UBowDrawFireAbility::ActivateAbility(
 	WaitInputCanceledTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, InputCanceledEventTag);
 	DodgeCancelWindowBeginTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, DodgeCancelWindowBeginEventTag);
 	DodgeCancelWindowEndTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, DodgeCancelWindowEndEventTag);
-	RateWindowBeginTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, RateWindowBeginEventTag);
-	RateWindowEndTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, RateWindowEndEventTag);
 
 	if (!MontageTask || !WaitDrawReadyTask || !WaitReleaseTask || !WaitInputReleasedTask || !WaitInputCanceledTask
-		|| !DodgeCancelWindowBeginTask || !DodgeCancelWindowEndTask || !RateWindowBeginTask || !RateWindowEndTask)
+		|| !DodgeCancelWindowBeginTask || !DodgeCancelWindowEndTask)
 	{
 		UE_LOG(LogPolyQuest, Warning, TEXT("UBowDrawFireAbility on '%s' failed to create required ability tasks."), *GetNameSafe(PlayerCharacter));
 		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
@@ -224,11 +222,7 @@ void UBowDrawFireAbility::ActivateAbility(
 	DodgeCancelWindowEndTask->EventReceived.AddDynamic(this, &UBowDrawFireAbility::OnDodgeCancelWindowEnd);
 	DodgeCancelWindowEndTask->ReadyForActivation();
 
-	RateWindowBeginTask->EventReceived.AddDynamic(this, &UBowDrawFireAbility::OnRateWindowBegin);
-	RateWindowBeginTask->ReadyForActivation();
 
-	RateWindowEndTask->EventReceived.AddDynamic(this, &UBowDrawFireAbility::OnRateWindowEnd);
-	RateWindowEndTask->ReadyForActivation();
 
 	PlayerCharacter->RegisterBowAimRequester(this);
 	MontageTask->ReadyForActivation();
@@ -250,6 +244,11 @@ void UBowDrawFireAbility::ActivateAbility(
 	{
 		UE_LOG(LogPolyQuest, Warning, TEXT("UBowDrawFireAbility on '%s' failed to apply MobileBowMoveSpeedGameplayEffect."), *GetNameSafe(PlayerCharacter));
 		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
+		return;
+	}
+
+	if (!BindRateWindow(AnimInstance, BowMontage.Get()))
+	{
 		return;
 	}
 
@@ -529,7 +528,7 @@ void UBowDrawFireAbility::EndAbility(
 	ClearMobileBowMoveSpeedEffect();
 	SetCharging(false);
 	SetDodgeCancelable(false);
-	RestoreBaselineMontageRate();
+	ClearRateWindow();
 
 	if (APlayerCharacter* PlayerCharacter = Cast<APlayerCharacter>(GetAvatarActorFromActorInfo()))
 	{
@@ -576,18 +575,6 @@ void UBowDrawFireAbility::EndAbility(
 	{
 		DodgeCancelWindowEndTask->EndTask();
 		DodgeCancelWindowEndTask = nullptr;
-	}
-
-	if (RateWindowBeginTask)
-	{
-		RateWindowBeginTask->EndTask();
-		RateWindowBeginTask = nullptr;
-	}
-
-	if (RateWindowEndTask)
-	{
-		RateWindowEndTask->EndTask();
-		RateWindowEndTask = nullptr;
 	}
 
 	if (BowMontage && ActorInfo && ActorInfo->AbilitySystemComponent.IsValid())
@@ -651,46 +638,6 @@ void UBowDrawFireAbility::OnDodgeCancelWindowEnd(FGameplayEventData Payload)
 	if (IsGameplayEventFromActiveMontage(Payload))
 	{
 		SetDodgeCancelable(false);
-	}
-}
-
-void UBowDrawFireAbility::OnRateWindowBegin(FGameplayEventData Payload)
-{
-	if (bRateWindowApplied || !IsGameplayEventFromActiveMontage(Payload) || Payload.EventMagnitude <= 0.0f)
-	{
-		return;
-	}
-
-	UAnimInstance* AnimInstance = CurrentActorInfo ? CurrentActorInfo->GetAnimInstance() : nullptr;
-	if (AnimInstance && BowMontage && AnimInstance->Montage_IsActive(BowMontage.Get()))
-	{
-		AnimInstance->Montage_SetPlayRate(BowMontage.Get(), Payload.EventMagnitude);
-		bRateWindowApplied = true;
-	}
-}
-
-void UBowDrawFireAbility::OnRateWindowEnd(FGameplayEventData Payload)
-{
-	if (!IsGameplayEventFromActiveMontage(Payload))
-	{
-		return;
-	}
-
-	RestoreBaselineMontageRate();
-}
-
-void UBowDrawFireAbility::RestoreBaselineMontageRate()
-{
-	if (!bRateWindowApplied)
-	{
-		return;
-	}
-
-	bRateWindowApplied = false;
-	UAnimInstance* AnimInstance = CurrentActorInfo ? CurrentActorInfo->GetAnimInstance() : nullptr;
-	if (AnimInstance && BowMontage && AnimInstance->Montage_IsActive(BowMontage.Get()))
-	{
-		AnimInstance->Montage_SetPlayRate(BowMontage.Get(), 1.0f);
 	}
 }
 
@@ -816,4 +763,157 @@ void UBowDrawFireAbility::ClearMobileBowMoveSpeedEffect()
 	}
 
 	MobileBowMoveSpeedEffectHandle.Invalidate();
+}
+
+void UBowDrawFireRateWindowContext::OnBegin(FGameplayEventData Payload)
+{
+	if (UBowDrawFireAbility* Ability = OwningAbility.Get())
+	{
+		if (Ability->RateWindowContext.Get() == this && Ability->RateWindowBindingToken == Token)
+		{
+			Ability->OnRateWindowBegin(Payload);
+		}
+	}
+}
+
+void UBowDrawFireRateWindowContext::OnEnd(FGameplayEventData Payload)
+{
+	if (UBowDrawFireAbility* Ability = OwningAbility.Get())
+	{
+		if (Ability->RateWindowContext.Get() == this && Ability->RateWindowBindingToken == Token)
+		{
+			Ability->OnRateWindowEnd(Payload);
+		}
+	}
+}
+
+bool UBowDrawFireAbility::HasOwnedRateWindowMontageInstance() const
+{
+	UAnimInstance* AnimInstance = RateWindowAnimInstance.Get();
+	UAnimMontage* Montage = RateWindowMontage.Get();
+	const FAnimMontageInstance* Instance = AnimInstance && Montage
+		? AnimInstance->GetActiveInstanceForMontage(Montage) : nullptr;
+	return Instance && RateWindowMontageInstanceID != INDEX_NONE
+		&& Instance->GetInstanceID() == RateWindowMontageInstanceID && !Instance->IsStopped();
+}
+
+bool UBowDrawFireAbility::BindRateWindow(UAnimInstance* AnimInstance, UAnimMontage* Montage)
+{
+	ClearRateWindow();
+	const uint32 BindingToken = ++RateWindowBindingToken;
+	const auto FailBinding = [this, BindingToken]()
+	{
+		if (RateWindowBindingToken == BindingToken && IsActive() && !bEndAbilityInProgress && CurrentActorInfo)
+		{
+			EndAbility(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, true, true);
+		}
+		return false;
+	};
+
+	if (!IsActive() || bEndAbilityInProgress || !IsValid(AnimInstance) || !IsValid(Montage))
+	{
+		return FailBinding();
+	}
+	const FAnimMontageInstance* Instance = AnimInstance->GetActiveInstanceForMontage(Montage);
+	if (!Instance || Instance->IsStopped())
+	{
+		return FailBinding();
+	}
+	RateWindowAnimInstance = AnimInstance;
+	RateWindowMontage = Montage;
+	RateWindowMontageInstanceID = Instance->GetInstanceID();
+	RateWindowLifecycle.BindAndCapture(this, AnimInstance, Montage, RateWindowBeginEventTag, RateWindowEndEventTag);
+	if (!RateWindowLifecycle.IsBound())
+	{
+		return FailBinding();
+	}
+
+	UBowDrawFireRateWindowContext* Context = NewObject<UBowDrawFireRateWindowContext>(this);
+	RateWindowContext = Context;
+	Context->OwningAbility = this;
+	Context->Token = BindingToken;
+	UAbilityTask_WaitGameplayEvent* BeginTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, RateWindowBeginEventTag, nullptr, false, true);
+	UAbilityTask_WaitGameplayEvent* EndTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, RateWindowEndEventTag, nullptr, false, true);
+	RateWindowBeginTask = BeginTask;
+	RateWindowEndTask = EndTask;
+	if (!BeginTask || !EndTask)
+	{
+		return FailBinding();
+	}
+	BeginTask->EventReceived.AddDynamic(Context, &UBowDrawFireRateWindowContext::OnBegin);
+	EndTask->EventReceived.AddDynamic(Context, &UBowDrawFireRateWindowContext::OnEnd);
+
+	const auto IsCurrentBinding = [this, Context, BindingToken]()
+	{
+		return IsActive() && !bEndAbilityInProgress && RateWindowBindingToken == BindingToken
+			&& RateWindowContext.Get() == Context;
+	};
+	BeginTask->ReadyForActivation();
+	if (!IsCurrentBinding())
+	{
+		return false; // A synchronous end/retrigger owns its own cleanup.
+	}
+	if (RateWindowBeginTask.Get() != BeginTask || !IsValid(BeginTask) || !BeginTask->IsActive()
+		|| RateWindowEndTask.Get() != EndTask || !IsValid(EndTask) || !HasOwnedRateWindowMontageInstance())
+	{
+		return FailBinding();
+	}
+	EndTask->ReadyForActivation();
+	if (!IsCurrentBinding())
+	{
+		return false;
+	}
+	if (RateWindowEndTask.Get() != EndTask || !IsValid(EndTask) || !EndTask->IsActive()
+		|| !HasOwnedRateWindowMontageInstance())
+	{
+		return FailBinding();
+	}
+	return true;
+}
+
+void UBowDrawFireAbility::OnRateWindowBegin(const FGameplayEventData& Payload)
+{
+	const AActor* Avatar = GetAvatarActorFromActorInfo();
+	if (!IsActive() || bEndAbilityInProgress || !IsValid(Avatar) || Avatar->IsActorBeingDestroyed() || !HasOwnedRateWindowMontageInstance())
+	{
+		return;
+	}
+	RateWindowLifecycle.HandleBegin(Payload);
+}
+
+void UBowDrawFireAbility::OnRateWindowEnd(const FGameplayEventData& Payload)
+{
+	const AActor* Avatar = GetAvatarActorFromActorInfo();
+	if (!IsActive() || bEndAbilityInProgress || !IsValid(Avatar) || Avatar->IsActorBeingDestroyed() || !HasOwnedRateWindowMontageInstance())
+	{
+		return;
+	}
+	RateWindowLifecycle.HandleEnd(Payload);
+}
+
+void UBowDrawFireAbility::ClearRateWindow()
+{
+	if (RateWindowContext)
+	{
+		RateWindowContext->OwningAbility.Reset();
+		RateWindowContext = nullptr;
+	}
+	if (RateWindowBeginTask)
+	{
+		RateWindowBeginTask->EndTask();
+		RateWindowBeginTask = nullptr;
+	}
+	if (RateWindowEndTask)
+	{
+		RateWindowEndTask->EndTask();
+		RateWindowEndTask = nullptr;
+	}
+	if (HasOwnedRateWindowMontageInstance())
+	{
+		RateWindowLifecycle.RestoreAndClear();
+	}
+	RateWindowLifecycle = FAbilityMontageRateWindowLifecycle();
+	RateWindowAnimInstance.Reset();
+	RateWindowMontage.Reset();
+	RateWindowMontageInstanceID = INDEX_NONE;
 }

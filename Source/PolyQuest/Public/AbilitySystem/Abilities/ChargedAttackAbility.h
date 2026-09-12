@@ -5,6 +5,7 @@
 #include "Abilities/GameplayAbilityTypes.h"
 #include "Combat/Melee/MeleeMotionWarping.h"
 #include "GameplayTagContainer.h"
+#include "AbilitySystem/Abilities/MontageRateWindowLifecycle.h"
 #include "ChargedAttackAbility.generated.h"
 
 class UAbilityTask_PlayMontageAndWait;
@@ -17,6 +18,25 @@ class UGameplayEffect;
 class UNiagaraComponent;
 class UNiagaraSystem;
 class USceneComponent;
+
+class UChargedAttackAbility;
+
+/** Transient receiver scoped to one RateWindow playback binding. */
+UCLASS(Transient)
+class POLYQUEST_API UChargedAttackRateWindowContext : public UObject
+{
+	GENERATED_BODY()
+
+public:
+	TWeakObjectPtr<UChargedAttackAbility> OwningAbility;
+	uint32 Token = 0;
+
+	UFUNCTION()
+	void OnBegin(FGameplayEventData Payload);
+
+	UFUNCTION()
+	void OnEnd(FGameplayEventData Payload);
+};
 
 /**
  * Holds a root-motion attack at an authored pose, then releases one charged hit.
@@ -171,7 +191,6 @@ private:
 	bool bMontagePausedAtHoldReady = false;
 	bool bHoldCancelWindowLatchedAcrossPause = false;
 	bool bReleaseStarted = false;
-	bool bRateWindowApplied = false;
 	bool bEndAbilityRequested = false;
 
 	UFUNCTION()
@@ -198,11 +217,9 @@ private:
 	UFUNCTION()
 	void OnDodgeCancelWindowEnd(FGameplayEventData Payload);
 
-	UFUNCTION()
-	void OnRateWindowBegin(FGameplayEventData Payload);
+	void OnRateWindowBegin(const FGameplayEventData& Payload);
 
-	UFUNCTION()
-	void OnRateWindowEnd(FGameplayEventData Payload);
+	void OnRateWindowEnd(const FGameplayEventData& Payload);
 
 	UFUNCTION()
 	void OnChargeFullDelayFinished();
@@ -219,7 +236,6 @@ private:
 	void CloseTraceWindow();
 	void SetCharging(bool bShouldCharge);
 	void SetDodgeCancelable(bool bShouldBeCancelable);
-	void RestoreBaselineMontageRate();
 	void TryApplyMeleeMotionWarpTarget(class APlayerCharacter* PlayerCharacter);
 	void ResetMeleeMotionWarpState();
 
@@ -314,5 +330,31 @@ private:
 	float TestDelayDuration = -1.0f;
 	TWeakObjectPtr<USceneComponent> TestAttachParent = nullptr;
 	FName TestAttachSocketName = NAME_None;
+#endif
+
+private:
+	friend class UChargedAttackRateWindowContext;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UChargedAttackRateWindowContext> RateWindowContext;
+
+	FAbilityMontageRateWindowLifecycle RateWindowLifecycle;
+	TWeakObjectPtr<UAnimInstance> RateWindowAnimInstance;
+	TWeakObjectPtr<UAnimMontage> RateWindowMontage;
+	uint32 RateWindowBindingToken = 0;
+	int32 RateWindowMontageInstanceID = INDEX_NONE;
+
+	bool BindRateWindow(UAnimInstance* AnimInstance, UAnimMontage* Montage);
+	bool HasOwnedRateWindowMontageInstance() const;
+	void ClearRateWindow();
+
+#if WITH_DEV_AUTOMATION_TESTS
+public:
+	const FAbilityMontageRateWindowLifecycle& GetTestRateWindowLifecycle() const { return RateWindowLifecycle; }
+	FAbilityMontageRateWindowLifecycle& GetTestRateWindowLifecycle_Mutable() { return RateWindowLifecycle; }
+	UChargedAttackRateWindowContext* GetTestRateWindowContext() const { return RateWindowContext.Get(); }
+	int32 GetTestRateWindowMontageInstanceID() const { return RateWindowMontageInstanceID; }
+	bool HasTestRateWindowTasks() const { return RateWindowBeginTask != nullptr || RateWindowEndTask != nullptr; }
+	void TestClearRateWindow() { ClearRateWindow(); }
 #endif
 };

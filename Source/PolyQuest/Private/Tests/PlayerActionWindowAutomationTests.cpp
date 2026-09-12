@@ -377,45 +377,8 @@ bool FPlayerActionWindowAutomationTest::RunTest(const FString& Parameters)
 		}
 	}
 
-	// -------------------------------------------------------------------------
-	// SECTION 6: Bow Rate Window Validation
-	// -------------------------------------------------------------------------
-	if (BowAbility)
-	{
-		UAnimMontage* ValidBowMontage = NewObject<UAnimMontage>(GetTransientPackage(), TEXT("Test_RateBowMontage"));
-		UAnimMontage* WrongMontage = NewObject<UAnimMontage>(GetTransientPackage(), TEXT("Test_WrongRateMontage"));
-		BowAbility->SetTestBowMontage(ValidBowMontage);
-
-		// 6.1 Non-positive EventMagnitude -> Rejected fail-closed
-		{
-			FGameplayEventData ZeroMagnitudePayload;
-			ZeroMagnitudePayload.EventTag = TagRateWindowBegin;
-			ZeroMagnitudePayload.Instigator = Player;
-			ZeroMagnitudePayload.Target = Player;
-			ZeroMagnitudePayload.OptionalObject = ValidBowMontage;
-			ZeroMagnitudePayload.EventMagnitude = 0.0f;
-
-			BowAbility->TestOnRateWindowBegin(ZeroMagnitudePayload);
-			TestFalse(TEXT("Zero magnitude rate window is rejected"), BowAbility->GetTestRateWindowApplied());
-		}
-
-		// 6.2 Wrong Montage -> Rejected fail-closed
-		{
-			FGameplayEventData WrongMontageRatePayload;
-			WrongMontageRatePayload.EventTag = TagRateWindowBegin;
-			WrongMontageRatePayload.Instigator = Player;
-			WrongMontageRatePayload.Target = Player;
-			WrongMontageRatePayload.OptionalObject = WrongMontage;
-			WrongMontageRatePayload.EventMagnitude = 1.5f;
-
-			BowAbility->TestOnRateWindowBegin(WrongMontageRatePayload);
-			TestFalse(TEXT("Wrong montage rate window is rejected"), BowAbility->GetTestRateWindowApplied());
-		}
-
-		// 6.3 Teardown / baseline restore reset
-		BowAbility->TestRestoreBaselineMontageRate();
-		TestFalse(TEXT("Baseline restore keeps RateWindowApplied false"), BowAbility->GetTestRateWindowApplied());
-	}
+	// Bow RateWindow validation now runs on real ASC/playback fixtures in
+	// PolyQuest.Combat.PlayerMontageRateWindow.Bow.
 
 	// -------------------------------------------------------------------------
 	// SECTION 7: Multi-Action Cancel Conformance (Guard & Parry cancel Bow & Skills)
@@ -681,43 +644,8 @@ bool FPlayerActionWindowAutomationTest::RunTest(const FString& Parameters)
 			TestFalse(TEXT("Valid Inner Sequence End removes CanCancel.Dodge from ASC"), ASC->HasMatchingGameplayTag(TagCanCancelDodge));
 		}
 
-		// 9.7 Rate Window Lifecycle
-		{
-			// Invalid Rate <= 0.0 -> Rejected
-			FGameplayEventData NonPositiveRatePayload;
-			NonPositiveRatePayload.EventTag = TagRateWindowBegin;
-			NonPositiveRatePayload.Instigator = Player;
-			NonPositiveRatePayload.Target = Player;
-			NonPositiveRatePayload.OptionalObject = InnerDodgeSequence;
-			NonPositiveRatePayload.EventMagnitude = 0.0f;
-
-			DodgeAbility->TestOnRateWindowBegin(NonPositiveRatePayload);
-			TestFalse(TEXT("Rate window with magnitude <= 0 is rejected"), DodgeAbility->GetTestRateWindowApplied());
-
-			// Foreign Sequence Rate Begin -> Rejected
-			FGameplayEventData ForeignRatePayload;
-			ForeignRatePayload.EventTag = TagRateWindowBegin;
-			ForeignRatePayload.Instigator = Player;
-			ForeignRatePayload.Target = Player;
-			ForeignRatePayload.OptionalObject = ForeignDodgeSequence;
-			ForeignRatePayload.EventMagnitude = 1.5f;
-
-			DodgeAbility->TestOnRateWindowBegin(ForeignRatePayload);
-			TestFalse(TEXT("Rate window with foreign Sequence is rejected"), DodgeAbility->GetTestRateWindowApplied());
-
-			// Foreign Sequence Rate End -> Rejected
-			FGameplayEventData ForeignRateEndPayload;
-			ForeignRateEndPayload.EventTag = TagRateWindowEnd;
-			ForeignRateEndPayload.Instigator = Player;
-			ForeignRateEndPayload.Target = Player;
-			ForeignRateEndPayload.OptionalObject = ForeignDodgeSequence;
-
-			DodgeAbility->TestOnRateWindowEnd(ForeignRateEndPayload);
-
-			// Valid Rate End restores baseline
-			DodgeAbility->TestRestoreBaselineMontageRate();
-			TestFalse(TEXT("Restore baseline clears rate window flag"), DodgeAbility->GetTestRateWindowApplied());
-		}
+		// RateWindow identity and restoration are covered with real playback in
+		// PolyQuest.Combat.PlayerMontageRateWindow.Dodge.
 
 		// 9.8 EndAbility cleanup removes CanCancel.Dodge and clears rate state
 		{
@@ -733,7 +661,7 @@ bool FPlayerActionWindowAutomationTest::RunTest(const FString& Parameters)
 			DodgeAbility->EndAbility(DodgeAbility->GetCurrentAbilitySpecHandle(), ASC->AbilityActorInfo.Get(), DodgeAbility->GetCurrentActivationInfo(), true, true);
 			TestFalse(TEXT("EndAbility removes CanCancel.Dodge"), ASC->HasMatchingGameplayTag(TagCanCancelDodge));
 			TestFalse(TEXT("EndAbility clears DodgeCancelable"), DodgeAbility->GetTestDodgeCancelable());
-			TestFalse(TEXT("EndAbility clears RateWindowApplied"), DodgeAbility->GetTestRateWindowApplied());
+			TestFalse(TEXT("EndAbility leaves no RateWindow binding"), DodgeAbility->GetTestRateWindowLifecycle().IsBound());
 		}
 
 		// 9.9 Continuous Retrigger Tag Lifecycle:

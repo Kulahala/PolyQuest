@@ -433,22 +433,36 @@ eligibility rules for projectile delivery.
 
 #### Player RateWindow policy
 
-`ULightAttackAbility` and `UPlayerMeleeSkillAbility` each consume
-`Event.Action.RateWindow.Begin/End` only when both event actors are their
-owning Avatar and `Payload.OptionalObject` exactly matches their tracked active
-Montage. A valid Begin with a positive
-`EventMagnitude` applies that magnitude as the current Montage play rate.
-Successive or overlapping valid Begins use a last-one-wins policy: the most
-recent override remains active until the local active-window count returns to
-zero. A valid End decrements that count only when it is positive; restoration
-occurs when the count reaches zero, or through the existing transition and
-terminal cleanup paths. Each Ability restores its fixed native rate rather
-than a captured pre-window baseline.
+Light, MeleeSkill, SprintAttack, ChargedAttack, BowDrawFire, and Dodge opt in to
+`FAbilityMontageRateWindowLifecycle`. Both event actors must be the owning
+Avatar; `OptionalObject` must identify the bound Montage or one of its source
+Sequences, and `OptionalObject2` must identify a RateWindow Notify declared by
+that source. Exact Begin/End tags and finite positive rates are required.
 
-This is a consumer-local policy for these two Player Abilities. It does not
-adopt `FAbilityMontageRateWindowLifecycle`, does not imply all Player
-Abilities support RateWindow, and does not complete the conditional
-Player/Enemy lifecycle unification in `TODO-07B8-C`.
+Windows are keyed by `(SourceAnimation, NotifyState)`. The last begun window
+that is still active supplies the absolute target play rate; duplicate Begins
+and unknown Ends do not change the set. Ending the newest window restores the
+previous active window, and ending the last window restores the baseline
+captured after successful playback. The rate is not multiplied by that baseline.
+
+Each consumer owns a transient RateWindow context, binding generation, instance
+ID, and exact-tag event tasks. Before forwarding an event or restoring a rate,
+the consumer verifies that `GetActiveInstanceForMontage()` still returns its
+bound instance ID and that the instance has not stopped. An older instance
+remaining alive is insufficient: the asset-based rate API targets the current
+instance. Cleanup invalidates the context, removes listeners, restores only a
+still-owned current instance, then clears local state. Normal termination
+continues through the Ability's existing GAS `EndAbility()` path.
+
+Light creates a new binding for each combo entry. MeleeSkill binds only after
+playback confirmation and successful Commit. Charged Pause/Resume and Bow
+Section changes retain the same baseline; changing rate never resumes a paused
+Montage. Dodge retrigger ends the previous activation before binding the new
+instance and retains its existing per-instance completion/cancellation tasks.
+Other action windows, damage, input, movement, and GAS ownership are unchanged.
+Player HitReaction does not opt in. Time-zero events before binding and events
+dropped by coincident Branching Points are outside this contract; authored
+adjacent-window validation uses independent Queued notifies.
 
 #### Key Ability cancel, commit, and Montage cleanup contracts
 
@@ -1156,9 +1170,9 @@ the new instance's baseline independently.
 
 Windows must begin after consumer binding. Authored Section-boundary acceptance
 uses Queued notifies; this identity policy does not recover events dropped by
-coincident Branching Points. Root Motion remains Montage/CMC-owned. Player's
-existing consumer-local count/fixed-rate policy described above is unchanged;
-Player/Enemy unification is not part of this implementation.
+coincident Branching Points. Root Motion remains Montage/CMC-owned. The six
+Player consumers described above now share these window-identity and baseline
+semantics while retaining their own action lifecycles.
 
 #### Launch reaction
 

@@ -71,13 +71,13 @@ void USprintAttackAbility::ActivateAbility(
 	const FGameplayAbilityActivationInfo ActivationInfo,
 	const FGameplayEventData*)
 {
+	ClearRateWindow();
 #if WITH_DEV_AUTOMATION_TESTS
 	bTestBypassMontageActiveCheck = false;
 #endif
 	bEndAbilityRequested = false;
 	bDodgeCancelable = false;
 	bRuntimeActionTagsApplied = false;
-	bRateWindowApplied = false;
 	ActiveMontage = nullptr;
 	BoundAnimInstance = nullptr;
 	ResetMeleeMotionWarpState();
@@ -109,9 +109,7 @@ void USprintAttackAbility::ActivateAbility(
 	TraceWindowEndTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, TraceWindowEndEventTag, nullptr, false, true);
 	DodgeCancelWindowBeginTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, DodgeCancelWindowBeginEventTag, nullptr, false, true);
 	DodgeCancelWindowEndTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, DodgeCancelWindowEndEventTag, nullptr, false, true);
-	RateWindowBeginTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, RateWindowBeginEventTag, nullptr, false, true);
-	RateWindowEndTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, RateWindowEndEventTag, nullptr, false, true);
-	if (!CreatedMontageTask || !TraceWindowBeginTask || !TraceWindowEndTask || !DodgeCancelWindowBeginTask || !DodgeCancelWindowEndTask || !RateWindowBeginTask || !RateWindowEndTask)
+	if (!CreatedMontageTask || !TraceWindowBeginTask || !TraceWindowEndTask || !DodgeCancelWindowBeginTask || !DodgeCancelWindowEndTask)
 	{
 		UE_LOG(LogPolyQuest, Warning, TEXT("Sprint attack activation aborted for '%s': failed to create an AbilityTask."), *GetNameSafe(PlayerCharacter));
 		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
@@ -136,15 +134,11 @@ void USprintAttackAbility::ActivateAbility(
 	TraceWindowEndTask->EventReceived.AddDynamic(this, &USprintAttackAbility::OnTraceWindowEnd);
 	DodgeCancelWindowBeginTask->EventReceived.AddDynamic(this, &USprintAttackAbility::OnDodgeCancelWindowBegin);
 	DodgeCancelWindowEndTask->EventReceived.AddDynamic(this, &USprintAttackAbility::OnDodgeCancelWindowEnd);
-	RateWindowBeginTask->EventReceived.AddDynamic(this, &USprintAttackAbility::OnRateWindowBegin);
-	RateWindowEndTask->EventReceived.AddDynamic(this, &USprintAttackAbility::OnRateWindowEnd);
 
 	TraceWindowBeginTask->ReadyForActivation();
 	TraceWindowEndTask->ReadyForActivation();
 	DodgeCancelWindowBeginTask->ReadyForActivation();
 	DodgeCancelWindowEndTask->ReadyForActivation();
-	RateWindowBeginTask->ReadyForActivation();
-	RateWindowEndTask->ReadyForActivation();
 	CreatedMontageTask->ReadyForActivation();
 
 	// Montage startup can synchronously invoke the bound end delegate. That path has already cleaned every task and pointer.
@@ -189,6 +183,11 @@ void USprintAttackAbility::ActivateAbility(
 		return;
 	}
 
+	if (!BindRateWindow(BoundAnimInstance.Get(), ActiveMontage.Get()))
+	{
+		return;
+	}
+
 	TryApplyMeleeMotionWarpTarget(PlayerCharacter);
 
 	PlayerCharacter->CancelActiveGuardAfterConfirmedAction(true);
@@ -214,7 +213,7 @@ void USprintAttackAbility::EndAbility(
 	SetDodgeCancelable(false);
 	SetRuntimeActionTags(false);
 	CloseTraceWindow();
-	RestoreBaselineMontageRate();
+	ClearRateWindow();
 
 	if (APlayerCharacter* PlayerCharacter = Cast<APlayerCharacter>(GetAvatarActorFromActorInfo()))
 	{
@@ -260,18 +259,6 @@ void USprintAttackAbility::EndAbility(
 	{
 		DodgeCancelWindowEndTask->EndTask();
 		DodgeCancelWindowEndTask = nullptr;
-	}
-
-	if (RateWindowBeginTask)
-	{
-		RateWindowBeginTask->EndTask();
-		RateWindowBeginTask = nullptr;
-	}
-
-	if (RateWindowEndTask)
-	{
-		RateWindowEndTask->EndTask();
-		RateWindowEndTask = nullptr;
 	}
 
 	ActiveMontage = nullptr;
@@ -379,45 +366,6 @@ void USprintAttackAbility::OpenTraceWindow(const TArray<FName>& InTraceSourceNam
 void USprintAttackAbility::CloseTraceWindow()
 {
 	FMeleeTraceWindowLifecycle::CloseAndClear(TraceWindowTask, ActiveTraceNotifyState);
-}
-
-void USprintAttackAbility::OnRateWindowBegin(FGameplayEventData Payload)
-{
-	// Ignore duplicate Begin events; authored rate windows must not overlap.
-	if (bRateWindowApplied || !IsGameplayEventFromActiveMontage(Payload) || Payload.EventMagnitude <= 0.0f)
-	{
-		return;
-	}
-
-	if (BoundAnimInstance && ActiveMontage && BoundAnimInstance->Montage_IsActive(ActiveMontage.Get()))
-	{
-		BoundAnimInstance->Montage_SetPlayRate(ActiveMontage.Get(), Payload.EventMagnitude);
-		bRateWindowApplied = true;
-	}
-}
-
-void USprintAttackAbility::OnRateWindowEnd(FGameplayEventData Payload)
-{
-	if (!IsGameplayEventFromActiveMontage(Payload))
-	{
-		return;
-	}
-
-	RestoreBaselineMontageRate();
-}
-
-void USprintAttackAbility::RestoreBaselineMontageRate()
-{
-	if (!bRateWindowApplied)
-	{
-		return;
-	}
-
-	bRateWindowApplied = false;
-	if (BoundAnimInstance && ActiveMontage && BoundAnimInstance->Montage_IsActive(ActiveMontage.Get()))
-	{
-		BoundAnimInstance->Montage_SetPlayRate(ActiveMontage.Get(), 1.0f);
-	}
 }
 
 void USprintAttackAbility::SetDodgeCancelable(bool bShouldBeCancelable)
@@ -657,4 +605,157 @@ void USprintAttackAbility::TryApplyMeleeMotionWarpTarget(APlayerCharacter* Playe
 		}
 #endif
 	}
+}
+
+void USprintAttackRateWindowContext::OnBegin(FGameplayEventData Payload)
+{
+	if (USprintAttackAbility* Ability = OwningAbility.Get())
+	{
+		if (Ability->RateWindowContext.Get() == this && Ability->RateWindowBindingToken == Token)
+		{
+			Ability->OnRateWindowBegin(Payload);
+		}
+	}
+}
+
+void USprintAttackRateWindowContext::OnEnd(FGameplayEventData Payload)
+{
+	if (USprintAttackAbility* Ability = OwningAbility.Get())
+	{
+		if (Ability->RateWindowContext.Get() == this && Ability->RateWindowBindingToken == Token)
+		{
+			Ability->OnRateWindowEnd(Payload);
+		}
+	}
+}
+
+bool USprintAttackAbility::HasOwnedRateWindowMontageInstance() const
+{
+	UAnimInstance* AnimInstance = RateWindowAnimInstance.Get();
+	UAnimMontage* Montage = RateWindowMontage.Get();
+	const FAnimMontageInstance* Instance = AnimInstance && Montage
+		? AnimInstance->GetActiveInstanceForMontage(Montage) : nullptr;
+	return Instance && RateWindowMontageInstanceID != INDEX_NONE
+		&& Instance->GetInstanceID() == RateWindowMontageInstanceID && !Instance->IsStopped();
+}
+
+bool USprintAttackAbility::BindRateWindow(UAnimInstance* AnimInstance, UAnimMontage* Montage)
+{
+	ClearRateWindow();
+	const uint32 BindingToken = ++RateWindowBindingToken;
+	const auto FailBinding = [this, BindingToken]()
+	{
+		if (RateWindowBindingToken == BindingToken && IsActive() && !bEndAbilityRequested && CurrentActorInfo)
+		{
+			EndAbility(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, true, true);
+		}
+		return false;
+	};
+
+	if (!IsActive() || bEndAbilityRequested || !IsValid(AnimInstance) || !IsValid(Montage))
+	{
+		return FailBinding();
+	}
+	const FAnimMontageInstance* Instance = AnimInstance->GetActiveInstanceForMontage(Montage);
+	if (!Instance || Instance->IsStopped())
+	{
+		return FailBinding();
+	}
+	RateWindowAnimInstance = AnimInstance;
+	RateWindowMontage = Montage;
+	RateWindowMontageInstanceID = Instance->GetInstanceID();
+	RateWindowLifecycle.BindAndCapture(this, AnimInstance, Montage, RateWindowBeginEventTag, RateWindowEndEventTag);
+	if (!RateWindowLifecycle.IsBound())
+	{
+		return FailBinding();
+	}
+
+	USprintAttackRateWindowContext* Context = NewObject<USprintAttackRateWindowContext>(this);
+	RateWindowContext = Context;
+	Context->OwningAbility = this;
+	Context->Token = BindingToken;
+	UAbilityTask_WaitGameplayEvent* BeginTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, RateWindowBeginEventTag, nullptr, false, true);
+	UAbilityTask_WaitGameplayEvent* EndTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, RateWindowEndEventTag, nullptr, false, true);
+	RateWindowBeginTask = BeginTask;
+	RateWindowEndTask = EndTask;
+	if (!BeginTask || !EndTask)
+	{
+		return FailBinding();
+	}
+	BeginTask->EventReceived.AddDynamic(Context, &USprintAttackRateWindowContext::OnBegin);
+	EndTask->EventReceived.AddDynamic(Context, &USprintAttackRateWindowContext::OnEnd);
+
+	const auto IsCurrentBinding = [this, Context, BindingToken]()
+	{
+		return IsActive() && !bEndAbilityRequested && RateWindowBindingToken == BindingToken
+			&& RateWindowContext.Get() == Context;
+	};
+	BeginTask->ReadyForActivation();
+	if (!IsCurrentBinding())
+	{
+		return false; // A synchronous end/retrigger owns its own cleanup.
+	}
+	if (RateWindowBeginTask.Get() != BeginTask || !IsValid(BeginTask) || !BeginTask->IsActive()
+		|| RateWindowEndTask.Get() != EndTask || !IsValid(EndTask) || !HasOwnedRateWindowMontageInstance())
+	{
+		return FailBinding();
+	}
+	EndTask->ReadyForActivation();
+	if (!IsCurrentBinding())
+	{
+		return false;
+	}
+	if (RateWindowEndTask.Get() != EndTask || !IsValid(EndTask) || !EndTask->IsActive()
+		|| !HasOwnedRateWindowMontageInstance())
+	{
+		return FailBinding();
+	}
+	return true;
+}
+
+void USprintAttackAbility::OnRateWindowBegin(const FGameplayEventData& Payload)
+{
+	const AActor* Avatar = GetAvatarActorFromActorInfo();
+	if (!IsActive() || bEndAbilityRequested || !IsValid(Avatar) || Avatar->IsActorBeingDestroyed() || !HasOwnedRateWindowMontageInstance())
+	{
+		return;
+	}
+	RateWindowLifecycle.HandleBegin(Payload);
+}
+
+void USprintAttackAbility::OnRateWindowEnd(const FGameplayEventData& Payload)
+{
+	const AActor* Avatar = GetAvatarActorFromActorInfo();
+	if (!IsActive() || bEndAbilityRequested || !IsValid(Avatar) || Avatar->IsActorBeingDestroyed() || !HasOwnedRateWindowMontageInstance())
+	{
+		return;
+	}
+	RateWindowLifecycle.HandleEnd(Payload);
+}
+
+void USprintAttackAbility::ClearRateWindow()
+{
+	if (RateWindowContext)
+	{
+		RateWindowContext->OwningAbility.Reset();
+		RateWindowContext = nullptr;
+	}
+	if (RateWindowBeginTask)
+	{
+		RateWindowBeginTask->EndTask();
+		RateWindowBeginTask = nullptr;
+	}
+	if (RateWindowEndTask)
+	{
+		RateWindowEndTask->EndTask();
+		RateWindowEndTask = nullptr;
+	}
+	if (HasOwnedRateWindowMontageInstance())
+	{
+		RateWindowLifecycle.RestoreAndClear();
+	}
+	RateWindowLifecycle = FAbilityMontageRateWindowLifecycle();
+	RateWindowAnimInstance.Reset();
+	RateWindowMontage.Reset();
+	RateWindowMontageInstanceID = INDEX_NONE;
 }

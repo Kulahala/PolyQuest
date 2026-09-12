@@ -100,6 +100,7 @@ void UChargedAttackAbility::ActivateAbility(
 	const FGameplayAbilityActivationInfo ActivationInfo,
 	const FGameplayEventData* TriggerEventData)
 {
+	ClearRateWindow();
 #if WITH_DEV_AUTOMATION_TESTS
 	bTestBypassMontageActiveCheck = false;
 	TestStartChargeFeedbackCallCount = 0;
@@ -117,7 +118,6 @@ void UChargedAttackAbility::ActivateAbility(
 	bMontagePausedAtHoldReady = false;
 	bHoldCancelWindowLatchedAcrossPause = false;
 	bReleaseStarted = false;
-	bRateWindowApplied = false;
 	DamageMultiplier = 1.0f;
 	PoiseDamageMagnitude = 0.0f;
 	ActiveMontage = nullptr;
@@ -157,11 +157,8 @@ void UChargedAttackAbility::ActivateAbility(
 	InputCanceledTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, InputCanceledEventTag, nullptr, false, true);
 	DodgeCancelWindowBeginTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, DodgeCancelWindowBeginEventTag, nullptr, false, true);
 	DodgeCancelWindowEndTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, DodgeCancelWindowEndEventTag, nullptr, false, true);
-	RateWindowBeginTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, RateWindowBeginEventTag, nullptr, false, true);
-	RateWindowEndTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, RateWindowEndEventTag, nullptr, false, true);
 
-	if (!MontageTask || !HoldReadyTask || !TraceWindowBeginTask || !TraceWindowEndTask || !InputReleasedTask || !InputCanceledTask || !DodgeCancelWindowBeginTask || !DodgeCancelWindowEndTask
-		|| !RateWindowBeginTask || !RateWindowEndTask)
+	if (!MontageTask || !HoldReadyTask || !TraceWindowBeginTask || !TraceWindowEndTask || !InputReleasedTask || !InputCanceledTask || !DodgeCancelWindowBeginTask || !DodgeCancelWindowEndTask)
 	{
 		UE_LOG(LogPolyQuest, Warning, TEXT("Charged attack activation aborted for '%s': failed to create an AbilityTask."), *GetNameSafe(PlayerCharacter));
 		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
@@ -180,8 +177,6 @@ void UChargedAttackAbility::ActivateAbility(
 	InputCanceledTask->EventReceived.AddDynamic(this, &UChargedAttackAbility::OnInputCanceled);
 	DodgeCancelWindowBeginTask->EventReceived.AddDynamic(this, &UChargedAttackAbility::OnDodgeCancelWindowBegin);
 	DodgeCancelWindowEndTask->EventReceived.AddDynamic(this, &UChargedAttackAbility::OnDodgeCancelWindowEnd);
-	RateWindowBeginTask->EventReceived.AddDynamic(this, &UChargedAttackAbility::OnRateWindowBegin);
-	RateWindowEndTask->EventReceived.AddDynamic(this, &UChargedAttackAbility::OnRateWindowEnd);
 
 	PlayerCharacter->ApplyLockAwareActionFacing();
 
@@ -192,8 +187,6 @@ void UChargedAttackAbility::ActivateAbility(
 	InputCanceledTask->ReadyForActivation();
 	DodgeCancelWindowBeginTask->ReadyForActivation();
 	DodgeCancelWindowEndTask->ReadyForActivation();
-	RateWindowBeginTask->ReadyForActivation();
-	RateWindowEndTask->ReadyForActivation();
 	MontageTask->ReadyForActivation();
 
 	// A zero-length or otherwise immediately completed Montage can synchronously run EndAbility.
@@ -206,6 +199,11 @@ void UChargedAttackAbility::ActivateAbility(
 	{
 		UE_LOG(LogPolyQuest, Warning, TEXT("Charged attack activation aborted for '%s': montage '%s' did not start."), *GetNameSafe(PlayerCharacter), *GetNameSafe(ChargedAttackMontage));
 		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
+		return;
+	}
+
+	if (!BindRateWindow(BoundAnimInstance.Get(), ActiveMontage.Get()))
+	{
 		return;
 	}
 
@@ -246,7 +244,7 @@ void UChargedAttackAbility::EndAbility(
 	CleanupChargeFeedback();
 	SetDodgeCancelable(false);
 	CloseTraceWindow();
-	RestoreBaselineMontageRate();
+	ClearRateWindow();
 
 	if (APlayerCharacter* PlayerCharacter = Cast<APlayerCharacter>(GetAvatarActorFromActorInfo()))
 	{
@@ -312,21 +310,8 @@ void UChargedAttackAbility::EndAbility(
 		DodgeCancelWindowEndTask = nullptr;
 	}
 
-	if (RateWindowBeginTask)
-	{
-		RateWindowBeginTask->EndTask();
-		RateWindowBeginTask = nullptr;
-	}
-
-	if (RateWindowEndTask)
-	{
-		RateWindowEndTask->EndTask();
-		RateWindowEndTask = nullptr;
-	}
-
 	bMontagePausedAtHoldReady = false;
 	bReleaseStarted = false;
-	bRateWindowApplied = false;
 	DamageMultiplier = 1.0f;
 	PoiseDamageMagnitude = 0.0f;
 	ActiveMontage = nullptr;
@@ -611,45 +596,6 @@ void UChargedAttackAbility::SetCharging(bool bShouldCharge)
 	}
 
 	bChargingStateApplied = false;
-}
-
-void UChargedAttackAbility::OnRateWindowBegin(FGameplayEventData Payload)
-{
-	// Ignore duplicate Begin events; authored rate windows must not overlap.
-	if (bRateWindowApplied || !IsGameplayEventFromActiveMontage(Payload) || Payload.EventMagnitude <= 0.0f)
-	{
-		return;
-	}
-
-	if (BoundAnimInstance && ActiveMontage && BoundAnimInstance->Montage_IsActive(ActiveMontage.Get()))
-	{
-		BoundAnimInstance->Montage_SetPlayRate(ActiveMontage.Get(), Payload.EventMagnitude);
-		bRateWindowApplied = true;
-	}
-}
-
-void UChargedAttackAbility::OnRateWindowEnd(FGameplayEventData Payload)
-{
-	if (!IsGameplayEventFromActiveMontage(Payload))
-	{
-		return;
-	}
-
-	RestoreBaselineMontageRate();
-}
-
-void UChargedAttackAbility::RestoreBaselineMontageRate()
-{
-	if (!bRateWindowApplied)
-	{
-		return;
-	}
-
-	bRateWindowApplied = false;
-	if (BoundAnimInstance && ActiveMontage && BoundAnimInstance->Montage_IsActive(ActiveMontage.Get()))
-	{
-		BoundAnimInstance->Montage_SetPlayRate(ActiveMontage.Get(), 1.0f);
-	}
 }
 
 void UChargedAttackAbility::SetDodgeCancelable(bool bShouldBeCancelable)
@@ -1006,4 +952,157 @@ void UChargedAttackAbility::CleanupChargeFeedback()
 		ChargeVFXComponent->Deactivate();
 		ChargeVFXComponent = nullptr;
 	}
+}
+
+void UChargedAttackRateWindowContext::OnBegin(FGameplayEventData Payload)
+{
+	if (UChargedAttackAbility* Ability = OwningAbility.Get())
+	{
+		if (Ability->RateWindowContext.Get() == this && Ability->RateWindowBindingToken == Token)
+		{
+			Ability->OnRateWindowBegin(Payload);
+		}
+	}
+}
+
+void UChargedAttackRateWindowContext::OnEnd(FGameplayEventData Payload)
+{
+	if (UChargedAttackAbility* Ability = OwningAbility.Get())
+	{
+		if (Ability->RateWindowContext.Get() == this && Ability->RateWindowBindingToken == Token)
+		{
+			Ability->OnRateWindowEnd(Payload);
+		}
+	}
+}
+
+bool UChargedAttackAbility::HasOwnedRateWindowMontageInstance() const
+{
+	UAnimInstance* AnimInstance = RateWindowAnimInstance.Get();
+	UAnimMontage* Montage = RateWindowMontage.Get();
+	const FAnimMontageInstance* Instance = AnimInstance && Montage
+		? AnimInstance->GetActiveInstanceForMontage(Montage) : nullptr;
+	return Instance && RateWindowMontageInstanceID != INDEX_NONE
+		&& Instance->GetInstanceID() == RateWindowMontageInstanceID && !Instance->IsStopped();
+}
+
+bool UChargedAttackAbility::BindRateWindow(UAnimInstance* AnimInstance, UAnimMontage* Montage)
+{
+	ClearRateWindow();
+	const uint32 BindingToken = ++RateWindowBindingToken;
+	const auto FailBinding = [this, BindingToken]()
+	{
+		if (RateWindowBindingToken == BindingToken && IsActive() && !bEndAbilityRequested && CurrentActorInfo)
+		{
+			EndAbility(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, true, true);
+		}
+		return false;
+	};
+
+	if (!IsActive() || bEndAbilityRequested || !IsValid(AnimInstance) || !IsValid(Montage))
+	{
+		return FailBinding();
+	}
+	const FAnimMontageInstance* Instance = AnimInstance->GetActiveInstanceForMontage(Montage);
+	if (!Instance || Instance->IsStopped())
+	{
+		return FailBinding();
+	}
+	RateWindowAnimInstance = AnimInstance;
+	RateWindowMontage = Montage;
+	RateWindowMontageInstanceID = Instance->GetInstanceID();
+	RateWindowLifecycle.BindAndCapture(this, AnimInstance, Montage, RateWindowBeginEventTag, RateWindowEndEventTag);
+	if (!RateWindowLifecycle.IsBound())
+	{
+		return FailBinding();
+	}
+
+	UChargedAttackRateWindowContext* Context = NewObject<UChargedAttackRateWindowContext>(this);
+	RateWindowContext = Context;
+	Context->OwningAbility = this;
+	Context->Token = BindingToken;
+	UAbilityTask_WaitGameplayEvent* BeginTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, RateWindowBeginEventTag, nullptr, false, true);
+	UAbilityTask_WaitGameplayEvent* EndTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, RateWindowEndEventTag, nullptr, false, true);
+	RateWindowBeginTask = BeginTask;
+	RateWindowEndTask = EndTask;
+	if (!BeginTask || !EndTask)
+	{
+		return FailBinding();
+	}
+	BeginTask->EventReceived.AddDynamic(Context, &UChargedAttackRateWindowContext::OnBegin);
+	EndTask->EventReceived.AddDynamic(Context, &UChargedAttackRateWindowContext::OnEnd);
+
+	const auto IsCurrentBinding = [this, Context, BindingToken]()
+	{
+		return IsActive() && !bEndAbilityRequested && RateWindowBindingToken == BindingToken
+			&& RateWindowContext.Get() == Context;
+	};
+	BeginTask->ReadyForActivation();
+	if (!IsCurrentBinding())
+	{
+		return false; // A synchronous end/retrigger owns its own cleanup.
+	}
+	if (RateWindowBeginTask.Get() != BeginTask || !IsValid(BeginTask) || !BeginTask->IsActive()
+		|| RateWindowEndTask.Get() != EndTask || !IsValid(EndTask) || !HasOwnedRateWindowMontageInstance())
+	{
+		return FailBinding();
+	}
+	EndTask->ReadyForActivation();
+	if (!IsCurrentBinding())
+	{
+		return false;
+	}
+	if (RateWindowEndTask.Get() != EndTask || !IsValid(EndTask) || !EndTask->IsActive()
+		|| !HasOwnedRateWindowMontageInstance())
+	{
+		return FailBinding();
+	}
+	return true;
+}
+
+void UChargedAttackAbility::OnRateWindowBegin(const FGameplayEventData& Payload)
+{
+	const AActor* Avatar = GetAvatarActorFromActorInfo();
+	if (!IsActive() || bEndAbilityRequested || !IsValid(Avatar) || Avatar->IsActorBeingDestroyed() || !HasOwnedRateWindowMontageInstance())
+	{
+		return;
+	}
+	RateWindowLifecycle.HandleBegin(Payload);
+}
+
+void UChargedAttackAbility::OnRateWindowEnd(const FGameplayEventData& Payload)
+{
+	const AActor* Avatar = GetAvatarActorFromActorInfo();
+	if (!IsActive() || bEndAbilityRequested || !IsValid(Avatar) || Avatar->IsActorBeingDestroyed() || !HasOwnedRateWindowMontageInstance())
+	{
+		return;
+	}
+	RateWindowLifecycle.HandleEnd(Payload);
+}
+
+void UChargedAttackAbility::ClearRateWindow()
+{
+	if (RateWindowContext)
+	{
+		RateWindowContext->OwningAbility.Reset();
+		RateWindowContext = nullptr;
+	}
+	if (RateWindowBeginTask)
+	{
+		RateWindowBeginTask->EndTask();
+		RateWindowBeginTask = nullptr;
+	}
+	if (RateWindowEndTask)
+	{
+		RateWindowEndTask->EndTask();
+		RateWindowEndTask = nullptr;
+	}
+	if (HasOwnedRateWindowMontageInstance())
+	{
+		RateWindowLifecycle.RestoreAndClear();
+	}
+	RateWindowLifecycle = FAbilityMontageRateWindowLifecycle();
+	RateWindowAnimInstance.Reset();
+	RateWindowMontage.Reset();
+	RateWindowMontageInstanceID = INDEX_NONE;
 }

@@ -116,14 +116,13 @@ void UPlayerMeleeSkillAbility::ActivateAbility(
 	const FGameplayAbilityActivationInfo ActivationInfo,
 	const FGameplayEventData*)
 {
+	ClearRateWindow();
 #if WITH_DEV_AUTOMATION_TESTS
 	bTestBypassMontageActiveCheck = false;
 #endif
 	bEndAbilityRequested = false;
 	bDodgeCancelable = false;
 	bRuntimeActionTagsApplied = false;
-	ActiveRateWindowCount = 0;
-	bRateWindowApplied = false;
 	ActiveMontage = nullptr;
 	BoundAnimInstance = nullptr;
 	ResetMeleeMotionWarpState();
@@ -160,9 +159,7 @@ void UPlayerMeleeSkillAbility::ActivateAbility(
 	TraceWindowEndTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, TraceWindowEndEventTag, nullptr, false, true);
 	DodgeCancelWindowBeginTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, DodgeCancelWindowBeginEventTag, nullptr, false, true);
 	DodgeCancelWindowEndTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, DodgeCancelWindowEndEventTag, nullptr, false, true);
-	RateWindowBeginTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, RateWindowBeginEventTag, nullptr, false, true);
-	RateWindowEndTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, RateWindowEndEventTag, nullptr, false, true);
-	if (!IsValid(CreatedMontageTask) || !IsValid(TraceWindowBeginTask) || !IsValid(TraceWindowEndTask) || !IsValid(DodgeCancelWindowBeginTask) || !IsValid(DodgeCancelWindowEndTask) || !IsValid(RateWindowBeginTask) || !IsValid(RateWindowEndTask))
+	if (!IsValid(CreatedMontageTask) || !IsValid(TraceWindowBeginTask) || !IsValid(TraceWindowEndTask) || !IsValid(DodgeCancelWindowBeginTask) || !IsValid(DodgeCancelWindowEndTask))
 	{
 		UE_LOG(LogPolyQuest, Warning, TEXT("Melee skill activation aborted for '%s': failed to create an AbilityTask."), *GetNameSafe(PlayerCharacter));
 		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
@@ -192,17 +189,9 @@ void UPlayerMeleeSkillAbility::ActivateAbility(
 	{
 		DodgeCancelWindowEndTask->EventReceived.AddDynamic(this, &UPlayerMeleeSkillAbility::OnDodgeCancelWindowEnd);
 	}
-	if (IsValid(RateWindowBeginTask))
-	{
-		RateWindowBeginTask->EventReceived.AddDynamic(this, &UPlayerMeleeSkillAbility::OnRateWindowBegin);
-	}
-	if (IsValid(RateWindowEndTask))
-	{
-		RateWindowEndTask->EventReceived.AddDynamic(this, &UPlayerMeleeSkillAbility::OnRateWindowEnd);
-	}
 
 	// Only the montage task starts before the commit: it must be playing so its
-	// identity can be confirmed. The six notify-window tasks stay un-armed, so a
+	// identity can be confirmed. The trace/cancel notify-window tasks stay un-armed, so a
 	// failed commit leaves no trace, no cancel tag, and no rate window behind.
 	CreatedMontageTask->ReadyForActivation();
 
@@ -272,6 +261,11 @@ void UPlayerMeleeSkillAbility::ActivateAbility(
 		return;
 	}
 
+	if (!BindRateWindow(BoundAnimInstance.Get(), ActiveMontage.Get()))
+	{
+		return;
+	}
+
 	SetRuntimeActionTags(true);
 	PlayerCharacter->ApplyLockAwareActionFacing();
 
@@ -309,9 +303,7 @@ void UPlayerMeleeSkillAbility::ActivateAbility(
 	if (!SafeActivateNotifyTask(TraceWindowBeginTask.Get())
 		|| !SafeActivateNotifyTask(TraceWindowEndTask.Get())
 		|| !SafeActivateNotifyTask(DodgeCancelWindowBeginTask.Get())
-		|| !SafeActivateNotifyTask(DodgeCancelWindowEndTask.Get())
-		|| !SafeActivateNotifyTask(RateWindowBeginTask.Get())
-		|| !SafeActivateNotifyTask(RateWindowEndTask.Get()))
+		|| !SafeActivateNotifyTask(DodgeCancelWindowEndTask.Get()))
 	{
 		return;
 	}
@@ -349,7 +341,7 @@ void UPlayerMeleeSkillAbility::EndAbility(
 	SetDodgeCancelable(false);
 	SetRuntimeActionTags(false);
 	CloseTraceWindow();
-	RestoreBaselineMontageRate();
+	ClearRateWindow();
 
 	if (APlayerCharacter* PlayerCharacter = Cast<APlayerCharacter>(GetAvatarActorFromActorInfo()))
 	{
@@ -400,17 +392,7 @@ void UPlayerMeleeSkillAbility::EndAbility(
 	}
 	DodgeCancelWindowEndTask = nullptr;
 
-	if (IsValid(RateWindowBeginTask))
-	{
-		RateWindowBeginTask->EndTask();
-	}
-	RateWindowBeginTask = nullptr;
 
-	if (IsValid(RateWindowEndTask))
-	{
-		RateWindowEndTask->EndTask();
-	}
-	RateWindowEndTask = nullptr;
 
 	ActiveMontage = nullptr;
 
@@ -517,55 +499,6 @@ void UPlayerMeleeSkillAbility::OpenTraceWindow(const TArray<FName>& InTraceSourc
 void UPlayerMeleeSkillAbility::CloseTraceWindow()
 {
 	FMeleeTraceWindowLifecycle::CloseAndClear(TraceWindowTask, ActiveTraceNotifyState);
-}
-
-void UPlayerMeleeSkillAbility::OnRateWindowBegin(FGameplayEventData Payload)
-{
-	if (!IsGameplayEventFromActiveMontage(Payload) || Payload.EventMagnitude <= 0.0f)
-	{
-		return;
-	}
-
-	if (IsValid(BoundAnimInstance) && IsValid(ActiveMontage) && BoundAnimInstance->Montage_IsActive(ActiveMontage.Get()))
-	{
-		// Last-one-wins: latest rate window overrides current play rate for rhythmic cadence.
-		BoundAnimInstance->Montage_SetPlayRate(ActiveMontage.Get(), Payload.EventMagnitude);
-		ActiveRateWindowCount++;
-		bRateWindowApplied = true;
-	}
-}
-
-void UPlayerMeleeSkillAbility::OnRateWindowEnd(FGameplayEventData Payload)
-{
-	if (!IsGameplayEventFromActiveMontage(Payload))
-	{
-		return;
-	}
-
-	if (ActiveRateWindowCount > 0)
-	{
-		ActiveRateWindowCount--;
-	}
-
-	if (ActiveRateWindowCount == 0)
-	{
-		RestoreBaselineMontageRate();
-	}
-}
-
-void UPlayerMeleeSkillAbility::RestoreBaselineMontageRate()
-{
-	ActiveRateWindowCount = 0;
-	if (!bRateWindowApplied)
-	{
-		return;
-	}
-
-	bRateWindowApplied = false;
-	if (IsValid(BoundAnimInstance) && IsValid(ActiveMontage) && BoundAnimInstance->Montage_IsActive(ActiveMontage.Get()))
-	{
-		BoundAnimInstance->Montage_SetPlayRate(ActiveMontage.Get(), 1.0f);
-	}
 }
 
 void UPlayerMeleeSkillAbility::SetDodgeCancelable(bool bShouldBeCancelable)
@@ -805,4 +738,157 @@ void UPlayerMeleeSkillAbility::TryApplyMeleeMotionWarpTarget(APlayerCharacter* P
 		}
 #endif
 	}
+}
+
+void UPlayerMeleeSkillRateWindowContext::OnBegin(FGameplayEventData Payload)
+{
+	if (UPlayerMeleeSkillAbility* Ability = OwningAbility.Get())
+	{
+		if (Ability->RateWindowContext.Get() == this && Ability->RateWindowBindingToken == Token)
+		{
+			Ability->OnRateWindowBegin(Payload);
+		}
+	}
+}
+
+void UPlayerMeleeSkillRateWindowContext::OnEnd(FGameplayEventData Payload)
+{
+	if (UPlayerMeleeSkillAbility* Ability = OwningAbility.Get())
+	{
+		if (Ability->RateWindowContext.Get() == this && Ability->RateWindowBindingToken == Token)
+		{
+			Ability->OnRateWindowEnd(Payload);
+		}
+	}
+}
+
+bool UPlayerMeleeSkillAbility::HasOwnedRateWindowMontageInstance() const
+{
+	UAnimInstance* AnimInstance = RateWindowAnimInstance.Get();
+	UAnimMontage* Montage = RateWindowMontage.Get();
+	const FAnimMontageInstance* Instance = AnimInstance && Montage
+		? AnimInstance->GetActiveInstanceForMontage(Montage) : nullptr;
+	return Instance && RateWindowMontageInstanceID != INDEX_NONE
+		&& Instance->GetInstanceID() == RateWindowMontageInstanceID && !Instance->IsStopped();
+}
+
+bool UPlayerMeleeSkillAbility::BindRateWindow(UAnimInstance* AnimInstance, UAnimMontage* Montage)
+{
+	ClearRateWindow();
+	const uint32 BindingToken = ++RateWindowBindingToken;
+	const auto FailBinding = [this, BindingToken]()
+	{
+		if (RateWindowBindingToken == BindingToken && IsActive() && !bEndAbilityRequested && CurrentActorInfo)
+		{
+			EndAbility(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, true, true);
+		}
+		return false;
+	};
+
+	if (!IsActive() || bEndAbilityRequested || !IsValid(AnimInstance) || !IsValid(Montage))
+	{
+		return FailBinding();
+	}
+	const FAnimMontageInstance* Instance = AnimInstance->GetActiveInstanceForMontage(Montage);
+	if (!Instance || Instance->IsStopped())
+	{
+		return FailBinding();
+	}
+	RateWindowAnimInstance = AnimInstance;
+	RateWindowMontage = Montage;
+	RateWindowMontageInstanceID = Instance->GetInstanceID();
+	RateWindowLifecycle.BindAndCapture(this, AnimInstance, Montage, RateWindowBeginEventTag, RateWindowEndEventTag);
+	if (!RateWindowLifecycle.IsBound())
+	{
+		return FailBinding();
+	}
+
+	UPlayerMeleeSkillRateWindowContext* Context = NewObject<UPlayerMeleeSkillRateWindowContext>(this);
+	RateWindowContext = Context;
+	Context->OwningAbility = this;
+	Context->Token = BindingToken;
+	UAbilityTask_WaitGameplayEvent* BeginTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, RateWindowBeginEventTag, nullptr, false, true);
+	UAbilityTask_WaitGameplayEvent* EndTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, RateWindowEndEventTag, nullptr, false, true);
+	RateWindowBeginTask = BeginTask;
+	RateWindowEndTask = EndTask;
+	if (!BeginTask || !EndTask)
+	{
+		return FailBinding();
+	}
+	BeginTask->EventReceived.AddDynamic(Context, &UPlayerMeleeSkillRateWindowContext::OnBegin);
+	EndTask->EventReceived.AddDynamic(Context, &UPlayerMeleeSkillRateWindowContext::OnEnd);
+
+	const auto IsCurrentBinding = [this, Context, BindingToken]()
+	{
+		return IsActive() && !bEndAbilityRequested && RateWindowBindingToken == BindingToken
+			&& RateWindowContext.Get() == Context;
+	};
+	BeginTask->ReadyForActivation();
+	if (!IsCurrentBinding())
+	{
+		return false; // A synchronous end/retrigger owns its own cleanup.
+	}
+	if (RateWindowBeginTask.Get() != BeginTask || !IsValid(BeginTask) || !BeginTask->IsActive()
+		|| RateWindowEndTask.Get() != EndTask || !IsValid(EndTask) || !HasOwnedRateWindowMontageInstance())
+	{
+		return FailBinding();
+	}
+	EndTask->ReadyForActivation();
+	if (!IsCurrentBinding())
+	{
+		return false;
+	}
+	if (RateWindowEndTask.Get() != EndTask || !IsValid(EndTask) || !EndTask->IsActive()
+		|| !HasOwnedRateWindowMontageInstance())
+	{
+		return FailBinding();
+	}
+	return true;
+}
+
+void UPlayerMeleeSkillAbility::OnRateWindowBegin(const FGameplayEventData& Payload)
+{
+	const AActor* Avatar = GetAvatarActorFromActorInfo();
+	if (!IsActive() || bEndAbilityRequested || !IsValid(Avatar) || Avatar->IsActorBeingDestroyed() || !HasOwnedRateWindowMontageInstance())
+	{
+		return;
+	}
+	RateWindowLifecycle.HandleBegin(Payload);
+}
+
+void UPlayerMeleeSkillAbility::OnRateWindowEnd(const FGameplayEventData& Payload)
+{
+	const AActor* Avatar = GetAvatarActorFromActorInfo();
+	if (!IsActive() || bEndAbilityRequested || !IsValid(Avatar) || Avatar->IsActorBeingDestroyed() || !HasOwnedRateWindowMontageInstance())
+	{
+		return;
+	}
+	RateWindowLifecycle.HandleEnd(Payload);
+}
+
+void UPlayerMeleeSkillAbility::ClearRateWindow()
+{
+	if (RateWindowContext)
+	{
+		RateWindowContext->OwningAbility.Reset();
+		RateWindowContext = nullptr;
+	}
+	if (RateWindowBeginTask)
+	{
+		RateWindowBeginTask->EndTask();
+		RateWindowBeginTask = nullptr;
+	}
+	if (RateWindowEndTask)
+	{
+		RateWindowEndTask->EndTask();
+		RateWindowEndTask = nullptr;
+	}
+	if (HasOwnedRateWindowMontageInstance())
+	{
+		RateWindowLifecycle.RestoreAndClear();
+	}
+	RateWindowLifecycle = FAbilityMontageRateWindowLifecycle();
+	RateWindowAnimInstance.Reset();
+	RateWindowMontage.Reset();
+	RateWindowMontageInstanceID = INDEX_NONE;
 }

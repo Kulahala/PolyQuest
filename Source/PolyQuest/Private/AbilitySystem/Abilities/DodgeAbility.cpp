@@ -84,12 +84,12 @@ void UDodgeAbility::ActivateAbility(
 	const FGameplayAbilityActivationInfo ActivationInfo,
 	const FGameplayEventData*)
 {
+	ClearRateWindow();
 	bEndAbilityRequested = false;
 	InvulnerabilityEffectHandle.Invalidate();
 	BoundAnimInstance = nullptr;
 	ActiveMontage = nullptr;
 	bDodgeCancelable = false;
-	bRateWindowApplied = false;
 
 	UAbilitySystemComponent* AbilitySystemComponent = GetAbilitySystemComponentFromActorInfo();
 	APlayerCharacter* PlayerCharacter = Cast<APlayerCharacter>(GetAvatarActorFromActorInfo());
@@ -115,10 +115,8 @@ void UDodgeAbility::ActivateAbility(
 	InvulnerabilityEndTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, InvulnerabilityEndEventTag, nullptr, false, true);
 	CancelBeginTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, CancelWindowBeginEventTag, nullptr, false, true);
 	CancelEndTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, CancelWindowEndEventTag, nullptr, false, true);
-	RateBeginTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, RateWindowBeginEventTag, nullptr, false, true);
-	RateEndTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, RateWindowEndEventTag, nullptr, false, true);
 	if (!MontageTask || !InvulnerabilityBeginTask || !InvulnerabilityEndTask
-		|| !CancelBeginTask || !CancelEndTask || !RateBeginTask || !RateEndTask)
+		|| !CancelBeginTask || !CancelEndTask)
 	{
 		UE_LOG(LogPolyQuest, Warning, TEXT("Dodge activation aborted for '%s': failed to create an AbilityTask."), *GetNameSafe(PlayerCharacter));
 		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
@@ -164,15 +162,11 @@ void UDodgeAbility::ActivateAbility(
 	InvulnerabilityEndTask->EventReceived.AddDynamic(this, &UDodgeAbility::OnInvulnerabilityEnd);
 	CancelBeginTask->EventReceived.AddDynamic(this, &UDodgeAbility::OnCancelWindowBegin);
 	CancelEndTask->EventReceived.AddDynamic(this, &UDodgeAbility::OnCancelWindowEnd);
-	RateBeginTask->EventReceived.AddDynamic(this, &UDodgeAbility::OnRateWindowBegin);
-	RateEndTask->EventReceived.AddDynamic(this, &UDodgeAbility::OnRateWindowEnd);
 
 	InvulnerabilityBeginTask->ReadyForActivation();
 	InvulnerabilityEndTask->ReadyForActivation();
 	CancelBeginTask->ReadyForActivation();
 	CancelEndTask->ReadyForActivation();
-	RateBeginTask->ReadyForActivation();
-	RateEndTask->ReadyForActivation();
 	MontageTask->ReadyForActivation();
 
 	// Montage startup can synchronously invoke the bound end delegate and clear all transient state.
@@ -185,6 +179,11 @@ void UDodgeAbility::ActivateAbility(
 	{
 		UE_LOG(LogPolyQuest, Warning, TEXT("Dodge activation aborted for '%s': montage '%s' did not start."), *GetNameSafe(PlayerCharacter), *GetNameSafe(DodgeMontage));
 		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
+		return;
+	}
+
+	if (!BindRateWindow(BoundAnimInstance.Get(), ActiveMontage.Get()))
+	{
 		return;
 	}
 
@@ -206,7 +205,7 @@ void UDodgeAbility::EndAbility(
 	bEndAbilityRequested = true;
 	ClearInvulnerabilityEffect();
 	SetDodgeCancelable(false);
-	RestoreBaselineMontageRate();
+	ClearRateWindow();
 
 	if (BoundAnimInstance)
 	{
@@ -245,18 +244,6 @@ void UDodgeAbility::EndAbility(
 	{
 		CancelEndTask->EndTask();
 		CancelEndTask = nullptr;
-	}
-
-	if (RateBeginTask)
-	{
-		RateBeginTask->EndTask();
-		RateBeginTask = nullptr;
-	}
-
-	if (RateEndTask)
-	{
-		RateEndTask->EndTask();
-		RateEndTask = nullptr;
 	}
 
 	ActiveMontage = nullptr;
@@ -387,45 +374,6 @@ void UDodgeAbility::SetDodgeCancelable(bool bShouldCancel)
 	}
 }
 
-void UDodgeAbility::OnRateWindowBegin(FGameplayEventData Payload)
-{
-	if (bRateWindowApplied || !IsGameplayEventFromActiveMontage(Payload) || Payload.EventMagnitude <= 0.0f)
-	{
-		return;
-	}
-
-	if (BoundAnimInstance && ActiveMontage && BoundAnimInstance->Montage_IsActive(ActiveMontage.Get()))
-	{
-		BoundAnimInstance->Montage_SetPlayRate(ActiveMontage.Get(), Payload.EventMagnitude);
-		bRateWindowApplied = true;
-	}
-}
-
-void UDodgeAbility::OnRateWindowEnd(FGameplayEventData Payload)
-{
-	if (!IsGameplayEventFromActiveMontage(Payload))
-	{
-		return;
-	}
-
-	RestoreBaselineMontageRate();
-}
-
-void UDodgeAbility::RestoreBaselineMontageRate()
-{
-	if (!bRateWindowApplied)
-	{
-		return;
-	}
-
-	if (BoundAnimInstance && ActiveMontage && BoundAnimInstance->Montage_IsActive(ActiveMontage.Get()))
-	{
-		BoundAnimInstance->Montage_SetPlayRate(ActiveMontage.Get(), 1.0f);
-	}
-
-	bRateWindowApplied = false;
-}
-
 bool UDodgeAbility::IsGameplayEventFromActiveMontage(const FGameplayEventData& Payload) const
 {
 	const AActor* AvatarActor = GetAvatarActorFromActorInfo();
@@ -460,4 +408,157 @@ bool UDodgeAbility::IsGameplayEventFromActiveMontage(const FGameplayEventData& P
 	}
 
 	return false;
+}
+
+void UDodgeRateWindowContext::OnBegin(FGameplayEventData Payload)
+{
+	if (UDodgeAbility* Ability = OwningAbility.Get())
+	{
+		if (Ability->RateWindowContext.Get() == this && Ability->RateWindowBindingToken == Token)
+		{
+			Ability->OnRateWindowBegin(Payload);
+		}
+	}
+}
+
+void UDodgeRateWindowContext::OnEnd(FGameplayEventData Payload)
+{
+	if (UDodgeAbility* Ability = OwningAbility.Get())
+	{
+		if (Ability->RateWindowContext.Get() == this && Ability->RateWindowBindingToken == Token)
+		{
+			Ability->OnRateWindowEnd(Payload);
+		}
+	}
+}
+
+bool UDodgeAbility::HasOwnedRateWindowMontageInstance() const
+{
+	UAnimInstance* AnimInstance = RateWindowAnimInstance.Get();
+	UAnimMontage* Montage = RateWindowMontage.Get();
+	const FAnimMontageInstance* Instance = AnimInstance && Montage
+		? AnimInstance->GetActiveInstanceForMontage(Montage) : nullptr;
+	return Instance && RateWindowMontageInstanceID != INDEX_NONE
+		&& Instance->GetInstanceID() == RateWindowMontageInstanceID && !Instance->IsStopped();
+}
+
+bool UDodgeAbility::BindRateWindow(UAnimInstance* AnimInstance, UAnimMontage* Montage)
+{
+	ClearRateWindow();
+	const uint32 BindingToken = ++RateWindowBindingToken;
+	const auto FailBinding = [this, BindingToken]()
+	{
+		if (RateWindowBindingToken == BindingToken && IsActive() && !bEndAbilityRequested && CurrentActorInfo)
+		{
+			EndAbility(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, true, true);
+		}
+		return false;
+	};
+
+	if (!IsActive() || bEndAbilityRequested || !IsValid(AnimInstance) || !IsValid(Montage))
+	{
+		return FailBinding();
+	}
+	const FAnimMontageInstance* Instance = AnimInstance->GetActiveInstanceForMontage(Montage);
+	if (!Instance || Instance->IsStopped())
+	{
+		return FailBinding();
+	}
+	RateWindowAnimInstance = AnimInstance;
+	RateWindowMontage = Montage;
+	RateWindowMontageInstanceID = Instance->GetInstanceID();
+	RateWindowLifecycle.BindAndCapture(this, AnimInstance, Montage, RateWindowBeginEventTag, RateWindowEndEventTag);
+	if (!RateWindowLifecycle.IsBound())
+	{
+		return FailBinding();
+	}
+
+	UDodgeRateWindowContext* Context = NewObject<UDodgeRateWindowContext>(this);
+	RateWindowContext = Context;
+	Context->OwningAbility = this;
+	Context->Token = BindingToken;
+	UAbilityTask_WaitGameplayEvent* BeginTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, RateWindowBeginEventTag, nullptr, false, true);
+	UAbilityTask_WaitGameplayEvent* EndTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, RateWindowEndEventTag, nullptr, false, true);
+	RateWindowBeginTask = BeginTask;
+	RateWindowEndTask = EndTask;
+	if (!BeginTask || !EndTask)
+	{
+		return FailBinding();
+	}
+	BeginTask->EventReceived.AddDynamic(Context, &UDodgeRateWindowContext::OnBegin);
+	EndTask->EventReceived.AddDynamic(Context, &UDodgeRateWindowContext::OnEnd);
+
+	const auto IsCurrentBinding = [this, Context, BindingToken]()
+	{
+		return IsActive() && !bEndAbilityRequested && RateWindowBindingToken == BindingToken
+			&& RateWindowContext.Get() == Context;
+	};
+	BeginTask->ReadyForActivation();
+	if (!IsCurrentBinding())
+	{
+		return false; // A synchronous end/retrigger owns its own cleanup.
+	}
+	if (RateWindowBeginTask.Get() != BeginTask || !IsValid(BeginTask) || !BeginTask->IsActive()
+		|| RateWindowEndTask.Get() != EndTask || !IsValid(EndTask) || !HasOwnedRateWindowMontageInstance())
+	{
+		return FailBinding();
+	}
+	EndTask->ReadyForActivation();
+	if (!IsCurrentBinding())
+	{
+		return false;
+	}
+	if (RateWindowEndTask.Get() != EndTask || !IsValid(EndTask) || !EndTask->IsActive()
+		|| !HasOwnedRateWindowMontageInstance())
+	{
+		return FailBinding();
+	}
+	return true;
+}
+
+void UDodgeAbility::OnRateWindowBegin(const FGameplayEventData& Payload)
+{
+	const AActor* Avatar = GetAvatarActorFromActorInfo();
+	if (!IsActive() || bEndAbilityRequested || !IsValid(Avatar) || Avatar->IsActorBeingDestroyed() || !HasOwnedRateWindowMontageInstance())
+	{
+		return;
+	}
+	RateWindowLifecycle.HandleBegin(Payload);
+}
+
+void UDodgeAbility::OnRateWindowEnd(const FGameplayEventData& Payload)
+{
+	const AActor* Avatar = GetAvatarActorFromActorInfo();
+	if (!IsActive() || bEndAbilityRequested || !IsValid(Avatar) || Avatar->IsActorBeingDestroyed() || !HasOwnedRateWindowMontageInstance())
+	{
+		return;
+	}
+	RateWindowLifecycle.HandleEnd(Payload);
+}
+
+void UDodgeAbility::ClearRateWindow()
+{
+	if (RateWindowContext)
+	{
+		RateWindowContext->OwningAbility.Reset();
+		RateWindowContext = nullptr;
+	}
+	if (RateWindowBeginTask)
+	{
+		RateWindowBeginTask->EndTask();
+		RateWindowBeginTask = nullptr;
+	}
+	if (RateWindowEndTask)
+	{
+		RateWindowEndTask->EndTask();
+		RateWindowEndTask = nullptr;
+	}
+	if (HasOwnedRateWindowMontageInstance())
+	{
+		RateWindowLifecycle.RestoreAndClear();
+	}
+	RateWindowLifecycle = FAbilityMontageRateWindowLifecycle();
+	RateWindowAnimInstance.Reset();
+	RateWindowMontage.Reset();
+	RateWindowMontageInstanceID = INDEX_NONE;
 }

@@ -622,6 +622,7 @@ bool FPlayerMeleeMotionWarpingAutomationTest::RunTest(const FString&)
 				Ability->SetTestComboDefinition(ComboAsset);
 				Ability->SetTestBoundAnimInstance(TestAnimInstance);
 				Ability->SetTestBypassMontageActiveCheck(true);
+				Ability->SetTestAbilityActive(true); // Explicitly mock active state for isolated logic test fixture
 
 				// 3.1 Entry 0 / 1 / 2 success path with independent parameters
 				{

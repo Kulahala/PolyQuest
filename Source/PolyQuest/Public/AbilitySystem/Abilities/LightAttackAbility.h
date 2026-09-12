@@ -5,6 +5,7 @@
 #include "Abilities/GameplayAbilityTypes.h"
 #include "Combat/Melee/MeleeMotionWarping.h"
 #include "GameplayTagContainer.h"
+#include "AbilitySystem/Abilities/MontageRateWindowLifecycle.h"
 #include "LightAttackAbility.generated.h"
 
 class UAbilityTask_PlayMontageAndWait;
@@ -14,6 +15,28 @@ class UAnimInstance;
 class UAnimMontage;
 class UComboChainDataAsset;
 class UGameplayEffect;
+class ULightAttackAbility;
+
+/**
+ * Transient context for per-entry RateWindow event isolation.
+ */
+UCLASS(Transient)
+class POLYQUEST_API ULightAttackRateWindowContext : public UObject
+{
+	GENERATED_BODY()
+
+public:
+	UPROPERTY(Transient)
+	TWeakObjectPtr<ULightAttackAbility> OwningAbility;
+
+	uint32 Token = 0;
+
+	UFUNCTION()
+	void OnRateWindowBegin(FGameplayEventData Payload);
+
+	UFUNCTION()
+	void OnRateWindowEnd(FGameplayEventData Payload);
+};
 
 UCLASS()
 class POLYQUEST_API ULightAttackAbility : public UStaminaActionAbility
@@ -98,10 +121,17 @@ private:
 	TObjectPtr<UAbilityTask_WaitGameplayEvent> RateWindowEndTask;
 
 	UPROPERTY(Transient)
+	TObjectPtr<ULightAttackRateWindowContext> ActiveRateWindowContext;
+
+	UPROPERTY(Transient)
 	TObjectPtr<UAnimInstance> BoundAnimInstance;
 
 	UPROPERTY(Transient)
 	TObjectPtr<UAnimMontage> ActiveEntryMontage;
+
+	FAbilityMontageRateWindowLifecycle RateWindowLifecycle;
+	uint32 CurrentActivationToken = 0;
+	int32 ActiveMontageInstanceID = INDEX_NONE;
 
 	FGameplayTag DodgeCancelWindowBeginEventTag;
 	FGameplayTag DodgeCancelWindowEndEventTag;
@@ -124,8 +154,6 @@ private:
 	bool bComboBranchWindowOpen = false;
 	bool bContinuationBuffered = false;
 	bool bComboTransitionInProgress = false;
-	int32 ActiveRateWindowCount = 0;
-	bool bRateWindowApplied = false;
 	bool bEndAbilityRequested = false;
 
 	UFUNCTION()
@@ -158,11 +186,9 @@ private:
 	UFUNCTION()
 	void OnComboBranchWindowEnd(FGameplayEventData Payload);
 
-	UFUNCTION()
-	void OnRateWindowBegin(FGameplayEventData Payload);
-
-	UFUNCTION()
-	void OnRateWindowEnd(FGameplayEventData Payload);
+	void OnRateWindowBegin(const FGameplayEventData& Payload);
+	void OnRateWindowEnd(const FGameplayEventData& Payload);
+	void ClearRateWindow(bool bRestoreRate);
 
 	void EndFromMontage(bool bWasCancelled);
 	bool ValidateComboDefinition() const;
@@ -173,7 +199,6 @@ private:
 	void OpenTraceWindow(const TArray<FName>& InTraceSourceNames);
 	void CloseTraceWindow();
 	void SetDodgeCancelable(bool bShouldBeCancelable);
-	void RestoreBaselineMontageRate();
 	void TryApplyMeleeMotionWarpTarget(class APlayerCharacter* PlayerCharacter, const struct FComboChainEntry& EntryConfig);
 	void ResetMeleeMotionWarpState();
 
@@ -181,12 +206,32 @@ private:
 
 	TWeakObjectPtr<const class UAnimNotifyState_AttackTraceWindow> ActiveTraceNotifyState;
 
+	friend class ULightAttackRateWindowContext;
+
 #if WITH_DEV_AUTOMATION_TESTS
 public:
+	const FGameplayTag& GetTestRateWindowBeginEventTag() const { return RateWindowBeginEventTag; }
+	const FGameplayTag& GetTestRateWindowEndEventTag() const { return RateWindowEndEventTag; }
+	const FAbilityMontageRateWindowLifecycle& GetTestRateWindowLifecycle() const { return RateWindowLifecycle; }
+	FAbilityMontageRateWindowLifecycle& GetTestRateWindowLifecycle_Mutable() { return RateWindowLifecycle; }
+	int32 GetTestActiveMontageInstanceID() const { return ActiveMontageInstanceID; }
+	void SetTestActiveMontageInstanceID(int32 InID) { ActiveMontageInstanceID = InID; }
+	uint32 GetTestCurrentActivationToken() const { return CurrentActivationToken; }
+	ULightAttackRateWindowContext* GetTestActiveRateWindowContext() const { return ActiveRateWindowContext.Get(); }
+	void TestClearRateWindow() { ClearRateWindow(true); }
+
 	void SetTestComboDefinition(UComboChainDataAsset* InComboDefinition) { ComboDefinition = InComboDefinition; }
 	void SetTestBoundAnimInstance(UAnimInstance* InAnimInstance) { BoundAnimInstance = InAnimInstance; }
 	void SetTestActorInfo(const FGameplayAbilityActorInfo* InActorInfo) { CurrentActorInfo = InActorInfo; }
-	void SetTestBypassMontageActiveCheck(bool bBypass) { bTestBypassMontageActiveCheck = bBypass; }
+	void SetTestAbilityActive(bool bInActive) { bIsActive = bInActive; }
+	void SetTestBypassMontageActiveCheck(bool bBypass)
+	{
+		bTestBypassMontageActiveCheck = bBypass;
+		RateWindowLifecycle.SetTestBypassMontageActiveCheck(bBypass);
+	}
+	void SetTestCostGameplayEffectClass(TSubclassOf<UGameplayEffect> InClass) { CostGameplayEffectClass = InClass; }
+	void SetTestDamageGameplayEffectClass(TSubclassOf<UGameplayEffect> InClass) { DamageGameplayEffectClass = InClass; }
+	void SetTestStaminaRegenDelayGameplayEffectClass(TSubclassOf<UGameplayEffect> InClass) { StaminaRegenDelayGameplayEffectClass = InClass; }
 	bool GetTestBypassMontageActiveCheck() const { return bTestBypassMontageActiveCheck; }
 	bool TestStartComboEntry(int32 EntryIndex) { return StartComboEntry(EntryIndex); }
 	void TestResetMeleeMotionWarpState() { ResetMeleeMotionWarpState(); }

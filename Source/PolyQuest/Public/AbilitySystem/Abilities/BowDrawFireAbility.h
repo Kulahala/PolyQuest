@@ -4,13 +4,34 @@
 #include "Abilities/GameplayAbility.h"
 #include "ActiveGameplayEffectHandle.h"
 #include "GameplayTagContainer.h"
+#include "AbilitySystem/Abilities/MontageRateWindowLifecycle.h"
 #include "BowDrawFireAbility.generated.h"
 
 class ACombatProjectile;
 class UAbilityTask_PlayMontageAndWait;
 class UAbilityTask_WaitGameplayEvent;
+class UAnimInstance;
 class UAnimMontage;
 class UGameplayEffect;
+
+class UBowDrawFireAbility;
+
+/** Transient receiver scoped to one RateWindow playback binding. */
+UCLASS(Transient)
+class POLYQUEST_API UBowDrawFireRateWindowContext : public UObject
+{
+	GENERATED_BODY()
+
+public:
+	TWeakObjectPtr<UBowDrawFireAbility> OwningAbility;
+	uint32 Token = 0;
+
+	UFUNCTION()
+	void OnBegin(FGameplayEventData Payload);
+
+	UFUNCTION()
+	void OnEnd(FGameplayEventData Payload);
+};
 
 /**
  * GAS ability governing player bow draw, hold, and projectile release lifecycle.
@@ -52,15 +73,12 @@ public:
 	bool GetTestSpawnedProjectile() const { return bSpawnedProjectile; }
 	bool GetTestDodgeCancelable() const { return bDodgeCancelable; }
 	bool GetTestChargingApplied() const { return bChargingApplied; }
-	bool GetTestRateWindowApplied() const { return bRateWindowApplied; }
 	void TestOnDrawReadyEvent(const FGameplayEventData& Payload) { OnDrawReadyEvent(Payload); }
 	void TestOnReleaseAnimEvent(const FGameplayEventData& Payload) { OnReleaseAnimEvent(Payload); }
 	void TestOnInputReleased(const FGameplayEventData& Payload) { OnInputReleased(Payload); }
 	void TestOnInputCanceled(const FGameplayEventData& Payload) { OnInputCanceled(Payload); }
 	void TestOnDodgeCancelWindowBegin(const FGameplayEventData& Payload) { OnDodgeCancelWindowBegin(Payload); }
 	void TestOnDodgeCancelWindowEnd(const FGameplayEventData& Payload) { OnDodgeCancelWindowEnd(Payload); }
-	void TestOnRateWindowBegin(const FGameplayEventData& Payload) { OnRateWindowBegin(Payload); }
-	void TestOnRateWindowEnd(const FGameplayEventData& Payload) { OnRateWindowEnd(Payload); }
 	void SetTestBowStateDrawing() { BowState = EBowState::Drawing; }
 	void SetTestBowStateHolding() { BowState = EBowState::Holding; }
 	void SetTestBowStateReleasing() { BowState = EBowState::Releasing; }
@@ -69,7 +87,6 @@ public:
 	void SetTestCurrentSpecHandle(const FGameplayAbilitySpecHandle InHandle) { CurrentSpecHandle = InHandle; }
 	void TestSetCharging(bool bShouldCharge) { SetCharging(bShouldCharge); }
 	void TestSetDodgeCancelable(bool bShouldCancel) { SetDodgeCancelable(bShouldCancel); }
-	void TestRestoreBaselineMontageRate() { RestoreBaselineMontageRate(); }
 	void TestSpawnProjectile() { SpawnProjectile(); }
 	void SetTestTargetAssistScreenProjectionHook(TFunction<bool(const FVector&, FVector2D&, FVector2D&)> InHook) { TestTargetAssistScreenProjectionHook = MoveTemp(InHook); }
 	bool Test_IsGameplayEventFromActiveMontage(const FGameplayEventData& Payload) const { return IsGameplayEventFromActiveMontage(Payload); }
@@ -147,17 +164,14 @@ private:
 	UFUNCTION()
 	void OnDodgeCancelWindowEnd(FGameplayEventData Payload);
 
-	UFUNCTION()
-	void OnRateWindowBegin(FGameplayEventData Payload);
+	void OnRateWindowBegin(const FGameplayEventData& Payload);
 
-	UFUNCTION()
-	void OnRateWindowEnd(FGameplayEventData Payload);
+	void OnRateWindowEnd(const FGameplayEventData& Payload);
 
 	void TriggerRelease();
 	void SpawnProjectile();
 	void SetCharging(bool bShouldCharge);
 	void SetDodgeCancelable(bool bShouldBeCancelable);
-	void RestoreBaselineMontageRate();
 	bool StartMobileBowMoveSpeedEffect();
 	void ClearMobileBowMoveSpeedEffect();
 
@@ -207,10 +221,35 @@ private:
 	bool bEndAbilityInProgress = false;
 	bool bDodgeCancelable = false;
 	bool bChargingApplied = false;
-	bool bRateWindowApplied = false;
 	FActiveGameplayEffectHandle MobileBowMoveSpeedEffectHandle;
 
 #if WITH_DEV_AUTOMATION_TESTS
 	TFunction<bool(const FVector&, FVector2D&, FVector2D&)> TestTargetAssistScreenProjectionHook;
+#endif
+
+private:
+	friend class UBowDrawFireRateWindowContext;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UBowDrawFireRateWindowContext> RateWindowContext;
+
+	FAbilityMontageRateWindowLifecycle RateWindowLifecycle;
+	TWeakObjectPtr<UAnimInstance> RateWindowAnimInstance;
+	TWeakObjectPtr<UAnimMontage> RateWindowMontage;
+	uint32 RateWindowBindingToken = 0;
+	int32 RateWindowMontageInstanceID = INDEX_NONE;
+
+	bool BindRateWindow(UAnimInstance* AnimInstance, UAnimMontage* Montage);
+	bool HasOwnedRateWindowMontageInstance() const;
+	void ClearRateWindow();
+
+#if WITH_DEV_AUTOMATION_TESTS
+public:
+	const FAbilityMontageRateWindowLifecycle& GetTestRateWindowLifecycle() const { return RateWindowLifecycle; }
+	FAbilityMontageRateWindowLifecycle& GetTestRateWindowLifecycle_Mutable() { return RateWindowLifecycle; }
+	UBowDrawFireRateWindowContext* GetTestRateWindowContext() const { return RateWindowContext.Get(); }
+	int32 GetTestRateWindowMontageInstanceID() const { return RateWindowMontageInstanceID; }
+	bool HasTestRateWindowTasks() const { return RateWindowBeginTask != nullptr || RateWindowEndTask != nullptr; }
+	void TestClearRateWindow() { ClearRateWindow(); }
 #endif
 };
