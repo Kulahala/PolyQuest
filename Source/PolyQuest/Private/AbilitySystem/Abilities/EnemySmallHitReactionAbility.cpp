@@ -8,7 +8,30 @@
 #include "Combat/Reaction/HitReactionFourWayMontageSelector.h"
 #include "Combat/Reaction/HitReactionImpactResolver.h"
 #include "Components/SkeletalMeshComponent.h"
+#include "Abilities/Tasks/AbilityTask_WaitGameplayEvent.h"
 #include "PolyQuest.h"
+
+void UEnemySmallHitReactionRateWindowContext::OnRateWindowBegin(FGameplayEventData Payload)
+{
+	if (UEnemySmallHitReactionAbility* Ability = OwningAbility.Get())
+	{
+		if (Ability->CurrentActivationToken == Token)
+		{
+			Ability->OnRateWindowBegin(Payload);
+		}
+	}
+}
+
+void UEnemySmallHitReactionRateWindowContext::OnRateWindowEnd(FGameplayEventData Payload)
+{
+	if (UEnemySmallHitReactionAbility* Ability = OwningAbility.Get())
+	{
+		if (Ability->CurrentActivationToken == Token)
+		{
+			Ability->OnRateWindowEnd(Payload);
+		}
+	}
+}
 
 UEnemySmallHitReactionAbility::UEnemySmallHitReactionAbility()
 {
@@ -21,6 +44,8 @@ UEnemySmallHitReactionAbility::UEnemySmallHitReactionAbility()
 	SmallHitReactingStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Action.SmallHitReacting")), false);
 	StunnedStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Status.Stunned")), false);
 	DeadStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Status.Dead")), false);
+	RateWindowBeginEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Action.RateWindow.Begin")), false);
+	RateWindowEndEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Action.RateWindow.End")), false);
 
 	AbilityTags.AddTag(SmallHitReactionAbilityTag);
 	ActivationOwnedTags.AddTag(SmallHitReactingStateTag);
@@ -51,6 +76,8 @@ void UEnemySmallHitReactionAbility::ActivateAbility(
 	const FGameplayEventData* TriggerEventData)
 {
 	bEndAbilityRequested = false;
+
+	ClearRateWindow(true);
 
 	if (MontageTask)
 	{
@@ -98,6 +125,11 @@ void UEnemySmallHitReactionAbility::ActivateAbility(
 		return;
 	}
 
+	++CurrentActivationToken;
+	ActiveRateWindowContext = NewObject<UEnemySmallHitReactionRateWindowContext>(this);
+	ActiveRateWindowContext->OwningAbility = this;
+	ActiveRateWindowContext->Token = CurrentActivationToken;
+
 	UAbilityTask_PlayMontageAndWait* CreatedMontageTask = UAbilityTask_PlayMontageAndWait::CreatePlayMontageAndWaitProxy(
 		this,
 		NAME_None,
@@ -108,9 +140,11 @@ void UEnemySmallHitReactionAbility::ActivateAbility(
 		1.0f,
 		0.0f,
 		true);
-	if (!CreatedMontageTask)
+	RateWindowBeginTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, RateWindowBeginEventTag, nullptr, false, true);
+	RateWindowEndTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, RateWindowEndEventTag, nullptr, false, true);
+	if (!CreatedMontageTask || !RateWindowBeginTask || !RateWindowEndTask)
 	{
-		UE_LOG(LogPolyQuest, Warning, TEXT("Enemy small hit reaction activation aborted for '%s': failed to create a montage AbilityTask."), *GetNameSafe(EnemyCharacter));
+		UE_LOG(LogPolyQuest, Warning, TEXT("Enemy small hit reaction activation aborted for '%s': failed to create an AbilityTask."), *GetNameSafe(EnemyCharacter));
 		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
 		return;
 	}
@@ -132,6 +166,23 @@ void UEnemySmallHitReactionAbility::ActivateAbility(
 	BoundAnimInstance = AnimInstance;
 	ActiveMontage = SelectedMontage;
 
+	RateWindowBeginTask->EventReceived.AddDynamic(ActiveRateWindowContext.Get(), &UEnemySmallHitReactionRateWindowContext::OnRateWindowBegin);
+	RateWindowEndTask->EventReceived.AddDynamic(ActiveRateWindowContext.Get(), &UEnemySmallHitReactionRateWindowContext::OnRateWindowEnd);
+
+	RateWindowBeginTask->ReadyForActivation();
+	if (bEndAbilityRequested || !IsActive() || !RateWindowBeginTask || !RateWindowBeginTask->IsActive())
+	{
+		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
+		return;
+	}
+
+	RateWindowEndTask->ReadyForActivation();
+	if (bEndAbilityRequested || !IsActive() || !RateWindowEndTask || !RateWindowEndTask->IsActive())
+	{
+		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
+		return;
+	}
+
 	MontageTask->OnCompleted.AddDynamic(this, &UEnemySmallHitReactionAbility::OnMontageCompleted);
 	MontageTask->OnInterrupted.AddDynamic(this, &UEnemySmallHitReactionAbility::OnMontageInterrupted);
 	MontageTask->OnCancelled.AddDynamic(this, &UEnemySmallHitReactionAbility::OnMontageCancelled);
@@ -149,12 +200,31 @@ void UEnemySmallHitReactionAbility::ActivateAbility(
 		return;
 	}
 
-	if (!BoundAnimInstance || !ActiveMontage || !BoundAnimInstance->Montage_IsActive(ActiveMontage.Get()))
+#if WITH_DEV_AUTOMATION_TESTS
+	const bool bMontageActive = bTestBypassMontageActiveCheck || (BoundAnimInstance && ActiveMontage && BoundAnimInstance->Montage_IsActive(ActiveMontage.Get()));
+#else
+	const bool bMontageActive = BoundAnimInstance && ActiveMontage && BoundAnimInstance->Montage_IsActive(ActiveMontage.Get());
+#endif
+
+	if (!BoundAnimInstance || !ActiveMontage || !bMontageActive)
 	{
 		UE_LOG(LogPolyQuest, Warning, TEXT("Enemy small hit reaction activation aborted for '%s': montage '%s' did not start."), *GetNameSafe(EnemyCharacter), *GetNameSafe(ActiveMontage.Get()));
 		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
 		return;
 	}
+
+	if (FAnimMontageInstance* Instance = BoundAnimInstance->GetActiveInstanceForMontage(ActiveMontage.Get()))
+	{
+		ActiveMontageInstanceID = Instance->GetInstanceID();
+	}
+#if WITH_DEV_AUTOMATION_TESTS
+	else if (bTestBypassMontageActiveCheck)
+	{
+		ActiveMontageInstanceID = 1;
+	}
+#endif
+
+	RateWindowLifecycle.BindAndCapture(this, BoundAnimInstance.Get(), ActiveMontage.Get(), RateWindowBeginEventTag, RateWindowEndEventTag);
 }
 
 void UEnemySmallHitReactionAbility::EndAbility(
@@ -170,6 +240,7 @@ void UEnemySmallHitReactionAbility::EndAbility(
 	}
 
 	bEndAbilityRequested = true;
+	ClearRateWindow(true);
 
 	if (MontageTask)
 	{
@@ -228,7 +299,8 @@ bool UEnemySmallHitReactionAbility::ValidateActivationSetup(const FGameplayAbili
 
 	return CharacterASC && EnemyCharacter && !EnemyCharacter->IsDead() && AnimInstance && MontageSet.IsComplete()
 		&& SmallHitReactionAbilityTag.IsValid() && SmallHitReactionEventTag.IsValid() && SmallHitReactingStateTag.IsValid()
-		&& StunnedStateTag.IsValid() && DeadStateTag.IsValid();
+		&& StunnedStateTag.IsValid() && DeadStateTag.IsValid()
+		&& RateWindowBeginEventTag.IsValid() && RateWindowEndEventTag.IsValid();
 }
 
 void UEnemySmallHitReactionAbility::EndFromMontage(bool bWasCancelled)
@@ -237,6 +309,117 @@ void UEnemySmallHitReactionAbility::EndFromMontage(bool bWasCancelled)
 	{
 		EndAbility(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, true, bWasCancelled);
 	}
+}
+
+void UEnemySmallHitReactionAbility::OnRateWindowBegin(const FGameplayEventData& Payload)
+{
+	if (bEndAbilityRequested || !IsActive())
+	{
+		return;
+	}
+
+	if (BoundAnimInstance && ActiveMontage && ActiveMontageInstanceID != INDEX_NONE)
+	{
+		const FAnimMontageInstance* CurrentInst = BoundAnimInstance->GetMontageInstanceForID(ActiveMontageInstanceID);
+#if WITH_DEV_AUTOMATION_TESTS
+		const bool bInstanceValid = bTestBypassMontageActiveCheck || (CurrentInst && CurrentInst->Montage == ActiveMontage && !CurrentInst->IsStopped());
+#else
+		const bool bInstanceValid = (CurrentInst && CurrentInst->Montage == ActiveMontage && !CurrentInst->IsStopped());
+#endif
+		if (!bInstanceValid)
+		{
+			return;
+		}
+	}
+	else
+	{
+		return;
+	}
+
+	RateWindowLifecycle.HandleBegin(Payload);
+}
+
+void UEnemySmallHitReactionAbility::OnRateWindowEnd(const FGameplayEventData& Payload)
+{
+	if (bEndAbilityRequested || !IsActive())
+	{
+		return;
+	}
+
+	if (BoundAnimInstance && ActiveMontage && ActiveMontageInstanceID != INDEX_NONE)
+	{
+		const FAnimMontageInstance* CurrentInst = BoundAnimInstance->GetMontageInstanceForID(ActiveMontageInstanceID);
+#if WITH_DEV_AUTOMATION_TESTS
+		const bool bInstanceValid = bTestBypassMontageActiveCheck || (CurrentInst && CurrentInst->Montage == ActiveMontage && !CurrentInst->IsStopped());
+#else
+		const bool bInstanceValid = (CurrentInst && CurrentInst->Montage == ActiveMontage && !CurrentInst->IsStopped());
+#endif
+		if (!bInstanceValid)
+		{
+			return;
+		}
+	}
+	else
+	{
+		return;
+	}
+
+	RateWindowLifecycle.HandleEnd(Payload);
+}
+
+void UEnemySmallHitReactionAbility::ClearRateWindow(bool bRestoreRate)
+{
+	if (ActiveRateWindowContext)
+	{
+		ActiveRateWindowContext->OwningAbility.Reset();
+		ActiveRateWindowContext->Token = 0;
+		ActiveRateWindowContext = nullptr;
+	}
+
+	if (RateWindowBeginTask)
+	{
+		RateWindowBeginTask->EndTask();
+		RateWindowBeginTask = nullptr;
+	}
+
+	if (RateWindowEndTask)
+	{
+		RateWindowEndTask->EndTask();
+		RateWindowEndTask = nullptr;
+	}
+
+	if (bRestoreRate && RateWindowLifecycle.IsBound())
+	{
+		bool bInstanceValid = false;
+		if (BoundAnimInstance && ActiveMontage && ActiveMontageInstanceID != INDEX_NONE)
+		{
+			const FAnimMontageInstance* CurrentInst = BoundAnimInstance->GetMontageInstanceForID(ActiveMontageInstanceID);
+#if WITH_DEV_AUTOMATION_TESTS
+			bInstanceValid = bTestBypassMontageActiveCheck || (CurrentInst && CurrentInst->Montage == ActiveMontage && !CurrentInst->IsStopped());
+#else
+			bInstanceValid = (CurrentInst && CurrentInst->Montage == ActiveMontage && !CurrentInst->IsStopped());
+#endif
+		}
+
+		if (bInstanceValid)
+		{
+			RateWindowLifecycle.RestoreAndClear();
+		}
+		else
+		{
+			RateWindowLifecycle = FAbilityMontageRateWindowLifecycle();
+		}
+	}
+	else
+	{
+		RateWindowLifecycle = FAbilityMontageRateWindowLifecycle();
+	}
+
+#if WITH_DEV_AUTOMATION_TESTS
+	bTestBypassMontageActiveCheck = false;
+#endif
+
+	ActiveMontageInstanceID = INDEX_NONE;
 }
 
 #if WITH_DEV_AUTOMATION_TESTS

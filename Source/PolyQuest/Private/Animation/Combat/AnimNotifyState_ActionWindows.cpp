@@ -36,7 +36,7 @@ namespace
 		UAbilitySystemBlueprintLibrary::SendGameplayEventToActor(Owner, EventTag, EventData);
 	}
 
-	void SendGameplayEventWithMagnitude(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, const FName EventTagName, float EventMagnitude, const TCHAR* NotifyName)
+	void SendGameplayEventWithMagnitude(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, const FName EventTagName, float EventMagnitude, const TCHAR* NotifyName, const UObject* OptionalObject2 = nullptr)
 	{
 		AActor* Owner = MeshComp ? MeshComp->GetOwner() : nullptr;
 		IAbilitySystemInterface* AbilitySystemInterface = Cast<IAbilitySystemInterface>(Owner);
@@ -58,6 +58,7 @@ namespace
 		EventData.Instigator = Owner;
 		EventData.Target = Owner;
 		EventData.OptionalObject = Animation;
+		EventData.OptionalObject2 = OptionalObject2;
 		EventData.EventMagnitude = EventMagnitude;
 		UAbilitySystemBlueprintLibrary::SendGameplayEventToActor(Owner, EventTag, EventData);
 	}
@@ -180,12 +181,12 @@ FString UAnimNotifyState_EnemyHyperArmor::GetNotifyName_Implementation() const
 
 void UAnimNotifyState_MontageRateWindow::NotifyBegin(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, float, const FAnimNotifyEventReference&)
 {
-	SendGameplayEventWithMagnitude(MeshComp, Animation, TEXT("Event.Action.RateWindow.Begin"), FMath::Max(RateMultiplier, 0.01f), TEXT("Montage rate window"));
+	SendGameplayEventWithMagnitude(MeshComp, Animation, TEXT("Event.Action.RateWindow.Begin"), FMath::Max(RateMultiplier, 0.01f), TEXT("Montage rate window"), this);
 }
 
 void UAnimNotifyState_MontageRateWindow::NotifyEnd(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, const FAnimNotifyEventReference&)
 {
-	SendGameplayEvent(MeshComp, Animation, TEXT("Event.Action.RateWindow.End"), TEXT("Montage rate window"));
+	SendGameplayEvent(MeshComp, Animation, TEXT("Event.Action.RateWindow.End"), TEXT("Montage rate window"), this);
 }
 
 FString UAnimNotifyState_MontageRateWindow::GetNotifyName_Implementation() const

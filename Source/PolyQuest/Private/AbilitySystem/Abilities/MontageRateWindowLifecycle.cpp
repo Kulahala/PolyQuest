@@ -4,6 +4,7 @@
 #include "Animation/AnimInstance.h"
 #include "Animation/AnimMontage.h"
 #include "Animation/AnimSequenceBase.h"
+#include "Animation/Combat/AnimNotifyState_ActionWindows.h"
 #include "PolyQuest.h"
 
 void FAbilityMontageRateWindowLifecycle::BindAndCapture(
@@ -74,8 +75,22 @@ void FAbilityMontageRateWindowLifecycle::HandleBegin(const FGameplayEventData& P
 		return;
 	}
 
-	if (!IsMontageOrSequenceMatch(Payload.OptionalObject.Get()))
+	const UObject* SourceAnimation = Payload.OptionalObject.Get();
+	if (!IsMontageOrSequenceMatch(SourceAnimation))
 	{
+		return;
+	}
+
+	const UAnimNotifyState_MontageRateWindow* RateNotify = Cast<UAnimNotifyState_MontageRateWindow>(Payload.OptionalObject2.Get());
+	if (!RateNotify)
+	{
+		UE_LOG(LogPolyQuest, Verbose, TEXT("RateWindowLifecycle: Begin rejected due to missing or invalid RateNotify identity in OptionalObject2."));
+		return;
+	}
+
+	if (!IsValidNotifyForSource(SourceAnimation, RateNotify))
+	{
+		UE_LOG(LogPolyQuest, Verbose, TEXT("RateWindowLifecycle: Begin rejected because RateNotify is not declared in source animation notifies."));
 		return;
 	}
 
@@ -96,24 +111,21 @@ void FAbilityMontageRateWindowLifecycle::HandleBegin(const FGameplayEventData& P
 		return;
 	}
 
-	float CurrentRate = AnimInstance->Montage_GetPlayRate(Montage);
-#if WITH_DEV_AUTOMATION_TESTS
-	if (bTestBypassMontageActiveCheck && (!FMath::IsFinite(CurrentRate) || CurrentRate <= KINDA_SMALL_NUMBER))
+	// Duplicate Begin check (idempotent: ignore duplicate Begin for already active window)
+	const int32 ExistingIndex = ActiveWindows.IndexOfByPredicate([SourceAnimation, RateNotify](const FRateWindowActiveEntry& Entry)
 	{
-		CurrentRate = RateStack.IsEmpty() ? BaselinePlayRate : RateStack.Last();
-	}
-#endif
-
-	if (!FMath::IsFinite(CurrentRate) || CurrentRate <= KINDA_SMALL_NUMBER)
-	{
-		UE_LOG(LogPolyQuest, Warning, TEXT("RateWindowLifecycle: current play rate %.3f is invalid; rejecting Begin event."), CurrentRate);
-		return;
-	}
-
-	if (!PushRate(CurrentRate, Payload.EventMagnitude))
+		return Entry.Matches(SourceAnimation, RateNotify);
+	});
+	if (ExistingIndex != INDEX_NONE)
 	{
 		return;
 	}
+
+	FRateWindowActiveEntry NewEntry;
+	NewEntry.WeakSourceAnimation = SourceAnimation;
+	NewEntry.WeakNotifyState = RateNotify;
+	NewEntry.TargetRate = Payload.EventMagnitude;
+	ActiveWindows.Add(NewEntry);
 
 	AnimInstance->Montage_SetPlayRate(Montage, Payload.EventMagnitude);
 }
@@ -140,7 +152,19 @@ void FAbilityMontageRateWindowLifecycle::HandleEnd(const FGameplayEventData& Pay
 		return;
 	}
 
-	if (!IsMontageOrSequenceMatch(Payload.OptionalObject.Get()))
+	const UObject* SourceAnimation = Payload.OptionalObject.Get();
+	if (!IsMontageOrSequenceMatch(SourceAnimation))
+	{
+		return;
+	}
+
+	const UAnimNotifyState_MontageRateWindow* RateNotify = Cast<UAnimNotifyState_MontageRateWindow>(Payload.OptionalObject2.Get());
+	if (!RateNotify)
+	{
+		return;
+	}
+
+	if (!IsValidNotifyForSource(SourceAnimation, RateNotify))
 	{
 		return;
 	}
@@ -156,59 +180,109 @@ void FAbilityMontageRateWindowLifecycle::HandleEnd(const FGameplayEventData& Pay
 		return;
 	}
 
-	float RestoreRate = 0.0f;
-	if (PopRate(RestoreRate))
+	const int32 FoundIndex = ActiveWindows.IndexOfByPredicate([SourceAnimation, RateNotify](const FRateWindowActiveEntry& Entry)
 	{
-		AnimInstance->Montage_SetPlayRate(Montage, RestoreRate);
+		return Entry.Matches(SourceAnimation, RateNotify);
+	});
+	if (FoundIndex == INDEX_NONE)
+	{
+		// Unknown or already ended window; ignore
+		return;
 	}
+
+	ActiveWindows.RemoveAt(FoundIndex);
+
+	const float TargetRate = ActiveWindows.IsEmpty() ? BaselinePlayRate : ActiveWindows.Last().TargetRate;
+	AnimInstance->Montage_SetPlayRate(Montage, TargetRate);
 }
 
-bool FAbilityMontageRateWindowLifecycle::PushRate(float CurrentRate, float NewRate)
+bool FAbilityMontageRateWindowLifecycle::IsValidNotifyForSource(const UObject* SourceAnimation, const UAnimNotifyState_MontageRateWindow* RateNotify) const
 {
-	if (!bCaptured
-		|| !FMath::IsFinite(CurrentRate) || CurrentRate <= KINDA_SMALL_NUMBER
-		|| !FMath::IsFinite(NewRate) || NewRate <= 0.0f)
+	if (!SourceAnimation || !RateNotify)
 	{
 		return false;
 	}
 
-	RateStack.Add(CurrentRate);
-	return true;
-}
-
-bool FAbilityMontageRateWindowLifecycle::PopRate(float& OutRestoredRate)
-{
-	if (!bCaptured || RateStack.IsEmpty())
+	const UAnimSequenceBase* AnimSeq = Cast<UAnimSequenceBase>(SourceAnimation);
+	if (!AnimSeq)
 	{
 		return false;
 	}
 
-	const float CandidateRate = RateStack.Pop();
-	if (!FMath::IsFinite(CandidateRate) || CandidateRate <= KINDA_SMALL_NUMBER)
+	for (const FAnimNotifyEvent& NotifyEvent : AnimSeq->Notifies)
 	{
-		RateStack.Reset();
-		return false;
+		if (NotifyEvent.NotifyStateClass == RateNotify)
+		{
+			return true;
+		}
 	}
 
-	OutRestoredRate = CandidateRate;
-	return true;
+	return false;
 }
 
 #if WITH_DEV_AUTOMATION_TESTS
-bool FAbilityMontageRateWindowLifecycle::TestApplyBegin(float CurrentRate, float NewRate, float& OutAppliedRate)
+bool FAbilityMontageRateWindowLifecycle::TestApplyBegin(
+	const UObject* InSource,
+	const UAnimNotifyState_MontageRateWindow* InNotify,
+	float NewRate,
+	float& OutAppliedRate)
 {
-	if (!PushRate(CurrentRate, NewRate))
+	if (!bCaptured || !InSource || !InNotify || !FMath::IsFinite(NewRate) || NewRate <= 0.0f)
 	{
 		return false;
 	}
+
+	if (!IsMontageOrSequenceMatch(InSource))
+	{
+		return false;
+	}
+
+	if (!IsValidNotifyForSource(InSource, InNotify))
+	{
+		return false;
+	}
+
+	const int32 ExistingIndex = ActiveWindows.IndexOfByPredicate([InSource, InNotify](const FRateWindowActiveEntry& Entry)
+	{
+		return Entry.Matches(InSource, InNotify);
+	});
+	if (ExistingIndex != INDEX_NONE)
+	{
+		return false;
+	}
+
+	FRateWindowActiveEntry NewEntry;
+	NewEntry.WeakSourceAnimation = InSource;
+	NewEntry.WeakNotifyState = InNotify;
+	NewEntry.TargetRate = NewRate;
+	ActiveWindows.Add(NewEntry);
 
 	OutAppliedRate = NewRate;
 	return true;
 }
 
-bool FAbilityMontageRateWindowLifecycle::TestApplyEnd(float& OutRestoredRate)
+bool FAbilityMontageRateWindowLifecycle::TestApplyEnd(
+	const UObject* InSource,
+	const UAnimNotifyState_MontageRateWindow* InNotify,
+	float& OutRestoredRate)
 {
-	return PopRate(OutRestoredRate);
+	if (!bCaptured || !InSource || !InNotify)
+	{
+		return false;
+	}
+
+	const int32 FoundIndex = ActiveWindows.IndexOfByPredicate([InSource, InNotify](const FRateWindowActiveEntry& Entry)
+	{
+		return Entry.Matches(InSource, InNotify);
+	});
+	if (FoundIndex == INDEX_NONE)
+	{
+		return false;
+	}
+
+	ActiveWindows.RemoveAt(FoundIndex);
+	OutRestoredRate = ActiveWindows.IsEmpty() ? BaselinePlayRate : ActiveWindows.Last().TargetRate;
+	return true;
 }
 #endif
 
@@ -229,7 +303,7 @@ void FAbilityMontageRateWindowLifecycle::RestoreAndClear()
 		}
 	}
 
-	RateStack.Reset();
+	ActiveWindows.Reset();
 	BaselinePlayRate = 1.0f;
 	bCaptured = false;
 	WeakAbility.Reset();

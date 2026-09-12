@@ -45,6 +45,28 @@ namespace
 	}
 }
 
+void UEnemyVictimExecutionRateWindowContext::OnRateWindowBegin(FGameplayEventData Payload)
+{
+	if (UEnemyVictimExecutionAbility* Ability = OwningAbility.Get())
+	{
+		if (Token != 0 && Ability->GetCurrentActivationToken() == Token)
+		{
+			Ability->OnRateWindowBegin(Payload);
+		}
+	}
+}
+
+void UEnemyVictimExecutionRateWindowContext::OnRateWindowEnd(FGameplayEventData Payload)
+{
+	if (UEnemyVictimExecutionAbility* Ability = OwningAbility.Get())
+	{
+		if (Token != 0 && Ability->GetCurrentActivationToken() == Token)
+		{
+			Ability->OnRateWindowEnd(Payload);
+		}
+	}
+}
+
 UEnemyVictimExecutionAbility::UEnemyVictimExecutionAbility()
 {
 	InstancingPolicy = EGameplayAbilityInstancingPolicy::InstancedPerActor;
@@ -71,6 +93,8 @@ UEnemyVictimExecutionAbility::UEnemyVictimExecutionAbility()
 	DeadStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Status.Dead")), false);
 	TeardownOnUnpossessTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Action.Teardown.OnUnpossess")), false);
 	StanceBreakAbilityTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Reaction.Enemy.StanceBreak")), false);
+	RateWindowBeginEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Action.RateWindow.Begin")), false);
+	RateWindowEndEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Action.RateWindow.End")), false);
 
 	AbilityTags.AddTag(VictimAbilityTag);
 	AbilityTags.AddTag(TeardownOnUnpossessTag);
@@ -300,6 +324,8 @@ void UEnemyVictimExecutionAbility::ActivateAbility(
 	ActiveVictimMontageInstanceID = INDEX_NONE;
 	StartupVictimMontageInstanceID = INDEX_NONE;
 	NonLethalRecoverySourceActor = nullptr;
+	++CurrentActivationToken;
+	ClearRateWindow(false);
 
 #if WITH_DEV_AUTOMATION_TESTS
 	if (const UEnemyVictimExecutionAbility* CDO = Cast<UEnemyVictimExecutionAbility>(GetClass()->GetDefaultObject()))
@@ -307,6 +333,7 @@ void UEnemyVictimExecutionAbility::ActivateAbility(
 		if (CDO->bTestBypassMontageActiveCheck)
 		{
 			bTestBypassMontageActiveCheck = true;
+			RateWindowLifecycle.SetTestBypassMontageActiveCheck(true);
 		}
 		if (!BoundAnimInstance.IsValid() && CDO->BoundAnimInstance.IsValid())
 		{
@@ -779,6 +806,43 @@ void UEnemyVictimExecutionAbility::OnVictimStartReceived(FGameplayEventData Payl
 					: (MontageInstance ? MontageInstance->GetInstanceID() : INDEX_NONE);
 			}
 			StartupVictimMontageInstanceID = INDEX_NONE;
+
+			UAbilitySystemComponent* ASC = GetAbilitySystemComponentFromActorInfo();
+			if (RateWindowBeginEventTag.IsValid() && RateWindowEndEventTag.IsValid() && ASC && AnimInstance)
+			{
+				ActiveRateWindowContext = NewObject<UEnemyVictimExecutionRateWindowContext>(this);
+				ActiveRateWindowContext->OwningAbility = this;
+				ActiveRateWindowContext->Token = CurrentActivationToken;
+
+				RateWindowBeginTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, RateWindowBeginEventTag, nullptr, false, true);
+				RateWindowEndTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, RateWindowEndEventTag, nullptr, false, true);
+
+				if (RateWindowBeginTask && RateWindowEndTask)
+				{
+					RateWindowBeginTask->EventReceived.AddDynamic(ActiveRateWindowContext, &UEnemyVictimExecutionRateWindowContext::OnRateWindowBegin);
+					RateWindowEndTask->EventReceived.AddDynamic(ActiveRateWindowContext, &UEnemyVictimExecutionRateWindowContext::OnRateWindowEnd);
+
+					RateWindowBeginTask->ReadyForActivation();
+					if (!IsActive() || bEndAbilityInProgress || !RateWindowBeginTask || !RateWindowBeginTask->IsActive())
+					{
+						ClearRateWindow(true);
+						return;
+					}
+
+					RateWindowEndTask->ReadyForActivation();
+					if (!IsActive() || bEndAbilityInProgress || !RateWindowEndTask || !RateWindowEndTask->IsActive())
+					{
+						ClearRateWindow(true);
+						return;
+					}
+
+					RateWindowLifecycle.BindAndCapture(this, AnimInstance, ActiveVictimMontage, RateWindowBeginEventTag, RateWindowEndEventTag);
+				}
+				else
+				{
+					ClearRateWindow(false);
+				}
+			}
 		}
 		else
 		{
@@ -933,6 +997,8 @@ void UEnemyVictimExecutionAbility::HandleOnMontageStarted(UAnimMontage* Montage)
 
 void UEnemyVictimExecutionAbility::StopVictimMontagePresentation(bool bIsNaturalCompletion)
 {
+	ClearRateWindow(true);
+
 	if (VictimMontageTask)
 	{
 		VictimMontageTask->OnCompleted.RemoveDynamic(this, &UEnemyVictimExecutionAbility::OnVictimMontageCompleted);
@@ -1301,6 +1367,191 @@ bool UEnemyVictimExecutionAbility::IsNonLethalRecoveryFrom(const AActor* SourceA
 	}
 
 	return NonLethalRecoverySourceActor.Get() == SourceActor;
+}
+
+void UEnemyVictimExecutionAbility::OnRateWindowBegin(FGameplayEventData Payload)
+{
+	if (bEndAbilityInProgress || !IsActive() || !bNonLethalRecoveryActive)
+	{
+		return;
+	}
+
+	UAnimInstance* AnimInstance = nullptr;
+	if (AEnemyCharacter* EnemyChar = Cast<AEnemyCharacter>(GetAvatarActorFromActorInfo()))
+	{
+		if (USkeletalMeshComponent* Mesh = EnemyChar->GetMesh())
+		{
+			AnimInstance = Mesh->GetAnimInstance();
+		}
+	}
+#if WITH_DEV_AUTOMATION_TESTS
+	if (!AnimInstance && BoundAnimInstance.IsValid())
+	{
+		AnimInstance = BoundAnimInstance.Get();
+	}
+	if (!AnimInstance)
+	{
+		if (const UEnemyVictimExecutionAbility* CDO = Cast<UEnemyVictimExecutionAbility>(GetClass()->GetDefaultObject()))
+		{
+			if (CDO->BoundAnimInstance.IsValid())
+			{
+				AnimInstance = CDO->BoundAnimInstance.Get();
+			}
+		}
+	}
+#endif
+
+	if (ActiveVictimMontageInstanceID != INDEX_NONE && AnimInstance)
+	{
+		const FAnimMontageInstance* CurrentInstance = AnimInstance->GetMontageInstanceForID(ActiveVictimMontageInstanceID);
+#if WITH_DEV_AUTOMATION_TESTS
+		const bool bInstanceValid = bTestBypassMontageActiveCheck || (CurrentInstance && CurrentInstance->Montage == ActiveVictimMontage && !CurrentInstance->IsStopped());
+#else
+		const bool bInstanceValid = (CurrentInstance && CurrentInstance->Montage == ActiveVictimMontage && !CurrentInstance->IsStopped());
+#endif
+		if (!bInstanceValid)
+		{
+			RateWindowLifecycle = FAbilityMontageRateWindowLifecycle();
+			return;
+		}
+	}
+	else
+	{
+		return;
+	}
+
+	RateWindowLifecycle.HandleBegin(Payload);
+}
+
+void UEnemyVictimExecutionAbility::OnRateWindowEnd(FGameplayEventData Payload)
+{
+	if (bEndAbilityInProgress || !IsActive() || !bNonLethalRecoveryActive)
+	{
+		return;
+	}
+
+	UAnimInstance* AnimInstance = nullptr;
+	if (AEnemyCharacter* EnemyChar = Cast<AEnemyCharacter>(GetAvatarActorFromActorInfo()))
+	{
+		if (USkeletalMeshComponent* Mesh = EnemyChar->GetMesh())
+		{
+			AnimInstance = Mesh->GetAnimInstance();
+		}
+	}
+#if WITH_DEV_AUTOMATION_TESTS
+	if (!AnimInstance && BoundAnimInstance.IsValid())
+	{
+		AnimInstance = BoundAnimInstance.Get();
+	}
+	if (!AnimInstance)
+	{
+		if (const UEnemyVictimExecutionAbility* CDO = Cast<UEnemyVictimExecutionAbility>(GetClass()->GetDefaultObject()))
+		{
+			if (CDO->BoundAnimInstance.IsValid())
+			{
+				AnimInstance = CDO->BoundAnimInstance.Get();
+			}
+		}
+	}
+#endif
+
+	if (ActiveVictimMontageInstanceID != INDEX_NONE && AnimInstance)
+	{
+		const FAnimMontageInstance* CurrentInstance = AnimInstance->GetMontageInstanceForID(ActiveVictimMontageInstanceID);
+#if WITH_DEV_AUTOMATION_TESTS
+		const bool bInstanceValid = bTestBypassMontageActiveCheck || (CurrentInstance && CurrentInstance->Montage == ActiveVictimMontage && !CurrentInstance->IsStopped());
+#else
+		const bool bInstanceValid = (CurrentInstance && CurrentInstance->Montage == ActiveVictimMontage && !CurrentInstance->IsStopped());
+#endif
+		if (!bInstanceValid)
+		{
+			RateWindowLifecycle = FAbilityMontageRateWindowLifecycle();
+			return;
+		}
+	}
+	else
+	{
+		return;
+	}
+
+	RateWindowLifecycle.HandleEnd(Payload);
+}
+
+void UEnemyVictimExecutionAbility::ClearRateWindow(bool bRestoreRate)
+{
+	if (ActiveRateWindowContext)
+	{
+		ActiveRateWindowContext->OwningAbility.Reset();
+		ActiveRateWindowContext->Token = 0;
+		ActiveRateWindowContext = nullptr;
+	}
+
+	if (RateWindowBeginTask)
+	{
+		RateWindowBeginTask->EndTask();
+		RateWindowBeginTask = nullptr;
+	}
+	if (RateWindowEndTask)
+	{
+		RateWindowEndTask->EndTask();
+		RateWindowEndTask = nullptr;
+	}
+
+	if (bRestoreRate && RateWindowLifecycle.IsBound())
+	{
+		UAnimInstance* AnimInstance = nullptr;
+		if (AEnemyCharacter* EnemyChar = Cast<AEnemyCharacter>(GetAvatarActorFromActorInfo()))
+		{
+			if (USkeletalMeshComponent* Mesh = EnemyChar->GetMesh())
+			{
+				AnimInstance = Mesh->GetAnimInstance();
+			}
+		}
+#if WITH_DEV_AUTOMATION_TESTS
+		if (!AnimInstance && BoundAnimInstance.IsValid())
+		{
+			AnimInstance = BoundAnimInstance.Get();
+		}
+		if (!AnimInstance)
+		{
+			if (const UEnemyVictimExecutionAbility* CDO = Cast<UEnemyVictimExecutionAbility>(GetClass()->GetDefaultObject()))
+			{
+				if (CDO->BoundAnimInstance.IsValid())
+				{
+					AnimInstance = CDO->BoundAnimInstance.Get();
+				}
+			}
+		}
+#endif
+
+		bool bInstanceValid = false;
+		if (AnimInstance && ActiveVictimMontage && ActiveVictimMontageInstanceID != INDEX_NONE)
+		{
+			const FAnimMontageInstance* CurrentInst = AnimInstance->GetMontageInstanceForID(ActiveVictimMontageInstanceID);
+#if WITH_DEV_AUTOMATION_TESTS
+			bInstanceValid = bTestBypassMontageActiveCheck || (CurrentInst && CurrentInst->Montage == ActiveVictimMontage && !CurrentInst->IsStopped());
+#else
+			bInstanceValid = (CurrentInst && CurrentInst->Montage == ActiveVictimMontage && !CurrentInst->IsStopped());
+#endif
+		}
+
+		if (bInstanceValid)
+		{
+			RateWindowLifecycle.RestoreAndClear();
+		}
+		else
+		{
+			RateWindowLifecycle = FAbilityMontageRateWindowLifecycle();
+		}
+	}
+	else
+	{
+		RateWindowLifecycle = FAbilityMontageRateWindowLifecycle();
+	}
+
+#if WITH_DEV_AUTOMATION_TESTS
+	bTestBypassMontageActiveCheck = false;
+#endif
 }
 
 #if WITH_DEV_AUTOMATION_TESTS

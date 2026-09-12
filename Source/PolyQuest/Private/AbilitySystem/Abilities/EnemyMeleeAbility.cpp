@@ -16,6 +16,28 @@
 #include "GameplayEffect.h"
 #include "PolyQuest.h"
 
+void UEnemyMeleeRateWindowContext::OnRateWindowBegin(FGameplayEventData Payload)
+{
+	if (UEnemyMeleeAbility* Ability = OwningAbility.Get())
+	{
+		if (Ability->CurrentActivationToken == Token)
+		{
+			Ability->OnRateWindowBegin(Payload);
+		}
+	}
+}
+
+void UEnemyMeleeRateWindowContext::OnRateWindowEnd(FGameplayEventData Payload)
+{
+	if (UEnemyMeleeAbility* Ability = OwningAbility.Get())
+	{
+		if (Ability->CurrentActivationToken == Token)
+		{
+			Ability->OnRateWindowEnd(Payload);
+		}
+	}
+}
+
 UEnemyMeleeAbility::UEnemyMeleeAbility()
 {
 	InstancingPolicy = EGameplayAbilityInstancingPolicy::InstancedPerActor;
@@ -29,6 +51,8 @@ UEnemyMeleeAbility::UEnemyMeleeAbility()
 	HyperArmorStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Status.HyperArmor")), false);
 	HyperArmorBeginEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Attack.HyperArmor.Begin")), false);
 	HyperArmorEndEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Attack.HyperArmor.End")), false);
+	RateWindowBeginEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Action.RateWindow.Begin")), false);
+	RateWindowEndEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Action.RateWindow.End")), false);
 	TeardownOnUnpossessTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Action.Teardown.OnUnpossess")), false);
 	FacingBlockedStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Block.Facing")), false);
 
@@ -107,12 +131,21 @@ void UEnemyMeleeAbility::ActivateAbility(
 	ActiveCooldownAfterAttack = PendingProfile->GetCooldownAfterAttack();
 	ActiveGuardStaminaDamage = PendingProfile->GetGuardStaminaDamage();
 
+	ClearRateWindow(false);
+
+	++CurrentActivationToken;
+	ActiveRateWindowContext = NewObject<UEnemyMeleeRateWindowContext>(this);
+	ActiveRateWindowContext->OwningAbility = this;
+	ActiveRateWindowContext->Token = CurrentActivationToken;
+
 	MontageTask = UAbilityTask_PlayMontageAndWait::CreatePlayMontageAndWaitProxy(this, NAME_None, ActiveMontage);
 	TraceWindowBeginTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, TraceWindowBeginEventTag, nullptr, false, true);
 	TraceWindowEndTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, TraceWindowEndEventTag, nullptr, false, true);
 	HyperArmorBeginTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, HyperArmorBeginEventTag, nullptr, false, true);
 	HyperArmorEndTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, HyperArmorEndEventTag, nullptr, false, true);
-	if (!MontageTask || !TraceWindowBeginTask || !TraceWindowEndTask || !HyperArmorBeginTask || !HyperArmorEndTask)
+	RateWindowBeginTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, RateWindowBeginEventTag, nullptr, false, true);
+	RateWindowEndTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, RateWindowEndEventTag, nullptr, false, true);
+	if (!MontageTask || !TraceWindowBeginTask || !TraceWindowEndTask || !HyperArmorBeginTask || !HyperArmorEndTask || !RateWindowBeginTask || !RateWindowEndTask)
 	{
 		UE_LOG(LogPolyQuest, Warning, TEXT("Enemy melee activation aborted for '%s': failed to create an AbilityTask."), *GetNameSafe(EnemyCharacter));
 		EnemyAIController->ClearPendingAttackProfile();
@@ -135,6 +168,24 @@ void UEnemyMeleeAbility::ActivateAbility(
 	TraceWindowEndTask->EventReceived.AddDynamic(this, &UEnemyMeleeAbility::OnTraceWindowEnd);
 	HyperArmorBeginTask->EventReceived.AddDynamic(this, &UEnemyMeleeAbility::OnHyperArmorBegin);
 	HyperArmorEndTask->EventReceived.AddDynamic(this, &UEnemyMeleeAbility::OnHyperArmorEnd);
+	RateWindowBeginTask->EventReceived.AddDynamic(ActiveRateWindowContext.Get(), &UEnemyMeleeRateWindowContext::OnRateWindowBegin);
+	RateWindowEndTask->EventReceived.AddDynamic(ActiveRateWindowContext.Get(), &UEnemyMeleeRateWindowContext::OnRateWindowEnd);
+
+	RateWindowBeginTask->ReadyForActivation();
+	if (bEndAbilityRequested || !IsActive() || !RateWindowBeginTask || !RateWindowBeginTask->IsActive())
+	{
+		EnemyAIController->ClearPendingAttackProfile();
+		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
+		return;
+	}
+
+	RateWindowEndTask->ReadyForActivation();
+	if (bEndAbilityRequested || !IsActive() || !RateWindowEndTask || !RateWindowEndTask->IsActive())
+	{
+		EnemyAIController->ClearPendingAttackProfile();
+		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
+		return;
+	}
 
 	TraceWindowBeginTask->ReadyForActivation();
 	TraceWindowEndTask->ReadyForActivation();
@@ -148,13 +199,32 @@ void UEnemyMeleeAbility::ActivateAbility(
 		return;
 	}
 
-	if (!BoundAnimInstance || !ActiveMontage || !BoundAnimInstance->Montage_IsActive(ActiveMontage.Get()))
+#if WITH_DEV_AUTOMATION_TESTS
+	const bool bMontageActive = bTestBypassMontageActiveCheck || (BoundAnimInstance && ActiveMontage && BoundAnimInstance->Montage_IsActive(ActiveMontage.Get()));
+#else
+	const bool bMontageActive = BoundAnimInstance && ActiveMontage && BoundAnimInstance->Montage_IsActive(ActiveMontage.Get());
+#endif
+
+	if (!BoundAnimInstance || !ActiveMontage || !bMontageActive)
 	{
 		UE_LOG(LogPolyQuest, Warning, TEXT("Enemy melee activation aborted for '%s': montage '%s' did not start."), *GetNameSafe(EnemyCharacter), *GetNameSafe(ActiveMontage));
 		EnemyAIController->ClearPendingAttackProfile();
 		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
 		return;
 	}
+
+	if (FAnimMontageInstance* Instance = BoundAnimInstance->GetActiveInstanceForMontage(ActiveMontage.Get()))
+	{
+		ActiveMontageInstanceID = Instance->GetInstanceID();
+	}
+#if WITH_DEV_AUTOMATION_TESTS
+	else if (bTestBypassMontageActiveCheck)
+	{
+		ActiveMontageInstanceID = 1;
+	}
+#endif
+
+	RateWindowLifecycle.BindAndCapture(this, BoundAnimInstance.Get(), ActiveMontage.Get(), RateWindowBeginEventTag, RateWindowEndEventTag);
 
 	bAttackStarted = true;
 }
@@ -172,6 +242,7 @@ void UEnemyMeleeAbility::EndAbility(
 	}
 
 	bEndAbilityRequested = true;
+	ClearRateWindow(true);
 	const bool bShouldStartCooldown = bAttackStarted;
 	const float CooldownAfterAttack = ActiveCooldownAfterAttack;
 	AEnemyCharacter* EnemyCharacter = Cast<AEnemyCharacter>(GetAvatarActorFromActorInfo());
@@ -340,6 +411,7 @@ bool UEnemyMeleeAbility::ValidateActivationSetup(const FGameplayAbilityActorInfo
 	return AbilitySystemComponent && EnemyCharacter && EnemyAIController && AttackSet && AttackSet->IsAttackSetValid(SetValidationReason) && EnemyAIController->HasValidAttackSet() && AnimInstance
 		&& EnemyMeleeAbilityTag.IsValid() && AttackingStateTag.IsValid() && HitReactingStateTag.IsValid() && TraceWindowBeginEventTag.IsValid() && TraceWindowEndEventTag.IsValid()
 		&& HyperArmorStateTag.IsValid() && HyperArmorBeginEventTag.IsValid() && HyperArmorEndEventTag.IsValid()
+		&& RateWindowBeginEventTag.IsValid() && RateWindowEndEventTag.IsValid()
 		&& TeardownOnUnpossessTag.IsValid() && FacingBlockedStateTag.IsValid()
 		&& EnemyAIController->HasValidCombatTarget() && EnemyAIController->IsCombatTargetInMeleeRange() && EnemyAIController->HasPendingAttackProfile() && EnemyAIController->IsPendingAttackInRange();
 }
@@ -398,4 +470,115 @@ void UEnemyMeleeAbility::CloseTraceWindow()
 		TraceWindowTask->EndTask();
 		TraceWindowTask = nullptr;
 	}
+}
+
+void UEnemyMeleeAbility::OnRateWindowBegin(const FGameplayEventData& Payload)
+{
+	if (bEndAbilityRequested || !IsActive())
+	{
+		return;
+	}
+
+	if (BoundAnimInstance && ActiveMontage && ActiveMontageInstanceID != INDEX_NONE)
+	{
+		const FAnimMontageInstance* CurrentInst = BoundAnimInstance->GetMontageInstanceForID(ActiveMontageInstanceID);
+#if WITH_DEV_AUTOMATION_TESTS
+		const bool bInstanceValid = bTestBypassMontageActiveCheck || (CurrentInst && CurrentInst->Montage == ActiveMontage && !CurrentInst->IsStopped());
+#else
+		const bool bInstanceValid = (CurrentInst && CurrentInst->Montage == ActiveMontage && !CurrentInst->IsStopped());
+#endif
+		if (!bInstanceValid)
+		{
+			return;
+		}
+	}
+	else
+	{
+		return;
+	}
+
+	RateWindowLifecycle.HandleBegin(Payload);
+}
+
+void UEnemyMeleeAbility::OnRateWindowEnd(const FGameplayEventData& Payload)
+{
+	if (bEndAbilityRequested || !IsActive())
+	{
+		return;
+	}
+
+	if (BoundAnimInstance && ActiveMontage && ActiveMontageInstanceID != INDEX_NONE)
+	{
+		const FAnimMontageInstance* CurrentInst = BoundAnimInstance->GetMontageInstanceForID(ActiveMontageInstanceID);
+#if WITH_DEV_AUTOMATION_TESTS
+		const bool bInstanceValid = bTestBypassMontageActiveCheck || (CurrentInst && CurrentInst->Montage == ActiveMontage && !CurrentInst->IsStopped());
+#else
+		const bool bInstanceValid = (CurrentInst && CurrentInst->Montage == ActiveMontage && !CurrentInst->IsStopped());
+#endif
+		if (!bInstanceValid)
+		{
+			return;
+		}
+	}
+	else
+	{
+		return;
+	}
+
+	RateWindowLifecycle.HandleEnd(Payload);
+}
+
+void UEnemyMeleeAbility::ClearRateWindow(bool bRestoreRate)
+{
+	if (ActiveRateWindowContext)
+	{
+		ActiveRateWindowContext->OwningAbility.Reset();
+		ActiveRateWindowContext->Token = 0;
+		ActiveRateWindowContext = nullptr;
+	}
+
+	if (RateWindowBeginTask)
+	{
+		RateWindowBeginTask->EndTask();
+		RateWindowBeginTask = nullptr;
+	}
+
+	if (RateWindowEndTask)
+	{
+		RateWindowEndTask->EndTask();
+		RateWindowEndTask = nullptr;
+	}
+
+	if (bRestoreRate && RateWindowLifecycle.IsBound())
+	{
+		bool bInstanceValid = false;
+		if (BoundAnimInstance && ActiveMontage && ActiveMontageInstanceID != INDEX_NONE)
+		{
+			const FAnimMontageInstance* CurrentInst = BoundAnimInstance->GetMontageInstanceForID(ActiveMontageInstanceID);
+#if WITH_DEV_AUTOMATION_TESTS
+			bInstanceValid = bTestBypassMontageActiveCheck || (CurrentInst && CurrentInst->Montage == ActiveMontage && !CurrentInst->IsStopped());
+#else
+			bInstanceValid = (CurrentInst && CurrentInst->Montage == ActiveMontage && !CurrentInst->IsStopped());
+#endif
+		}
+
+		if (bInstanceValid)
+		{
+			RateWindowLifecycle.RestoreAndClear();
+		}
+		else
+		{
+			RateWindowLifecycle = FAbilityMontageRateWindowLifecycle();
+		}
+	}
+	else
+	{
+		RateWindowLifecycle = FAbilityMontageRateWindowLifecycle();
+	}
+
+#if WITH_DEV_AUTOMATION_TESTS
+	bTestBypassMontageActiveCheck = false;
+#endif
+
+	ActiveMontageInstanceID = INDEX_NONE;
 }

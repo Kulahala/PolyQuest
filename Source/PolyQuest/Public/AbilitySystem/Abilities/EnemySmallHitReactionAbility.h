@@ -3,12 +3,36 @@
 #include "CoreMinimal.h"
 #include "Abilities/GameplayAbility.h"
 #include "Abilities/GameplayAbilityTypes.h"
+#include "AbilitySystem/Abilities/MontageRateWindowLifecycle.h"
 #include "GameplayTagContainer.h"
 #include "EnemySmallHitReactionAbility.generated.h"
 
 class UAbilityTask_PlayMontageAndWait;
+class UAbilityTask_WaitGameplayEvent;
 class UAnimInstance;
 class UAnimMontage;
+class UEnemySmallHitReactionAbility;
+
+/**
+ * Transient context for per-activation RateWindow event isolation.
+ */
+UCLASS(Transient)
+class POLYQUEST_API UEnemySmallHitReactionRateWindowContext : public UObject
+{
+	GENERATED_BODY()
+
+public:
+	UPROPERTY(Transient)
+	TWeakObjectPtr<UEnemySmallHitReactionAbility> OwningAbility;
+
+	uint32 Token = 0;
+
+	UFUNCTION()
+	void OnRateWindowBegin(FGameplayEventData Payload);
+
+	UFUNCTION()
+	void OnRateWindowEnd(FGameplayEventData Payload);
+};
 
 /**
  * Server-authoritative, non-interrupting enemy small hit reaction.
@@ -65,6 +89,26 @@ public:
 	void TestOnMontageCompleted() { OnMontageCompleted(); }
 	void TestOnMontageInterrupted() { OnMontageInterrupted(); }
 	void TestOnMontageCancelled() { OnMontageCancelled(); }
+	const FGameplayTag& GetTestRateWindowBeginEventTag() const { return RateWindowBeginEventTag; }
+	const FGameplayTag& GetTestRateWindowEndEventTag() const { return RateWindowEndEventTag; }
+	const FAbilityMontageRateWindowLifecycle& GetTestRateWindowLifecycle() const { return RateWindowLifecycle; }
+	FAbilityMontageRateWindowLifecycle& GetTestRateWindowLifecycle_Mutable() { return RateWindowLifecycle; }
+	int32 GetTestActiveMontageInstanceID() const { return ActiveMontageInstanceID; }
+	void SetTestActiveMontageInstanceID(int32 InID) { ActiveMontageInstanceID = InID; }
+	uint32 GetTestCurrentActivationToken() const { return CurrentActivationToken; }
+	UEnemySmallHitReactionRateWindowContext* GetTestActiveRateWindowContext() const { return ActiveRateWindowContext.Get(); }
+	void SetTestBypassMontageActiveCheck(bool bBypass)
+	{
+		bTestBypassMontageActiveCheck = bBypass;
+		RateWindowLifecycle.SetTestBypassMontageActiveCheck(bBypass);
+	}
+	bool GetTestBypassMontageActiveCheck() const { return bTestBypassMontageActiveCheck; }
+	void SetTestAbilityActive(bool bInActive) { bIsActive = bInActive; }
+	void SetTestActorInfo(FGameplayAbilitySpecHandle InHandle, const FGameplayAbilityActorInfo* InActorInfo)
+	{
+		SetCurrentActorInfo(InHandle, InActorInfo);
+	}
+	void SetTestCurrentActivationToken(uint32 InToken) { CurrentActivationToken = InToken; }
 #endif
 
 private:
@@ -84,17 +128,37 @@ private:
 	TObjectPtr<UAbilityTask_PlayMontageAndWait> MontageTask;
 
 	UPROPERTY(Transient)
+	TObjectPtr<UAbilityTask_WaitGameplayEvent> RateWindowBeginTask;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UAbilityTask_WaitGameplayEvent> RateWindowEndTask;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UEnemySmallHitReactionRateWindowContext> ActiveRateWindowContext;
+
+	UPROPERTY(Transient)
 	TObjectPtr<UAnimInstance> BoundAnimInstance;
 
 	UPROPERTY(Transient)
 	TObjectPtr<UAnimMontage> ActiveMontage;
+
+	FAbilityMontageRateWindowLifecycle RateWindowLifecycle;
 
 	FGameplayTag SmallHitReactionAbilityTag;
 	FGameplayTag SmallHitReactionEventTag;
 	FGameplayTag SmallHitReactingStateTag;
 	FGameplayTag StunnedStateTag;
 	FGameplayTag DeadStateTag;
+	FGameplayTag RateWindowBeginEventTag;
+	FGameplayTag RateWindowEndEventTag;
+
+	uint32 CurrentActivationToken = 0;
+	int32 ActiveMontageInstanceID = INDEX_NONE;
 	bool bEndAbilityRequested = false;
+
+#if WITH_DEV_AUTOMATION_TESTS
+	bool bTestBypassMontageActiveCheck = false;
+#endif
 
 	UFUNCTION()
 	void OnMontageCompleted();
@@ -105,6 +169,12 @@ private:
 	UFUNCTION()
 	void OnMontageCancelled();
 
+	void OnRateWindowBegin(const FGameplayEventData& Payload);
+	void OnRateWindowEnd(const FGameplayEventData& Payload);
+	void ClearRateWindow(bool bRestoreRate);
+
 	bool ValidateActivationSetup(const FGameplayAbilityActorInfo* ActorInfo) const;
 	void EndFromMontage(bool bWasCancelled);
+
+	friend class UEnemySmallHitReactionRateWindowContext;
 };

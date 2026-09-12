@@ -3,14 +3,38 @@
 #include "CoreMinimal.h"
 #include "Abilities/GameplayAbility.h"
 #include "Abilities/GameplayAbilityTypes.h"
+#include "AbilitySystem/Abilities/MontageRateWindowLifecycle.h"
 #include "GameplayTagContainer.h"
 #include "EnemyLaunchReactionAbility.generated.h"
 
 class ACharacter;
 class AEnemyCharacter;
 class UAbilityTask_PlayMontageAndWait;
+class UAbilityTask_WaitGameplayEvent;
 class UAnimInstance;
 class UAnimMontage;
+class UEnemyLaunchReactionAbility;
+
+/**
+ * Transient context for per-activation RateWindow event isolation.
+ */
+UCLASS(Transient)
+class POLYQUEST_API UEnemyLaunchReactionRateWindowContext : public UObject
+{
+	GENERATED_BODY()
+
+public:
+	UPROPERTY(Transient)
+	TWeakObjectPtr<UEnemyLaunchReactionAbility> OwningAbility;
+
+	uint32 Token = 0;
+
+	UFUNCTION()
+	void OnRateWindowBegin(FGameplayEventData Payload);
+
+	UFUNCTION()
+	void OnRateWindowEnd(FGameplayEventData Payload);
+};
 
 /**
  * Server-authoritative grounded root motion knockdown enemy launch hit reaction.
@@ -63,10 +87,27 @@ public:
 	void SetTestLedgeSettingModified(bool bModified) { bLedgeSettingModified = bModified; }
 	bool GetTestSavedCanWalkOffLedges() const { return bSavedCanWalkOffLedges; }
 	void SetTestSavedCanWalkOffLedges(bool bValue) { bSavedCanWalkOffLedges = bValue; }
-	void SetTestBypassMontageActiveCheck(bool bBypass) { bTestBypassMontageActiveCheck = bBypass; }
+	void SetTestBypassMontageActiveCheck(bool bBypass)
+	{
+		bTestBypassMontageActiveCheck = bBypass;
+		RateWindowLifecycle.SetTestBypassMontageActiveCheck(bBypass);
+	}
 	bool GetTestBypassMontageActiveCheck() const { return bTestBypassMontageActiveCheck; }
+	void SetTestAbilityActive(bool bInActive) { bIsActive = bInActive; }
+	void SetTestActorInfo(FGameplayAbilitySpecHandle InHandle, const FGameplayAbilityActorInfo* InActorInfo)
+	{
+		SetCurrentActorInfo(InHandle, InActorInfo);
+	}
 	UAnimInstance* GetTestBoundAnimInstance() const { return BoundAnimInstance.Get(); }
 	void SetTestBoundAnimInstance(UAnimInstance* AnimInst) { BoundAnimInstance = AnimInst; }
+	const FGameplayTag& GetTestRateWindowBeginEventTag() const { return RateWindowBeginEventTag; }
+	const FGameplayTag& GetTestRateWindowEndEventTag() const { return RateWindowEndEventTag; }
+	const FAbilityMontageRateWindowLifecycle& GetTestRateWindowLifecycle() const { return RateWindowLifecycle; }
+	FAbilityMontageRateWindowLifecycle& GetTestRateWindowLifecycle_Mutable() { return RateWindowLifecycle; }
+	int32 GetTestActiveMontageInstanceID() const { return ActiveMontageInstanceID; }
+	void SetTestActiveMontageInstanceID(int32 InID) { ActiveMontageInstanceID = InID; }
+	uint32 GetTestCurrentActivationToken() const { return CurrentActivationToken; }
+	UEnemyLaunchReactionRateWindowContext* GetTestActiveRateWindowContext() const { return ActiveRateWindowContext.Get(); }
 	bool CallTestIsRootMotionKnockdownCandidate(const AEnemyCharacter* InEnemy, const class UCharacterMovementComponent* InMovement) const
 	{
 		return IsRootMotionKnockdownCandidate(InEnemy, InMovement);
@@ -100,6 +141,15 @@ private:
 	TObjectPtr<UAbilityTask_PlayMontageAndWait> MontageTask;
 
 	UPROPERTY(Transient)
+	TObjectPtr<UAbilityTask_WaitGameplayEvent> RateWindowBeginTask;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UAbilityTask_WaitGameplayEvent> RateWindowEndTask;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UEnemyLaunchReactionRateWindowContext> ActiveRateWindowContext;
+
+	UPROPERTY(Transient)
 	TObjectPtr<UAnimInstance> BoundAnimInstance;
 
 	UPROPERTY(Transient)
@@ -107,6 +157,8 @@ private:
 
 	UPROPERTY(Transient)
 	TWeakObjectPtr<AEnemyCharacter> BoundEnemyCharacter;
+
+	FAbilityMontageRateWindowLifecycle RateWindowLifecycle;
 
 	FGameplayTag EnemyLaunchReactionAbilityTag;
 	FGameplayTag EnemyLaunchReactionEventTag;
@@ -116,6 +168,8 @@ private:
 	FGameplayTag HyperArmorStateTag;
 	FGameplayTag EnemyMeleeAbilityTag;
 	FGameplayTag EnemySmallHitReactionAbilityTag;
+	FGameplayTag RateWindowBeginEventTag;
+	FGameplayTag RateWindowEndEventTag;
 	FGameplayTag TeardownOnUnpossessTag;
 	FGameplayTag FacingBlockedStateTag;
 	FGameplayTagContainer AbilitiesToCancel;
@@ -123,6 +177,8 @@ private:
 	FVector ImpactDirectionSnapshot = FVector::ZeroVector;
 	float ImpactReferenceYawSnapshot = 0.0f;
 	ELaunchPhase CurrentPhase = ELaunchPhase::None;
+	uint32 CurrentActivationToken = 0;
+	int32 ActiveMontageInstanceID = INDEX_NONE;
 	bool bSavedCanWalkOffLedges = true;
 	bool bLedgeSettingModified = false;
 	bool bMovementModeDelegateBound = false;
@@ -135,6 +191,10 @@ private:
 	UFUNCTION()
 	void OnMovementModeChanged(ACharacter* Character, EMovementMode PrevMovementMode, uint8 PreviousCustomMode);
 
+	void OnRateWindowBegin(const FGameplayEventData& Payload);
+	void OnRateWindowEnd(const FGameplayEventData& Payload);
+	void ClearRateWindow(bool bRestoreRate);
+
 	bool ValidateActivationSetup(const FGameplayAbilityActorInfo* ActorInfo) const;
 	bool IsRootMotionKnockdownCandidate(const AEnemyCharacter* EnemyCharacter, const class UCharacterMovementComponent* MovementComponent) const;
 	static bool TryResolveRootMotionFacingYaw(const FVector& LocalAttackerDirection, float ImpactReferenceYaw, float& OutFacingYaw);
@@ -143,4 +203,6 @@ private:
 #if WITH_DEV_AUTOMATION_TESTS
 	bool bTestBypassMontageActiveCheck = false;
 #endif
+
+	friend class UEnemyLaunchReactionRateWindowContext;
 };

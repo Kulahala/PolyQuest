@@ -1125,6 +1125,41 @@ owns those locks, and leaves movement/Poise recovery to the execution Victim
 Ability when `State.Action.Execution.VictimLocked` is present. Unpossession
 selects only Abilities carrying `Ability.Action.Teardown.OnUnpossess`.
 
+#### Enemy Montage RateWindow policy
+
+Enemy Stance Break and the Melee, Big Hit, Small Hit, Launch Reaction, and
+non-lethal Victim recovery consumers use `FAbilityMontageRateWindowLifecycle`.
+`UAnimNotifyState_MontageRateWindow` sends its source animation in
+`OptionalObject` and its own NotifyState object in `OptionalObject2`; both event
+actors identify the owning Avatar. The helper verifies the active Montage or
+one of its source Sequences, the source's declared NotifyState, exact event tags,
+and a finite positive rate. The rate is an absolute `Montage_SetPlayRate` target,
+not a multiplier applied to the captured baseline or another active window.
+
+Active windows are keyed by `(SourceAnimation, NotifyState)` and retain Begin
+order. The most recently begun window that remains active supplies the rate.
+End removes only its matching identity: `A Begin -> B Begin -> A End` keeps B,
+while `A Begin -> B Begin -> B End` restores A. With no windows left, the helper
+restores the actual baseline captured after successful Montage playback.
+Duplicate Begins and unknown Ends leave the active set unchanged.
+
+The five added consumers own transient RateWindow-only contexts, activation
+tokens, Montage instance checks, and Begin/End AbilityTasks. Their existing
+damage, Trace, HyperArmor, movement, and execution delegates retain their
+ownership. Victim binds only after its non-lethal recovery Montage successfully
+starts; initial victim locking and lethal execution do not listen for RateWindow.
+Cleanup invalidates the context and removes listeners before restoring a still
+owned active instance. Stopped or replaced instances only clear local state;
+external GAS cancellation can stop the MontageTask before Ability cleanup.
+Small Hit retrigger uses old `EndAbility` followed by new activation and captures
+the new instance's baseline independently.
+
+Windows must begin after consumer binding. Authored Section-boundary acceptance
+uses Queued notifies; this identity policy does not recover events dropped by
+coincident Branching Points. Root Motion remains Montage/CMC-owned. Player's
+existing consumer-local count/fixed-rate policy described above is unchanged;
+Player/Enemy unification is not part of this implementation.
+
 #### Launch reaction
 
 `UPlayerLaunchReactionAbility` and `UEnemyLaunchReactionAbility` are matching

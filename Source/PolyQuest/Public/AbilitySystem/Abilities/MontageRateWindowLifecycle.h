@@ -6,11 +6,27 @@
 
 class UAnimInstance;
 class UAnimMontage;
+class UAnimNotifyState_MontageRateWindow;
 class UGameplayAbility;
 
 /**
+ * Active RateWindow record identifying the authored window instance and its target play rate.
+ */
+struct POLYQUEST_API FRateWindowActiveEntry
+{
+	TWeakObjectPtr<const UObject> WeakSourceAnimation;
+	TWeakObjectPtr<const UAnimNotifyState_MontageRateWindow> WeakNotifyState;
+	float TargetRate = 1.0f;
+
+	bool Matches(const UObject* InSource, const UAnimNotifyState_MontageRateWindow* InNotify) const
+	{
+		return WeakSourceAnimation.Get() == InSource && WeakNotifyState.Get() == InNotify;
+	}
+};
+
+/**
  * Ability-side lifecycle helper for playback-rate override windows (RateWindow).
- * Owns the captured baseline play rate, the LIFO restoration rate stack,
+ * Owns the captured baseline play rate, the active window identity collection (Last-Active-Wins),
  * and fail-closed validation across event callbacks and termination paths.
  */
 struct POLYQUEST_API FAbilityMontageRateWindowLifecycle
@@ -31,15 +47,18 @@ public:
 
 #if WITH_DEV_AUTOMATION_TESTS
 	float GetBaselinePlayRate() const { return BaselinePlayRate; }
-	int32 GetStackDepth() const { return RateStack.Num(); }
-	const TArray<float>& GetRateStack() const { return RateStack; }
+	int32 GetActiveWindowCount() const { return ActiveWindows.Num(); }
+	int32 GetStackDepth() const { return ActiveWindows.Num(); }
+	float GetCurrentTargetRate() const { return ActiveWindows.IsEmpty() ? BaselinePlayRate : ActiveWindows.Last().TargetRate; }
+	const TArray<FRateWindowActiveEntry>& GetActiveWindows() const { return ActiveWindows; }
 #endif
 
 	bool IsMontageOrSequenceMatch(const UObject* OptionalObject) const;
+	bool IsValidNotifyForSource(const UObject* SourceAnimation, const UAnimNotifyState_MontageRateWindow* RateNotify) const;
 
 #if WITH_DEV_AUTOMATION_TESTS
-	bool TestApplyBegin(float CurrentRate, float NewRate, float& OutAppliedRate);
-	bool TestApplyEnd(float& OutRestoredRate);
+	bool TestApplyBegin(const UObject* InSource, const UAnimNotifyState_MontageRateWindow* InNotify, float NewRate, float& OutAppliedRate);
+	bool TestApplyEnd(const UObject* InSource, const UAnimNotifyState_MontageRateWindow* InNotify, float& OutRestoredRate);
 
 	void SetTestBypassMontageActiveCheck(bool bBypass) { bTestBypassMontageActiveCheck = bBypass; }
 	bool GetTestBypassMontageActiveCheck() const { return bTestBypassMontageActiveCheck; }
@@ -76,14 +95,11 @@ private:
 	FGameplayTag RateWindowBeginEventTag;
 	FGameplayTag RateWindowEndEventTag;
 
-	TArray<float> RateStack;
+	TArray<FRateWindowActiveEntry> ActiveWindows;
 	float BaselinePlayRate = 1.0f;
 	bool bCaptured = false;
 
 #if WITH_DEV_AUTOMATION_TESTS
 	bool bTestBypassMontageActiveCheck = false;
 #endif
-
-	bool PushRate(float CurrentRate, float NewRate);
-	bool PopRate(float& OutRestoredRate);
 };

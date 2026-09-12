@@ -1525,3 +1525,20 @@ TODO-03A3E World Pickup Interaction Prompt v1
 - **验证证据**：本阶段已有用户编译和修复版 PIE 通过确认；用户此前确认 ExecutionVictimRootMotion、ExecutionReleaseOutcomes、ExecutionImpactFeedback 等相关 Automation 通过。最终附件 `c89f57c8-66fa-4d18-acd5-97f9fd53169b/pasted-text.txt` 的 Test Run 4 明确为 ExecutionVictimPresentation、Player.LockOn 两套 Success。Main 两测试文件 Rider 错误检查为 0，git diff --check 通过；Rider 不替代编译，两套运行结果也不扩写为同轮全量测试、自动化物理位移/视觉或打包证明。最后测试增量没有改变生产逻辑，沿用此前用户 PIE 证据。
 - **Main Fresh Review**：既有 P1/P2 经定向修复与真实回归闭环；本次两批限定 delta review 未发现新的 P0/P1/P2 blocker。有界 code-review-graph 基线与 HEAD 匹配；动态委托测试覆盖使用源码和用户收据，不由图谱 gap/risk 分数定论。无新增延期 blocker；Content authored baseline 沿用现有用户 WIP 边界。
 - **提交与后续**：用户已明确批准，仅提交 plan.md 第 3 节 15 个 Source/Test/Tag 路径及 ARCHITECTURE.md、ROADMAP.md、ROADMAP-archive.md、plan.md，共 19 路径。全部 Content/**、Config/Automation/Presets/1.json 与其他 WIP 排除，提交记录以 Git 历史为准。保留本阶段 plan.md；TODO-07B14 仍为独立条件候选，TODO-03C 仍有独立启动门禁。
+
+## TODO-07B8-B Activation / TODO-05A1-F Handoff Pointer (2026-09-12)
+
+- 用户已批准 TODO-07B8-B 修订计划落盘：五类 Enemy Ability 接入 RateWindow，包括近战、大小受击、Launch 和处决非致死恢复；实际资产窗口由用户代表性 readback/PIE 验证。
+- TODO-05A1-F 完整收口已在上节归档，不重复复制。旧 plan.md 的完整白名单、修复历史与证据可从提交 7f245f55ddf805086d1695b3536593479919d059 的 plan.md 读取；此前“保留在 plan.md”的指针从本交接起指向该历史版本。
+- 当前 plan.md 已切换为 TODO-07B8-B；本交接不增加任何代码、编译、Automation 或 PIE 通过声明，B 未完成，C 仍等待 B 验收。
+
+## TODO-07B8-B Enemy Montage RateWindow Adoption And Identity Repair Closeout (2026-09-12)
+
+> 本节记录基线 7f245f55ddf805086d1695b3536593479919d059 上的源码、用户验证与 Main Review 收口；完整 16 路径白名单及验证分层保留在当前 plan.md。用户已批准源码/文档提交，哈希以 Git 历史为准；本节不替代 Source、资产或 Editor 状态作为运行时权威。
+
+- **最终行为**：Melee、大受击、小受击、Launch 和 Victim 非致死恢复接入局部 Montage RateWindow。共享 Notify 以 OptionalObject2 携带 NotifyState 身份；helper 按 `(SourceAnimation, NotifyState)` 维护有序活跃集合，最后开始且仍活跃的窗口生效。A Begin → B Begin → A End 保留 B，真正嵌套退出恢复 A，无窗口恢复实际捕获 baseline；重复 Begin/未知 End 不污染其他窗口。StanceBreak 随共享 helper 采用同一规则。
+- **生命周期边界**：五类消费者保留 GAS 权属、原有伤害/方向/Root Motion 与处决协议，新增 Context 仅代理 RateWindow。Victim 只在非致死恢复启动后绑定；死亡提交与抽刀前锁定不监听。激活代次与实例检查保护旧回调/同资产新播放。正常小受击 Retrigger 在旧 EndAbility 中恢复活跃实例；外部 Cancel 的 MontageTask 可先停播，随后只清空已停止实例的本地状态与监听，后续播放不受污染。
+- **Main 测试补修**：Fresh Review 的两个 P2 是手动 token 模拟未覆盖真实重触发，以及 Notify 仅验证 ASC 收件而未验证生产消费者/实际速率。按单文件例外，补入有效临时动画、真实 ASC 的同向/切向重触发、生产 Notify 消费链、实际速率/非 1 baseline、清理与迟到回调测试。最终夹具显式恢复复制 Montage 时长、以名称定位 A/B、避免未导出的引擎接口，并按真实 Cancel 时序断言。生产代码没有因夹具修复而改变。
+- **验证证据**：用户确认身份补修后的 PIE/Automation 通过；最终 EnemyMontageRateWindow Test Run 3 为 Success，明确包含 initial front、same front、switch right。Gemini 身份补修交付报告另列 StanceBreak、ExecutionVictimPresentation 与 Scene01 PIE 成功，保持执行者证据归属。Main 最终测试 Rider errors 为 0，Source diff/测试空白检查通过；最终有界 delta review 无新增 P0-P2。手动 Notify 序列不冒充时间轴自动派发，瞬时 Enemy Retrigger 不冒充 Player/跨帧证据。
+- **后续与收据**：窗口身份 blocker 已关闭；独立 authored readback/编译日志收据仅在 ROADMAP.md 的 Debt-07B8-AuthoredValidation 跟踪，既有 07B5 Player/跨帧债务保留。TODO-07B8-C 为下一项已排期工作，需独立计划冻结 Player 计数/固定恢复率与 Enemy 身份集合/捕获基线的迁移语义，不能据 B 收口自动批准批量迁移。
+- **提交边界**：用户已批准 16 个 Source/Test 文件与 plan.md、ARCHITECTURE.md、ROADMAP.md、ROADMAP-archive.md，共 20 路径提交；ROADMAP.md 同时纳入新排期 07B8-C → 03H6 架构/代码健康审查 → 必要有界修复 → 03C → 03C-B。Content/**、Config、其他用户 WIP 保留并排除。此次排期不等于提前启动 C/H6 或授权其实现范围。

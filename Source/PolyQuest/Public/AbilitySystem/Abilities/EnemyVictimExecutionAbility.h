@@ -3,6 +3,7 @@
 #include "CoreMinimal.h"
 #include "Abilities/GameplayAbility.h"
 #include "GameplayTagContainer.h"
+#include "AbilitySystem/Abilities/MontageRateWindowLifecycle.h"
 #include "EnemyVictimExecutionAbility.generated.h"
 
 class AEnemyCharacter;
@@ -11,6 +12,28 @@ class UAbilityTask_WaitGameplayEvent;
 class UAnimInstance;
 class UAnimMontage;
 class UExecutionLockContext;
+class UEnemyVictimExecutionAbility;
+
+/**
+ * Context object bridging RateWindow event delegates to UEnemyVictimExecutionAbility with token validation.
+ */
+UCLASS(Transient)
+class POLYQUEST_API UEnemyVictimExecutionRateWindowContext : public UObject
+{
+	GENERATED_BODY()
+
+public:
+	UPROPERTY(Transient)
+	TWeakObjectPtr<UEnemyVictimExecutionAbility> OwningAbility;
+
+	uint32 Token = 0;
+
+	UFUNCTION()
+	void OnRateWindowBegin(FGameplayEventData Payload);
+
+	UFUNCTION()
+	void OnRateWindowEnd(FGameplayEventData Payload);
+};
 
 /**
  * Server-authoritative victim execution ability for enemies.
@@ -22,8 +45,12 @@ class POLYQUEST_API UEnemyVictimExecutionAbility : public UGameplayAbility
 {
 	GENERATED_BODY()
 
+	friend class UEnemyVictimExecutionRateWindowContext;
+
 public:
 	UEnemyVictimExecutionAbility();
+
+	uint32 GetCurrentActivationToken() const { return CurrentActivationToken; }
 
 	virtual bool CanActivateAbility(
 		const FGameplayAbilitySpecHandle Handle,
@@ -87,8 +114,18 @@ public:
 	void SetTestActiveVictimMontage(UAnimMontage* InMontage) { ActiveVictimMontage = InMontage; }
 	void TestStopVictimMontagePresentation(bool bIsNaturalCompletion) { StopVictimMontagePresentation(bIsNaturalCompletion); }
 	void TestTriggerMovementModeChanged(EMovementMode PrevMode, uint8 PrevCustomMode);
-	void SetTestBypassMontageActiveCheck(bool bBypass) { bTestBypassMontageActiveCheck = bBypass; }
+	void SetTestBypassMontageActiveCheck(bool bBypass)
+	{
+		bTestBypassMontageActiveCheck = bBypass;
+		RateWindowLifecycle.SetTestBypassMontageActiveCheck(bBypass);
+	}
 	bool GetTestBypassMontageActiveCheck() const { return bTestBypassMontageActiveCheck; }
+	const FGameplayTag& GetTestRateWindowBeginEventTag() const { return RateWindowBeginEventTag; }
+	const FGameplayTag& GetTestRateWindowEndEventTag() const { return RateWindowEndEventTag; }
+	const FAbilityMontageRateWindowLifecycle& GetTestRateWindowLifecycle() const { return RateWindowLifecycle; }
+	FAbilityMontageRateWindowLifecycle& GetTestRateWindowLifecycle_Mutable() { return RateWindowLifecycle; }
+	uint32 GetTestCurrentActivationToken() const { return CurrentActivationToken; }
+	UEnemyVictimExecutionRateWindowContext* GetTestActiveRateWindowContext() const { return ActiveRateWindowContext.Get(); }
 	void SetTestBoundAnimInstance(UAnimInstance* InAnimInstance) { BoundAnimInstance = InAnimInstance; }
 	UAnimInstance* GetTestBoundAnimInstance() const { return BoundAnimInstance.Get(); }
 	void SetTestCancelDuringStartupMovementMode(bool bCancel) { bTestCancelDuringStartupMovementMode = bCancel; }
@@ -171,6 +208,14 @@ private:
 
 	void StopVictimMontagePresentation(bool bIsNaturalCompletion);
 
+	UFUNCTION()
+	void OnRateWindowBegin(FGameplayEventData Payload);
+
+	UFUNCTION()
+	void OnRateWindowEnd(FGameplayEventData Payload);
+
+	void ClearRateWindow(bool bRestoreRate);
+
 	bool ValidateExecutionRequest(
 		const FGameplayEventData* TriggerEventData,
 		AEnemyCharacter* EnemyCharacter,
@@ -187,6 +232,17 @@ private:
 
 	UPROPERTY(Transient)
 	TObjectPtr<UAbilityTask_PlayMontageAndWait> VictimMontageTask;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UAbilityTask_WaitGameplayEvent> RateWindowBeginTask;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UAbilityTask_WaitGameplayEvent> RateWindowEndTask;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UEnemyVictimExecutionRateWindowContext> ActiveRateWindowContext;
+
+	FAbilityMontageRateWindowLifecycle RateWindowLifecycle;
 
 	UPROPERTY(Transient)
 	TObjectPtr<UAnimMontage> PendingVictimMontage;
@@ -211,6 +267,10 @@ private:
 	FGameplayTag BlockMovementTag;
 	FGameplayTag BlockJumpTag;
 	FGameplayTag TeardownOnUnpossessTag;
+	FGameplayTag RateWindowBeginEventTag;
+	FGameplayTag RateWindowEndEventTag;
+
+	uint32 CurrentActivationToken = 0;
 
 	FGameplayTagContainer AbilitiesToCancel;
 

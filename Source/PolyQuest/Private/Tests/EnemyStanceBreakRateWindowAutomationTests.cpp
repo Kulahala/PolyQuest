@@ -11,6 +11,7 @@
 #include "AbilitySystem/CharacterAttributeSet.h"
 #include "Animation/AnimComposite.h"
 #include "Animation/AnimMontage.h"
+#include "Animation/Combat/AnimNotifyState_ActionWindows.h"
 #include "Character/Enemy/EnemyCharacter.h"
 #include "Character/Player/PlayerCharacter.h"
 #include "Combat/Equipment/MeleeWeaponDefinition.h"
@@ -142,25 +143,40 @@ bool FEnemyStanceBreakRateWindowAutomationTest::RunTest(const FString& Parameter
 		TestEqual(TEXT("Non-finite test baseline falls back to 1.0"), Helper.GetBaselinePlayRate(), 1.0f);
 		Helper.SetTestActiveContext(nullptr, nullptr, DummyMontage, TagRateWindowBegin, TagRateWindowEnd, 1.75f);
 
+		UAnimNotifyState_MontageRateWindow* DummyNotify1 = NewObject<UAnimNotifyState_MontageRateWindow>(GetTransientPackage(), TEXT("Test_DummyRateNotify1"));
+		DummyNotify1->RateMultiplier = 0.5f;
+		FAnimNotifyEvent Event1;
+		Event1.NotifyStateClass = DummyNotify1;
+		DummyMontage->Notifies.Add(Event1);
+
+		UAnimNotifyState_MontageRateWindow* DummyNotify2 = NewObject<UAnimNotifyState_MontageRateWindow>(GetTransientPackage(), TEXT("Test_DummyRateNotify2"));
+		DummyNotify2->RateMultiplier = 0.25f;
+		FAnimNotifyEvent Event2;
+		Event2.NotifyStateClass = DummyNotify2;
+		DummySequence->Notifies.Add(Event2);
+
 		float AppliedRate = -1.0f;
-		TestTrue(TEXT("First synthetic Begin is accepted"), Helper.TestApplyBegin(1.75f, 0.5f, AppliedRate));
+		TestTrue(TEXT("First synthetic Begin is accepted"), Helper.TestApplyBegin(DummyMontage, DummyNotify1, 0.5f, AppliedRate));
 		TestEqual(TEXT("First Begin applies authored rate"), AppliedRate, 0.5f);
-		TestEqual(TEXT("First Begin pushes one rate"), Helper.GetStackDepth(), 1);
-		TestTrue(TEXT("Nested synthetic Begin is accepted"), Helper.TestApplyBegin(0.5f, 0.25f, AppliedRate));
+		TestEqual(TEXT("First Begin pushes one rate"), Helper.GetActiveWindowCount(), 1);
+		TestTrue(TEXT("Nested synthetic Begin is accepted"), Helper.TestApplyBegin(DummySequence, DummyNotify2, 0.25f, AppliedRate));
 		TestEqual(TEXT("Nested Begin applies authored rate"), AppliedRate, 0.25f);
-		TestEqual(TEXT("Nested Begin pushes two rates"), Helper.GetStackDepth(), 2);
+		TestEqual(TEXT("Nested Begin pushes two rates"), Helper.GetActiveWindowCount(), 2);
 
 		float RestoredRate = -1.0f;
-		TestTrue(TEXT("First synthetic End restores inner predecessor"), Helper.TestApplyEnd(RestoredRate));
-		TestEqual(TEXT("LIFO restores 0.5"), RestoredRate, 0.5f);
-		TestTrue(TEXT("Second synthetic End restores baseline predecessor"), Helper.TestApplyEnd(RestoredRate));
-		TestEqual(TEXT("LIFO restores 1.75 baseline"), RestoredRate, 1.75f);
+		TestTrue(TEXT("First synthetic End restores outer still-active predecessor"), Helper.TestApplyEnd(DummySequence, DummyNotify2, RestoredRate));
+		TestEqual(TEXT("Active winner restores 0.5"), RestoredRate, 0.5f);
+		TestTrue(TEXT("Second synthetic End restores baseline predecessor"), Helper.TestApplyEnd(DummyMontage, DummyNotify1, RestoredRate));
+		TestEqual(TEXT("All ended restores 1.75 baseline"), RestoredRate, 1.75f);
 		RestoredRate = 9.0f;
-		TestFalse(TEXT("Extra synthetic End is ignored"), Helper.TestApplyEnd(RestoredRate));
+		TestFalse(TEXT("Extra synthetic End is ignored"), Helper.TestApplyEnd(DummyMontage, DummyNotify1, RestoredRate));
 		TestEqual(TEXT("Extra End leaves output unchanged"), RestoredRate, 9.0f);
-		TestEqual(TEXT("Stack is empty after matched Ends"), Helper.GetStackDepth(), 0);
-		TestFalse(TEXT("Non-finite current rate is rejected"), Helper.TestApplyBegin(std::numeric_limits<float>::quiet_NaN(), 0.5f, AppliedRate));
-		TestFalse(TEXT("Non-positive new rate is rejected"), Helper.TestApplyBegin(1.0f, 0.0f, AppliedRate));
+		TestEqual(TEXT("Active windows empty after matched Ends"), Helper.GetActiveWindowCount(), 0);
+
+		UAnimNotifyState_MontageRateWindow* UnregisteredNotify = NewObject<UAnimNotifyState_MontageRateWindow>(GetTransientPackage(), TEXT("Test_UnregisteredRateNotify"));
+		TestFalse(TEXT("Unregistered notify is rejected"), Helper.TestApplyBegin(DummyMontage, UnregisteredNotify, 0.5f, AppliedRate));
+		TestFalse(TEXT("Non-finite rate is rejected"), Helper.TestApplyBegin(DummyMontage, DummyNotify1, std::numeric_limits<float>::quiet_NaN(), AppliedRate));
+		TestFalse(TEXT("Non-positive new rate is rejected"), Helper.TestApplyBegin(DummyMontage, DummyNotify1, 0.0f, AppliedRate));
 
 		// Clear helper
 		Helper.RestoreAndClear();
@@ -250,6 +266,18 @@ bool FEnemyStanceBreakRateWindowAutomationTest::RunTest(const FString& Parameter
 		StanceSlotTrack.AnimTrack.AnimSegments.Add(StanceSegment);
 		ActiveStanceMontage->SlotAnimTracks.Add(StanceSlotTrack);
 
+		UAnimNotifyState_MontageRateWindow* StanceNotify1 = NewObject<UAnimNotifyState_MontageRateWindow>(World, TEXT("Test_StanceRateNotify1"));
+		StanceNotify1->RateMultiplier = 0.33f;
+		FAnimNotifyEvent StanceEvent1;
+		StanceEvent1.NotifyStateClass = StanceNotify1;
+		ActiveStanceMontage->Notifies.Add(StanceEvent1);
+
+		UAnimNotifyState_MontageRateWindow* StanceNotify2 = NewObject<UAnimNotifyState_MontageRateWindow>(World, TEXT("Test_StanceRateNotify2"));
+		StanceNotify2->RateMultiplier = 0.1f;
+		FAnimNotifyEvent StanceEvent2;
+		StanceEvent2.NotifyStateClass = StanceNotify2;
+		ActiveInnerSequence->Notifies.Add(StanceEvent2);
+
 		UAnimInstance* MockAnimInstance = NewObject<UAnimInstance>(Enemy->GetMesh());
 
 		// 3. Give Ability and configure test seams on CDO/Instance
@@ -317,9 +345,10 @@ bool FEnemyStanceBreakRateWindowAutomationTest::RunTest(const FString& Parameter
 				BadActorPayload.Instigator = Player;
 				BadActorPayload.Target = Enemy;
 				BadActorPayload.OptionalObject = ActiveStanceMontage;
+				BadActorPayload.OptionalObject2 = StanceNotify1;
 				BadActorPayload.EventMagnitude = 0.5f;
 				EnemyASC->HandleGameplayEvent(TagRateWindowBegin, &BadActorPayload);
-				TestEqual(TEXT("Bad Instigator rejected (stack depth unchanged)"), StanceBreakAbility->GetRateWindowLifecycle().GetStackDepth(), 0);
+				TestEqual(TEXT("Bad Instigator rejected (stack depth unchanged)"), StanceBreakAbility->GetRateWindowLifecycle().GetActiveWindowCount(), 0);
 			}
 
 			// 5.2 Wrong Event Tag -> WaitGameplayEvent does not trigger
@@ -330,9 +359,10 @@ bool FEnemyStanceBreakRateWindowAutomationTest::RunTest(const FString& Parameter
 				BadTagPayload.Instigator = Enemy;
 				BadTagPayload.Target = Enemy;
 				BadTagPayload.OptionalObject = ActiveStanceMontage;
+				BadTagPayload.OptionalObject2 = StanceNotify1;
 				BadTagPayload.EventMagnitude = 0.5f;
 				EnemyASC->HandleGameplayEvent(TagUnrelated, &BadTagPayload);
-				TestEqual(TEXT("Unrelated EventTag ignored by Task (stack depth unchanged)"), StanceBreakAbility->GetRateWindowLifecycle().GetStackDepth(), 0);
+				TestEqual(TEXT("Unrelated EventTag ignored by Task (stack depth unchanged)"), StanceBreakAbility->GetRateWindowLifecycle().GetActiveWindowCount(), 0);
 			}
 
 			// 5.3 Unrelated Montage / Sequence
@@ -343,9 +373,10 @@ bool FEnemyStanceBreakRateWindowAutomationTest::RunTest(const FString& Parameter
 				BadMontagePayload.Instigator = Enemy;
 				BadMontagePayload.Target = Enemy;
 				BadMontagePayload.OptionalObject = ForeignMontage;
+				BadMontagePayload.OptionalObject2 = StanceNotify1;
 				BadMontagePayload.EventMagnitude = 0.5f;
 				EnemyASC->HandleGameplayEvent(TagRateWindowBegin, &BadMontagePayload);
-				TestEqual(TEXT("Foreign Montage rejected (stack depth unchanged)"), StanceBreakAbility->GetRateWindowLifecycle().GetStackDepth(), 0);
+				TestEqual(TEXT("Foreign Montage rejected (stack depth unchanged)"), StanceBreakAbility->GetRateWindowLifecycle().GetActiveWindowCount(), 0);
 			}
 
 			// 5.4 Non-positive / non-finite magnitude
@@ -355,16 +386,36 @@ bool FEnemyStanceBreakRateWindowAutomationTest::RunTest(const FString& Parameter
 				BadMagPayload.Instigator = Enemy;
 				BadMagPayload.Target = Enemy;
 				BadMagPayload.OptionalObject = ActiveStanceMontage;
+				BadMagPayload.OptionalObject2 = StanceNotify1;
 				BadMagPayload.EventMagnitude = 0.0f;
 				EnemyASC->HandleGameplayEvent(TagRateWindowBegin, &BadMagPayload);
-				TestEqual(TEXT("Zero magnitude rejected (stack depth unchanged)"), StanceBreakAbility->GetRateWindowLifecycle().GetStackDepth(), 0);
+				TestEqual(TEXT("Zero magnitude rejected (stack depth unchanged)"), StanceBreakAbility->GetRateWindowLifecycle().GetActiveWindowCount(), 0);
 
 				BadMagPayload.EventMagnitude = -0.5f;
 				EnemyASC->HandleGameplayEvent(TagRateWindowBegin, &BadMagPayload);
-				TestEqual(TEXT("Negative magnitude rejected (stack depth unchanged)"), StanceBreakAbility->GetRateWindowLifecycle().GetStackDepth(), 0);
+				TestEqual(TEXT("Negative magnitude rejected (stack depth unchanged)"), StanceBreakAbility->GetRateWindowLifecycle().GetActiveWindowCount(), 0);
 			}
 
-			// 6. Valid Begin & Nested LIFO Rate Window Integration:
+			// 5.5 Missing or Unregistered Notify Identity
+			{
+				FGameplayEventData MissingIdentityPayload;
+				MissingIdentityPayload.EventTag = TagRateWindowBegin;
+				MissingIdentityPayload.Instigator = Enemy;
+				MissingIdentityPayload.Target = Enemy;
+				MissingIdentityPayload.OptionalObject = ActiveStanceMontage;
+				MissingIdentityPayload.OptionalObject2 = nullptr;
+				MissingIdentityPayload.EventMagnitude = 0.5f;
+				EnemyASC->HandleGameplayEvent(TagRateWindowBegin, &MissingIdentityPayload);
+				TestEqual(TEXT("Missing OptionalObject2 identity rejected (stack depth unchanged)"), StanceBreakAbility->GetRateWindowLifecycle().GetActiveWindowCount(), 0);
+
+				UAnimNotifyState_MontageRateWindow* UnregisteredNotify = NewObject<UAnimNotifyState_MontageRateWindow>(World, TEXT("Test_UnregisteredStanceNotify"));
+				FGameplayEventData UnregisteredIdentityPayload = MissingIdentityPayload;
+				UnregisteredIdentityPayload.OptionalObject2 = UnregisteredNotify;
+				EnemyASC->HandleGameplayEvent(TagRateWindowBegin, &UnregisteredIdentityPayload);
+				TestEqual(TEXT("Unregistered OptionalObject2 identity rejected (stack depth unchanged)"), StanceBreakAbility->GetRateWindowLifecycle().GetActiveWindowCount(), 0);
+			}
+
+			// 6. Valid Begin & Nested Rate Window Integration:
 			// 6.1 First Valid Begin (0.33f Rate)
 			{
 				FGameplayEventData ValidBeginPayload;
@@ -372,9 +423,10 @@ bool FEnemyStanceBreakRateWindowAutomationTest::RunTest(const FString& Parameter
 				ValidBeginPayload.Instigator = Enemy;
 				ValidBeginPayload.Target = Enemy;
 				ValidBeginPayload.OptionalObject = ActiveStanceMontage;
+				ValidBeginPayload.OptionalObject2 = StanceNotify1;
 				ValidBeginPayload.EventMagnitude = 0.33f;
 				EnemyASC->HandleGameplayEvent(TagRateWindowBegin, &ValidBeginPayload);
-				TestEqual(TEXT("Valid Begin pushes rate (stack depth 1)"), StanceBreakAbility->GetRateWindowLifecycle().GetStackDepth(), 1);
+				TestEqual(TEXT("Valid Begin pushes rate (stack depth 1)"), StanceBreakAbility->GetRateWindowLifecycle().GetActiveWindowCount(), 1);
 			}
 
 			// 6.2 Nested Valid Begin using Inner Sequence reference (0.1f Rate)
@@ -384,9 +436,10 @@ bool FEnemyStanceBreakRateWindowAutomationTest::RunTest(const FString& Parameter
 				NestedBeginPayload.Instigator = Enemy;
 				NestedBeginPayload.Target = Enemy;
 				NestedBeginPayload.OptionalObject = ActiveInnerSequence;
+				NestedBeginPayload.OptionalObject2 = StanceNotify2;
 				NestedBeginPayload.EventMagnitude = 0.1f;
 				EnemyASC->HandleGameplayEvent(TagRateWindowBegin, &NestedBeginPayload);
-				TestEqual(TEXT("Nested Begin on inner sequence pushes rate (stack depth 2)"), StanceBreakAbility->GetRateWindowLifecycle().GetStackDepth(), 2);
+				TestEqual(TEXT("Nested Begin on inner sequence pushes rate (stack depth 2)"), StanceBreakAbility->GetRateWindowLifecycle().GetActiveWindowCount(), 2);
 			}
 
 			// 6.3 First End Event (Pops nested rate, restores 0.33f)
@@ -395,9 +448,10 @@ bool FEnemyStanceBreakRateWindowAutomationTest::RunTest(const FString& Parameter
 				EndPayload.EventTag = TagRateWindowEnd;
 				EndPayload.Instigator = Enemy;
 				EndPayload.Target = Enemy;
-				EndPayload.OptionalObject = ActiveStanceMontage;
+				EndPayload.OptionalObject = ActiveInnerSequence;
+				EndPayload.OptionalObject2 = StanceNotify2;
 				EnemyASC->HandleGameplayEvent(TagRateWindowEnd, &EndPayload);
-				TestEqual(TEXT("First End pops rate (stack depth 1)"), StanceBreakAbility->GetRateWindowLifecycle().GetStackDepth(), 1);
+				TestEqual(TEXT("First End pops rate (stack depth 1)"), StanceBreakAbility->GetRateWindowLifecycle().GetActiveWindowCount(), 1);
 			}
 
 			// 6.4 Second End Event (Pops to baseline)
@@ -407,8 +461,9 @@ bool FEnemyStanceBreakRateWindowAutomationTest::RunTest(const FString& Parameter
 				EndPayload.Instigator = Enemy;
 				EndPayload.Target = Enemy;
 				EndPayload.OptionalObject = ActiveStanceMontage;
+				EndPayload.OptionalObject2 = StanceNotify1;
 				EnemyASC->HandleGameplayEvent(TagRateWindowEnd, &EndPayload);
-				TestEqual(TEXT("Second End restores baseline (stack depth 0)"), StanceBreakAbility->GetRateWindowLifecycle().GetStackDepth(), 0);
+				TestEqual(TEXT("Second End restores baseline (stack depth 0)"), StanceBreakAbility->GetRateWindowLifecycle().GetActiveWindowCount(), 0);
 			}
 
 			// 7. UnPossess Teardown & Complete EndAbility Cleanup Verification

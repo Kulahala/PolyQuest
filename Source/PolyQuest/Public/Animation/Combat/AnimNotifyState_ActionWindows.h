@@ -102,7 +102,7 @@ public:
 	virtual FString GetNotifyName_Implementation() const override;
 };
 
-/** Sends the authored playback-rate override window for the active attack Montage. */
+/** Sends the authored playback-rate override window for the active attack Montage, carrying window identity in OptionalObject2. */
 UCLASS()
 class POLYQUEST_API UAnimNotifyState_MontageRateWindow : public UAnimNotifyState
 {
