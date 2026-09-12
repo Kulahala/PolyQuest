@@ -638,7 +638,11 @@ bool APlayerCharacter::CanAttemptGuard() const
 		&& CharacterASC->GetNumericAttribute(UCharacterAttributeSet::GetStaminaAttribute()) > 0.0f;
 }
 
-bool APlayerCharacter::TryGuardIncomingMeleeHit(AActor* AttackingActor, float GuardStaminaDamage, const FHitResult& HitResult)
+bool APlayerCharacter::TryGuardIncomingMeleeHit(
+	AActor* AttackingActor,
+	float GuardStaminaDamage,
+	const FHitResult& HitResult,
+	const FVector* WorldIncomingDirection)
 {
 	if (!AttackingActor)
 	{
@@ -647,7 +651,7 @@ bool APlayerCharacter::TryGuardIncomingMeleeHit(AActor* AttackingActor, float Gu
 
 	if (UPlayerGuardAbility* GuardAbility = FindActiveGuardAbility())
 	{
-		return GuardAbility->TryGuardMeleeHit(AttackingActor, GuardStaminaDamage, HitResult);
+		return GuardAbility->TryGuardMeleeHit(AttackingActor, GuardStaminaDamage, HitResult, WorldIncomingDirection);
 	}
 
 	return false;
@@ -682,7 +686,8 @@ bool APlayerCharacter::TryResolveIncomingDefense(
 	AActor* AttackingActor,
 	float GuardStaminaDamage,
 	const FHitResult& HitResult,
-	bool bAllowParry)
+	bool bAllowParry,
+	const FVector* WorldIncomingDirection)
 {
 	if (!AttackingActor)
 	{
@@ -697,7 +702,7 @@ bool APlayerCharacter::TryResolveIncomingDefense(
 		}
 	}
 
-	return TryGuardIncomingMeleeHit(AttackingActor, GuardStaminaDamage, HitResult);
+	return TryGuardIncomingMeleeHit(AttackingActor, GuardStaminaDamage, HitResult, WorldIncomingDirection);
 }
 
 void APlayerCharacter::TriggerParrySuccessCameraShake()

@@ -4,6 +4,7 @@
 #include "AbilitySystemGlobals.h"
 #include "ActiveGameplayEffectHandle.h"
 #include "Character/Player/PlayerCharacter.h"
+#include "Combat/CombatImpactEffectContext.h"
 #include "Combat/Projectile/CombatProjectileTargeting.h"
 #include "GameFramework/Actor.h"
 #include "GameplayEffect.h"
@@ -22,6 +23,20 @@ namespace
 	{
 		static const FGameplayTag InvulnerableTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Status.Invulnerable")), false);
 		return InvulnerableTag;
+	}
+
+	FVector SanitizeIncomingDirection(const FVector& Direction)
+	{
+		if (!FMath::IsFinite(Direction.X) || !FMath::IsFinite(Direction.Y) || !FMath::IsFinite(Direction.Z))
+		{
+			return FVector::ZeroVector;
+		}
+		const FVector Planar(Direction.X, Direction.Y, 0.0f);
+		if (Planar.IsNearlyZero())
+		{
+			return FVector::ZeroVector;
+		}
+		return Planar.GetSafeNormal();
 	}
 }
 
@@ -61,16 +76,26 @@ bool FCombatProjectileHitResolver::TryResolveHit(const FCombatProjectileHitReque
 		return false;
 	}
 
+	const FVector ValidatedIncomingDirection = SanitizeIncomingDirection(Request.WorldIncomingDirection);
+
 	if (APlayerCharacter* PlayerCharacter = Cast<APlayerCharacter>(TargetActor))
 	{
-		if (PlayerCharacter->TryResolveIncomingDefense(SourceActor, Request.GuardStaminaDamage, Request.HitResult, false))
+		if (PlayerCharacter->TryResolveIncomingDefense(SourceActor, Request.GuardStaminaDamage, Request.HitResult, false, &ValidatedIncomingDirection))
 		{
 			// Player defense (Guard) successfully consumed the contact.
 			return true;
 		}
 	}
 
-	FGameplayEffectContextHandle EffectContext = SourceASC->MakeEffectContext();
+	FCombatImpactEffectContext* TypedContext = new FCombatImpactEffectContext();
+	const FGameplayEffectContextHandle BaseContext = SourceASC->MakeEffectContext();
+	if (BaseContext.IsValid())
+	{
+		*static_cast<FGameplayEffectContext*>(TypedContext) = *BaseContext.Get();
+	}
+	TypedContext->SetWorldIncomingDirection(ValidatedIncomingDirection);
+
+	FGameplayEffectContextHandle EffectContext(TypedContext);
 	EffectContext.AddSourceObject(Request.SourceObject ? Request.SourceObject : SourceActor);
 	EffectContext.AddHitResult(Request.HitResult, true);
 

@@ -407,6 +407,11 @@ Parry path.
 Projectile collision uses FCombatProjectileHitResolver, not the melee resolver,
 but follows the corresponding team, living, invulnerability, and Player Guard
 eligibility rules for projectile delivery.
+Projectile Guard uses the explicit impact-time incoming direction described
+below. The optional Native direction argument defaults to `nullptr` for ordinary
+melee/execution callers, preserving their attacker-position arc rule. Projectile
+delivery disallows Parry and retains the existing stamina/GuardBreak consumption
+contract, including absorption of the hit that exhausts stamina.
 
 ### Action ability boundaries
 
@@ -685,6 +690,30 @@ hit or blocking impact disables the applicable collision/movement lifecycle.
 A successfully resolved pawn hit is delivered once and enters terminal trail
 cleanup; a rejected pawn is ignored so flight can continue. The Native path has
 no AoE explosion or penetration-through-target contract.
+
+Before resolving a pawn contact or stopping movement, `HandlePawnImpact`
+samples the current movement velocity. `WorldIncomingDirection` is its negated,
+normalized XY projection: target toward the incoming side. It follows the
+current trajectory, independent of launch direction or the shooter's later
+position. Missing movement, non-finite XYZ, or near-zero planar velocity yields
+an explicit zero direction. A valid hostile hit still applies damage at zero;
+Guard rejects it and directional reaction resolution returns zero without a
+shooter-position or surface-normal fallback.
+
+`FCombatImpactEffectContext` stores this direction by value and preserves the
+base context produced by the source ASC, the projectile SourceObject and the
+contact HitResult. The source ASC remains the damage authority. Reflection
+identifies the derived context; `Duplicate()` retains its type and deep-copies
+HitResult. The saved direction remains usable after source actors are destroyed.
+Ordinary contexts retain Instigator priority followed by ImpactNormal fallback.
+Reaction consumers convert the world incoming direction into target-local space;
+Enemy lethal damage uses it to derive the opposite, outgoing ragdoll impulse.
+Native serialization support does not imply a replicated/network-tested route.
+
+FIX2 verification includes Native Automation for real movement/collision into
+the damage context and separate lethal-GE consumption of that captured context.
+Authored PIE/visual behavior was waived by the user and remains unverified; its
+follow-up is owned by `Debt-03H6-FIX2-PIE` in ROADMAP.md.
 
 Flight-trail components are presentation-only. A terminal trail may detach into
 world space and wait for its Niagara completion callback or its configured

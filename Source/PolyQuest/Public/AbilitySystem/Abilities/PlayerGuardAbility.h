@@ -50,8 +50,12 @@ public:
 	/** True only after the Guard Montage and both Duration effects are confirmed active. */
 	bool IsGuardActive() const { return bGuardActive && !bEndAbilityRequested; }
 
-	/** Applies one authored Stamina loss for a resolver-validated front-arc melee contact. */
-	bool TryGuardMeleeHit(AActor* AttackingActor, float GuardStaminaDamage, const FHitResult& HitResult);
+	/** Applies one authored Stamina loss for a resolver-validated front-arc contact. Optional WorldIncomingDirection overrides attacker position arc check. */
+	bool TryGuardMeleeHit(
+		AActor* AttackingActor,
+		float GuardStaminaDamage,
+		const FHitResult& HitResult,
+		const FVector* WorldIncomingDirection = nullptr);
 
 #if WITH_DEV_AUTOMATION_TESTS
 	const FGameplayTagContainer& GetTestActivationBlockedTags() const { return ActivationBlockedTags; }
@@ -134,7 +138,7 @@ private:
 	void ClearGuardEffects();
 	void ApplyStaminaRegenDelay();
 	bool IsGuardInputEvent(const FGameplayEventData& Payload) const;
-	bool IsAttackerInGuardArc(const AActor* AttackingActor) const;
+	bool IsAttackerInGuardArc(const AActor* AttackingActor, const FVector* WorldIncomingDirection = nullptr) const;
 	void EndFromMontage(bool bWasCancelled);
 	void TriggerGuardSuccessFeedback(const FHitResult& HitResult);
 

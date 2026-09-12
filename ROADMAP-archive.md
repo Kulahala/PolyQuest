@@ -1671,3 +1671,20 @@ TODO-03A3E World Pickup Interaction Prompt v1
 - **原门禁偏差**：修复前真实Melee RED未实际运行；本次PIE与修复后Automation不能补证历史。用户在获知这一边界后授权收尾和提交，本片按现有代码/验证完成实现验收；未执行RED保留为非阻塞Debt-03H6-FIX1-PreFixProof，唯一后续触发与关闭条件见ROADMAP。原批准计划的测试先行顺序未被追认为已完成，不声称生产资产自然触发过该缺陷。
 - **文档与提交**：提交清单为18份Source文件（12生产cpp、2头文件、4测试cpp）及plan.md、ROADMAP.md、ROADMAP-archive.md、ARCHITECTURE.md。保留原归档正文，仅追加；本plan保留完成态交接。用户明确授权提交，未授权推送。Content/Config/tmp既有WIP全部排除，不暂存资产或Config。
 - **下一阶段**：独立制定TODO-03H6-FIX2计划，其后为已接受有限SHRINK，再进入03C；其他FULL-AUDIT Findings和authored验证债保持原归属。本次不开始FIX2实现。
+
+## TODO-03H6-FIX1 → TODO-03H6-FIX2 Handoff (2026-09-13)
+
+- 用户接受结合 Gemini 反馈的修订计划，要求写入 plan.md 并提供执行提示词；当前活跃交接转为 FIX2，执行路线为 manual/out-of-band Gemini。本轮仅文档，未实施源码、编译、Automation、Editor/PIE 或提交。
+- FIX1 已提交于 f2fea459b6ff8e7cd3cdae3ea45c4b8079ffd36d；完整完成态凭据固定为 git show f2fea459b6ff8e7cd3cdae3ea45c4b8079ffd36d:plan.md。上方 FIX1 收尾正文不改，原未执行 RED 的非阻塞证据债继续唯一归 ROADMAP 的 Debt-03H6-FIX1-PreFixProof。
+- FIX2 只处理 H6-F02：命中瞬间速度反向的显式来向、GAS 来源保全、Guard 与受击/死亡方向。用户选择退化几何时伤害照常、Guard 不吸收、方向归零；普通近战/处决保持 Instigator 优先，投射物允许 Guard、禁止 Parry。
+- 已采纳 UE 反射识别、显式基类 NetSerialize、提前采样与真实 World 碰撞前置检查。13 个 Source/Test 路径与符号白名单、测试及用户门禁记录于当前 plan.md；无资产或 Config 写入。Source 和既有 Content/Config/tmp WIP 保留。
+- H6-F02 仍开放；FIX2 实施/验证/终审完成后进入已接受有限 SHRINK，再到 TODO-03C。其他 Findings 和 ProjectileIntegration 剩余债务保持 ROADMAP 原归属，不以此次规划声称完成。
+
+## TODO-03H6-FIX2 Main Implementation Closeout (2026-09-13)
+
+- **结果与范围**：以f2fea459b6ff8e7cd3cdae3ea45c4b8079ffd36d为基线，H6-F02实现与终审关闭。投射物按命中时速度反向投影提供显式来向；派生GAS Context保留来源权属、接触与按值方向，零方向合法伤害不变但不吸收Guard/不伪造定向反应。近战/处决默认来源规则、投射物禁Parry、Guard体力边界与单次命中清理保持。
+- **路径**：原批准13份Source/Test文件，加用户交接授权的FrontExecution/Backstab两份测试地面修复，共15份；Main维护plan.md、ROADMAP.md、ROADMAP-archive.md、ARCHITECTURE.md四份文档。未改资产、Config、Build.cs或共享fixture；2,122项既有WIP排除。当前plan保留完整完成态凭据，下一片启动前以本次提交固定引用。
+- **修复与审查**：Gemini执行生产实现和两份处决测试局部地面修复。Main两轮静态审查未发现生产逻辑缺陷；补齐真实碰撞到GAS Context/当前方向/来源保全、来源销毁后快照与死亡冲量的P2验证缺口。用户专项首次失败暴露第5.2节共用Enemy已触发不可逆死亡清理；Main只在专项中隔离死亡来源fixture并保留所有行为断言，用户随后回传Success。最终delta Fresh Review通过，无未关闭P0–P2；ponytail辅助无新增阻塞建议。
+- **证据归属**：Gemini执行且用户转交的Development Editor编译成功及11/11 Automation，Main已读取本机日志；后续只有专项测试改动，采用用户最后手动PolyQuest.Projectile.ImpactGeometry Success回执，保留其余10项既有回归。Main未重跑编译、Automation或操作Editor，未把旧11/11冒充新版全套重跑；最终静态差异/白名单/空白检查通过。
+- **验证边界**：用户因远程敌人尚未实现接受本片PIE豁免，不是PIE通过；唯一后续实测归ROADMAP的Debt-03H6-FIX2-PIE。Native死亡冲量段复用真实捕获Context，不是第二次真实飞行或视觉Ragdoll证明。Guard人工活跃fixture日志不证明资产激活与恢复延迟配置；World缺EndPlay清理日志保留为非阻塞测试维护项，唯一触发见REC-03H6-AdditionalShrink。其余ProjectileIntegration终态集成矩阵仍归03C。
+- **授权与下一阶段**：用户在回传专项Success后明确允许Fresh Review完成即文档收尾并提交；按19文件精确清单提交，未授权推送。下一阶段为已接受有限TODO-03H6-SHRINK，03C仍须该前置完成，不自动启动新切片。

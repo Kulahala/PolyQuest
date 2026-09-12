@@ -407,6 +407,20 @@ void ACombatProjectile::HandlePawnImpact(AActor* HitActor, const FHitResult& Hit
 		return;
 	}
 
+	FVector WorldIncomingDirection = FVector::ZeroVector;
+	if (MovementComponent)
+	{
+		const FVector CurrentVelocity = MovementComponent->Velocity;
+		if (FMath::IsFinite(CurrentVelocity.X) && FMath::IsFinite(CurrentVelocity.Y) && FMath::IsFinite(CurrentVelocity.Z))
+		{
+			const FVector PlanarIncoming(-CurrentVelocity.X, -CurrentVelocity.Y, 0.0f);
+			if (!PlanarIncoming.IsNearlyZero())
+			{
+				WorldIncomingDirection = PlanarIncoming.GetSafeNormal();
+			}
+		}
+	}
+
 	FCombatProjectileHitRequest HitRequest;
 	HitRequest.SourceActor = CachedLaunchRequest.SourceActor;
 	HitRequest.SourceAbilitySystemComponent = CachedLaunchRequest.SourceAbilitySystemComponent;
@@ -418,6 +432,7 @@ void ACombatProjectile::HandlePawnImpact(AActor* HitActor, const FHitResult& Hit
 	HitRequest.GuardStaminaDamage = CachedLaunchRequest.GuardStaminaDamage;
 	HitRequest.SourceObject = this;
 	HitRequest.HitResult = HitResult;
+	HitRequest.WorldIncomingDirection = WorldIncomingDirection;
 
 	const bool bResolved = FCombatProjectileHitResolver::TryResolveHit(HitRequest);
 	if (bResolved)

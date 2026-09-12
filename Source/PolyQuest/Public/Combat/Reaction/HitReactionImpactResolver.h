@@ -13,7 +13,9 @@ class POLYQUEST_API FHitReactionImpactResolver
 public:
 	/**
 	 * Resolves the planar attacker direction in the Target's local coordinate space.
-	 * Evaluates finite non-zero (InstigatorLocation - TargetLocation) first;
+	 * If ContextHandle wraps an FCombatImpactEffectContext, uses its explicit snapshot incoming direction;
+	 * explicit zero or invalid direction returns ZeroVector without positional fallback.
+	 * For ordinary contexts: evaluates finite non-zero (InstigatorLocation - TargetLocation) first;
 	 * falls back to finite non-zero HitResult.ImpactNormal when instigator is missing, coincident, or invalid.
 	 * Projects to XY, normalizes, transforms to Target local space, and returns ZeroVector on failure.
 	 */

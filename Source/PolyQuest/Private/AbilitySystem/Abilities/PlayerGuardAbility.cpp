@@ -208,9 +208,13 @@ void UPlayerGuardAbility::EndAbility(
 	Super::EndAbility(Handle, ActorInfo, ActivationInfo, bReplicateEndAbility, bWasCancelled);
 }
 
-bool UPlayerGuardAbility::TryGuardMeleeHit(AActor* AttackingActor, float GuardStaminaDamage, const FHitResult& HitResult)
+bool UPlayerGuardAbility::TryGuardMeleeHit(
+	AActor* AttackingActor,
+	float GuardStaminaDamage,
+	const FHitResult& HitResult,
+	const FVector* WorldIncomingDirection)
 {
-	if (!IsGuardActive() || !AttackingActor || !IsAttackerInGuardArc(AttackingActor))
+	if (!IsGuardActive() || !AttackingActor || !IsAttackerInGuardArc(AttackingActor, WorldIncomingDirection))
 	{
 		return false;
 	}
@@ -396,7 +400,7 @@ bool UPlayerGuardAbility::IsGuardInputEvent(const FGameplayEventData& Payload) c
 		&& Payload.InstigatorTags.HasTagExact(GuardInputTag);
 }
 
-bool UPlayerGuardAbility::IsAttackerInGuardArc(const AActor* AttackingActor) const
+bool UPlayerGuardAbility::IsAttackerInGuardArc(const AActor* AttackingActor, const FVector* WorldIncomingDirection) const
 {
 	const APlayerCharacter* PlayerCharacter = Cast<APlayerCharacter>(GetAvatarActorFromActorInfo());
 	if (!PlayerCharacter || !AttackingActor)
@@ -404,15 +408,42 @@ bool UPlayerGuardAbility::IsAttackerInGuardArc(const AActor* AttackingActor) con
 		return false;
 	}
 
-	const FVector ToAttacker = (AttackingActor->GetActorLocation() - PlayerCharacter->GetActorLocation()).GetSafeNormal2D();
 	const FVector GuardForward = PlayerCharacter->GetActorForwardVector().GetSafeNormal2D();
-	if (ToAttacker.IsNearlyZero() || GuardForward.IsNearlyZero())
+	if (GuardForward.IsNearlyZero())
 	{
 		return false;
 	}
 
+	FVector DirectionToIncoming = FVector::ZeroVector;
+	if (WorldIncomingDirection)
+	{
+		// Explicit incoming direction provided: reject zero or non-finite without fallback to attacker position.
+		if (!FMath::IsFinite(WorldIncomingDirection->X) || !FMath::IsFinite(WorldIncomingDirection->Y) || !FMath::IsFinite(WorldIncomingDirection->Z))
+		{
+			return false;
+		}
+
+		const FVector PlanarIncoming(WorldIncomingDirection->X, WorldIncomingDirection->Y, 0.0f);
+		if (PlanarIncoming.IsNearlyZero())
+		{
+			return false;
+		}
+
+		DirectionToIncoming = PlanarIncoming.GetSafeNormal();
+	}
+	else
+	{
+		// Melee fallback: planar vector pointing from Player to AttackingActor
+		const FVector ToAttacker = (AttackingActor->GetActorLocation() - PlayerCharacter->GetActorLocation()).GetSafeNormal2D();
+		if (ToAttacker.IsNearlyZero())
+		{
+			return false;
+		}
+		DirectionToIncoming = ToAttacker;
+	}
+
 	const float MinimumDot = FMath::Cos(FMath::DegreesToRadians(GuardHalfArcDegrees));
-	return FVector::DotProduct(GuardForward, ToAttacker) >= MinimumDot;
+	return FVector::DotProduct(GuardForward, DirectionToIncoming) >= MinimumDot;
 }
 
 void UPlayerGuardAbility::EndFromMontage(bool bWasCancelled)

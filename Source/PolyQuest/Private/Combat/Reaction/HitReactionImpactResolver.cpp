@@ -1,5 +1,6 @@
 #include "Combat/Reaction/HitReactionImpactResolver.h"
 
+#include "Combat/CombatImpactEffectContext.h"
 #include "GameFramework/Actor.h"
 
 FVector FHitReactionImpactResolver::ResolveImpactDirection(const FGameplayEventData& EventData, const AActor* TargetActor)
@@ -22,41 +23,65 @@ FVector FHitReactionImpactResolver::ResolveImpactDirectionFromContext(
 	FVector WorldDirection = FVector::ZeroVector;
 	bool bFoundValidDirection = false;
 
-	// 1. Priority 1: Finite, non-zero planar relative line (InstigatorLocation - TargetLocation) -> points Target -> Attacker
-	const AActor* InstigatorActor = (ContextHandle.IsValid() && ContextHandle.GetInstigator())
-		? ContextHandle.GetInstigator()
-		: FallbackInstigator;
-
-	if (InstigatorActor && InstigatorActor != TargetActor)
+	// Check if this context carries an explicit snapshot incoming direction (FCombatImpactEffectContext)
+	const FGameplayEffectContext* RawContext = ContextHandle.Get();
+	if (RawContext && RawContext->GetScriptStruct() && RawContext->GetScriptStruct()->IsChildOf(FCombatImpactEffectContext::StaticStruct()))
 	{
-		const FVector InstigatorLoc = InstigatorActor->GetActorLocation();
-		const FVector TargetLoc = TargetActor->GetActorLocation();
-		if (FMath::IsFinite(InstigatorLoc.X) && FMath::IsFinite(InstigatorLoc.Y) &&
-			FMath::IsFinite(TargetLoc.X) && FMath::IsFinite(TargetLoc.Y))
+		const FCombatImpactEffectContext* ImpactContext = static_cast<const FCombatImpactEffectContext*>(RawContext);
+		const FVector ExplicitIncomingDir = ImpactContext->GetWorldIncomingDirection();
+
+		if (!FMath::IsFinite(ExplicitIncomingDir.X) || !FMath::IsFinite(ExplicitIncomingDir.Y) || !FMath::IsFinite(ExplicitIncomingDir.Z))
 		{
-			FVector Offset = InstigatorLoc - TargetLoc;
-			Offset.Z = 0.0f;
-			if (!Offset.IsNearlyZero() && Offset.Normalize())
+			return FVector::ZeroVector;
+		}
+
+		const FVector PlanarDir(ExplicitIncomingDir.X, ExplicitIncomingDir.Y, 0.0f);
+		if (PlanarDir.IsNearlyZero())
+		{
+			return FVector::ZeroVector;
+		}
+
+		WorldDirection = PlanarDir.GetSafeNormal();
+		bFoundValidDirection = true;
+	}
+	else
+	{
+		// 1. Priority 1: Finite, non-zero planar relative line (InstigatorLocation - TargetLocation) -> points Target -> Attacker
+		const AActor* InstigatorActor = (ContextHandle.IsValid() && ContextHandle.GetInstigator())
+			? ContextHandle.GetInstigator()
+			: FallbackInstigator;
+
+		if (InstigatorActor && InstigatorActor != TargetActor)
+		{
+			const FVector InstigatorLoc = InstigatorActor->GetActorLocation();
+			const FVector TargetLoc = TargetActor->GetActorLocation();
+			if (FMath::IsFinite(InstigatorLoc.X) && FMath::IsFinite(InstigatorLoc.Y) &&
+				FMath::IsFinite(TargetLoc.X) && FMath::IsFinite(TargetLoc.Y))
 			{
-				WorldDirection = Offset;
-				bFoundValidDirection = true;
+				FVector Offset = InstigatorLoc - TargetLoc;
+				Offset.Z = 0.0f;
+				if (!Offset.IsNearlyZero() && Offset.Normalize())
+				{
+					WorldDirection = Offset;
+					bFoundValidDirection = true;
+				}
 			}
 		}
-	}
 
-	// 2. Priority 2 (Fallback): HitResult ImpactNormal (points Target -> Attacker)
-	if (!bFoundValidDirection && ContextHandle.IsValid())
-	{
-		if (const FHitResult* HitResult = ContextHandle.GetHitResult())
+		// 2. Priority 2 (Fallback): HitResult ImpactNormal (points Target -> Attacker)
+		if (!bFoundValidDirection && ContextHandle.IsValid())
 		{
-			FVector Normal = HitResult->ImpactNormal;
-			if (!Normal.IsNearlyZero() && FMath::IsFinite(Normal.X) && FMath::IsFinite(Normal.Y))
+			if (const FHitResult* HitResult = ContextHandle.GetHitResult())
 			{
-				Normal.Z = 0.0f;
-				if (!Normal.IsNearlyZero() && Normal.Normalize())
+				FVector Normal = HitResult->ImpactNormal;
+				if (!Normal.IsNearlyZero() && FMath::IsFinite(Normal.X) && FMath::IsFinite(Normal.Y))
 				{
-					WorldDirection = Normal;
-					bFoundValidDirection = true;
+					Normal.Z = 0.0f;
+					if (!Normal.IsNearlyZero() && Normal.Normalize())
+					{
+						WorldDirection = Normal;
+						bFoundValidDirection = true;
+					}
 				}
 			}
 		}

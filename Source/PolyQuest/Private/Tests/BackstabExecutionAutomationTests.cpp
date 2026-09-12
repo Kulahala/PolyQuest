@@ -17,6 +17,7 @@
 #include "Combat/Equipment/WeaponEquipmentComponent.h"
 #include "Combat/Melee/MeleeHitResolver.h"
 #include "Components/BoxComponent.h"
+#include "Components/CapsuleComponent.h"
 #include "Engine/Engine.h"
 #include "Engine/World.h"
 #include "Framework/PolyQuestPlayerController.h"
@@ -200,6 +201,34 @@ bool FBackstabExecutionAutomationTest::RunTest(const FString& Parameters)
 	}
 
 	Controller->Possess(Player);
+
+	// Setup walkable floor fixture for victim movement mode restoration
+	AActor* FloorActor = World->SpawnActor<AActor>();
+	TestNotNull(TEXT("FloorActor spawned"), FloorActor);
+	if (FloorActor)
+	{
+		UBoxComponent* FloorBox = NewObject<UBoxComponent>(FloorActor);
+		TestNotNull(TEXT("FloorBox created"), FloorBox);
+		if (FloorBox)
+		{
+			FloorBox->InitBoxExtent(FVector(5000.0f, 5000.0f, 50.0f));
+			FloorBox->SetCollisionProfileName(UCollisionProfile::BlockAll_ProfileName);
+			FloorActor->SetRootComponent(FloorBox);
+			FloorBox->RegisterComponent();
+			TestTrue(TEXT("FloorBox registered"), FloorBox->IsRegistered());
+			TestTrue(TEXT("FloorBox query collision enabled"), FloorBox->IsCollisionEnabled());
+
+			const float CapsuleHalfHeight = Enemy->GetCapsuleComponent() ? Enemy->GetCapsuleComponent()->GetScaledCapsuleHalfHeight() : 88.0f;
+			const float CapsuleBottomZ = Enemy->GetActorLocation().Z - CapsuleHalfHeight;
+			FloorActor->SetActorLocation(FVector(0.0f, 0.0f, CapsuleBottomZ - 50.0f));
+
+			if (Player->GetCapsuleComponent())
+			{
+				Player->GetCapsuleComponent()->IgnoreActorWhenMoving(FloorActor, true);
+			}
+		}
+	}
+
 	UAbilitySystemComponent* PlayerASC = Player->GetAbilitySystemComponent();
 	UAbilitySystemComponent* EnemyASC = Enemy->GetAbilitySystemComponent();
 
@@ -586,6 +615,9 @@ bool FBackstabExecutionAutomationTest::RunTest(const FString& Parameters)
 		// Verify Enemy restored to MOVE_Walking after release
 		if (UCharacterMovementComponent* EnemyMove = Enemy->GetCharacterMovement())
 		{
+			FFindFloorResult FloorResult;
+			EnemyMove->FindFloor(Enemy->GetActorLocation(), FloorResult, false);
+			TestTrue(TEXT("Enemy has walkable floor precondition after backstab release"), FloorResult.IsWalkableFloor());
 			TestEqual(TEXT("Enemy movement mode restored to MOVE_Walking after backstab release"),
 				EnemyMove->MovementMode, MOVE_Walking);
 		}
@@ -1252,6 +1284,9 @@ bool FBackstabExecutionAutomationTest::RunTest(const FString& Parameters)
 			// Victim must be formally released and restored to MOVE_Walking
 			if (UCharacterMovementComponent* EnemyMove = Enemy->GetCharacterMovement())
 			{
+				FFindFloorResult FloorResult;
+				EnemyMove->FindFloor(Enemy->GetActorLocation(), FloorResult, false);
+				TestTrue(TEXT("Victim has walkable floor precondition after blocked backstab cancel"), FloorResult.IsWalkableFloor());
 				TestEqual(TEXT("Victim restored to MOVE_Walking after blocked backstab cancel"), EnemyMove->MovementMode, MOVE_Walking);
 			}
 

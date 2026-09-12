@@ -235,15 +235,20 @@ public:
 	/** True when held Guard input and current character state permit a new Guard Ability request. */
 	bool CanAttemptGuard() const;
 
-	/** Resolves one valid incoming melee contact through the active Guard Ability. */
-	bool TryGuardIncomingMeleeHit(AActor* AttackingActor, float GuardStaminaDamage, const FHitResult& HitResult);
+	/** Resolves one valid incoming contact through the active Guard Ability. Optional WorldIncomingDirection overrides attacker position arc check. */
+	bool TryGuardIncomingMeleeHit(
+		AActor* AttackingActor,
+		float GuardStaminaDamage,
+		const FHitResult& HitResult,
+		const FVector* WorldIncomingDirection = nullptr);
 
-	/** Resolves one valid incoming contact through the active Parry first (if allowed), then the active Guard. */
+	/** Resolves one valid incoming contact through the active Parry first (if allowed), then the active Guard. Optional WorldIncomingDirection overrides attacker position arc check. */
 	bool TryResolveIncomingDefense(
 		AActor* AttackingActor,
 		float GuardStaminaDamage,
 		const FHitResult& HitResult,
-		bool bAllowParry);
+		bool bAllowParry,
+		const FVector* WorldIncomingDirection = nullptr);
 
 	/** Returns the configured player combat feedback data asset, or nullptr if unset or invalid type. */
 	UPlayerCombatFeedbackDataAsset* GetPlayerCombatFeedbackData() const;

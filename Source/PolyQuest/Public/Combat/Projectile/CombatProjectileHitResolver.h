@@ -22,6 +22,13 @@ struct POLYQUEST_API FCombatProjectileHitRequest
 	float GuardStaminaDamage = 0.0f;
 	const UObject* SourceObject = nullptr;
 	FHitResult HitResult;
+
+	/**
+	 * World-space planar unit vector pointing from the target toward the incoming projectile source.
+	 * Explicit ZeroVector signifies degraded/indeterminate incoming geometry (e.g. vertical or zero velocity),
+	 * which consumes damage normally but is unguardable and provides zero impact direction without fallback.
+	 */
+	FVector WorldIncomingDirection = FVector::ZeroVector;
 };
 
 /** Shared validation and GAS delivery for projectile impact candidates. */

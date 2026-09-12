@@ -235,6 +235,7 @@ bool FPlayerDefenseAudioAutomationTest::RunTest(const FString& Parameters)
 		ProjectileRequest.DamageGameplayEffectClass = UTestProjectileDamageGE::StaticClass();
 		ProjectileRequest.GuardStaminaDamage = 30.0f;
 		ProjectileRequest.AbilityLevel = 1.0f;
+		ProjectileRequest.WorldIncomingDirection = FVector(1.0f, 0.0f, 0.0f);
 
 		const bool bProjGuarded = FCombatProjectileHitResolver::TryResolveHit(ProjectileRequest);
 		TestTrue(TEXT("Projectile hit is successfully resolved via Guard"), bProjGuarded);
