@@ -4,6 +4,7 @@
 #include "Abilities/GameplayAbility.h"
 #include "AbilitySystem/Tasks/AbilityTask_PlayActionMontage.h"
 #include "Animation/Combat/AnimNotifyState_ActionWindows.h"
+#include "AbilitySystem/Abilities/DodgeAbility.h"
 #include "TestManagedMontageAbility.generated.h"
 
 struct FManagedMontageTestHelpers
@@ -17,6 +18,28 @@ struct FManagedMontageTestHelpers
 		AActor* AvatarActor = nullptr,
 		UObject* Animation = nullptr,
 		const UObject* RateNotify = nullptr);
+
+	static FGameplayAbilityTargetDataHandle MakeCancelWindowTargetData(
+		UAnimInstance* AnimInstance,
+		int32 MontageInstanceID,
+		bool bReachedEnd = false);
+
+	static FGameplayEventData MakeCancelWindowEventData(
+		const FGameplayTag& EventTag,
+		UAnimInstance* AnimInstance,
+		int32 MontageInstanceID,
+		AActor* AvatarActor = nullptr,
+		UObject* Animation = nullptr,
+		const UObject* NotifyState = nullptr,
+		bool bReachedEnd = false);
+
+	static bool ValidateCancelWindowConfiguration(
+		const UGameplayAbility* SourceAbility,
+		const UAnimMontage* Montage,
+		const UAbilityTask_PlayActionMontage* ActualTask,
+		EActionMontageCancelPolicy ExpectedPolicy,
+		const TArray<const UGameplayAbility*>& TargetAbilities,
+		FString& OutDiagnosticReason);
 };
 
 UCLASS()
@@ -46,7 +69,8 @@ public:
 		FName StartSection = NAME_None,
 		float AnimRootMotionTranslationScale = 1.0f,
 		float StartTimeSeconds = 0.0f,
-		bool bAllowInterruptAfterBlendOut = false);
+		bool bAllowInterruptAfterBlendOut = false,
+		EActionMontageCancelPolicy CancelPolicy = EActionMontageCancelPolicy::None);
 
 	void EndTestAbility()
 	{
@@ -85,6 +109,7 @@ public:
 	float TestRate = 1.0f;
 	float InitialRootMotionScale = 1.0f;
 	bool bTestAllowInterruptAfterBlendOut = false;
+	EActionMontageCancelPolicy TestCancelPolicy = EActionMontageCancelPolicy::None;
 
 	bool bCompletedCalled = false;
 	bool bBlendedInCalled = false;
@@ -103,4 +128,27 @@ public:
 private:
 	UPROPERTY(Transient)
 	TObjectPtr<UAbilityTask_PlayActionMontage> MontageTask;
+};
+
+/**
+ * Test ability that inherits from UDodgeAbility but fails CommitCheck.
+ * Used to verify GAS positive/negative cancellation behavior.
+ */
+UCLASS()
+class UTestCommitFailingDodgeAbility : public UDodgeAbility
+{
+	GENERATED_BODY()
+
+public:
+	int32 CommitCheckCallCount = 0;
+
+	virtual bool CommitCheck(
+		const FGameplayAbilitySpecHandle Handle,
+		const FGameplayAbilityActorInfo* ActorInfo,
+		const FGameplayAbilityActivationInfo ActivationInfo,
+		OUT FGameplayTagContainer* OptionalRelevantTags = nullptr) override
+	{
+		++CommitCheckCallCount;
+		return false;
+	}
 };

@@ -23,6 +23,8 @@ USprintAttackAbility::USprintAttackAbility()
 	NetExecutionPolicy = EGameplayAbilityNetExecutionPolicy::ServerOnly;
 
 	AbilityTags.AddTag(FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Attack.Sprint")), false));
+	AbilityTags.AddTag(FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Action.CancelableBy.Dodge")), false));
+	AbilityTags.AddTag(FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Action.CancelableBy.Defense")), false));
 	ActivationBlockedTags.AddTag(FGameplayTag::RequestGameplayTag(FName(TEXT("State.Action.Attacking")), false));
 	ActivationBlockedTags.AddTag(FGameplayTag::RequestGameplayTag(FName(TEXT("State.Action.Dodging")), false));
 	ActivationBlockedTags.AddTag(FGameplayTag::RequestGameplayTag(FName(TEXT("State.Action.Parrying")), false));
@@ -37,10 +39,6 @@ USprintAttackAbility::USprintAttackAbility()
 	StaminaRegenBlockedTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Resource.Stamina.RegenBlocked")), false);
 	TraceWindowBeginEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Attack.TraceWindow.Begin")), false);
 	TraceWindowEndEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Attack.TraceWindow.End")), false);
-	DodgeCancelWindowBeginEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Action.CancelWindow.Dodge.Begin")), false);
-	DodgeCancelWindowEndEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Action.CancelWindow.Dodge.End")), false);
-	DodgeCancelableStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Action.CanCancel.Dodge")), false);
-	DefenseCancelableStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Action.CanCancel.Defense")), false);
 }
 
 bool USprintAttackAbility::CanActivateAbility(
@@ -70,7 +68,6 @@ void USprintAttackAbility::ActivateAbility(
 	const FGameplayEventData*)
 {
 	bEndAbilityRequested = false;
-	bDodgeCancelable = false;
 	bRuntimeActionTagsApplied = false;
 	ActiveMontage = nullptr;
 	BoundAnimInstance = nullptr;
@@ -88,7 +85,6 @@ void USprintAttackAbility::ActivateAbility(
 		|| !DamageGameplayEffectClass || !StaminaRegenDelayGameplayEffectClass || !SprintStateTag.IsValid() || !AttackingStateTag.IsValid()
 		|| !MovementInputBlockedTag.IsValid() || !JumpInputBlockedTag.IsValid() || !StaminaRegenBlockedTag.IsValid()
 		|| !TraceWindowBeginEventTag.IsValid() || !TraceWindowEndEventTag.IsValid()
-		|| !DodgeCancelWindowBeginEventTag.IsValid() || !DodgeCancelWindowEndEventTag.IsValid() || !DodgeCancelableStateTag.IsValid() || !DefenseCancelableStateTag.IsValid()
 		|| !AbilitySystemComponent->HasMatchingGameplayTag(SprintStateTag) || !PlayerCharacter->ShouldRequestSprintAttack())
 	{
 		UE_LOG(LogPolyQuest, Warning, TEXT("Sprint attack activation aborted for '%s': active grounded Sprint, montage, cost/damage/regen effects, and required gameplay tags are required."), *GetNameSafe(PlayerCharacter));
@@ -96,13 +92,20 @@ void USprintAttackAbility::ActivateAbility(
 		return;
 	}
 
-	UAbilityTask_PlayActionMontage* CreatedMontageTask = UAbilityTask_PlayActionMontage::PlayActionMontage(this, NAME_None, SprintAttackMontage);
+	UAbilityTask_PlayActionMontage* CreatedMontageTask = UAbilityTask_PlayActionMontage::PlayActionMontage(
+		this,
+		NAME_None,
+		SprintAttackMontage,
+		1.0f,
+		NAME_None,
+		1.0f, // AnimRootMotionTranslationScale
+		0.0f, // StartTimeSeconds
+		false, // bAllowInterruptAfterBlendOut
+		EActionMontageCancelPolicy::DodgeAndDefense);
 	MontageTask = CreatedMontageTask;
 	TraceWindowBeginTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, TraceWindowBeginEventTag, nullptr, false, true);
 	TraceWindowEndTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, TraceWindowEndEventTag, nullptr, false, true);
-	DodgeCancelWindowBeginTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, DodgeCancelWindowBeginEventTag, nullptr, false, true);
-	DodgeCancelWindowEndTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, DodgeCancelWindowEndEventTag, nullptr, false, true);
-	if (!CreatedMontageTask || !TraceWindowBeginTask || !TraceWindowEndTask || !DodgeCancelWindowBeginTask || !DodgeCancelWindowEndTask)
+	if (!CreatedMontageTask || !TraceWindowBeginTask || !TraceWindowEndTask)
 	{
 		UE_LOG(LogPolyQuest, Warning, TEXT("Sprint attack activation aborted for '%s': failed to create an AbilityTask."), *GetNameSafe(PlayerCharacter));
 		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
@@ -127,13 +130,9 @@ void USprintAttackAbility::ActivateAbility(
 	CreatedMontageTask->OnFailed.AddDynamic(this, &USprintAttackAbility::OnMontageFailed);
 	TraceWindowBeginTask->EventReceived.AddDynamic(this, &USprintAttackAbility::OnTraceWindowBegin);
 	TraceWindowEndTask->EventReceived.AddDynamic(this, &USprintAttackAbility::OnTraceWindowEnd);
-	DodgeCancelWindowBeginTask->EventReceived.AddDynamic(this, &USprintAttackAbility::OnDodgeCancelWindowBegin);
-	DodgeCancelWindowEndTask->EventReceived.AddDynamic(this, &USprintAttackAbility::OnDodgeCancelWindowEnd);
 
 	TraceWindowBeginTask->ReadyForActivation();
 	TraceWindowEndTask->ReadyForActivation();
-	DodgeCancelWindowBeginTask->ReadyForActivation();
-	DodgeCancelWindowEndTask->ReadyForActivation();
 	CreatedMontageTask->ReadyForActivation();
 
 	// Montage startup can synchronously invoke the bound end delegate. That path has already cleaned every task and pointer.
@@ -200,7 +199,6 @@ void USprintAttackAbility::EndAbility(
 #if WITH_DEV_AUTOMATION_TESTS
 	bTestBypassMontageActiveCheck = false;
 #endif
-	SetDodgeCancelable(false);
 	SetRuntimeActionTags(false);
 	CloseTraceWindow();
 
@@ -234,20 +232,6 @@ void USprintAttackAbility::EndAbility(
 		TraceWindowEndTask->EndTask();
 		TraceWindowEndTask = nullptr;
 	}
-
-	if (DodgeCancelWindowBeginTask)
-	{
-		DodgeCancelWindowBeginTask->EndTask();
-		DodgeCancelWindowBeginTask = nullptr;
-	}
-
-	if (DodgeCancelWindowEndTask)
-	{
-		DodgeCancelWindowEndTask->EndTask();
-		DodgeCancelWindowEndTask = nullptr;
-	}
-
-	ActiveMontage = nullptr;
 
 	Super::EndAbility(Handle, ActorInfo, ActivationInfo, bReplicateEndAbility, bWasCancelled);
 }
@@ -310,21 +294,7 @@ void USprintAttackAbility::OnTraceWindowEnd(FGameplayEventData Payload)
 	CloseTraceWindow();
 }
 
-void USprintAttackAbility::OnDodgeCancelWindowBegin(FGameplayEventData Payload)
-{
-	if (IsGameplayEventFromActiveMontage(Payload))
-	{
-		SetDodgeCancelable(true);
-	}
-}
 
-void USprintAttackAbility::OnDodgeCancelWindowEnd(FGameplayEventData Payload)
-{
-	if (IsGameplayEventFromActiveMontage(Payload))
-	{
-		SetDodgeCancelable(false);
-	}
-}
 
 void USprintAttackAbility::EndFromMontage(bool bWasCancelled)
 {
@@ -364,48 +334,7 @@ void USprintAttackAbility::CloseTraceWindow()
 	FMeleeTraceWindowLifecycle::CloseAndClear(TraceWindowTask, ActiveTraceNotifyState);
 }
 
-void USprintAttackAbility::SetDodgeCancelable(bool bShouldBeCancelable)
-{
-	if (bShouldBeCancelable)
-	{
-		if (bEndAbilityRequested || bDodgeCancelable)
-		{
-			return;
-		}
 
-		if (UAbilitySystemComponent* CharacterASC = GetAbilitySystemComponentFromActorInfo())
-		{
-			if (!DodgeCancelableStateTag.IsValid() || !DefenseCancelableStateTag.IsValid())
-			{
-				return;
-			}
-
-			CharacterASC->AddLooseGameplayTag(DodgeCancelableStateTag);
-			CharacterASC->AddLooseGameplayTag(DefenseCancelableStateTag);
-			bDodgeCancelable = true;
-		}
-		return;
-	}
-
-	if (!bDodgeCancelable)
-	{
-		return;
-	}
-
-	if (UAbilitySystemComponent* CharacterASC = GetAbilitySystemComponentFromActorInfo())
-	{
-		if (DodgeCancelableStateTag.IsValid())
-		{
-			CharacterASC->RemoveLooseGameplayTag(DodgeCancelableStateTag);
-		}
-		if (DefenseCancelableStateTag.IsValid())
-		{
-			CharacterASC->RemoveLooseGameplayTag(DefenseCancelableStateTag);
-		}
-	}
-
-	bDodgeCancelable = false;
-}
 
 void USprintAttackAbility::SetRuntimeActionTags(bool bShouldApply)
 {
@@ -618,5 +547,10 @@ int32 USprintAttackAbility::GetTestRateWindowMontageInstanceID() const
 bool USprintAttackAbility::HasTestRateWindowTasks() const
 {
 	return MontageTask != nullptr && !MontageTask->IsTerminated();
+}
+
+bool USprintAttackAbility::Test_IsDodgeCancelable() const
+{
+	return MontageTask ? MontageTask->HasContributedDodgeTag() : false;
 }
 #endif

@@ -11,7 +11,7 @@ struct FBranchingPointNotifyPayload;
 
 /**
  * Target data carrying local source playback identity (AnimInstance and MontageInstanceID)
- * for Montage RateWindow event routing and fail-closed validation.
+ * for Montage RateWindow and CancelWindow event routing and fail-closed validation.
  */
 USTRUCT()
 struct POLYQUEST_API FGameplayAbilityTargetData_MontageRateWindowSource : public FGameplayAbilityTargetData
@@ -23,6 +23,14 @@ struct POLYQUEST_API FGameplayAbilityTargetData_MontageRateWindowSource : public
 
 	UPROPERTY()
 	int32 MontageInstanceID = INDEX_NONE;
+
+	/** This window reached its boundary: verified sampling time for Queued, native payload for BranchingPoint. */
+	UPROPERTY()
+	bool bReachedEnd = false;
+
+	/** Raw engine result for diagnostics; Queued notify contexts may share this flag across different events. */
+	UPROPERTY()
+	bool bNativeReachedEnd = false;
 
 	virtual UScriptStruct* GetScriptStruct() const override
 	{
@@ -38,6 +46,8 @@ class POLYQUEST_API UAnimNotifyState_ActionDodgeCancelWindow : public UAnimNotif
 public:
 	virtual void NotifyBegin(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, float TotalDuration, const FAnimNotifyEventReference& EventReference) override;
 	virtual void NotifyEnd(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, const FAnimNotifyEventReference& EventReference) override;
+	virtual void BranchingPointNotifyBegin(FBranchingPointNotifyPayload& BranchingPointPayload) override;
+	virtual void BranchingPointNotifyEnd(FBranchingPointNotifyPayload& BranchingPointPayload) override;
 	virtual FString GetNotifyName_Implementation() const override;
 };
 

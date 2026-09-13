@@ -87,12 +87,6 @@ private:
 	TObjectPtr<UAbilityTask_MeleeTraceWindow> TraceWindowTask;
 
 	UPROPERTY(Transient)
-	TObjectPtr<UAbilityTask_WaitGameplayEvent> DodgeCancelWindowBeginTask;
-
-	UPROPERTY(Transient)
-	TObjectPtr<UAbilityTask_WaitGameplayEvent> DodgeCancelWindowEndTask;
-
-	UPROPERTY(Transient)
 	TObjectPtr<UAnimInstance> BoundAnimInstance;
 
 	UPROPERTY(Transient)
@@ -105,11 +99,6 @@ private:
 	FGameplayTag StaminaRegenBlockedTag;
 	FGameplayTag TraceWindowBeginEventTag;
 	FGameplayTag TraceWindowEndEventTag;
-	FGameplayTag DodgeCancelWindowBeginEventTag;
-	FGameplayTag DodgeCancelWindowEndEventTag;
-	FGameplayTag DodgeCancelableStateTag;
-	FGameplayTag DefenseCancelableStateTag;
-	bool bDodgeCancelable = false;
 	bool bRuntimeActionTagsApplied = false;
 	bool bEndAbilityRequested = false;
 
@@ -131,17 +120,10 @@ private:
 	UFUNCTION()
 	void OnTraceWindowEnd(FGameplayEventData Payload);
 
-	UFUNCTION()
-	void OnDodgeCancelWindowBegin(FGameplayEventData Payload);
-
-	UFUNCTION()
-	void OnDodgeCancelWindowEnd(FGameplayEventData Payload);
-
 	void EndFromMontage(bool bWasCancelled);
 	bool IsGameplayEventFromActiveMontage(const FGameplayEventData& Payload) const;
 	void OpenTraceWindow(const TArray<FName>& InTraceSourceNames);
 	void CloseTraceWindow();
-	void SetDodgeCancelable(bool bShouldBeCancelable);
 	void SetRuntimeActionTags(bool bShouldApply);
 	void TryApplyMeleeMotionWarpTarget(class APlayerCharacter* PlayerCharacter);
 	void ResetMeleeMotionWarpState();
@@ -174,7 +156,7 @@ public:
 	}
 	void SetTestEndAbilityRequested(bool bRequested) { bEndAbilityRequested = bRequested; }
 	bool Test_IsRuntimeActionTagsApplied() const { return bRuntimeActionTagsApplied; }
-	bool Test_IsDodgeCancelable() const { return bDodgeCancelable; }
+	bool Test_IsDodgeCancelable() const;
 
 private:
 	bool bTestBypassMontageActiveCheck = false;

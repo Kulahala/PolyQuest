@@ -4,8 +4,9 @@
 
 ## Current State
 
-- 最近交付：`08f4214`（2026-09-13），TODO-03H9-A 统一 Montage RateWindow 托管，已完成实现、最终 Main 代码复核、归档和提交。
-- 当前交接：[plan.md](plan.md) 第 6 节；固定版本为 `git show 08f4214:plan.md`。Development Editor 编译、专项 Automation 和 PIE 已有用户确认，各自验证时点及剩余项以原记录为准。
+- 最近交付：TODO-03H9-B CancelWindow 托管、两试点迁移与修复已完成代码交付及 Main 复核；最终专项 Automation 和 PIE 获用户确认，核心记录见 ROADMAP-archive 的 TODO-03H9-B 条目。
+- 当前交接：[plan.md](plan.md) 保留 B 的批准契约、修复与收尾记录；本轮提交包含该凭据，下一切片替换前须固定到本次提交版本。B 剩余验收仅维护于 `Debt-03H9-B-RepairValidation`，不重复开启已修复问题。
+- A 的历史交接固定为 `git show 08f4214:plan.md` 第 6 节；Development Editor 编译、专项 Automation 和 PIE 已有用户确认，各自验证时点及剩余项以原记录为准。
 - **03H9-A 总验收仍开放**，仅待 `Debt-03H9-A-ValidationReceipts` 对账；提交不等于全部门禁通过，不重复安排已修复缺陷，也不自动启动后续实现。
 - 已接受顺序：**03H9-A 验收对账 → 03H9-B → 03H9-C → 03C → 03C-B**。03C-A、03A7E、03A4B、03I3、07B14 和 REC 候选仍按各自条件启动，不自动加入前置。
 - 既有 Content/Config WIP 与各阶段资产收据债保持独立；当前状态不构成干净检出可复现或打包就绪证明。
@@ -35,14 +36,11 @@
   - 复用既有窗口算法和 Notify 类身份，不扩展跨项目插件、网络复制、全局时间膨胀、角色级第二状态机或无关动作。类迁移、Tag/Config/Build.cs 或资产变更须由后续计划明确批准路径和兼容步骤，禁止手改二进制。
 
 - [ ] TODO-03H9-A: RateWindow Ownership And Standard Playback Entry
-  - 实现/最终 Main 增量审查已完成；PlayActionMontage 托管 RateWindow，SprintAttack/EnemySmallHitReaction 两试点已迁移。冻结合同、真实 ASC/Montage 时间推进验证和完整矩阵见当前 [plan](plan.md)；固定交接见 `git show 08f4214:plan.md`。
+  - 实现/最终 Main 增量审查已完成；PlayActionMontage 托管 RateWindow，SprintAttack/EnemySmallHitReaction 两试点已迁移。冻结合同、真实 ASC/Montage 时间推进验证和完整矩阵见固定交接 `git show 08f4214:plan.md`；核心结果见 ROADMAP-archive.md 的 TODO-03H9-A 归档。
   - 总验收只引用 `Debt-03H9-A-ValidationReceipts` 的剩余清单与关闭条件，不在此重复维护收据。
 
 - [ ] TODO-03H9-B: CancelWindow Ownership And Explicit Cancellation Policy
-  - 复用A的播放归属，独立封装取消窗口监听、来源/绑定校验、幂等Tag贡献和退出清理。统一入口可通过显式策略选择取消目标及现有动作门控；不再要求普通动作手写Begin/End和Add/RemoveLooseGameplayTag，不因两类窗口同名而强行合并其状态算法。
-  - 规划时核对当前Dodge/Defense相关策略和消费者，保留现有权限：Big/Launch不得因封装额外获得Guard/Parry等取消；Charged暂停保留、Launch阶段门及已有防御恢复策略以窄策略适配保留。新动作配置须同时满足窗口授权、可被取消标记、目标激活及阻止Tag兼容；统一校验这些关系，禁止通过全局删除阻止Tag制造可用性。
-  - GAS仍决定激活、消耗与实际打断，目标CanActivate/Commit失败不得提前结束原动作；成功后的动作替换沿用批准契约。只撤销本次绑定自身Tag贡献，外部贡献保留；重复/迟到/跨激活事件和自然/强制退出安全。重叠窗口语义在计划中依据现有资产/调用冻结，若改变可取消时机须显式裁决，不顺带引入任意动作转换矩阵。
-  - 在普通Dodge取消和蓄力暂停等差异场景验证后由C完成余下迁移；真实ASC验证窗口内外、消耗拒绝/真实Commit失败、错误来源、重复Begin/End、旧播放事件、重新激活与外部Tag贡献，结合适用用户编译/PIE/readback和Main终审。
+  - 实现、修复、Main 复核及最终专项 Automation/PIE 已完成；核心结果已归档。总验收只待 `Debt-03H9-B-RepairValidation` 中尚未单独报告的收据，不重复安排代码修复。
 
 - [ ] TODO-03H9-C: Complete Adoption And Configuration-Only Acceptance
   - 对当前Player/Enemy玩法Montage播放入口及两类窗口消费者做有界采用清单，包含尚未监听RateWindow的动作，避免只迁移已支持者而留下同类缺口。逐项记录播放入口、Rate能力、取消策略及迁移/明确不适用理由；不得以缺少旧实现为不适用理由。收口前所有适用入口使用公共设施，普通新动作遵循同一模板；分批实施可行，未完成项不能隐入后续逐动作TODO。
@@ -180,6 +178,8 @@
 ## Known Risks And Validation Debt
 
 本节是开放风险和证据缺口的唯一维护位置。条目沿用各阶段记录及其证据时点；本次文档整理不重新审计源码、不核销收据，也不把“未报告”判定为测试失败。旧 fixture/资产描述在相关维护时按真实状态对账，不能据此推断新阶段尚未实现或自动新增修复。
+
+- **Debt-03H9-B-RepairValidation（剩余验收收据）**：最终 ManagedMontageCancelWindow Automation 与 PIE 已由用户分别确认通过，Main 本轮增量 Fresh Review 无 P0–P2；Queued End 和 Segment fixture 失败修复回路已闭环。此前 PlayerMontageRateWindow 六组、ManagedMontageRateWindow、Player.ActionWindows 共 8 项 Success 保留原时点。尚未单独报告的非 Editor Win64 Development 构建、其余计划回归及精确资产 readback 按 plan 验证矩阵保留，不默认为失败、不重复运行已确认项。关闭触发：补齐这些适用收据，或用户明确接受有边界的验收调整。用户已授权文档收尾及源码提交；提交不追认为全矩阵通过，不关闭父阶段，不自动启动 C。
 
 - **Debt-03H9-A-ValidationReceipts（A阶段剩余验证收据）**：Development Editor编译已由用户明确确认，不再列缺失。尚未单独报告：①非Editor Win64 Development构建；②本片相关的PolyQuest.Combat.EnemyStanceBreakRateWindow、PolyQuest.Combat.HitReaction、PolyQuest.Combat.PlayerBigHitReactionWindows、PolyQuest.Player.ActionWindows、PolyQuest.Combat.PlayerMeleeMotionWarping五项回归；③Sprint/EnemySmall实际GA→Montage引用、Small四向选择、Skeleton/Slot、Notify类型/数值/区间及派发模式readback。已报告通过的Player六组、Enemy及Managed保留各自时点，最终授权修复后再次确认的是Managed；不将较早报告写成最终版本全量重跑。关闭触发：用户补充上述适用结果，或明确接受有边界的验收调整并记录其理由。此项维持03H9-A总验收标记开放，不否认已完成的实现/代码复核，也不自动生成修复、重跑或资产修改任务；未确认项不默认为失败。不得据此宣称全门禁、干净资产基线或打包就绪；03H7/H6旧债务独立保留。
 

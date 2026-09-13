@@ -8,11 +8,37 @@
 #include "GameplayTagContainer.h"
 #include "AbilityTask_PlayActionMontage.generated.h"
 
+class UAnimNotifyState;
+
+UENUM(BlueprintType)
+enum class EActionMontageCancelPolicy : uint8
+{
+	None,
+	DodgeOnly,
+	DodgeAndDefense
+};
+
+struct FCancelWindowIdentity
+{
+	TWeakObjectPtr<const UObject> SourceAnimation;
+	TWeakObjectPtr<const UAnimNotifyState> NotifyState;
+
+	bool operator==(const FCancelWindowIdentity& Other) const
+	{
+		return SourceAnimation == Other.SourceAnimation && NotifyState == Other.NotifyState;
+	}
+
+	friend uint32 GetTypeHash(const FCancelWindowIdentity& Key)
+	{
+		return HashCombine(GetTypeHash(Key.SourceAnimation), GetTypeHash(Key.NotifyState));
+	}
+};
+
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FPlayActionMontageDelegate);
 
 /**
- * Standard Action Montage playback task with default RateWindow management.
- * Plays a montage via ASC, owns the active RateWindow lifecycle, and fail-closed validates
+ * Standard Action Montage playback task with default RateWindow and CancelWindow management.
+ * Plays a montage via ASC, owns RateWindow and CancelWindow lifecycles, and fail-closed validates
  * event source identity, reentrancy boundaries, and instance-authorized teardown.
  */
 UCLASS()
@@ -51,11 +77,21 @@ public:
 		FName StartSection = NAME_None,
 		float AnimRootMotionTranslationScale = 1.0f,
 		float StartTimeSeconds = 0.0f,
-		bool bAllowInterruptAfterBlendOut = false);
+		bool bAllowInterruptAfterBlendOut = false,
+		EActionMontageCancelPolicy CancelPolicy = EActionMontageCancelPolicy::None);
 
 	virtual void Activate() override;
 	virtual void ExternalCancel() override;
 	virtual FString GetDebugString() const override;
+
+	/** Latch active cancel windows across a montage pause (e.g. Charged HoldReady). Prevents premature tag revocation while paused. */
+	void LatchCancelWindowsAcrossPause();
+
+	/** Unlatch cancel windows after montage pause is resumed (e.g. Charged Release). Natural-ended windows are cleaned up, active windows wait for real End. */
+	void UnlatchCancelWindowsAfterPause();
+
+	EActionMontageCancelPolicy GetCancelPolicy() const { return CancelPolicy; }
+	bool IsCancelWindowLatched() const { return bCancelWindowLatched; }
 
 protected:
 	virtual void OnDestroy(bool AbilityEnded) override;
@@ -112,6 +148,31 @@ private:
 	FOnMontageEnded MontageEndedDelegate;
 	FDelegateHandle InterruptedHandle;
 
+	// --- Cancel Window management ---
+	void OnCancelWindowBeginReceived(const FGameplayEventData* Payload);
+	void OnCancelWindowEndReceived(const FGameplayEventData* Payload);
+	void BindCancelWindowEvents(UAbilitySystemComponent* ASC);
+	void UnbindCancelWindowEvents();
+	bool ValidateCancelWindowEventSource(const FGameplayEventData& Payload, FCancelWindowIdentity& OutIdentity, bool& OutReachedEnd) const;
+	bool IsMontageOrSequenceMatch(const UObject* SourceAnimation) const;
+	bool IsValidCancelNotifyForSource(const UObject* SourceAnimation, const UAnimNotifyState* Notify) const;
+	void UpdateCancelPolicyTags();
+	void RemoveContributedCancelTags();
+
+	EActionMontageCancelPolicy CancelPolicy = EActionMontageCancelPolicy::None;
+	TSet<FCancelWindowIdentity> ActiveCancelWindows;
+	TSet<FCancelWindowIdentity> PendingNaturalEndWindows;
+	bool bCancelWindowLatched = false;
+	bool bContributedDodgeTag = false;
+	bool bContributedDefenseTag = false;
+
+	FGameplayTag CancelWindowBeginEventTag;
+	FGameplayTag CancelWindowEndEventTag;
+	FGameplayTag DodgeCancelStateTag;
+	FGameplayTag DefenseCancelStateTag;
+	FDelegateHandle CancelWindowBeginHandle;
+	FDelegateHandle CancelWindowEndHandle;
+
 	bool bTerminated = false;
 	bool bAppliedRootMotionScale = false;
 
@@ -144,5 +205,21 @@ public:
 	{
 		OnMontageEnded(Montage, bInterrupted);
 	}
+
+	int32 GetActiveCancelWindowsNum() const { return ActiveCancelWindows.Num(); }
+	int32 GetActiveCancelWindowCount() const { return ActiveCancelWindows.Num(); }
+	int32 GetPendingNaturalEndWindowsNum() const { return PendingNaturalEndWindows.Num(); }
+	bool IsCancelWindowLatchedAcrossPause() const { return bCancelWindowLatched; }
+	bool HasContributedDodgeTag() const { return bContributedDodgeTag; }
+	bool HasContributedDefenseTag() const { return bContributedDefenseTag; }
+	void TestInvokeCancelBegin(const FGameplayEventData& Payload) { OnCancelWindowBeginReceived(&Payload); }
+	void TestInvokeCancelEnd(const FGameplayEventData& Payload) { OnCancelWindowEndReceived(&Payload); }
+	void TestBindCancelWindowEvents(UAbilitySystemComponent* ASC) { BindCancelWindowEvents(ASC); }
+	bool TestValidateCancelWindowEventSource(const FGameplayEventData& Payload, FCancelWindowIdentity& OutIdentity, bool& OutReachedEnd) const
+	{
+		return ValidateCancelWindowEventSource(Payload, OutIdentity, OutReachedEnd);
+	}
+	void TestUpdateCancelPolicyTags() { UpdateCancelPolicyTags(); }
+	void SetTestCancelPolicy(EActionMontageCancelPolicy InPolicy) { CancelPolicy = InPolicy; }
 #endif
 };

@@ -5,6 +5,8 @@
 #include "AbilitySystemLog.h"
 #include "Animation/AnimInstance.h"
 #include "Animation/AnimMontage.h"
+#include "Animation/AnimNotifies/AnimNotifyState.h"
+#include "Animation/AnimSequenceBase.h"
 #include "Animation/Combat/AnimNotifyState_ActionWindows.h"
 #include "GameFramework/Character.h"
 #include "PolyQuest.h"
@@ -14,6 +16,10 @@ UAbilityTask_PlayActionMontage::UAbilityTask_PlayActionMontage(const FObjectInit
 {
 	RateWindowBeginEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Action.RateWindow.Begin")), false);
 	RateWindowEndEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Action.RateWindow.End")), false);
+	CancelWindowBeginEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Action.CancelWindow.Dodge.Begin")), false);
+	CancelWindowEndEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Action.CancelWindow.Dodge.End")), false);
+	DodgeCancelStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Action.CanCancel.Dodge")), false);
+	DefenseCancelStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Action.CanCancel.Defense")), false);
 }
 
 UAbilityTask_PlayActionMontage* UAbilityTask_PlayActionMontage::PlayActionMontage(
@@ -24,7 +30,8 @@ UAbilityTask_PlayActionMontage* UAbilityTask_PlayActionMontage::PlayActionMontag
 	FName StartSection,
 	float AnimRootMotionTranslationScale,
 	float StartTimeSeconds,
-	bool bAllowInterruptAfterBlendOut)
+	bool bAllowInterruptAfterBlendOut,
+	EActionMontageCancelPolicy CancelPolicy)
 {
 	UAbilitySystemGlobals::NonShipping_ApplyGlobalAbilityScaler_Rate(Rate);
 
@@ -35,6 +42,7 @@ UAbilityTask_PlayActionMontage* UAbilityTask_PlayActionMontage::PlayActionMontag
 	MyObj->AnimRootMotionTranslationScale = AnimRootMotionTranslationScale;
 	MyObj->StartTimeSeconds = StartTimeSeconds;
 	MyObj->bAllowInterruptAfterBlendOut = bAllowInterruptAfterBlendOut;
+	MyObj->CancelPolicy = CancelPolicy;
 	return MyObj;
 }
 
@@ -55,9 +63,18 @@ void UAbilityTask_PlayActionMontage::Activate()
 
 	RateWindowBeginEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Action.RateWindow.Begin")), false);
 	RateWindowEndEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Action.RateWindow.End")), false);
+	CancelWindowBeginEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Action.CancelWindow.Dodge.Begin")), false);
+	CancelWindowEndEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Action.CancelWindow.Dodge.End")), false);
+	DodgeCancelStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Action.CanCancel.Dodge")), false);
+	DefenseCancelStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Action.CanCancel.Defense")), false);
+
+	const bool bCancelConfigValid = (CancelPolicy == EActionMontageCancelPolicy::None)
+		|| (CancelWindowBeginEventTag.IsValid() && CancelWindowEndEventTag.IsValid() && DodgeCancelStateTag.IsValid()
+			&& (CancelPolicy != EActionMontageCancelPolicy::DodgeAndDefense || DefenseCancelStateTag.IsValid()));
 
 	if (!ASC || !ActorInfo || !AnimInstance || !Avatar || !MontageToPlay
 		|| !RateWindowBeginEventTag.IsValid() || !RateWindowEndEventTag.IsValid()
+		|| !bCancelConfigValid
 		|| !FMath::IsFinite(Rate) || Rate <= 0.0f)
 	{
 		UE_LOG(LogPolyQuest, Warning, TEXT("PlayActionMontage [%s]: Activation aborted on Ability %s due to invalid setup."),
@@ -73,6 +90,10 @@ void UAbilityTask_PlayActionMontage::Activate()
 
 	// 1. Subscribe to RateWindow GameplayEvents on ASC
 	BindRateWindowEvents(ASC);
+	if (CancelPolicy != EActionMontageCancelPolicy::None)
+	{
+		BindCancelWindowEvents(ASC);
+	}
 
 	// 2. Subscribe to Ability cancellation
 	InterruptedHandle = Ability->OnGameplayAbilityCancelled.AddUObject(this, &UAbilityTask_PlayActionMontage::OnGameplayAbilityCancelled);
@@ -183,8 +204,9 @@ FString UAbilityTask_PlayActionMontage::GetDebugString() const
 			PlayingMontage = AnimInstance->Montage_IsActive(MontageToPlay) ? ToRawPtr(MontageToPlay) : AnimInstance->GetCurrentActiveMontage();
 		}
 	}
-	return FString::Printf(TEXT("PlayActionMontage. Montage: %s (InstanceID: %d, Playing: %s)"),
-		*GetNameSafe(MontageToPlay), BoundMontageInstanceID, *GetNameSafe(PlayingMontage));
+	return FString::Printf(TEXT("PlayActionMontage. Montage: %s (InstanceID: %d, Playing: %s, CancelPolicy: %d, ActiveCancelWindows: %d, Latched: %d)"),
+		*GetNameSafe(MontageToPlay), BoundMontageInstanceID, *GetNameSafe(PlayingMontage),
+		static_cast<int32>(CancelPolicy), ActiveCancelWindows.Num(), bCancelWindowLatched ? 1 : 0);
 }
 
 void UAbilityTask_PlayActionMontage::OnDestroy(bool AbilityEnded)
@@ -428,6 +450,399 @@ void UAbilityTask_PlayActionMontage::OnRateWindowEndReceived(const FGameplayEven
 	RateWindowLifecycle.HandleEnd(*Payload);
 }
 
+void UAbilityTask_PlayActionMontage::BindCancelWindowEvents(UAbilitySystemComponent* ASC)
+{
+	if (!ASC)
+	{
+		return;
+	}
+
+	UnbindCancelWindowEvents();
+
+	if (CancelWindowBeginEventTag.IsValid())
+	{
+		CancelWindowBeginHandle = ASC->GenericGameplayEventCallbacks.FindOrAdd(CancelWindowBeginEventTag).AddUObject(
+			this, &UAbilityTask_PlayActionMontage::OnCancelWindowBeginReceived);
+	}
+	if (CancelWindowEndEventTag.IsValid())
+	{
+		CancelWindowEndHandle = ASC->GenericGameplayEventCallbacks.FindOrAdd(CancelWindowEndEventTag).AddUObject(
+			this, &UAbilityTask_PlayActionMontage::OnCancelWindowEndReceived);
+	}
+}
+
+void UAbilityTask_PlayActionMontage::UnbindCancelWindowEvents()
+{
+	UAbilitySystemComponent* ASC = AbilitySystemComponent.Get();
+	if (ASC)
+	{
+		if (CancelWindowBeginHandle.IsValid() && CancelWindowBeginEventTag.IsValid())
+		{
+			ASC->GenericGameplayEventCallbacks.FindOrAdd(CancelWindowBeginEventTag).Remove(CancelWindowBeginHandle);
+			CancelWindowBeginHandle.Reset();
+		}
+		if (CancelWindowEndHandle.IsValid() && CancelWindowEndEventTag.IsValid())
+		{
+			ASC->GenericGameplayEventCallbacks.FindOrAdd(CancelWindowEndEventTag).Remove(CancelWindowEndHandle);
+			CancelWindowEndHandle.Reset();
+		}
+	}
+}
+
+bool UAbilityTask_PlayActionMontage::ValidateCancelWindowEventSource(
+	const FGameplayEventData& Payload,
+	FCancelWindowIdentity& OutIdentity,
+	bool& OutReachedEnd) const
+{
+	OutReachedEnd = false;
+	if (bTerminated || !IsActive() || !Ability)
+	{
+		return false;
+	}
+
+#if WITH_DEV_AUTOMATION_TESTS
+	if (!bTestBypassMontageActiveCheck)
+	{
+		if (!Ability->IsActive())
+		{
+			return false;
+		}
+	}
+#else
+	if (!Ability->IsActive())
+	{
+		return false;
+	}
+#endif
+
+	const AActor* AvatarActor = Ability->GetAvatarActorFromActorInfo();
+	if (!AvatarActor || Payload.Instigator != AvatarActor || Payload.Target != AvatarActor)
+	{
+		return false;
+	}
+
+	if (Payload.TargetData.Num() == 0 || !Payload.TargetData.IsValid(0))
+	{
+		return false;
+	}
+
+	const FGameplayAbilityTargetData* BaseData = Payload.TargetData.Get(0);
+	if (!BaseData || BaseData->GetScriptStruct() != FGameplayAbilityTargetData_MontageRateWindowSource::StaticStruct())
+	{
+		return false;
+	}
+
+	const FGameplayAbilityTargetData_MontageRateWindowSource* SourceData = static_cast<const FGameplayAbilityTargetData_MontageRateWindowSource*>(BaseData);
+	if (!SourceData->AnimInstance.IsValid() || SourceData->AnimInstance.Get() != BoundAnimInstance.Get())
+	{
+		return false;
+	}
+
+	if (SourceData->MontageInstanceID == INDEX_NONE || BoundMontageInstanceID == INDEX_NONE || SourceData->MontageInstanceID != BoundMontageInstanceID)
+	{
+		return false;
+	}
+
+	const UAnimInstance* AnimInst = BoundAnimInstance.Get();
+	const UAnimMontage* Montage = MontageToPlay.Get();
+	if (!AnimInst || !Montage)
+	{
+		return false;
+	}
+
+#if WITH_DEV_AUTOMATION_TESTS
+	if (!bTestBypassMontageActiveCheck)
+	{
+		if (!FAbilityMontageRateWindowLifecycle::IsCurrentMontageInstance(AnimInst, Montage, BoundMontageInstanceID))
+		{
+			return false;
+		}
+	}
+#else
+	if (!FAbilityMontageRateWindowLifecycle::IsCurrentMontageInstance(AnimInst, Montage, BoundMontageInstanceID))
+	{
+		return false;
+	}
+#endif
+
+	const UObject* SourceAnimation = Payload.OptionalObject.Get();
+	if (!IsMontageOrSequenceMatch(SourceAnimation))
+	{
+		return false;
+	}
+
+	const UAnimNotifyState_ActionDodgeCancelWindow* Notify = Cast<UAnimNotifyState_ActionDodgeCancelWindow>(Payload.OptionalObject2.Get());
+	if (!Notify)
+	{
+		return false;
+	}
+
+	if (!IsValidCancelNotifyForSource(SourceAnimation, Notify))
+	{
+		return false;
+	}
+
+	OutIdentity.SourceAnimation = SourceAnimation;
+	OutIdentity.NotifyState = Notify;
+	OutReachedEnd = SourceData->bReachedEnd;
+	return true;
+}
+
+bool UAbilityTask_PlayActionMontage::IsMontageOrSequenceMatch(const UObject* SourceAnimation) const
+{
+	if (!MontageToPlay || !SourceAnimation)
+	{
+		return false;
+	}
+
+	if (SourceAnimation == MontageToPlay)
+	{
+		return true;
+	}
+
+	if (const UAnimSequenceBase* Sequence = Cast<UAnimSequenceBase>(SourceAnimation))
+	{
+		for (const FSlotAnimationTrack& Track : MontageToPlay->SlotAnimTracks)
+		{
+			for (const FAnimSegment& Segment : Track.AnimTrack.AnimSegments)
+			{
+				if (Segment.GetAnimReference() == Sequence)
+				{
+					return true;
+				}
+			}
+		}
+	}
+
+	return false;
+}
+
+bool UAbilityTask_PlayActionMontage::IsValidCancelNotifyForSource(const UObject* SourceAnimation, const UAnimNotifyState* Notify) const
+{
+	if (!SourceAnimation || !Notify)
+	{
+		return false;
+	}
+
+	if (const UAnimSequenceBase* AnimSeq = Cast<UAnimSequenceBase>(SourceAnimation))
+	{
+		for (const FAnimNotifyEvent& NotifyEvent : AnimSeq->Notifies)
+		{
+			if (NotifyEvent.NotifyStateClass == Notify)
+			{
+				return true;
+			}
+		}
+	}
+	else if (const UAnimMontage* Montage = Cast<UAnimMontage>(SourceAnimation))
+	{
+		for (const FAnimNotifyEvent& NotifyEvent : Montage->Notifies)
+		{
+			if (NotifyEvent.NotifyStateClass == Notify)
+			{
+				return true;
+			}
+		}
+	}
+
+	return false;
+}
+
+void UAbilityTask_PlayActionMontage::OnCancelWindowBeginReceived(const FGameplayEventData* Payload)
+{
+	if (bTerminated || !IsActive() || !Payload || !Payload->EventTag.MatchesTagExact(CancelWindowBeginEventTag))
+	{
+		return;
+	}
+
+	if (CancelPolicy == EActionMontageCancelPolicy::None)
+	{
+		return;
+	}
+
+	FCancelWindowIdentity Identity;
+	bool bReachedEnd = false;
+	if (!ValidateCancelWindowEventSource(*Payload, Identity, bReachedEnd))
+	{
+		return;
+	}
+
+	if (ActiveCancelWindows.Contains(Identity))
+	{
+		return;
+	}
+
+	// 1. 首次合法 Begin 加入集合；重复 Begin 不累加
+	// Reentrancy safety: register state BEFORE calling external tag modification
+	ActiveCancelWindows.Add(Identity);
+	UpdateCancelPolicyTags();
+}
+
+void UAbilityTask_PlayActionMontage::OnCancelWindowEndReceived(const FGameplayEventData* Payload)
+{
+	if (bTerminated || !IsActive() || !Payload || !Payload->EventTag.MatchesTagExact(CancelWindowEndEventTag))
+	{
+		return;
+	}
+
+	if (CancelPolicy == EActionMontageCancelPolicy::None)
+	{
+		return;
+	}
+
+	FCancelWindowIdentity Identity;
+	bool bReachedEnd = false;
+	if (!ValidateCancelWindowEventSource(*Payload, Identity, bReachedEnd))
+	{
+		return;
+	}
+
+	if (!ActiveCancelWindows.Contains(Identity))
+	{
+		// 2. 未知或重复 End 无副作用
+		return;
+	}
+
+	// 锁存期间处理
+	if (bCancelWindowLatched)
+	{
+		if (bReachedEnd)
+		{
+			PendingNaturalEndWindows.Add(Identity);
+		}
+		// bReachedEnd == false: 视为未自然走到窗口终点的退出，不记成自然结束；在锁存期间保留窗口
+		return;
+	}
+
+	// 无锁存时：正常关闭自己的窗口
+	// Reentrancy safety: record state BEFORE calling external tag modification
+	ActiveCancelWindows.Remove(Identity);
+	UpdateCancelPolicyTags();
+}
+
+void UAbilityTask_PlayActionMontage::LatchCancelWindowsAcrossPause()
+{
+	if (bTerminated || !IsActive())
+	{
+		return;
+	}
+
+	// 只有当前已经存在合法窗口才锁存，不凭暂停产生取消权限
+	if (!ActiveCancelWindows.IsEmpty())
+	{
+		bCancelWindowLatched = true;
+	}
+	PendingNaturalEndWindows.Reset();
+}
+
+void UAbilityTask_PlayActionMontage::UnlatchCancelWindowsAfterPause()
+{
+	if (!bCancelWindowLatched)
+	{
+		return;
+	}
+
+	bCancelWindowLatched = false;
+
+	// 只移除待结算自然结束的窗口，重新按并集计算权限；其余窗口保持授权，等待恢复后的合法 End
+	for (const FCancelWindowIdentity& NaturalEndWindow : PendingNaturalEndWindows)
+	{
+		ActiveCancelWindows.Remove(NaturalEndWindow);
+	}
+	PendingNaturalEndWindows.Reset();
+
+	UpdateCancelPolicyTags();
+}
+
+void UAbilityTask_PlayActionMontage::UpdateCancelPolicyTags()
+{
+	if (bTerminated || !IsActive())
+	{
+		return;
+	}
+
+	UAbilitySystemComponent* ASC = AbilitySystemComponent.Get();
+	if (!ASC && Ability && Ability->GetCurrentActorInfo())
+	{
+		ASC = Ability->GetCurrentActorInfo()->AbilitySystemComponent.Get();
+		SetAbilitySystemComponent(ASC);
+	}
+	if (!ASC)
+	{
+		return;
+	}
+
+	const bool bShouldContribute = !ActiveCancelWindows.IsEmpty() && (CancelPolicy != EActionMontageCancelPolicy::None);
+	const bool bWantDodge = bShouldContribute && (CancelPolicy == EActionMontageCancelPolicy::DodgeOnly || CancelPolicy == EActionMontageCancelPolicy::DodgeAndDefense);
+
+	if (bWantDodge && !bContributedDodgeTag)
+	{
+		bContributedDodgeTag = true;
+		ASC->AddLooseGameplayTag(DodgeCancelStateTag);
+		if (bTerminated || !IsActive())
+		{
+			return;
+		}
+	}
+	else if (!bWantDodge && bContributedDodgeTag)
+	{
+		bContributedDodgeTag = false;
+		ASC->RemoveLooseGameplayTag(DodgeCancelStateTag);
+		if (bTerminated || !IsActive())
+		{
+			return;
+		}
+	}
+
+	// Dodge tag callbacks may have synchronously opened or closed windows without ending the task.
+	const bool bWantDefense = !ActiveCancelWindows.IsEmpty() && (CancelPolicy == EActionMontageCancelPolicy::DodgeAndDefense);
+	if (bWantDefense && !bContributedDefenseTag)
+	{
+		bContributedDefenseTag = true;
+		ASC->AddLooseGameplayTag(DefenseCancelStateTag);
+		if (bTerminated || !IsActive())
+		{
+			return;
+		}
+	}
+	else if (!bWantDefense && bContributedDefenseTag)
+	{
+		bContributedDefenseTag = false;
+		ASC->RemoveLooseGameplayTag(DefenseCancelStateTag);
+		if (bTerminated || !IsActive())
+		{
+			return;
+		}
+	}
+}
+
+void UAbilityTask_PlayActionMontage::RemoveContributedCancelTags()
+{
+	UAbilitySystemComponent* ASC = AbilitySystemComponent.Get();
+	if (!ASC && Ability && Ability->GetCurrentActorInfo())
+	{
+		ASC = Ability->GetCurrentActorInfo()->AbilitySystemComponent.Get();
+	}
+	if (ASC)
+	{
+		if (bContributedDodgeTag)
+		{
+			bContributedDodgeTag = false;
+			ASC->RemoveLooseGameplayTag(DodgeCancelStateTag);
+		}
+		if (bContributedDefenseTag)
+		{
+			bContributedDefenseTag = false;
+			ASC->RemoveLooseGameplayTag(DefenseCancelStateTag);
+		}
+	}
+	else
+	{
+		bContributedDodgeTag = false;
+		bContributedDefenseTag = false;
+	}
+}
+
 void UAbilityTask_PlayActionMontage::ResetRootMotionScale()
 {
 	if (!bAppliedRootMotionScale)
@@ -495,8 +910,14 @@ bool UAbilityTask_PlayActionMontage::CleanupTask(bool bStopMontage)
 	}
 	bTerminated = true;
 
-	// 1. Unbind RateWindow events
+	// 1. Unbind RateWindow and CancelWindow events
 	UnbindRateWindowEvents();
+	UnbindCancelWindowEvents();
+
+	ActiveCancelWindows.Reset();
+	PendingNaturalEndWindows.Reset();
+	bCancelWindowLatched = false;
+	RemoveContributedCancelTags();
 
 	// 2. Unbind cancellation delegate
 	if (Ability)

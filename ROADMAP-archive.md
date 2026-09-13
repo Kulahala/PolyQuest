@@ -1760,3 +1760,12 @@ TODO-03A3E World Pickup Interaction Prompt v1
 - **最近阶段固定入口**：上方 TODO-03H9-A 的实现/审查及 18 文件提交已经落在 `08f4214`；完整批准范围、冻结合同和第 6 节收据固定为 `git show 08f4214:plan.md`。记录中的 `6ca8a399` 是实施前基线，不是维护时的 HEAD。03H9-A 总验收仍待 `Debt-03H9-A-ValidationReceipts` 对账，提交不表示全门禁关闭。
 - **旧指针解释**：历史正文中的“当前 plan.md”“下一阶段”和当时未提交状态仅描述该条记录时点。当前执行入口读取 ROADMAP；追溯本次迁出文字使用上述固定提交，再按阶段条目定位更早证据。2026-08-29 Policy Revision 已明确开放路线不保留完整完成块，本次恢复该文档分工，不新增运行时路线或验收政策。
 - **旧措辞澄清**：04B 的 pre-03C punish 前置明确指向已交付的 05A/05B/05A1；“Directional Small/Big 扩展延期”与本归档 C3L 四向反应交付记录不一致，当前 ROADMAP 保留为历史资产/PIE 范围对账项，不重新安排选择器实现或核销验证债。
+
+
+## TODO-03H9-B：CancelWindow 托管与显式取消策略（2026-09-13）
+
+- **范围与结果**：基于 c2aefff7e4f875bb8569feefe19cdfb3a3d3568c，Task 接管 CancelWindow；None/DodgeOnly/DodgeAndDefense 显式策略、窗口并集及独立 Tag 贡献，SprintAttack/ChargedAttack 迁移。GAS 保留激活、Commit、实际取消权属，配置反射仅用于测试。
+- **关键修复**：修正播放参数顺序与同步重入；Queued End 以事件采样时间核验自身边界，直接动画段换算局部时间，Branching 使用独立 Payload。专项第 9 节隔离自动动画推进，显式推进真实 Montage/Notify 并补来源收据，原暂停、释放、重叠和重入断言保留。
+- **验证**：最终 ManagedMontageCancelWindow 自动化与 PIE 均由用户确认通过；此前八项成功记录保留原时点。Main 增量 Fresh Review 无 P0–P2，最终专项文件 Rider errors: []、空白检查通过；未代用户执行编译、Editor、Automation 或 PIE。
+- **剩余边界**：完整计划中未单独报告的构建/回归/readback 唯一维护于 ROADMAP 的 Debt-03H9-B-RepairValidation。此记录归档实现和修复交付，不宣称 B 全矩阵、父阶段完成或干净资产基线；A/H7/H6 债独立保留。
+- **授权与凭据**：用户明确授权文档收尾然后提交。提交包含 12 个源码/测试文件和 plan、ROADMAP、ARCHITECTURE、ROADMAP-archive 四份文档；排除全部 Content/Config/tmp WIP，不推送。完整契约及修复收据保存在本条所属提交的 plan.md；当前 plan 未来替换不改变此历史凭据。

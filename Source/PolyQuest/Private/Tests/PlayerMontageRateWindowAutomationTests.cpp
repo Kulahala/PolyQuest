@@ -1017,7 +1017,7 @@ namespace PlayerMontageRateWindowAutomation
 			ASC->AddLooseGameplayTag(FGameplayTag::RequestGameplayTag(TEXT("State.Movement.Sprinting")));
 			Player->SetTestCurrentMoveInput(FVector2D(0.0f, 1.0f));
 		}
-		if constexpr (std::is_same_v<TAbility, UBowDrawFireAbility> || std::is_same_v<TAbility, UChargedAttackAbility>)
+		if constexpr (std::is_same_v<TAbility, UBowDrawFireAbility>)
 		{
 			Player->TriggerTestHandleCombatInputStarted(PrimaryInput);
 			ASC->CancelAllAbilities(); // Keep held input, finish the separate PrimaryAttack router fixture.
@@ -1078,7 +1078,7 @@ namespace PlayerMontageRateWindowAutomation
 		const auto Activate = [&]()
 		{
 			ASC->SetNumericAttributeBase(UCharacterAttributeSet::GetStaminaAttribute(), 100.0f);
-			if constexpr (std::is_same_v<TAbility, UBowDrawFireAbility> || std::is_same_v<TAbility, UChargedAttackAbility>)
+			if constexpr (std::is_same_v<TAbility, UBowDrawFireAbility>)
 			{
 				if (!Player->IsCombatInputHeld(PrimaryInput))
 				{
@@ -1179,20 +1179,7 @@ namespace PlayerMontageRateWindowAutomation
 		Payload = Valid; Payload.EventTag = EndTag;
 		OldContext->OnBegin(Payload); Rate(1.25f); // Correct identity, wrong callback tag.
 
-		if constexpr (std::is_same_v<TAbility, UChargedAttackAbility>)
-		{
-			BeginA();
-			Payload = Valid; Payload.EventTag = FGameplayTag::RequestGameplayTag(TEXT("Event.Attack.Charged.HoldReady"));
-			ASC->HandleGameplayEvent(Payload.EventTag, &Payload);
-			Test.TestFalse(TEXT("Hold pauses the montage"), Anim->Montage_IsPlaying(Montage));
-			EndA(); Rate(1.25f);
-			Test.TestFalse(TEXT("Rate End cannot resume Hold"), Anim->Montage_IsPlaying(Montage));
-			BeginA();
-			Player->TriggerTestHandleCombatInputEnded(PrimaryInput);
-			Test.TestTrue(TEXT("Release resumes the existing instance"), Anim->Montage_IsPlaying(Montage));
-			Test.TestEqual(TEXT("Release preserves captured baseline"), Lifecycle.GetBaselinePlayRate(), 1.25f);
-			Rate(0.5f); EndA(); Rate(1.25f);
-		}
+
 		if constexpr (std::is_same_v<TAbility, UBowDrawFireAbility>)
 		{
 			// Early input release waits for DrawReady, then uses the real Section jump.
@@ -1233,7 +1220,7 @@ namespace PlayerMontageRateWindowAutomation
 		Test.TestFalse(TEXT("Replacement cleanup removes old binding"), Lifecycle.IsBound());
 		ASC->CancelAbilityHandle(Handle);
 		CheckEnded();
-		if constexpr (std::is_same_v<TAbility, UBowDrawFireAbility> || std::is_same_v<TAbility, UChargedAttackAbility>)
+		if constexpr (std::is_same_v<TAbility, UBowDrawFireAbility>)
 		{
 			Player->TriggerTestHandleCombatInputStarted(PrimaryInput);
 			ASC->CancelAllAbilities(); // Keep held input, finish the separate PrimaryAttack router fixture.
@@ -2012,6 +1999,113 @@ namespace PlayerMontageRateWindowAutomation
 
 		return true;
 	}
+
+	bool RunChargedAttackConsumer(FAutomationTestBase& Test, const TCHAR* MontageProperty, const TCHAR* Name)
+	{
+		FWorldContext& WorldContext = GEngine->CreateNewWorldContext(EWorldType::Game);
+		UWorld* World = UWorld::CreateWorld(EWorldType::Game, false);
+		WorldContext.SetCurrentWorld(World);
+		FTestWorldScope Cleanup{ World };
+		if (!Test.TestNotNull(TEXT("Consumer world exists"), World)) return false;
+		FURL URL;
+		World->InitializeActorsForPlay(URL);
+		World->BeginPlay();
+		APlayerCharacter* Player = FCombatAutomationFixture::SpawnPlayer(World);
+		if (!Test.TestNotNull(TEXT("Player exists"), Player)) return false;
+		UAbilitySystemComponent* ASC = Player->GetAbilitySystemComponent();
+		if (!Test.TestNotNull(TEXT("ASC exists"), ASC)) return false;
+		Player->GetCharacterMovement()->SetMovementMode(MOVE_Walking);
+		ASC->SetNumericAttributeBase(UCharacterAttributeSet::GetMaxStaminaAttribute(), 100.0f);
+		ASC->SetNumericAttributeBase(UCharacterAttributeSet::GetStaminaAttribute(), 100.0f);
+
+		UAnimMontage* Montage = CreatePlayableRateMontage(Test, World, Name);
+		if (!Test.TestNotNull(TEXT("Playable consumer montage exists"), Montage)) return false;
+		UAnimInstance* Anim = NewObject<UAnimInstance>(Player->GetMesh());
+		Anim->InitializeMontageOnly();
+		Anim->CurrentSkeleton = Montage->GetSkeleton();
+		Player->GetMesh()->AnimScriptInstance = Anim;
+		ASC->RefreshAbilityActorInfo();
+
+		const FGameplayTag PrimaryInput = FGameplayTag::RequestGameplayTag(TEXT("Input.PrimaryAttack"));
+		Player->TriggerTestHandleCombatInputStarted(PrimaryInput);
+		ASC->CancelAllAbilities();
+
+		const FGameplayAbilitySpecHandle Handle = ASC->GiveAbility(FGameplayAbilitySpec(UChargedAttackAbility::StaticClass(), 1, INDEX_NONE, Player));
+		UChargedAttackAbility* Ability = Cast<UChargedAttackAbility>(ASC->FindAbilitySpecFromHandle(Handle)->GetPrimaryInstance());
+		if (!Test.TestNotNull(TEXT("ASC instanced the ChargedAttack consumer"), Ability)) return false;
+		ON_SCOPE_EXIT { if (IsValid(ASC)) { ASC->CancelAbilityHandle(Handle); ASC->ClearAbility(Handle); } };
+
+		if (!Test.TestTrue(TEXT("Fixture assigns authored montage"), SetFixtureObject(Ability, MontageProperty, Montage))) return false;
+		for (const FName EffectProperty : { FName(TEXT("CostGameplayEffectClass")), FName(TEXT("CooldownGameplayEffectClass")),
+			FName(TEXT("DamageGameplayEffectClass")), FName(TEXT("StaminaRegenDelayGameplayEffectClass")), FName(TEXT("InvulnerabilityGameplayEffectClass")) })
+		{
+			SetFixtureObject(Ability, EffectProperty, UGameplayEffect::StaticClass());
+		}
+
+		const bool bActivated = ASC->TryActivateAbility(Handle);
+		if (!Test.TestTrue(TEXT("Real ASC activation keeps ChargedAttack active"), bActivated && Ability->IsActive()
+			&& ASC->FindAbilitySpecFromHandle(Handle)->IsActive()))
+		{
+			return false;
+		}
+
+		Test.TestTrue(TEXT("ChargedAttack RateWindow lifecycle is bound"), Ability->GetTestRateWindowLifecycle().IsBound());
+		Test.TestTrue(TEXT("ChargedAttack has active montage task"), Ability->HasTestRateWindowTasks());
+		Test.TestEqual(TEXT("ChargedAttack starts at montage time zero"), Anim->Montage_GetPosition(Montage), 0.0f);
+		Test.TestEqual(TEXT("ChargedAttack preserves root motion scale"), Player->GetAnimRootMotionTranslationScale(), 1.0f);
+
+		const FAnimMontageInstance* Instance = Anim->GetActiveInstanceForMontage(Montage);
+		if (!Test.TestNotNull(TEXT("Actual montage instance exists"), Instance)) return false;
+		Test.TestEqual(TEXT("ChargedAttack owns actual instance ID"), Ability->GetTestRateWindowMontageInstanceID(), Instance->GetInstanceID());
+
+		FAnimNotifyEvent* EventA = FindRateWindowEvent(Montage, 0);
+		FAnimNotifyEvent* EventB = FindRateWindowEvent(Montage, 1);
+		if (!Test.TestNotNull(TEXT("Notify A exists"), EventA) || !Test.TestNotNull(TEXT("Notify B exists"), EventB)) return false;
+		auto* NotifyA = CastChecked<UAnimNotifyState_MontageRateWindow>(EventA->NotifyStateClass);
+		auto* NotifyB = CastChecked<UAnimNotifyState_MontageRateWindow>(EventB->NotifyStateClass);
+		FAnimNotifyEventReference RefA(EventA, Montage);
+		RefA.AddContextData<UE::Anim::FAnimNotifyMontageInstanceContext>(Instance->GetInstanceID());
+		FAnimNotifyEventReference RefB(EventB, Montage);
+		RefB.AddContextData<UE::Anim::FAnimNotifyMontageInstanceContext>(Instance->GetInstanceID());
+
+		const auto BeginA = [&]() { NotifyA->NotifyBegin(Player->GetMesh(), Montage, 1.0f, RefA); };
+		const auto BeginB = [&]() { NotifyB->NotifyBegin(Player->GetMesh(), Montage, 1.0f, RefB); };
+		const auto EndA = [&]() { NotifyA->NotifyEnd(Player->GetMesh(), Montage, RefA); };
+		const auto EndB = [&]() { NotifyB->NotifyEnd(Player->GetMesh(), Montage, RefB); };
+		const auto Rate = [&](float Expected) { Test.TestEqual(TEXT("Actual montage rate"), Anim->Montage_GetPlayRate(Montage), Expected); };
+
+		// Exercise RateWindow via standard AnimNotify transport
+		BeginA(); Rate(0.5f);
+		BeginB(); Rate(0.2f);
+		EndA(); Rate(0.2f);
+		EndB(); Rate(1.0f);
+
+		// Charged Hold pause & resume
+		BeginA(); Rate(0.5f);
+		FGameplayEventData HoldPayload;
+		HoldPayload.EventTag = FGameplayTag::RequestGameplayTag(TEXT("Event.Attack.Charged.HoldReady"));
+		HoldPayload.Instigator = Player;
+		HoldPayload.Target = Player;
+		HoldPayload.OptionalObject = Montage;
+		ASC->HandleGameplayEvent(HoldPayload.EventTag, &HoldPayload);
+		Test.TestFalse(TEXT("Hold pauses montage"), Anim->Montage_IsPlaying(Montage));
+
+		// RateWindow End while paused does not resume
+		EndA(); Rate(1.0f);
+		Test.TestFalse(TEXT("Rate End cannot resume Hold"), Anim->Montage_IsPlaying(Montage));
+
+		// Release resumes
+		Player->TriggerTestHandleCombatInputEnded(PrimaryInput);
+		Test.TestTrue(TEXT("Release resumes playing"), Anim->Montage_IsPlaying(Montage));
+
+		// End ability
+		ASC->CancelAbilityHandle(Handle);
+		Test.TestFalse(TEXT("ChargedAttack ended"), Ability->IsActive());
+		Test.TestFalse(TEXT("ChargedAttack RateWindow lifecycle unbound"), Ability->GetTestRateWindowLifecycle().IsBound());
+		Test.TestFalse(TEXT("ChargedAttack montage task cleaned up"), Ability->HasTestRateWindowTasks());
+
+		return true;
+	}
 }
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FMeleeSkillRateWindowTest, "PolyQuest.Combat.PlayerMontageRateWindow.MeleeSkill", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
@@ -2019,7 +2113,7 @@ bool FMeleeSkillRateWindowTest::RunTest(const FString&) { return PlayerMontageRa
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSprintAttackRateWindowTest, "PolyQuest.Combat.PlayerMontageRateWindow.Sprint", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 bool FSprintAttackRateWindowTest::RunTest(const FString&) { return PlayerMontageRateWindowAutomation::RunSprintAttackConsumer(*this, TEXT("SprintAttackMontage"), TEXT("Sprint")); }
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FChargedAttackRateWindowTest, "PolyQuest.Combat.PlayerMontageRateWindow.Charged", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
-bool FChargedAttackRateWindowTest::RunTest(const FString&) { return PlayerMontageRateWindowAutomation::RunConsumer<UChargedAttackAbility>(*this, TEXT("ChargedAttackMontage"), TEXT("Charged")); }
+bool FChargedAttackRateWindowTest::RunTest(const FString&) { return PlayerMontageRateWindowAutomation::RunChargedAttackConsumer(*this, TEXT("ChargedAttackMontage"), TEXT("Charged")); }
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FBowRateWindowTest, "PolyQuest.Combat.PlayerMontageRateWindow.Bow", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 bool FBowRateWindowTest::RunTest(const FString&) { return PlayerMontageRateWindowAutomation::RunConsumer<UBowDrawFireAbility>(*this, TEXT("BowMontage"), TEXT("Bow")); }
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FDodgeRateWindowTest, "PolyQuest.Combat.PlayerMontageRateWindow.Dodge", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)

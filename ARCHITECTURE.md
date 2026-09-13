@@ -451,7 +451,7 @@ and unknown Ends do not change the set. Ending the newest window restores the
 previous active window, and ending the last window restores the baseline
 captured after successful playback. The rate is not multiplied by that baseline.
 
-SprintAttack delegates playback and RateWindow ownership to
+SprintAttack and ChargedAttack delegate playback and RateWindow ownership to
 `UAbilityTask_PlayActionMontage`; the other listed Player consumers retain their
 transient contexts, binding generations, instance IDs, and exact-tag event tasks.
 Player and Enemy consumers share the native
@@ -464,7 +464,7 @@ instance. Cleanup invalidates the context, removes listeners, restores only a
 still-owned current instance, then clears local state. Normal termination
 continues through the Ability's existing GAS `EndAbility()` path.
 
-ChargedAttack, MeleeSkill, BowDrawFire, Dodge, and
+MeleeSkill, BowDrawFire, Dodge, and
 PlayerBigHitReaction share the private,
 stateless `FMontageRateWindowBinding` template helper through their existing
 `BindRateWindow` methods. The helper reads each Ability's ending flag by reference,
@@ -476,7 +476,7 @@ UPROPERTY ownership, and action-specific cleanup remain in each Ability. Light
 and Enemy consumers retain their distinct binding order.
 
 `UAbilityTask_PlayActionMontage` directly plays through the ASC and composes the
-existing RateWindow lifecycle. SprintAttack and EnemySmallHitReaction use this
+existing RateWindow lifecycle. SprintAttack, ChargedAttack and EnemySmallHitReaction use this
 entry and no longer own RateWindow-only contexts/listeners or parallel Montage
 stop calls. The Ability retains Commit, gameplay effects and its `EndAbility()`
 exit; the task owns playback, event subscriptions, rate restoration and stopping.
@@ -494,8 +494,25 @@ stop. Natural completion still reports Completed after the instance stops.
 Root Motion scale recovery requires that the task actually applied it and that
 no other Montage or newer instance has taken over; BlendOut and cleanup share
 that check. Failed startup cannot reset another playback's scale. These facts
-cover the two adopted consumers; other actions retain their existing playback
+cover the three adopted consumers; other actions retain their existing playback
 and cancellation ownership.
+
+The managed task also owns CancelWindow subscriptions and per-task loose-tag
+contributions. `EActionMontageCancelPolicy` has `None` (default), `DodgeOnly`
+and `DodgeAndDefense`; SprintAttack and ChargedAttack use `DodgeAndDefense`.
+Valid windows are keyed by source animation and Notify identity and form a
+union. The task contributes each policy tag once while that union is nonempty,
+and removes only its own contribution during closure or idempotent cleanup.
+Activation, Commit and actual interruption remain GAS responsibilities.
+Configuration diagnostics are test-only and never block runtime playback.
+
+ChargedAttack latches cancellation windows before pausing. Premature Ends do
+not revoke held authorization; natural Ends are deferred and settled on release.
+Queued Ends require both the native flag and the event's sampled time reaching
+that window's boundary, with direct segment time conversion. This avoids UE 5.8
+shared tick-context flags from another Notify ending an interior window.
+Branching Point Ends use their own payload. Release checks ability/task validity
+after unlatching because removing a tag can synchronously cancel the ability.
 
 Light creates a new binding for each combo entry. MeleeSkill binds only after
 playback confirmation and successful Commit. Charged Pause/Resume and Bow
