@@ -1751,3 +1751,12 @@ TODO-03A3E World Pickup Interaction Prompt v1
 - **终审**：Main最终增量Fresh Review通过，无未关闭P0–P2；Ponytail辅审无新增独立复杂度建议。最终五文件Rider 0 errors及Source空白检查为Gemini报告，Main未代跑编译/Automation/Editor/PIE。
 - **证据边界与交接**：本记录沉淀已完成实现/审查，不宣称总验收所有门禁关闭；未单独报告的构建/回归/readback唯一归ROADMAP的Debt-03H9-A-ValidationReceipts。plan.md第6节保留当前凭据，ARCHITECTURE仅更新两个已迁移试点的运行时事实。路线保持A → B → C → 03C，不自动实施后续阶段。
 - **文档与Git**：用户确认编译后要求继续，Main更新plan.md、ROADMAP.md、ROADMAP-archive.md与ARCHITECTURE.md。用户随后明确回复“可以提交”，批准本片14个源码/测试文件与4份阶段文档共18文件有界提交；显式暂存并核验清单，排除全部无关WIP，不推送。剩余验证收据按原边界保留，不因提交批准追认为已执行。
+
+
+## README / ROADMAP Navigation Maintenance（2026-09-13）
+
+- **固定基线**：本次整理基于已提交的 `08f4214968b370d0d0c48dafc127095ecd045120`。整理前 README 的完整介绍/阶段叙述、ROADMAP 的旧完成块与依赖措辞分别固定为 `git show 08f4214:README.md`、`git show 08f4214:ROADMAP.md`；不将整份旧正文再次复制到归档。
+- **归档去向**：README 提及的阶段均可在本归档检索；早期记录位于初始快照，后续交付位于各阶段 closeout。ROADMAP 移除重复完成链、已关闭条目和历史运行时描述，开放阶段、条件候选、风险及验证关闭条件继续由当前 ROADMAP 唯一维护。本次没有补造编译、Automation、Editor/readback 或 PIE 证据。
+- **最近阶段固定入口**：上方 TODO-03H9-A 的实现/审查及 18 文件提交已经落在 `08f4214`；完整批准范围、冻结合同和第 6 节收据固定为 `git show 08f4214:plan.md`。记录中的 `6ca8a399` 是实施前基线，不是维护时的 HEAD。03H9-A 总验收仍待 `Debt-03H9-A-ValidationReceipts` 对账，提交不表示全门禁关闭。
+- **旧指针解释**：历史正文中的“当前 plan.md”“下一阶段”和当时未提交状态仅描述该条记录时点。当前执行入口读取 ROADMAP；追溯本次迁出文字使用上述固定提交，再按阶段条目定位更早证据。2026-08-29 Policy Revision 已明确开放路线不保留完整完成块，本次恢复该文档分工，不新增运行时路线或验收政策。
+- **旧措辞澄清**：04B 的 pre-03C punish 前置明确指向已交付的 05A/05B/05A1；“Directional Small/Big 扩展延期”与本归档 C3L 四向反应交付记录不一致，当前 ROADMAP 保留为历史资产/PIE 范围对账项，不重新安排选择器实现或核销验证债。

@@ -1,215 +1,56 @@
 # PolyQuest
 
-![PolyQuest Cover](docs/images/cover.jpg)
+![PolyQuest 游戏场景封面](docs/images/cover.jpg)
 
-UE 5.8 C++/GAS-first single-player low-poly action RPG with a fixed elevated oblique perspective and deliberate, readable combat.
+PolyQuest 是使用 **Unreal Engine 5.8、C++ 与 Gameplay Ability System（GAS）** 开发的单人低多边形动作 RPG。游戏采用固定俯斜视角，以近战攻防、体力管理和清晰的动作反馈为核心。
 
-## Demo Video
+[观看战斗演示 · Bilibili](https://www.bilibili.com/video/BV14Ntw6RELr)
 
-- [Bilibili combat demo](https://www.bilibili.com/video/BV14Ntw6RELr)
+## 项目状态
 
-## Status
+项目仍在开发，当前重点是玩家战斗与首个近战敌人的可玩闭环。已经具备近战、弓箭、装备切换、锁定、受击反应和处决等基础；远程敌人、存档与休息点、消耗品、完整关卡和 Boss 流程仍属于后续工作。具体排期见 [开发路线](ROADMAP.md)。
 
-PolyQuest has completed its native first-enemy combat loop and weapon/AI combat foundation end to end: input-intent routing, a linear light-attack Combo, Stamina exhaustion/recovery, Root Motion Dodge, hold/release Charged Attack, Sprint/Jump/Sprint Attack, shared weapon-motion tracing and GAS hit resolution, the first enemy Sight/StateTree/melee loop with Profile/reach/cooldown, terminal death with teardown and ragdoll presentation, tiered Small/Big/Launch hit reactions with grounded Root Motion interruption and CharacterMovement-owned launch/landing recovery, damage-path-owned nonlethal Mesh Overlay flashes with separate received-hit and attacker-impact Player camera shake (`TODO-07B1` / `TODO-07B4`), the player-only authored LandingRecovery-to-Dodge cancellation route, enemy Poise with deferred Stance Break, the player directional Guard with Guard Break, a Q-triggered timed Parry that counters through the enemy Poise path, notify-timed enemy Hyper Armor, a combat-Notify ownership/naming audit, authored Montage rate windows for Light, Charged, and Sprint Attack, player-authored Action Windows and controlled Dodge recovery chaining (`TODO-01C3`), player equipment with direct GameplayAbility routes and prepared 1-4 skills, world equipment pickup and atomic drop-swap, melee sweep trace socket authoring, OffHand Shield composite defense, ordinary enemy weighted attack sets, static enemy weapon geometry binding with camera collision protection, enemy cooldown repositioning, distance-aware weighted melee approach and attack execution, the cross-stage weapon/combat health and lean reviews (`TODO-03H1` / `TODO-03H2`), and the player Bow/Projectile target-assist, limited-homing, and locked-target preference slices (`TODO-03B-2` / `TODO-03B-3`). The user has confirmed the relevant local `PolyQuestEditor` automation suites and focused PIE/Standalone visual routes for these stages. GameplayAbility, GameplayEffect, Montage, AnimBP, Blueprint, input, DataAsset, and map authoring assets remain local mutable WIP, so the focused source/config commits do not claim clean-checkout reproduction of those fixtures.
+演示与阶段验证基于本地制作的资产。部分 Blueprint、Montage、AnimBP、DataAsset、输入与地图仍是本地 WIP，**当前仓库不承诺干净克隆后即可复现全部演示，也不代表已具备发布构建**。各项验证的详细记录与剩余限制见阶段文档。
 
-`TODO-07B2` adds one exact Trace Window-owned Niagara melee trail to Player and Enemy melee without changing the shared Sweep/Resolver damage route. The user confirmed focused `Scene01` PIE visual validation and all thirteen Unreal Editor Automation suites, including `PolyQuest.Melee.WeaponTrail`; authored Niagara assets and Blueprint assignments remain local `Content/**` WIP rather than clean-checkout evidence.
+## 主要玩法
 
-`TODO-07B3` completes Definition-authored projectile flight trails without a second Arrow Actor or Blueprint subclass. `ACombatProjectile` owns one inactive Niagara component; a valid Socket anchors it at the projectile mesh tail, null presentation stays silent, and a missing Socket falls back safely to the mesh root. On a hit or lifespan expiry, combat delivery stops immediately while the detached trail finishes naturally before the still-owning Actor is destroyed through Niagara completion or a bounded timeout. The user confirmed focused PIE and the sixteen-suite Automation matrix, including `PolyQuest.Projectile.FlightTrail`; Niagara, mesh-socket, and DataAsset authoring remain local `Content/**` WIP.
+- **近战与体力管理**：轻攻击连段、蓄力攻击、冲刺攻击、跳跃与 Root Motion 闪避，配合体力消耗、恢复和耗尽约束。
+- **防御与破绽惩罚**：方向格挡、盾牌防御、格挡破坏、限时弹反、敌人韧性与姿态破坏，以及正面处决和背刺。
+- **弓箭与锁定**：移动拉弓、蓄持与释放，发射时选定目标及有限制导；屏幕空间锁定、目标切换与遮挡保持策略。
+- **装备与交互**：主副手组合、装备驱动的攻击/防御能力与 1–4 技能槽，世界武器拾取、交换和交互提示。
+- **敌人与战斗反馈**：基于 Sight/StateTree 的近战敌人、加权攻击与距离调整、四向轻重受击、接地 Root Motion 击倒、死亡布娃娃，以及刀光、箭矢拖尾、音效、镜头反馈和生命/体力 HUD。
+- **场景可读性**：固定视角下的遮挡处理与地牢楼层可见性切换。
 
-`TODO-07B4` adds independent attacker-impact Small/Big/Launch Camera Shake fields while preserving the received-hit fields and the shared PlayerCameraManager lifecycle. The existing Enemy Health/Team feedback boundary forwards one classified tier to the Player after per-Spec de-duplication; an empty attacker field fails closed and never borrows a received-hit field. The user confirmed the focused Automation suite and Scene01 PIE. This closeout does not claim a separate manual compile log or six-field Editor readback; authored shake assignments remain local `Content/**` WIP.
+## 技术特点
 
-`TODO-03A7` adds a player-only, opt-in Motion-Warp contact assist for Light combo entry 0. It consumes one validated Lock-On snapshot, writes a bounded static contact target, and clears it on entry replacement, cancellation, death, UnPossess, and EndPlay; it does not alter Lock-On acquisition, melee Trace/Resolver/Damage, Bow/Projectile, or other attack families. The closeout records user-confirmed focused Automation and Scene01 PIE; it does not claim a separate manual `PolyQuestEditor` compile or Motion-Warp asset readback, and authored assets remain local `Content/**` WIP.
+- **GAS 统一战斗权威**：Ability、Effect、Tag 和 Attribute 承担动作激活、打断、消耗、状态和伤害；不维护平行动作状态机。
+- **AI 与动作分工**：Controller/StateTree 管理感知、导航与战术意图，具体战斗动作由 Ability 执行。
+- **数据驱动配置**：武器、投射物、攻击 Profile 与表现 DataAsset 描述内容，复用现有 C++ 运行时路径。
+- **动画与玩法协作**：Montage/Notify 驱动攻击和动作窗口，Root Motion/CharacterMovement 管位移与碰撞，局部 Motion Warping 用于适用的攻击接近与对齐。
+- **验证方式**：使用 Unreal Automation 覆盖关键合同与生命周期，并以 Editor/PIE 验证实际资产和游戏表现；两类证据分别记录。
 
-`TODO-03A7B` completes the bounded Player Light Combo Motion-Warp adoption slice for zero-based entries 0..2. Each legal opt-in entry uses the Ability-owned one-shot Lock-On snapshot and its own geometry parameters; target death/destruction, entry replacement, task/montage failure, cancellation, UnPossess, and teardown clear stale targets without changing the shared melee Trace/Resolver/Damage path. The user confirmed the focused Automation suite and Scene01 PIE. No separate manual `PolyQuestEditor` compile or entry 1/2 Motion-Warp Editor readback is recorded, so authored fixtures remain local WIP and this is not a clean-checkout authored-baseline claim.
+更详细的模块所有权和数据流见 [架构说明](ARCHITECTURE.md)。
 
-`TODO-03A7D` completes the bounded source lifecycle for `UPlayerMeleeSkillAbility` on the existing Player-owned Motion-Warp bridge and shared evaluator. The ability keeps its own static Lock-On snapshot and teardown gates, while the `Trace -> Resolver -> Damage GE` path and other action ownership remain unchanged. Focused source validation is recorded separately from the still-open `GA_Skill_Whirlwind` authored readback/adoption decision.
+## 本地开发
 
-`TODO-03A7F` completes the source-level trigger-range contract for the four current Player Motion-Warp consumers. `MinTriggerDistance <= WarpStopDistance <= MaxTriggerDistance` makes the lower and upper bounds explicit: `Min < Stop` permits bounded reverse correction, `Min == Stop` preserves forward-only behavior, and exact stop distance is a no-op. The user confirmed the focused Motion-Warp Automation suite and Scene01 PIE; authored field migration, Montage/Notify/Root Motion readback, and an independent manual `PolyQuestEditor` compile receipt remain open, so this is not a clean-checkout authored-fixture claim.
+环境基线为 Windows、Unreal Engine 5.8、Visual Studio 2022 C++ 游戏开发工具及 Git LFS。
 
-`TODO-03H5` completes a Review-Only health audit of the four current Player Motion-Warp consumers and their direct lifecycle, ASC, input, and melee damage boundaries. No P0-P2 blocker or Source change was found; the A7F exact-stop test limitation and authored readback/manual-compile/cross-frame Task evidence remain non-blocking validation debt.
+1. 安装 Git LFS，在克隆前执行 `git lfs install`，克隆后执行 `git lfs pull` 拉取已跟踪的大文件。
+2. 按 [PolyQuest.uproject](PolyQuest.uproject) 准备当前启用的插件。项目描述包含 VibeUE、MCP 工具集及其他 Editor 插件依赖，仓库没有项目级 `Plugins/` 目录，需在本机引擎环境中满足这些依赖。
+3. 生成项目文件，使用 Visual Studio 构建 `PolyQuestEditor` 的 Development Editor / Win64 配置，再打开项目。
+4. 本地内容基线齐备后，可在 `/Game/Maps/Scene01` 进行开发验证。缺少的本地 WIP 资产不会由 Git LFS 自动补齐。
 
-`TODO-03I1` establishes the direct input route for the equipped MainHand: `PrimaryAttackAbilityTag` and optional `SprintAttackAbilityTag` are canonical, Guard/Parry use the Effective Defense Profile, and prepared 1-4 slots use exact handles. `TODO-03I4` removes the former `UCombatLoadoutDefinition` C++/test compatibility surface after the user confirmed product references were zero and the legacy asset was deleted; no Loadout route now participates in runtime input or equipment transactions. The user confirmed the affected Automation and Scene01 PIE passed; no separate manual `PolyQuestEditor` compile receipt is recorded.
+当前输入验证以键鼠为准，尚不宣称手柄硬件支持。构建与运行需具备相应的本地插件和资产基线。
 
-`TODO-03B-4` completes mobile Player Bow Draw/Hold/Release/Recovery: the Bow Ability keeps its existing aim, lock-preference, projectile, Dodge-window, and Jump-block contracts, but no longer blocks ordinary movement input. A configured authored MoveSpeed GameplayEffect owns one exact active handle across the full Bow lifecycle and cancels only an active Sprint; the handle is removed precisely through `EndAbility()` without touching other speed sources. The user confirmed focused PIE and the fourteen-suite Editor Automation matrix. The authored pace is mutable local Content tuning, while native Automation covers handle lifetime and CharacterMovement synchronization with an isolated fixture value.
+## 仓库导航
 
-`TODO-03B-5` completes Bow Hold locomotion presentation. `State.Action.Attacking` remains the full Draw -> Hold -> Release action tag and drives the Bow locomotion selector; `State.Action.Charging` is added only after the valid DrawReady event and drives the separate Hold-only `Is Bow Holding` layer gate. The authored `AllowBlend` relation keeps Draw and Release UpperBody Montage poses visible while Hold alone uses the full-body Bow hold presentation. The user confirmed focused Automation, Editor readback, and Scene01 PIE. The adjacent `CameraBoom` tuning (`CameraLagSpeed = 8.0f`, `CameraLagMaxDistance = 0.0f`) is recorded separately as presentation feel work; mutable AnimBP and other authored assets remain local WIP.
-
-`TODO-03B-2` extends the TwoHanded Bow with local pointer-facing over a character-center reference plane, one Release-time hostile-target selection inside the current viewport plus a 6% edge overscan, and a projectile-owned target snapshot. Arrows first fly along the pointer direction, then optionally steer under authored duration, turn-rate, and total-turn budgets; a data value above 90 degrees deliberately permits the current casual U-turn behavior. A selected target never triggers a new search, and leaving the screen after Release does not cancel the arrow. The shared projectile collision, GameplayEffect delivery, and ownership boundary remain unchanged. PolyQuest continues to reuse validated player-facing behavior from the old Test project without copying its FSM, save schema, or authored asset topology.
-
-`TODO-03B-3` completes the Bow-to-lock bridge without turning lock-on into a projectile framework. On Release, only a Bow definition with `bEnableTargetAssist=true` asks the Player to validate the current B2 lock once; a valid lock, including B2's one-time death handoff, is copied into the existing projectile target snapshot before the B2 automatic candidate query. The arrow still launches along the mouse pointer direction, and a later wheel switch, clear, or target death cannot retarget that launched arrow. An invalid lock falls through to the unchanged B2 automatic query; with Target Assist disabled, Bow neither reads the lock nor selects any target, preserving straight-flight behavior. The user confirmed `PolyQuest.Projectile.Lifecycle`, `PolyQuest.Projectile.TargetAssist`, and `PolyQuest.Player.LockOn` Automation plus focused PIE. Authored Bow/Projectile assets remain local `Content/**` WIP.
-
-`TODO-03H2` closes a read-first combat-runtime health gate. It found no P0-P2 lifecycle or ownership defect across Player combat, equipment, lock-on, Bow/Projectile, hit reactions, Enemy AI/combat, and vital HUD. Its sole code repair is test-only: the B3 Release fixture now injects the real equipment-granted Bow Ability Spec handle before `GetAbilityLevel()` runs, removing the five misleading `Invalid AbilitySpecHandle` warnings without changing Bow runtime behavior. The user confirmed manual compilation, all ten focused Automation suites, and focused `Scene01` PIE; the remaining high-volume native-fixture configuration warnings are documented as a dedicated signal-hygiene debt rather than being hidden or changed at runtime.
-
-`TODO-02C3E` establishes the fail-closed Hit Reaction Tier classification contract (`Data.Reaction.Small`, `Data.Reaction.Big`, `Data.Reaction.Launch`) and delivers the first non-interrupting Player and Enemy Small reaction: `FHitReactionClassifier` provides pure, context-free tag classification; `APlayerCharacter` and `AEnemyCharacter` bind authoritative Health attribute value change delegates to dispatch target-side reaction events; `UPlayerSmallHitReactionAbility` and `UEnemySmallHitReactionAbility` provide native montage playback on `ReactionOverlayGroup.ReactionOverlay` without stopping movement or cancelling active actions; and `UEnemyHitReactionAbility` re-maps to Enemy Big. 8/8 automation test suites passed, and the user confirmed Scene01 PIE visual validation for non-interrupting overlay reactions.
-
-`TODO-02C3F` completes the grounded, nonlethal Big reaction route for both targets. `UPlayerBigHitReactionAbility` and the retained `UEnemyHitReactionAbility` begin a full-body Montage before cancelling eligible actions; Montage Root Motion is the only planar displacement owner, movement can neither walk off ledges nor remain locked after a Falling transition, and the existing StateTree pauses Enemy attack decisions through `State.Action.HitReacting`. `FHitReactionImpactResolver` snapshots a fail-closed target-local attacker direction for later presentation work without steering current Root Motion. The remaining `Data.Reaction.Interrupt` asset was migrated to `Data.Reaction.Big`, and the retired Interrupt/Enemy.Hit tags were removed after a zero-reference asset scan. The user confirmed `PolyQuest.Combat.HitReaction` Automation and Scene01 PIE, including the migrated Unarmed Charged route.
-
-`TODO-02C3G` completes the nonlethal Player/Enemy Launch route. A matching Launch Gameplay Event starts a full-body Takeoff Montage; the authored Commit Notify pauses that Montage on its airborne pose while `CharacterMovement` exclusively owns the physical arc. A bounded airborne watchdog, phase-aware movement delegate, and landing-time velocity brake prevent stale HitReacting/input/AI state and high-speed ground bounce. Actual grounding stops the paused Takeoff before an in-place prone-to-standing LandingRecovery begins. The shared impact resolver now uses the valid planar actor-center relative line first, with ImpactNormal as a fail-closed fallback, so launch velocity consistently moves the target away from its attacker. The user confirmed Automation and focused PIE after the lifecycle repair; mutable authored Launch assets remain local WIP.
-
-`TODO-01C4` completes the Player-only recovery Dodge route. The existing `ActionDodgeCancelWindow` can authorize a normal grounded Dodge only during a matching active Player Launch `LandingRecovery` Montage; the scoped `State.Action.CanCancel.Dodge` contribution is removed on window end and every Launch cleanup path. Dodge still commits its normal cost before it cancels Launch, preserving the existing positive-Stamina soft-overspend rule and rejecting repeated startup inputs until Dodge opens its own recovery window. The user confirmed Automation and focused PIE; the authored Montage/GA/GE assets remain local WIP.
-
-`TODO-02C3H` completes the Enemy-only landing-deferred Stance Break route. Once an Enemy Launch Takeoff has actually started, a zero-Poise result becomes one Enemy-owned pending intent rather than a mid-air Stance Break; only natural LandingRecovery completion, after Launch cleanup releases `State.Action.HitReacting`, may dispatch the existing Stance Break event. A positive Poise recovery clears the intent. Death, teardown, or an abnormal Launch end clear it without a late break; a surviving zero-Poise Enemy instead restores Poise through the existing recovery GameplayEffect. Player Guard/Parry and immediate Player Guard Break behavior are intentionally unchanged. The user confirmed `PolyQuest.Combat.HitReaction` Automation and focused PIE; authored assets remain local WIP.
-
-`TODO-07A1` completes the core vital-display route: a passive local viewport HUD shows the Player's current/max Health and Stamina, while each living Enemy owns an always-visible Screen Space Health-only bar. Existing ASC attributes remain authoritative; the Controller and Enemy refresh the display through attribute delegates with explicit re-possession, death, and teardown cleanup. The user confirmed `PolyQuest.UI.VitalHUD` Automation, manual `PolyQuestEditor` compilation, Editor asset readback, and focused PIE. The project currently has no playable Player-healing source, so Automation drives the same ASC positive-Health refresh branch without claiming a PIE healing route; `TODO-03E` remains the first gameplay healing loop. Authored UMG/Blueprint assets remain local `Content/**` WIP.
-
-`TODO-02B1` and `TODO-02B2` complete the local screen-space lock-on route for the fixed oblique camera: Middle Mouse acquires the strictly in-viewport hostile nearest to the cursor or clears the current lock, while the mouse wheel cycles the current lock in deterministic screen-space order. A valid lock highlights the Enemy's existing overhead Health bar. It supplies one-shot facing to Light, Charged, Sprint Attack, and Melee Skill; it also continuously faces the target during eligible grounded Idle/Walk/Run, Guard, and non-Root-Motion Parry at the native `800 degrees/second` yaw rate. Sprint retains the lock but restores movement-facing, and action, Root Motion, Bow, hit-reaction, death, and Stunned states retain their own yaw. Only a confirmed current-target death makes one clockwise strict-viewport handoff from the cached screen record; a target beyond the `TODO-02B3` retention band or any other invalidation clears without replacement. The lock route does not recenter the camera or change Bow Draw/Hold pointer-facing, Homing, collision, or projectile lifetime. `TODO-03B-3` adds its sole Bow integration: a valid lock may be the Release-time initial target source when authored Target Assist is enabled. The user confirmed `PolyQuest.Player.LockOn` Automation and focused PIE, including the Bow regression and fixed-weapon camera-collision check. Input/Widget assets remain local `Content/**` WIP.
-
-`TODO-02B3` completes Lock-On Retention Hysteresis v1. Acquisition, cycle candidate construction, and confirmed-death handoff remain strict to the viewport, while an already-owned target may remain valid within one fixed per-axis `15%` screen margin. A retention-only target stays highlighted and keeps the existing facing/`ResolveValidLockedTarget()` contract; wheel Cycle is a no-op until it returns to the strict candidate set. Bow's independent `6%` automatic Target Assist boundary is unchanged. The user confirmed the relevant Automation suites and focused `Scene01` PIE; authored GameplayAbility/GameplayEffect/Montage/AnimBP/Blueprint/input/DataAsset/map content remains local WIP, and no separate Development Editor compile log is claimed here.
-
-`TODO-03A6C` completes the current weapon-presentation contract. `EWeaponLocomotionMode` now contains only main-hand families (`Default = 0`, `LightSword = 1`, `HeavySword = 2`, `Bow = 4`); the removed ordinal `3` fails definition validation instead of silently becoming a locomotion mode. `GetResolvedLocomotionMode()` is MainHand-only, while `HasShieldEquipped()` separately exposes the committed OffHand's authored Shield-presentation fact. `ABP_Player_Dungeon` selects full-body Shield Guard only from `HasShieldEquipped()` together with active `State.Action.Guarding.Shield`; a generic Guard tag or `Ability.Defense.Guard.Shield` is not an equipped-Shield signal. The user confirmed Editor compilation/readback, fourteen Automation suites, and focused PIE; the old `BS_SwordShield_Walk_Run` asset remains local `Content/**` WIP after its AnimBP branch was removed and was not deleted by this stage.
-
-`TODO-03A6D` completes bounded multi-source melee tracing for Unarmed combat. `UMeleeWeaponDefinition` authors named owner-mesh source profiles, while each `UAnimNotifyState_AttackTraceWindow` selects `RightFist`, `LeftFist`, or both; the shared trace Task validates every source before updating source-keyed trails or delivering any hit, and it still allows only one successful target delivery per authored window. Existing single-source weapon and Enemy paths remain unchanged. The user confirmed the post-review fifteen-suite Automation matrix, including `PolyQuest.Melee.MultiTraceSource`, and focused Scene01 PIE; authored sockets, Montage window arrays, Niagara assets, and Blueprint assignments remain local `Content/**` WIP.
-
-`TODO-07B3` 已完成由 Definition 作者化的投射物飞行拖尾，而没有新建第二个 Arrow Actor 或 Blueprint 子类。`ACombatProjectile` 持有一个默认关闭的 Niagara 组件；有效 Socket 将其锚定到投射物网格尾部，空表现配置保持静默，缺失 Socket 安全回退到网格根节点。命中或寿命到期时，战斗投递立即停止，而拖尾会在仍由原 Actor 持有的前提下自然淡出，随后由 Niagara 完成回调或有界 timeout 销毁 Actor。用户已确认聚焦 PIE 和包含 `PolyQuest.Projectile.FlightTrail` 的十六套 Automation 矩阵通过；Niagara、网格 Socket 与 DataAsset 作者化仍是本地 `Content/**` WIP。
-
-`TODO-03A6B` completes the authored Shield Guard presentation route without changing Guard gameplay authority. Shield Guard owns the active child `State.Action.Guarding.Shield`, which remains compatible with generic Guard checks; `ABP_Player_Dungeon` uses it to select full-body `BS_Shield_Walk_Run` and bypass the existing `DefaultGroup.UpperBody` visual branch only for Shield Guard. Single-Sword Guard keeps that upper-body route, B2 lock-facing remains unchanged, and the accepted shared Guard pace remains the existing `0.7` multiplier rather than a new `300` override. The user confirmed the focused authored/PIE visual result; Config and authored assets remain local WIP.
-
-`TODO-01I` makes Stamina exhaustion a Player-owned GAS lifecycle. The first zero writes one loose `State.Status.Exhausted` contribution, holds one Infinite `MoveSpeed x0.7` effect, and starts one fixed three-second timer; ordinary Stamina regeneration continues, while the action lock clears only after that original timer and a positive Stamina value. The local `BP_Player` reference uses the existing Guard-speed GameplayEffect. Jump retains valid zero-cost and regeneration-delay authored references but is an explicit movement exception: it bypasses the shared nonzero-Stamina gate and skips the recovery-delay effect, so it neither spends Stamina nor breaks the exhaustion lifecycle. The required matrix also exposed a stale callback-local `FGameplayEffectSpec*` at the Enemy Poise/Launch boundary; it now correlates only Definition, EffectContext, and the current executed Poise modifier. The user confirmed manual `PolyQuestEditor` compilation, focused `Scene01` PIE, and all eleven Automation suites. Authored assets remain local `Content/**` WIP.
-
-`TODO-07B1` adds short feedback only for actual nonlethal Health GameplayEffect damage. `ABaseCharacter` temporarily owns the global Mesh Overlay and restores the prior value only when B1 still owns it; repeat hits refresh one timer, while a newer external Overlay remains intact. Player additionally starts the authored local single-instance Camera Shake through `PlayerCameraManager`; Enemy does not affect the Player camera. Healing, direct attribute writes, Poise-only effects, lethal/dead state, Guard/Parry absorption, and hit-reaction suppression do not create a second damage route. The user confirmed focused PIE plus `PolyQuest.Combat.HitFeedback` and the eleven existing regression suites; authored Material and Camera Shake assets remain local `Content/**` WIP.
-
-`TODO-02C3K` completes three-channel Player-to-Enemy impact feedback without adding a GameplayCue framework: `APolyQuestPlayerController` solely owns short global hit-stop through real-time expiry and external-owner-safe restoration, while `AEnemyCharacter` selects Small/Big/Launch preset strength and dispatches one shared flesh sound plus one unattached, auto-destroyed world-space blood Niagara burst from the existing Damage GE context. The first lethal Enemy hit now dispatches the same feedback before terminal Dead teardown; later Dead callbacks remain silent. A single GE with multiple Health modifiers produces one impact, while independent same-context GE applications remain distinct. The user confirmed `PolyQuest.Combat.HitFeedback` and focused Scene01 PIE audio/visual validation; sound, Niagara, Blueprint, and Material assets remain local `Content/**` WIP.
-
-`TODO-02C3L` completes four-direction Player/Enemy Small/Big reaction presentation with no generic Montage fallback. Each Ability requires Front/Back/Left/Right authored Montages; a private pure selector turns the existing target-local `Target -> Attacker` direction into four equal cardinal sectors with deterministic X-axis diagonal ties. Incomplete authoring or zero, near-zero, NaN, or Inf direction safely ends the reaction before a Montage Task starts. Small keeps its non-interrupting overlay behavior, Big keeps its grounded Root Motion/no-pre-turn behavior, and Launch remains independent. The user confirmed focused Editor/PIE behavior and the combat/reaction Automation matrix; the final `PolyQuest.Combat.HitReaction` run after the static repair succeeded. Authored GA/Montage assets remain local `Content/**` WIP.
-
-`TODO-02C3M` completes Player Parry success feedback without introducing a GameplayCue framework. Melee contacts pass the validated `FHitResult` through the Parry boundary, while projectiles explicitly skip Parry and retain Guard or ordinary damage. A successful Parry reuses the Controller-owned short hit-stop (approved `0.05s / 0.03` default), the Player Big camera response, and an optional Parry sound at the contact or Player-location fallback; Health, Poise, blood, and reaction Montage ownership remain unchanged. The user confirmed Development Editor compilation, the focused Automation/regression matrix, and Scene01 PIE. The C3K Small/Big/Launch hit-stop tuning was frozen in the same source/docs commit; authored sound and other Content assets remain local WIP.
-
-`TODO-01C3` is complete: Bow Draw/Hold/Release/Recovery and Charged Hold expose interruption only through authored `ActionDodgeCancelWindow`; `State.Action.Charging` remains descriptive state rather than a Dodge exemption. Dodge now uses UE 5.8's `InstancedPerActor` re-trigger path: a successor must pass its grounded/Stamina/cancel preflight before the old segment cleans up, and only a matching Dodge recovery window permits that successor. Dodge owns scoped CancelWindow permission, RateWindow playback-rate, invulnerability, and cleanup; its per-Montage-instance task callbacks prevent a stopped predecessor from ending the new segment. User-confirmed Automation and Scene01 PIE cover the completed Slice B route.
-
-`TODO-02C3N` completes Guard success and Player received-hit audio at existing native boundaries. A successful Guard-Stamina GameplayEffect dispatches one optional `GuardSuccessSound` for melee or projectile contacts, including a Guard-break absorption; the Player's authoritative nonlethal Health delegate dispatches one optional `ReceivedHitSound` per GameplayEffect Spec for an exact `Team.Enemy` instigator. Both use a validated contact point or Player-location fallback and fail silently for missing assets or invalid presentation data, without adding GameplayCue, replication, or a second damage path. The user confirmed `PolyQuest.Combat.DefenseAudio` and focused Scene01 PIE; audio assets remain local `Content/**` WIP.
-
-`TODO-03A3E` completes the local world-pickup interaction prompt. A Player-owned event-driven candidate snapshot drives both the passive prompt and `E` interaction; invalid snapshots fail closed without an input-time rescan, while `UWeaponEquipmentComponent::TryEquipWorldPickup` remains the only equipment mutation. The user confirmed focused Scene01 PIE and manually selected all current PolyQuest Automation suites (25/25 Success); UMG authoring remains local `Content/**` WIP, and this closeout does not claim a separate Development Editor compile log.
-
-`TODO-05A1-E` completes Execution Impact Feedback v1. After an authorized execution Hit is successfully settled, the Player uses a dedicated Execution Camera Shake and the Enemy dispatches its typed Execution Hit-Stop plus the existing impact sound/blood channels exactly once; ordinary Health feedback is suppressed inside the authorized Hit scope, while the existing damage and Release paths remain unchanged. The user confirmed focused Automation (`PolyQuest.Combat.ExecutionImpactFeedback`) and Scene01 PIE; executor-reported compile/readback evidence remains separately classified, and authored feedback assets remain local `Content/**` WIP.
-
-`TODO-07B9` completes Dungeon Multi-Floor Trigger & Visibility System v1. Spatial `AFloorVolume` instances auto-gather contained actors by bounds and categorize them into structural geometry and interior props. Inactive floors suppress rendering via `SetActorHiddenInGame(true)` while strictly preserving actor/component collisions to prevent upper-tier AI or physics props from dropping through. Structural geometry clips via MPC `FloorCutoffZ` DitherTemporalAA, interior props toggle instantaneously to cut draw calls with zero material overhead, and dual `AFloorTriggerVolume` actors provide staircase hysteresis to eliminate boundary flickering. The user confirmed 4/4 Automation suites and focused PIE.
-
-## Technology
-
-- Unreal Engine 5.8
-- C++
-- Gameplay Ability System
-- Enhanced Input
-- Git LFS for Unreal packages
-- Official Unreal MCP with VibeUE-enhanced editor services
-
-## Project Layout
-
-```text
-Config/                 Project configuration
-Content/                Authored Unreal assets
-Source/PolyQuest/       PolyQuest runtime module
-AGENTS.md               Collaboration and tooling rules
-ARCHITECTURE.md          Verified implemented architecture
-ROADMAP.md               Active milestone and dependency view
-ROADMAP-archive.md       Historical roadmap and closeout archive
-plan.md                 Current or most-recent stage plan/closeout record
-```
-
-## Local Setup
-
-1. Install Unreal Engine 5.8 and Visual Studio 2022 with C++ game-development tooling.
-2. Install Git LFS, then clone the repository and run `git lfs install`.
-3. Open `PolyQuest.uproject`, regenerate project files when needed, and build `PolyQuestEditor` manually from Visual Studio.
-
-The user owns compilation, PIE validation, packaging, and commit approval unless explicitly delegated.
-
-## Documentation
-
-- [`ARCHITECTURE.md`](ARCHITECTURE.md): implemented facts only.
-- [`ROADMAP.md`](ROADMAP.md): accepted future milestones and adoption gates.
-- [`ROADMAP-archive.md`](ROADMAP-archive.md): historical closeouts and evidence; non-authoritative.
-- [`plan.md`](plan.md): current stage scope, validation, handoff, or most-recent closeout detail.
-- [`AGENTS.md`](AGENTS.md): repository-specific collaboration, MCP, Git, and validation rules.
-
-## 中文说明
-
-PolyQuest 是一个以 UE 5.8、C++ 与 GAS 为核心的单机低多边形动作 RPG：采用固定高位斜视视角，以清晰的方向反馈、短促硬直与可读的攻防节奏为核心。首个敌人的完整战斗闭环与武器/AI 战斗体系已原生落地：输入意图路由、连段轻击、体力耗竭与恢复、Root Motion 闪避、短按/长按蓄力攻击、冲刺/跳跃/冲刺攻击、共享武器轨迹命中与 GAS 解析、首个敌人的 Sight/StateTree/近战循环（含攻击 Profile/触及/冷却）、终态死亡与布娃娃表现、分级 Small/Big/Launch 受击、地面 Root Motion 硬直与 CharacterMovement 击飞/落地恢复、仅由非致死 Health 伤害路径触发的 Mesh Overlay 红闪与分别解耦的受击/攻击者三档玩家镜头抖动（`TODO-07B1` / `TODO-07B4`）、玩家专属的 LandingRecovery-to-Dodge 作者化取消路线、敌人韧性削韧与延后姿态破坏、玩家方向性格挡与破防、Q 键定时弹反（经敌人韧性路径反制）、通知时序的敌人霸体、战斗 Notify 归属与命名审计、Light/Charged/Sprint Attack 的作者化 Montage 速率窗口、玩家作者化 Action Window 与闪避恢复连续链（`TODO-01C3`）、直接绑定 GameplayAbility 类的主手/双手/空手装备系统、按精确 Handle 激活的 `1-4` 战技与首个 `GA_Skill_Whirlwind`、世界武器拾取与原子掉落交换、静态网格体刀刃轨迹 Socket 标定、副手盾牌复合防御、普通敌人加权攻击集、敌人静态武器几何绑定与摄像机碰撞忽略保护、冷却重定位、距离感知加权近战接近与攻击执行、跨阶段武器与战斗健康/Automation 信号审查门（`TODO-03H1` / `TODO-03H2` / `TODO-03H3`），以及玩家弓箭的目标辅助、有限追踪与锁定目标优先（`TODO-03B-2` / `TODO-03B-3`）。用户已确认各阶段的本地 `PolyQuestEditor` 自动化测试矩阵与聚焦 PIE/Standalone 视觉路由。GA、GE、Montage、AnimBP、Blueprint、输入、DataAsset 和地图等作者化资产仍是本地高频 WIP，因此聚焦的源码/配置提交不宣称可以从干净检出完整复现这些夹具。
-
-`TODO-07B8-A` 已完成 Enemy Stance Break 的局部 Montage RateWindow 接入：敌人 Ability 只对当前 Montage/源 Sequence 响应 Begin/End，保存实际播放速率并以 LIFO 规则恢复，取消、中断、销毁和 UnPossess 均经同一清理路径。用户已确认专项 Automation 与 `Scene01` PIE；本阶段没有单独归档的 Development Editor 编译或 Enemy Stance Break 资产 readback 收据，作者化数据仍按本地 WIP 处理。
-
-`TODO-05A1-A` 已完成 Front/Backstab 的成对处决接触锁定：Player Ability 通过同步 Request/Release Gameplay Event 与目标侧 `UEnemyVictimExecutionAbility` 共享 transient execution context；双方的 GAS 锁定/无敌、目标移动与 StateTree AI 暂停、外部伤害阻断和唯一 `FMeleeHitResolver` 授权均在各自所有者内闭环，已有 Lock-On 目标在执行期间保留而初次候选搜索仍严格排除无敌目标。用户已确认相关 Automation、编译与 `Scene01` PIE；DeathPending、延迟死亡和非致死 Launch/Knockback 不属于本阶段，仍需后续独立验证。
-
-`TODO-05A1-B` 已完成授权命中与致死恢复：执行命中在唯一 `FMeleeHitResolver` 内以 RAII scope 保证 Exactly-Once，致死结果先进入目标侧 `State.Status.DeathPending`，保持成对锁定、无敌与 Lock-On，待合法 Release 或异常收尾后才通过既有 `SetDeadState -> HandleDeath -> CancelAllAbilities -> StartDeathRagdoll` 链完成死亡；普通伤害仍保持即时死亡语义。用户已确认相关编译、Automation、`Scene01` PIE 与 Main Fresh Review。
-
-`TODO-05A1-C` 已完成释放结果与双人表现收口：Player 的 `UAnimNotify_PlayerExecutionRelease` 只发出 Release Request，Hit/Release 按独立状态轴完成一次认证释放；Victim 可选播放 Front/Backstab 配合 Montage，致死路径延续 `DeathPending` 后的既有死亡链，非致死路径在解除锁定后复用既有 Enemy Launch Reaction，条件不满足时降级为存活站立。用户已确认阶段 PIE 与 Automation，第二轮修复后的 `PolyQuest.Combat.ExecutionReleaseOutcomes` 为 15/15 `Success`；作者化 Montage/Notify 配置仍属于本地 `Content/**` WIP。
-
-`TODO-05A1-D1` 已完成受害者表现时序收口：握手阶段只建立锁定，主角 Montage 的 `UAnimNotify_PlayerExecutionVictimStart` 经当前 Player Ability 与执行会话校验后同步转发，受害者 Montage 延迟到 `VictimStart` 才开播；`VictimStart -> Hit -> Release` 三个语义点不改变唯一伤害、致死恢复和非致死 Launch/站立降级所有权，缺失或失败表现安全降级。用户已确认 Scene01 PIE 与专项/回归 Automation；编译与 Editor readback 以执行报告记录，作者化 Montage/Notify 仍是本地 `Content/**` WIP。
-
-`TODO-05A1-D2A` 已完成执行握手的一次性 Snap 对齐：Front/Backstab 在握手成功、玩家 Montage 启动前，读取武器 `ExecutionSnapDistance`，对受害者前/后方做带临时自身碰撞忽略的 Sweep；阻挡时恢复原始 Transform 并清速，再沿既有 formal Release 清理。最终位置/Yaw 使用有限容差与回绕安全比较，输出高度保留玩家当前 `Z`，解决已发现的玩家/目标高度差导致背刺下陷的问题；复杂坡地和台阶贴地仍未覆盖。D2D 完成后，`UMeleeWeaponDefinition` 同时作者化 `MinExecutionDistance`、`MaxExecutionDistance` 与 `ExecutionSnapDistance`，统一校验 `0 <= Min <= Snap <= Max <= 250 cm`，激活后的 Snap/几何/命中继续使用三值快照；执行专用旧 Motion-Warp 字段按产品决定删除，普通攻击的 Motion-Warp 仍由各自 Ability 拥有。用户已确认相关 Automation 与 Scene01 PIE；独立编译/readback 收据和 authored baseline 仍按本地 WIP 债务记录。
-
-`TODO-05A1-D2B` 已完成武器专属 Execution Montage 选择：`UMeleeWeaponDefinition` 提供可选 `FrontExecutionMontage`/`BackstabExecutionMontage`，Front/Backstab Ability 统一从当前主手 resolver 读取并在激活时锁定武器/Montage 快照；缺失方向 fail-closed，不回退到 Unarmed 或 Ability CDO。既有 VictimStart/Hit/Release、唯一 Resolver、Exactly-Once 与 `State.Action.Attacking`/`CanSwapNow()` 换装闸门保持不变。用户已确认两项 Focused Automation 与 Scene01 PIE；Gemini 回交的编译、Rider 与资产 readback 仅作为执行者报告记录，独立收据和 authored baseline 仍未归档；随后进入的 `TODO-05A1-E` 已完成。
-
-`TODO-05A1-D2D` 已完成武器作者化处决距离契约：真实 manifest 证实轻剑/重剑的 `ExecutionSnapDistance` 分别为 `140/170 cm`；三项距离现由同一 `UMeleeWeaponDefinition` 作者化，Native helper 负责有限值、闭区间关系与 `250 cm` hard cap，Front/Backstab 在 Commit 前后分别使用 live 值与激活快照。用户已确认 Focused Automation 与 Scene01 PIE；Gemini 的编译、Rider 和资产 readback 保留为执行者证据，作者化资产仍是本地 `Content/**` WIP；随后进入的 `TODO-05A1-E` 已完成。
-
-`TODO-05A1-E` 已完成执行命中反馈收口：授权 `Hit` 在 `NonLethal`/`DeathPending` 成功结算后由 typed Player/Enemy profile 驱动独立 Execution Camera Shake、Execution Hit-Stop 与既有冲击音/血液通道，普通 Health 反馈在授权 scope 内不重复触发；唯一伤害路径、Release 结果和 Ability cleanup 保持不变。用户已确认 `PolyQuest.Combat.ExecutionImpactFeedback` Automation 与 Scene01 PIE；Gemini 的编译、Rider 和反馈 DataAsset readback 仅作为执行者证据记录，作者化反馈资产仍是本地 `Content/**` WIP。随后 `TODO-07A2-A`、`TODO-02B4` 与 `TODO-07B10` 均已完成；Vital HUD 现以体力非对称平滑、治疗平滑和零值瞬断呈现。下一 player-facing slice 为 `TODO-03C`，保持独立敌人路线。
-
-E 之后的 `b69dabe` 基线包含相机遮挡/MPC、FOV Punch、Player/Enemy/Controller HUD 反馈和武器 CustomDepth 同步等已提交表现改动；这些改动触及运行时 C++ 与公开 Widget/Camera 表面，不能视为纯材质变更。对应的独立编译、Editor readback、生命周期/性能和 Scene01 PIE 证据仍需按 `plan.md` 的关闭条件补齐。
-
-`TODO-07B2` 已完成由精确 Trace Window 生命周期驱动的 Player/Enemy Niagara 近战武器拖尾，既有 Sweep/Resolver 伤害路径不变。用户已确认聚焦 `Scene01` PIE 视觉验收，以及包含 `PolyQuest.Melee.WeaponTrail` 的十三套 Unreal Editor Automation 全部通过；Niagara 资产和 Blueprint 绑定仍是本地 `Content/**` WIP，不作为干净检出的复现证据。
-
-`TODO-07B4` 已实现玩家攻击者命中镜头冲击反馈：Enemy 的权威 Health/Team 边界把 `Data.Reaction.Small/Big/Launch` 单次转发到 Player；Player 以独立的 attacker 字段解析三档 Shake，允许复用同一组 Camera Shake 资产但禁止字段回退，且与受击路径共用单一 CameraManager/清理生命周期。用户已确认 focused Automation 与 Scene01 PIE；本次收口没有独立手动编译日志或六字段 Editor 读回，因此作者化字段基线仍是本地 WIP。
-
-`TODO-03B-4` 已完成可移动的玩家拉弓/保持/释放/收招路线：Bow Ability 保留既有瞄准、锁定优先、投射物、Dodge 窗口与跳跃封锁合同，但不再封锁普通移动输入。一个作者化 MoveSpeed GameplayEffect 的精确 Handle 覆盖完整 Bow 生命周期，只取消当前 Sprint，并经 `EndAbility()` 精确移除而不影响其他速度来源。用户已确认聚焦 PIE 与十四套 Editor Automation 全部通过。实际步速是本地 `Content/**` 中可调的作者化数据；原生 Automation 仅以隔离夹具验证 Handle 生命周期和 CharacterMovement 同步。
-
-`TODO-03B-5` 已完成弓箭蓄力移动表现分离：`State.Action.Attacking` 继续覆盖完整 Draw -> Hold -> Release 流程并驱动 Bow locomotion；`State.Action.Charging` 只在合法 DrawReady 后进入 Hold 时写入，并驱动独立的 `Is Bow Holding` 上半身分层门。`AllowBlend` 保持“非盾牌 Guard 且非 Bow Holding”时开启，因此 Draw/Release 保留上半身 Montage，Hold 才切换为全身 Bow 保持姿态。用户已确认聚焦 Automation、Editor 读回与 Scene01 PIE；`CameraBoom` 的 `CameraLagSpeed = 8.0f`、`CameraLagMaxDistance = 0.0f` 是单独记录的表现调参，AnimBP 等作者化资产仍是本地 WIP。
-
-`TODO-03AI3` / `TODO-03AI3B` 已完成首个敌人的 Root Motion 朝向所有权与有界目标记忆：Enemy 的 Root Motion 期间由动作独占 yaw，结束后才以受限速度平滑回正；冷却期的横移/贴身修正使用固定战术步速而普通追击保持原速度。敌人在正面发现 Player 后，即使 Player 暂时绕到背后，也只会在既有 `LoseSightRadius` 和出生地 Leash 内维持目标；超出任一边界仍走原有脱战/回城路线。用户确认了聚焦 Scene01 PIE，且在延迟感知回调安全修复后，十八套 Editor Automation 全部通过。该摘要不宣称另有单独记录的 Development Editor 手动编译。
-
-`TODO-02C3E` 已完成：确立了由 Damage GE 资产标签作者化的受击分类闭环契约（`Data.Reaction.Small`、`Data.Reaction.Big`、`Data.Reaction.Launch`，多标签冲突 Fail-Closed 保护），并实现了首个玩家与敌人的无打断轻受击（Small）。`FHitReactionClassifier` 提供纯无状态分类；`APlayerCharacter` 与 `AEnemyCharacter` 绑定权威生命值变化委托以分发目标受击事件；`UPlayerSmallHitReactionAbility` 与 `UEnemySmallHitReactionAbility` 通过 `ReactionOverlayGroup.ReactionOverlay` 插槽与动画蓝图 `spine_01` 分层混合叠加播放受击动作，不打断走位与当前技能执行；原有 `UEnemyHitReactionAbility` 重映射为 Enemy Big。8/8 项自动化测试全部通过，用户已在 Scene01 PIE 确认轻受击叠加与蓄力受击打断表现。
-
-`TODO-02C3F` 已完成玩家与敌人的地面非致死 Big 受击闭环。`UPlayerBigHitReactionAbility` 与保留名称的 `UEnemyHitReactionAbility` 先确认全身 Montage 启动，再取消符合条件的动作；Montage Root Motion 是唯一的平面位移所有者，角色在受击期间不能走出边缘，进入 Falling 会清理受击并恢复原有设置，Enemy StateTree 继续通过 `State.Action.HitReacting` 暂停攻击决策。`FHitReactionImpactResolver` 只快照 Fail-Closed 的本地攻击者方向，为后续表现升级保留单一来源，不改变当前 Root Motion 方向。遗留的 `Data.Reaction.Interrupt` 资产已迁移为 `Data.Reaction.Big`，旧 Interrupt/Enemy.Hit Tag 已在零引用资产扫描后删除。用户已确认 `PolyQuest.Combat.HitReaction` Automation 与 Scene01 PIE，包括无武器蓄力迁移回归。
-
-`TODO-02C3G` 已完成玩家与敌人的非致死击飞闭环。匹配的 Launch Gameplay Event 启动全身 Takeoff Montage；作者化 Commit Notify 在水平空中姿态暂停它，随后由 `CharacterMovement` 独占整段抛物线。有限的起飞宽限 watchdog、分阶段 MovementMode 委托和落地即时刹车，避免残留的 HitReacting、输入/AI 锁定及高速触地颠簸；真正触地后才停止暂停的 Takeoff 并播放原地倒地起身 LandingRecovery。共享方向解析器优先使用攻击者与受击者的有限平面相对连线，失败时才回退 ImpactNormal，因此击飞稳定地远离攻击者。用户已确认 Automation 与修复后的聚焦 PIE；Launch 的 GA、GE、Montage、Notify、AnimBP、Blueprint、DataAsset 和地图资产仍是本地 WIP。
-
-`TODO-02C3I` 已完成击飞朝向表现修正：Player 与 Enemy 在 Takeoff Montage 启动前冻结受击方向和角色当时的 Yaw，Commit Notify 时从同一份快照同时得出“面向攻击者”的 Yaw 与“远离攻击者”的 CharacterMovement 速度，避免转身后重新取朝向导致的位移漂移。Enemy Controller 只在真实激活的 Enemy Launch Ability Spec 存在时让出 yaw，普通 Big 受击仍使用原有 AI 朝向规则。用户已确认二十套 Editor Automation 与聚焦 Scene01 PIE 通过；本摘要不额外声称独立的 Development Editor 编译记录，作者化受击资产仍为本地 WIP。
-
-`TODO-02C3J` 已完成击飞起飞前的平滑转向：Player 与 Enemy 不再在 Commit Notify 瞬间跳转朝向，而是在 Takeoff 中以固定有限速率沿最短角度转向攻击者；Commit 与转向完成任一方先到只记录状态，只有两者都满足时才一次性消费冻结的击飞速度并交给既有 CharacterMovement 抛射。Root Motion、异常掉落、取消、死亡、无效状态与暂停 Takeoff 异常结束都会 Fail-Closed，不会在空中继续抢写 yaw。用户确认 `PolyQuest.Combat.LaunchFacingSmoothing`、`PolyQuest.Combat.HitReaction` 与完整战斗/受击回归矩阵均通过，并在 Scene01 PIE 验证转向、抛射和落地恢复；GA、GE、Montage、AnimBP、Blueprint 等作者化资产仍是本地 WIP。
-
-`TODO-02C3L` 已完成 Player/Enemy Small/Big 的四方向受击表现选择。`FHitReactionImpactResolver` 仍是唯一的受击 Context 到目标本地 `Target -> Attacker` 方向来源；私有纯 C++ selector 只按 XY 把攻击者方位映射到 Front/Back/Left/Right 四个等角扇区，精确 45 度对角线固定使用 X 轴优先。四个方向 Montage 现在必须完整配置，旧的单 Montage 字段已移除；配置不完整、零/近零、NaN 或 Inf 方向会在创建 Montage Task 前 Fail-Closed。Small 保持不打断的叠加层行为，Big 保持接地 Root Motion、既有清理与不预转身合同，Launch、AI yaw、Tag、伤害、Poise 和 C3K 命中反馈均未改变。用户确认聚焦 Editor/PIE 与战斗/受击 Automation；修复后的最终 `PolyQuest.Combat.HitReaction` 运行成功。作者化 GA/Montage 资产仍是本地 `Content/**` WIP。
-
-`TODO-02C3M` 已完成玩家弹反成功反馈。近战命中会把有效 `FHitResult` 传入 Parry 边界，投射物显式跳过 Parry 并保留 Guard/普通伤害路径；成功弹反复用 Controller 的短顿帧（批准默认 `0.05s / 0.03`）、玩家 Big 镜头反馈，并可在命中点或玩家位置回退播放可选音效。该阶段没有新增 GameplayCue、Health/Poise/血液或受击 Montage 路径。用户已确认 Development Editor 编译、聚焦 Automation/回归矩阵与 Scene01 PIE；C3K 的 Small/Big/Launch 定格调参并入同一次源码/文档提交，作者化音效和其他 Content 资产继续作为本地 WIP。
-
-`TODO-02C3N` 已完成 Guard 成功与玩家受击音效。Guard 只有在体力 GameplayEffect 成功应用后才为近战、投射物及 Guard Break 吸收接触播放一次可选 `GuardSuccessSound`；玩家则在权威非致命 Health 委托中，仅对精确 `Team.Enemy` 来源按每个 GameplayEffect Spec 的首个 Health Modifier 播放一次 `ReceivedHitSound`。两条路径都优先使用属于玩家的有效命中点，否则回退到有限的玩家位置；缺失资产、无效位置或 World 只会静默跳过，不新增 GameplayCue、复制或第二条伤害路径。用户已确认 `PolyQuest.Combat.DefenseAudio` Automation 与 Scene01 PIE，音效资产仍是本地 `Content/**` WIP。
-
-`TODO-03A3E` 已完成世界武器拾取交互提示：Player-owned 的事件驱动候选快照同时驱动被动提示和 `E` 交互；候选在输入前失效时 Fail-Closed，不现场重扫或偷偷换选，装备变更仍只由 `UWeaponEquipmentComponent::TryEquipWorldPickup` 完成。用户已确认聚焦 Scene01 PIE，并手动勾选当前全部 PolyQuest Automation 套件 25/25 通过；UMG 作者化仍是本地 `Content/**` WIP，本次收口不宣称另有独立 Development Editor 编译日志。
-
-`TODO-03A7B` 已完成玩家 Light Combo entry 0..2 的窄 Motion-Warp adoption 与生命周期收口：每段独立 opt-in，首个合法段落只捕获一次静态 Lock-On 位置/接地快照，后续段落复用快照而不重选；Task/Montage 激活失败、目标死亡/销毁、`ClearLockedTarget()`、UnPossess、取消和 EndPlay 都 Fail-Closed 清理，近战 Trace/Resolver/Damage 路径不变。用户已确认 focused Automation 与 Scene01 PIE；没有独立手动 `PolyQuestEditor` 编译或 entry 1/2 Editor readback，因此作者化字段仍是本地 WIP，不宣称干净检出可复现。
-
-`TODO-03A7C` 已完成 Charged release 与 Sprint Attack 的源码级 Motion-Warp adoption：Charged 只在成功提交并确认主动 Montage 后、恢复播放前尝试一次；Sprint 只在 Montage Task/Montage 双重活跃门禁后、取消 Sprint 前尝试一次。两者各自拥有静态目标快照，复用同一纯几何 evaluator 和 Player 窄桥，失败与取消不改变 Cost、Trace/Resolver/Damage、Guard/Dodge 或 Sprint 所有权。用户已确认 focused Automation 与 Scene01 PIE；GA/Montage Notify、Modifier、Root Motion 和独立手动编译/readback 尚未形成干净作者化基线，相关资产继续作为本地 WIP。
-
-`TODO-03A7D` 已完成 `UPlayerMeleeSkillAbility` 的源码级 Motion-Warp 生命周期接入：能力独立持有静态锁定快照并沿既有 Player 窄桥清理，未改变 `Trace -> Resolver -> Damage GE` 或其他动作所有权。源码收口与用户验证和 `GA_Skill_Whirlwind` 的作者化 readback/adoption 决策保持分离。
-
-`TODO-03A7F` 已完成四个 Player Motion-Warp 消费者的显式触发距离合同：`MinTriggerDistance <= WarpStopDistance <= MaxTriggerDistance`。`Min < Stop` 时允许有界反向修正，`Min == Stop` 保持前向-only，精确停距不写入目标。用户已确认聚焦 Motion-Warp Automation 与 Scene01 PIE；字段迁移、Montage/Notify/Root Motion readback 及独立手动 `PolyQuestEditor` 编译收据仍未形成，因此不宣称干净作者化基线。
-
-`TODO-03H5` 已完成对四个 Player Motion-Warp 消费者及其直接生命周期、ASC、输入和近战伤害边界的 Review-Only 健康审查。未发现 P0-P2 blocker，也没有 Source 改动；A7F exact-stop 测试限制以及作者化 readback、独立手动编译和跨帧 Task 时序证据仍是非阻塞验证债务。
-
-`TODO-03I1` 已完成装备主手的 direct input route 收口：`PrimaryAttackAbilityTag` 与可选 `SprintAttackAbilityTag` 是 Primary/Sprint 规范来源，Guard/Parry 由 Effective Defense Profile 解析，1-4 按精确 Handle 激活。`TODO-03I4` 在用户确认产品引用为零并删除旧资产后，移除了原 `UCombatLoadoutDefinition` 的 C++/测试兼容层；当前没有 Loadout route 参与运行时输入或装备事务。用户已确认受影响 Automation 与 Scene01 PIE 通过；没有单独记录的手动 `PolyQuestEditor` 编译收据。
-
-`TODO-01C4` 已完成玩家专属的起身翻滚路线。现有 `ActionDodgeCancelWindow` 只会在匹配且仍活跃的 Player Launch `LandingRecovery` Montage 中授权普通的接地 Dodge；该阶段对 `State.Action.CanCancel.Dodge` 的 scoped loose-tag 贡献会在窗口结束和所有 Launch 清理路径中移除。Dodge 仍会先提交其正常 Cost，随后才取消 Launch，因此保留“当前 Stamina 大于 0 即可开始、Cost 后钳制到 0”的软透支规则；连续输入在 Dodge 自身恢复窗口到来前不会覆盖新起手。用户已确认 Automation 与聚焦 PIE，Montage/GA/GE 作者化资产继续保留为本地 WIP。
-
-`TODO-02C3H` 已完成仅限敌人的“落地后延迟姿态破坏”路线。Enemy Launch 的 Takeoff 真正启动后，Poise 归零会变为一个由 Enemy 持有的 pending intent，而不会在空中进入 Stance Break；只有自然完成 LandingRecovery、且 Launch 清理已释放 `State.Action.HitReacting` 后，才能分发现有的 Stance Break 事件。飞行期 Poise 恢复为正值会清除意图；死亡、teardown 或异常结束不会产生延迟破韧，存活且 Poise 为零的敌人则通过既有恢复 GameplayEffect 恢复 Poise。玩家 Guard/Parry 与立即生效的 Player Guard Break 故意保持不变。用户已确认 `PolyQuest.Combat.HitReaction` Automation 和聚焦 PIE；作者化资产仍是本地 WIP。
-
-`TODO-07A1` 已完成基础生命值显示路线：本地 Player 视口 HUD 显示当前/最大 Health 与 Stamina，每个存活 Enemy 则拥有始终可见、仅显示 Health 的 Screen Space 头顶条。现有 ASC Attribute 仍是唯一权威；Controller 与 Enemy 通过属性委托事件驱动刷新，并在重新 Possess、死亡与 teardown 中显式清理。用户已确认 `PolyQuest.UI.VitalHUD` Automation、手动 `PolyQuestEditor` 编译、Editor 资产读回和聚焦 PIE。项目当前没有可玩的 Player 治疗来源，因此 Automation 直接驱动同一 ASC 的 Health 正向变化以覆盖显示刷新分支，但不把它表述为 PIE 治疗路径；首个真实治疗玩法仍由 `TODO-03E` 负责。UMG/Blueprint 作者化资产继续作为本地 `Content/**` WIP。
-
-`TODO-02B1` 与 `TODO-02B2` 已完成固定斜视相机下的本地屏幕空间锁定路线：中键获取严格位于视口内、离鼠标最近的敌对目标或清除当前锁定，滚轮则按确定性的屏幕空间顺序切换。有效锁定高亮 Enemy 既有头顶血条；除为 Light、Charged、Sprint Attack 与 Melee Skill 提供一次性起手朝向外，也会在合法的接地 Idle/Walk/Run、Guard 与无 Root Motion 的 Parry 中，以原生 `800 degrees/second` 的 yaw 速率持续面对目标。Sprint 保留锁定但恢复 movement-facing；动作、Root Motion、Bow、受击、死亡与 Stunned 保留各自的 yaw 所有权。只有当前锁定 Enemy 确认死亡时，才会从缓存的屏幕记录按顺时针进行一次严格视口内交接；超出 `TODO-02B3` 保持带或其他失效原因才清锁，且不自动替换。该路线不重置相机，也不改变 Bow Draw/Hold 的鼠标指向、Homing、碰撞或投射物生命周期；`TODO-03B-3` 仅在作者化 Target Assist 开启时，把有效锁定作为 Release 的初始目标来源。用户已确认 `PolyQuest.Player.LockOn` Automation 与聚焦 PIE，包括 Bow 回归和固定武器的镜头碰撞检查。Input/Widget 资产继续作为本地 `Content/**` WIP。
-
-`TODO-02B3` 已完成锁定保持迟滞 v1：获取、循环候选和死亡交接继续使用严格视口，已有锁定目标仅在每轴固定 15% 外扩内保持；只处于保持区的目标继续高亮并供现有朝向与 `ResolveValidLockedTarget()` 使用，滚轮循环为 no-op，回到严格视口后恢复。Bow 独立的 6% 自动 Target Assist 边界未改动。用户已确认相关 Automation 与 `Scene01` 聚焦 PIE；本记录没有独立 Development Editor 编译日志，也未将作者化 Content/输入/Blueprint 资产纳入基线。
-
-`TODO-03B-2` 已完成：双手 Bow 在 Draw/Hold/Release 期间以角色中心高度平面上的鼠标指针维持水平朝向；Release 时只在当前视口及 6% 边缘外扩内选择一次合规敌对目标，并把弱目标和制导标量快照交给 Projectile。箭先沿指针方向直飞，之后才按作者化时长、转向速度和总转角有限追踪；总转角大于 90 度时允许当前休闲向的回头追踪。目标在 Release 后离开屏幕不会触发换追或取消，投射物原有碰撞、单次 GameplayEffect 命中投递和生命周期所有权保持不变。
-
-`TODO-03B-3` 已完成 Bow 与锁定的窄桥接，而没有把锁定扩展成通用投射物框架。仅当 Bow 的 `bEnableTargetAssist=true` 时，Release 才会验证一次当前 B2 锁定；有效锁定（包括 B2 已有的一次死亡交接）先写入既有 Projectile 目标快照，再保留原有 B2 自动候选查询作为无锁/失效锁回退。箭的初始方向仍严格来自鼠标指针，发射后的滚轮切换、清锁或目标死亡不会改变已发射箭；关闭 Target Assist 时，Bow 不读取锁定也不选自动目标，保持直射。用户已确认 `PolyQuest.Projectile.Lifecycle`、`PolyQuest.Projectile.TargetAssist`、`PolyQuest.Player.LockOn` Automation 及聚焦 PIE；Bow/Projectile 作者化资产仍为本地 `Content/**` WIP。
-
-`TODO-03H2` 已完成战斗运行时健康门禁。对 Player 战斗、装备、锁定、Bow/Projectile、受击、Enemy AI/战斗和 Vital HUD 的生命周期与所有权审计未发现 P0-P2；唯一修复是仅在 Automation 下把装备组件真实授予的 Bow Ability Spec Handle 注入 B3 Release 夹具，使 `GetAbilityLevel()` 不再输出五条误导性的 `Invalid AbilitySpecHandle`。该修复不改变 Bow 运行时行为。用户已确认手动编译、十项聚焦 Automation 与 `Scene01` 聚焦 PIE；其余原生瞬态夹具未配置完整作者化数据所产生的高频 Warning 作为 signal-hygiene 债务记录，不在运行时静默或掩盖。
-
-`TODO-03H3` 已完成 Automation fixture signal hygiene。私有 `FCombatAutomationFixture` 通过 deferred spawn 在 `FinishSpawning()` 前给原生 Player 夹具注入合法的 direct-route、无显示的 Owner-mesh Trace 武器、Hero Mesh 与无限期无数值 Regen GE；给普通 Enemy 夹具禁用 AI 自动持有和 Ragdoll，并提供测试 Poise Recovery GE。actor 注入入口与夹具调用均仅在 `WITH_DEV_AUTOMATION_TESTS` 路径存在；`UTestStaminaRegenGE` 仅是 Private Tests 中的无数值测试类型，不改变产品运行时失败保护、作者化资产、Config 或日志级别。用户已确认 `PolyQuestEditor` 编译和十套既有 Automation 全部通过；成功路径不再输出缺失夹具配置噪音，保留的受击 Tag、Poise fallback、装备事务与静态 Trace Warning 均来自明确的负向断言。H3 没有 PIE 验收目标。
-
-`TODO-03A6B` 已完成持盾 Guard 的作者化表现闭环，而不改变 Guard 的 GAS 权威。持盾 Guard 拥有活跃子标签 `State.Action.Guarding.Shield`，并继续通过层级匹配满足通用 Guard 判断；`ABP_Player_Dungeon` 用它选择全身 `BS_Shield_Walk_Run`，且只在持盾 Guard 时绕过既有 `DefaultGroup.UpperBody` 视觉层。单剑 Guard 保留原有上半身路线，B2 锁定朝向保持不变，接受的共享 Guard 速度仍是现有 `0.7` 倍率而不是新建 `300` Override。用户已确认聚焦作者化/PIE 视觉结果；Config 与作者化资产继续作为本地 WIP。
-
-`TODO-01I` 已将体力耗尽改为 Player 持有的 GAS 生命周期。首次归零只写入一份 loose `State.Status.Exhausted`、持有一份 Infinite `MoveSpeed x0.7` 效果并启动固定三秒计时；普通体力恢复持续运行，只有原计时到期且当前 Stamina 为正时才解除行动锁。`BP_Player` 的本地作者化引用复用现有 Guard 速度 GameplayEffect。Jump 保留合法的零 Cost 与 Regen Delay 作者化引用，但作为明确的移动例外绕过共享的“Stamina 必须为正”门槛，并在结束时跳过回体延迟效果，因此既不消耗体力，也不会破坏耗尽生命周期。完整矩阵还暴露了 Enemy Poise/Launch 边界跨回调保留 `FGameplayEffectSpec*` 的问题；现改为只关联 Definition、EffectContext 与当前已执行的 Poise Modifier。用户已确认手动 `PolyQuestEditor` 编译、聚焦 `Scene01` PIE 和十一套 Automation 全部通过；作者化资产仍是本地 `Content/**` WIP。
-
-`TODO-07B1` / `TODO-07B1A` 为真实的非致死 Health GameplayEffect 伤害增加短促反馈。`ABaseCharacter` 临时拥有全局 Mesh Overlay，只在 B1 仍拥有该 Overlay 时才恢复原值；连续命中刷新同一计时器，而期间由其他表现系统替换的新 Overlay 不会被覆盖。Player 仅对 `Data.Reaction.Small`、`Data.Reaction.Big`、`Data.Reaction.Launch` 分别启动作者化的本地单实例 Camera Shake；无 Reaction Tag 或非法多档 Tag 仍红闪，但不启动、停止或替换当前 Shake。Stunned 的合法分级伤害仍给出对应 Shake，同时维持 Reaction Event 抑制；Enemy 不会影响玩家镜头。Player 只弱引用精确启动的 Manager/实例，换档、UnPossess 与 EndPlay 都经同一幂等清理，不绕过 `CameraModifier` 的实例回收。治疗、直接 Attribute 写入、仅 Poise 效果、致死/死亡状态、Guard/Parry 吸收与受击反应抑制均不会另开伤害路线。用户已确认聚焦 PIE、`PolyQuest.Combat.HitFeedback` 和十一套既有回归共十二套 Automation 全部通过；Material 与 Camera Shake 作者化资产仍为本地 `Content/**` WIP。
-
-`TODO-01C3` 已完成：Bow 的 Draw/Hold/Release/Recovery 与 Charged Hold 只在作者化 `ActionDodgeCancelWindow` 中开放打断，`State.Action.Charging` 仅表示状态，不再是 Dodge 豁免。Dodge 使用 UE 5.8 的 `InstancedPerActor` 重激活路径：下一段必须先通过地面、Stamina 与取消许可预检，旧段才经 `EndAbility()` 清理；只有匹配的 Dodge Recovery 窗口允许这次连续启动。Dodge 自己拥有 CancelWindow/RateWindow、无敌与播放速率清理，按具体 Montage 实例绑定的 Task 回调确保旧段停止不会终止新段。用户已确认相关 Automation 与 Scene01 PIE 通过。
-
-旧 `Test` 项目保留为独立的 UE 5.7 FSM 参考基线；PolyQuest 会按已验证的玩法合同重新实现功能，而不是直接搬运旧 FSM 和资产。
+| 路径 | 内容 |
+| --- | --- |
+| [Source/PolyQuest](Source/PolyQuest/) | C++ 运行时模块及自动化测试 |
+| [Config](Config/) | 项目与运行时配置 |
+| [Content](Content/) | 已纳入仓库的 Unreal 资产 |
+| [ARCHITECTURE.md](ARCHITECTURE.md) | 当前架构、所有权与运行时合同 |
+| [ROADMAP.md](ROADMAP.md) | 当前入口、后续路线及开放风险 |
+| [plan.md](plan.md) | 当前或最近切片的实施范围、验证与交接 |
+| [ROADMAP-archive.md](ROADMAP-archive.md) | 历史交付和验证记录 |
+| [AGENTS.md](AGENTS.md) | 仓库协作与修改规则 |
