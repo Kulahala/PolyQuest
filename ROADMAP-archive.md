@@ -1721,3 +1721,13 @@ TODO-03A3E World Pickup Interaction Prompt v1
 - **历史证据边界**：除可复用Charged专项外，其余六项迁移前成功收据未提供。用户在获知该缺口后批准收尾提交，当前代码验收依据源码等价和实施后结果，不追认原计划先基线后迁移已执行；非阻塞历史证据债唯一归ROADMAP的Debt-03H6-TEST-SHRINK-Baseline。原FIX2-PIE、World缺EndPlay及其他审计债务不随本片关闭。
 - **归档与授权**：用户明确批准文档收尾提交，精确包含七份Source/Test及plan.md、ROADMAP.md、ROADMAP-archive.md共10文件；2,122项既有Content/Config/tmp WIP排除，不改ARCHITECTURE或资产，不推送。当前plan第9节保留完成态与日志锚点，新切片替换前以本次提交固定凭据。
 - **下一阶段**：TODO-03C Ranged Enemy v1；不自动扩展测试瘦身或将其他未接受候选变成03C前置，本轮不启动远程敌人实现。
+
+
+## TODO-03H7 — Main Implementation Closeout（2026-09-13）
+
+- **范围与结果**：PlayerBigHitReactionAbility.h/.cpp、HitReactionAutomationTests.cpp、PlayerMontageRateWindowAutomationTests.cpp 四文件完成玩家四向 Dodge 取消窗口与共享 RateWindow 接入；保持10项阻止/11项打断、ASC唯一权属及原动作生命周期，无新Tag、共享Dodge/RateWindow修改或资产写入。
+- **终审修复**：取消窗口直接绑定Ability，只有RateWindow使用既有Context/token；Main修复同资产旧结束广播误伤新播放。专项使用真实时间推进/Notify派发，验证活动窗口下退出与立即重激活；移除失败后的手工事件兜底，区分CanActivate拒绝/真实Commit失败与Closed/Open非法来源过滤。正常及对抗性审查、定向delta复核后无未关闭P0–P2；纯getter简化P3未扩展实施。
+- **验证所有权**：最新BigHitReactionWindows Success为用户回传；更早日志确认PlayerMontageRateWindow六组（Bow、Charged、Dodge、Light、MeleeSkill、Sprint）、HitReaction、PlayerLaunchReactionRootMotion成功，用户曾确认编译/Editor readback/PIE。Main只执行静态检查与复核，适用Rider errors为空、git diff --check通过，不宣称代跑运行时验证。
+- **验收例外**：完整编译/回归/PIE收据早于最终生产修复；用户知悉后批准收尾提交，唯一延期记录及关闭触发见ROADMAP的Debt-03H7-PostRepairValidation。资产未改，先前readback仍有效。实现/审查收口不等于最终版全部运行时门禁重新执行。
+- **日志与后续**：空Montage启动失败属于专项8.5负向场景；ExecutionReleaseOutcomes与VitalHUD真实失败另排TODO-03H8，根因与引入版本未确认，不归为已知历史问题。之后独立规划03C，不自动实现后续阶段。
+- **交接与提交**：plan.md第9节保留完成态；四份Source/Test与plan.md、ROADMAP.md、ROADMAP-archive.md、ARCHITECTURE.md共八文件纳入用户批准的有界提交。Content/Config和其他WIP排除，未推送。

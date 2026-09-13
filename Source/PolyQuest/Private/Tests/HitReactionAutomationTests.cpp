@@ -272,19 +272,35 @@ bool FHitReactionAutomationTest::RunTest(const FString& Parameters)
 						&& Trigger.TriggerSource == EGameplayAbilityTriggerSource::GameplayEvent;
 				}));
 
-			// BlockAbilitiesWithTag and AbilitiesToCancel must match exactly 11 tags
+			const FGameplayTag TagCancelableByDodge = FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Action.CancelableBy.Dodge")), false);
+			TestTrue(TEXT("Tag Ability.Action.CancelableBy.Dodge is valid"), TagCancelableByDodge.IsValid());
+			TestTrue(TEXT("PlayerBig CDO has AbilityTags Ability.Action.CancelableBy.Dodge"),
+				PlayerBigCDO->AbilityTags.HasTagExact(TagCancelableByDodge));
 
-			TestEqual(TEXT("PlayerBig BlockAbilitiesWithTag has exactly 11 tags"),
-				PlayerBigCDO->GetTestBlockAbilitiesWithTag().Num(), 11);
+			const FGameplayTag TagAbilityDodge = FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Dodge")), false);
+			TestTrue(TEXT("Tag Ability.Dodge is valid"), TagAbilityDodge.IsValid());
+
+			// BlockAbilitiesWithTag has 10 tags, AbilitiesToCancel has 11 tags
+
+			TestEqual(TEXT("PlayerBig BlockAbilitiesWithTag has exactly 10 tags"),
+				PlayerBigCDO->GetTestBlockAbilitiesWithTag().Num(), 10);
 			TestEqual(TEXT("PlayerBig AbilitiesToCancel has exactly 11 tags"),
 				PlayerBigCDO->GetTestAbilitiesToCancel().Num(), 11);
+
+			TestFalse(TEXT("PlayerBig BlockAbilitiesWithTag does NOT contain Ability.Dodge"),
+				PlayerBigCDO->GetTestBlockAbilitiesWithTag().HasTagExact(TagAbilityDodge));
+			TestTrue(TEXT("PlayerBig AbilitiesToCancel DOES contain Ability.Dodge"),
+				PlayerBigCDO->GetTestAbilitiesToCancel().HasTagExact(TagAbilityDodge));
 
 			for (const FName& ActionTagName : ExpectedTargetActionTagNames)
 			{
 				const FGameplayTag ActionTag = FGameplayTag::RequestGameplayTag(ActionTagName, false);
 				TestTrue(FString::Printf(TEXT("Tag '%s' is valid"), *ActionTagName.ToString()), ActionTag.IsValid());
-				TestTrue(FString::Printf(TEXT("PlayerBig BlockAbilitiesWithTag contains '%s'"), *ActionTagName.ToString()),
-					PlayerBigCDO->GetTestBlockAbilitiesWithTag().HasTagExact(ActionTag));
+				if (ActionTagName != TEXT("Ability.Dodge"))
+				{
+					TestTrue(FString::Printf(TEXT("PlayerBig BlockAbilitiesWithTag contains '%s'"), *ActionTagName.ToString()),
+						PlayerBigCDO->GetTestBlockAbilitiesWithTag().HasTagExact(ActionTag));
+				}
 				TestTrue(FString::Printf(TEXT("PlayerBig AbilitiesToCancel contains '%s'"), *ActionTagName.ToString()),
 					PlayerBigCDO->GetTestAbilitiesToCancel().HasTagExact(ActionTag));
 			}

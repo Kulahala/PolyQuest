@@ -438,7 +438,8 @@ contract, including absorption of the hit that exhausts stamina.
 
 #### Player RateWindow policy
 
-Light, MeleeSkill, SprintAttack, ChargedAttack, BowDrawFire, and Dodge opt in to
+Light, MeleeSkill, SprintAttack, ChargedAttack, BowDrawFire, Dodge, and
+PlayerBigHitReaction opt in to
 `FAbilityMontageRateWindowLifecycle`. Both event actors must be the owning
 Avatar; `OptionalObject` must identify the bound Montage or one of its source
 Sequences, and `OptionalObject2` must identify a RateWindow Notify declared by
@@ -461,7 +462,8 @@ instance. Cleanup invalidates the context, removes listeners, restores only a
 still-owned current instance, then clears local state. Normal termination
 continues through the Ability's existing GAS `EndAbility()` path.
 
-ChargedAttack, SprintAttack, MeleeSkill, BowDrawFire, and Dodge share the private,
+ChargedAttack, SprintAttack, MeleeSkill, BowDrawFire, Dodge, and
+PlayerBigHitReaction share the private,
 stateless `FMontageRateWindowBinding` template helper through their existing
 `BindRateWindow` methods. The helper reads each Ability's ending flag by reference,
 captures the baseline before installing exact-tag listeners, and checks binding
@@ -1104,6 +1106,20 @@ Root Motion is the presentation displacement source; these abilities do not use
 `DisableMovement()`, force `MOVE_Walking`, impulses, or Motion Warping as a
 replacement movement path. Montage/task delegates and all abnormal exits are
 cleaned by `EndAbility()`.
+
+The Player Big Reaction opts into `Ability.Action.CancelableBy.Dodge` and keeps
+10 action-block tags (excluding `Ability.Dodge`) and 11 activation-cancel targets
+(including an existing Dodge). Direct Ability-owned cancel-window listeners
+idempotently add/remove only their own `State.Action.CanCancel.Dodge` loose-tag
+contribution. Outside the window, the existing HitReacting gate rejects Dodge;
+inside it, Dodge preconditions and Commit must succeed before cancelling the
+reaction. A Dodge Montage failure after successful Commit does not restore the reaction.
+
+Its RateWindow binding is established only after confirmed playback. Ending
+first marks the Ability as ending, removes its cancel contribution, clears the
+RateWindow binding/rate, then ends listeners and performs existing cleanup.
+An asset-only Montage end broadcast is ignored while that asset has a current
+non-stopped instance, preventing a queued old end from terminating a new playback.
 
 #### Player grounded launch reaction
 

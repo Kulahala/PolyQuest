@@ -16,7 +16,9 @@
 #include "AbilitySystem/Abilities/ChargedAttackAbility.h"
 #include "AbilitySystem/Abilities/BowDrawFireAbility.h"
 #include "AbilitySystem/Abilities/DodgeAbility.h"
+#include "AbilitySystem/Abilities/PlayerBigHitReactionAbility.h"
 #include "Combat/Equipment/BowWeaponDefinition.h"
+#include "Combat/Reaction/HitReactionImpactResolver.h"
 #include "Combat/Equipment/ProjectileDefinition.h"
 #include "Combat/Equipment/WeaponEquipmentComponent.h"
 #include "GameFramework/CharacterMovementComponent.h"
@@ -1387,6 +1389,519 @@ namespace PlayerMontageRateWindowAutomation
 		Test.AddInfo(FString::Printf(TEXT("%s: real ASC activation, identity windows, phase checks and cleanup executed"), Name));
 		return true;
 	}
+
+	bool RunPlayerBigHitReactionWindowsTest(FAutomationTestBase& Test)
+	{
+		FWorldContext& WorldContext = GEngine->CreateNewWorldContext(EWorldType::Game);
+		UWorld* World = UWorld::CreateWorld(EWorldType::Game, false);
+		WorldContext.SetCurrentWorld(World);
+		FTestWorldScope Cleanup{ World };
+		if (!Test.TestNotNull(TEXT("BigReaction world exists"), World)) return false;
+
+		FURL URL;
+		World->InitializeActorsForPlay(URL);
+		World->BeginPlay();
+
+		APlayerCharacter* Player = FCombatAutomationFixture::SpawnPlayer(World, FTransform(FRotator::ZeroRotator, FVector::ZeroVector));
+		AEnemyCharacter* Enemy = FCombatAutomationFixture::SpawnPassiveEnemy(World, FTransform(FRotator::ZeroRotator, FVector(200.0f, 0.0f, 0.0f)));
+		if (!Test.TestNotNull(TEXT("Player exists"), Player) || !Test.TestNotNull(TEXT("Enemy exists"), Enemy)) return false;
+
+		UAbilitySystemComponent* ASC = Player->GetAbilitySystemComponent();
+		if (!Test.TestNotNull(TEXT("Player ASC exists"), ASC)) return false;
+
+		UCharacterMovementComponent* Movement = Player->GetCharacterMovement();
+		if (!Test.TestNotNull(TEXT("Movement component exists"), Movement)) return false;
+		Movement->SetMovementMode(MOVE_Walking);
+		ASC->SetNumericAttributeBase(UCharacterAttributeSet::GetStaminaAttribute(), 100.0f);
+		ASC->SetNumericAttributeBase(UCharacterAttributeSet::GetMaxStaminaAttribute(), 100.0f);
+
+		UAnimMontage* MontageFront = CreatePlayableRateMontage(Test, World, TEXT("BigHit_F"));
+		USkeleton* SharedSkeleton = MontageFront ? MontageFront->GetSkeleton() : nullptr;
+		UAnimMontage* MontageBack = CreatePlayableRateMontage(Test, World, TEXT("BigHit_B"), SharedSkeleton);
+		UAnimMontage* MontageLeft = CreatePlayableRateMontage(Test, World, TEXT("BigHit_L"), SharedSkeleton);
+		UAnimMontage* MontageRight = CreatePlayableRateMontage(Test, World, TEXT("BigHit_R"), SharedSkeleton);
+		UAnimMontage* DodgeMontage = CreatePlayableRateMontage(Test, World, TEXT("Dodge_Synth"), SharedSkeleton);
+		UAnimMontage* ForeignMontage = CreateDummyMontage(World);
+
+		if (!Test.TestNotNull(TEXT("MontageFront exists"), MontageFront)
+			|| !Test.TestNotNull(TEXT("MontageBack exists"), MontageBack)
+			|| !Test.TestNotNull(TEXT("MontageLeft exists"), MontageLeft)
+			|| !Test.TestNotNull(TEXT("MontageRight exists"), MontageRight)
+			|| !Test.TestNotNull(TEXT("DodgeMontage exists"), DodgeMontage))
+		{
+			return false;
+		}
+
+		FAnimNotifyEvent* RateEventFrontA = FindRateWindowEvent(MontageFront, 0);
+		if (RateEventFrontA)
+		{
+			RateEventFrontA->SetTime(0.05f);
+			RateEventFrontA->SetDuration(0.5f);
+			RateEventFrontA->Link(MontageFront, 0.05f);
+			RateEventFrontA->EndLink.Link(MontageFront, 0.55f);
+		}
+
+		UAnimNotifyState_ActionDodgeCancelWindow* FrontCancelNotify = NewObject<UAnimNotifyState_ActionDodgeCancelWindow>(MontageFront, TEXT("DodgeCancelFront"));
+		FAnimNotifyEvent FrontCancelEvent;
+		FrontCancelEvent.NotifyStateClass = FrontCancelNotify;
+		FrontCancelEvent.SetTime(0.15f);
+		FrontCancelEvent.SetDuration(0.5f);
+		FrontCancelEvent.Link(MontageFront, 0.15f);
+		FrontCancelEvent.EndLink.Link(MontageFront, 0.65f);
+		MontageFront->Notifies.Add(FrontCancelEvent);
+
+		for (UAnimMontage* DirectionMontage : { MontageBack, MontageLeft, MontageRight })
+		{
+			if (FAnimNotifyEvent* SiblingRateEvent = FindRateWindowEvent(DirectionMontage, 0))
+			{
+				SiblingRateEvent->SetTime(0.05f);
+				SiblingRateEvent->SetDuration(0.5f);
+				SiblingRateEvent->Link(DirectionMontage, 0.05f);
+				SiblingRateEvent->EndLink.Link(DirectionMontage, 0.55f);
+			}
+
+			UAnimNotifyState_ActionDodgeCancelWindow* SiblingCancelNotify = NewObject<UAnimNotifyState_ActionDodgeCancelWindow>(DirectionMontage, TEXT("DodgeCancelSibling"));
+			FAnimNotifyEvent SiblingCancelEvent;
+			SiblingCancelEvent.NotifyStateClass = SiblingCancelNotify;
+			SiblingCancelEvent.SetTime(0.15f);
+			SiblingCancelEvent.SetDuration(0.5f);
+			SiblingCancelEvent.Link(DirectionMontage, 0.15f);
+			SiblingCancelEvent.EndLink.Link(DirectionMontage, 0.65f);
+			DirectionMontage->Notifies.Add(SiblingCancelEvent);
+		}
+
+		UAnimInstance* Anim = NewObject<UAnimInstance>(Player->GetMesh());
+		Anim->InitializeMontageOnly();
+		Anim->CurrentSkeleton = MontageFront->GetSkeleton();
+		Player->GetMesh()->AnimScriptInstance = Anim;
+		ASC->RefreshAbilityActorInfo();
+
+		const FGameplayAbilitySpecHandle DodgeHandle = ASC->GiveAbility(FGameplayAbilitySpec(UDodgeAbility::StaticClass(), 1, INDEX_NONE, Player));
+		UDodgeAbility* DodgeAbility = Cast<UDodgeAbility>(ASC->FindAbilitySpecFromHandle(DodgeHandle)->GetPrimaryInstance());
+		if (!Test.TestNotNull(TEXT("Dodge ability instanced"), DodgeAbility)) return false;
+
+		SetFixtureObject(DodgeAbility, TEXT("DodgeMontage"), DodgeMontage);
+		for (const FName EffectProperty : { FName(TEXT("CostGameplayEffectClass")), FName(TEXT("StaminaRegenDelayGameplayEffectClass")), FName(TEXT("InvulnerabilityGameplayEffectClass")) })
+		{
+			SetFixtureObject(DodgeAbility, EffectProperty, UGameplayEffect::StaticClass());
+		}
+
+		const FGameplayAbilitySpecHandle BigReactionHandle = ASC->GiveAbility(FGameplayAbilitySpec(UPlayerBigHitReactionAbility::StaticClass(), 1, INDEX_NONE, Player));
+		UPlayerBigHitReactionAbility* BigReactionAbility = Cast<UPlayerBigHitReactionAbility>(ASC->FindAbilitySpecFromHandle(BigReactionHandle)->GetPrimaryInstance());
+		if (!Test.TestNotNull(TEXT("BigReaction ability instanced"), BigReactionAbility)) return false;
+
+		BigReactionAbility->SetTestMontages(MontageFront, MontageBack, MontageLeft, MontageRight);
+
+		ON_SCOPE_EXIT
+		{
+			if (IsValid(ASC))
+			{
+				ASC->ClearAbility(DodgeHandle);
+				ASC->ClearAbility(BigReactionHandle);
+			}
+		};
+
+		const FGameplayTag TagEventPlayerBig = FGameplayTag::RequestGameplayTag(TEXT("Event.Reaction.Player.Big"));
+		const FGameplayTag TagHitReacting = FGameplayTag::RequestGameplayTag(TEXT("State.Action.HitReacting"));
+		const FGameplayTag TagCanCancelDodge = FGameplayTag::RequestGameplayTag(TEXT("State.Action.CanCancel.Dodge"));
+		const FGameplayTag TagCancelBegin = FGameplayTag::RequestGameplayTag(TEXT("Event.Action.CancelWindow.Dodge.Begin"));
+		const FGameplayTag TagCancelEnd = FGameplayTag::RequestGameplayTag(TEXT("Event.Action.CancelWindow.Dodge.End"));
+		const FGameplayTag TagRateBegin = FGameplayTag::RequestGameplayTag(TEXT("Event.Action.RateWindow.Begin"));
+		const FGameplayTag TagRateEnd = FGameplayTag::RequestGameplayTag(TEXT("Event.Action.RateWindow.End"));
+
+		auto ActivateBigReaction = [&](const FVector& EnemyRelativeOffset) -> bool
+		{
+			ASC->SetNumericAttributeBase(UCharacterAttributeSet::GetStaminaAttribute(), 100.0f);
+			const FGameplayTag TagExhausted = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Status.Exhausted")), false);
+			if (TagExhausted.IsValid())
+			{
+				ASC->SetLooseGameplayTagCount(TagExhausted, 0);
+			}
+			Movement->SetMovementMode(MOVE_Walking);
+			Enemy->SetActorLocation(Player->GetActorLocation() + EnemyRelativeOffset);
+			FGameplayEventData TriggerData;
+			TriggerData.EventTag = TagEventPlayerBig;
+			TriggerData.Instigator = Enemy;
+			TriggerData.Target = Player;
+			const int32 ActivatedCount = ASC->HandleGameplayEvent(TagEventPlayerBig, &TriggerData);
+			return ActivatedCount > 0 && BigReactionAbility->IsActive();
+		};
+
+		const auto GetMontagePlayRate = [&](UAnimMontage* M) -> float
+		{
+			const FAnimMontageInstance* Inst = Anim->GetActiveInstanceForMontage(M);
+			return Inst ? Inst->GetPlayRate() : 0.0f;
+		};
+
+		auto AdvanceMontage = [&](float DeltaTime)
+		{
+			// Use the public montage-only tick; this fixture has no AnimGraph.
+			Anim->TickMontageOnly(DeltaTime);
+			Anim->DispatchQueuedAnimEvents();
+		};
+
+		auto ActivateAndOpenWindows = [&]() -> bool
+		{
+			if (!ActivateBigReaction(FVector(200.0f, 0.0f, 0.0f)))
+			{
+				return false;
+			}
+			AdvanceMontage(0.08f);
+			AdvanceMontage(0.20f);
+			return BigReactionAbility->IsActive()
+				&& BigReactionAbility->GetTestDodgeCancelable()
+				&& ASC->HasMatchingGameplayTag(TagCanCancelDodge)
+				&& FMath::IsNearlyEqual(GetMontagePlayRate(MontageFront), 0.5f, 0.01f);
+		};
+
+		// ---------------------------------------------------------------------
+		// 1. Four-Way Selection & Initial Window-Closed Rejection
+		// ---------------------------------------------------------------------
+		Test.TestTrue(TEXT("1.1: Activate Front Big Reaction"), ActivateBigReaction(FVector(200.0f, 0.0f, 0.0f)));
+		Test.TestEqual(TEXT("1.2: Front montage selected"), BigReactionAbility->GetTestActiveMontage(), MontageFront);
+		Test.TestTrue(TEXT("1.3: ASC owns HitReacting tag"), ASC->HasMatchingGameplayTag(TagHitReacting));
+		Test.TestFalse(TEXT("1.4: DodgeCancelable initially false"), BigReactionAbility->GetTestDodgeCancelable());
+		Test.TestFalse(TEXT("1.5: ASC does not have CanCancel.Dodge yet"), ASC->HasMatchingGameplayTag(TagCanCancelDodge));
+
+		// Outside window: Dodge activation is rejected
+		const bool bDodgeOutsideResult = ASC->TryActivateAbility(DodgeHandle);
+		Test.TestFalse(TEXT("1.6: Dodge rejected outside cancel window"), bDodgeOutsideResult);
+		Test.TestTrue(TEXT("1.7: Big reaction remains active"), BigReactionAbility->IsActive());
+
+		// ---------------------------------------------------------------------
+		// 2. Real Time Advancement & Automatic Notify Delivery (P2-1)
+		// ---------------------------------------------------------------------
+		AdvanceMontage(0.08f);
+		if (!Test.TestEqual(TEXT("2.1: Time advance triggered RateWindow (play rate 0.5f)"), GetMontagePlayRate(MontageFront), 0.5f)) return false;
+		Test.TestFalse(TEXT("2.2: Cancel window still closed before its time threshold"), BigReactionAbility->GetTestDodgeCancelable());
+		Test.TestFalse(TEXT("2.3: Dodge still rejected when only RateWindow is active"), ASC->TryActivateAbility(DodgeHandle));
+
+		AdvanceMontage(0.20f);
+		if (!Test.TestTrue(TEXT("2.4: Time advance opened cancel window"), BigReactionAbility->GetTestDodgeCancelable())) return false;
+		Test.TestTrue(TEXT("2.5: ASC has CanCancel.Dodge tag"), ASC->HasMatchingGameplayTag(TagCanCancelDodge));
+
+		// ---------------------------------------------------------------------
+		// 3. In-Window Dodge Cancels Big Reaction (End-to-End Closure)
+		// ---------------------------------------------------------------------
+		const bool bDodgeInWindowResult = ASC->TryActivateAbility(DodgeHandle);
+		Test.TestTrue(TEXT("3.1: Dodge activated successfully in cancel window"), bDodgeInWindowResult);
+		Test.TestFalse(TEXT("3.2: Big reaction cancelled by dodge"), BigReactionAbility->IsActive());
+		Test.TestFalse(TEXT("3.3: HitReacting state cleared"), ASC->HasMatchingGameplayTag(TagHitReacting));
+		Test.TestEqual(TEXT("3.4: CanCancel.Dodge count cleared to 0"), ASC->GetTagCount(TagCanCancelDodge), 0);
+		Test.TestFalse(TEXT("3.5: Rate lifecycle cleared"), BigReactionAbility->GetTestRateWindowLifecycle().IsBound());
+		Test.TestFalse(TEXT("3.6: Cancel tasks cleared"), BigReactionAbility->HasTestCancelTasks());
+
+		ASC->CancelAbilityHandle(DodgeHandle);
+
+		// ---------------------------------------------------------------------
+		// 4. Verification across Back, Left, Right Directions
+		// ---------------------------------------------------------------------
+		struct FDirectionTestCase
+		{
+			const TCHAR* Label;
+			FVector Offset;
+			UAnimMontage* ExpectedMontage;
+		};
+		const FDirectionTestCase SiblingDirections[] = {
+			{ TEXT("Back"), FVector(-200.0f, 0.0f, 0.0f), MontageBack },
+			{ TEXT("Left"), FVector(0.0f, -200.0f, 0.0f), MontageLeft },
+			{ TEXT("Right"), FVector(0.0f, 200.0f, 0.0f), MontageRight }
+		};
+
+		for (const auto& Case : SiblingDirections)
+		{
+			Test.TestTrue(FString::Printf(TEXT("4.1 [%s]: Activate"), Case.Label), ActivateBigReaction(Case.Offset));
+			Test.TestEqual(FString::Printf(TEXT("4.2 [%s]: Correct montage selected"), Case.Label),
+				BigReactionAbility->GetTestActiveMontage(), Case.ExpectedMontage);
+
+			AdvanceMontage(0.28f);
+
+			Test.TestTrue(FString::Printf(TEXT("4.3 [%s]: Window open"), Case.Label), BigReactionAbility->GetTestDodgeCancelable());
+			Test.TestTrue(FString::Printf(TEXT("4.4 [%s]: Dodge cancels reaction"), Case.Label), ASC->TryActivateAbility(DodgeHandle));
+			Test.TestFalse(FString::Printf(TEXT("4.5 [%s]: Big reaction ended"), Case.Label), BigReactionAbility->IsActive());
+			Test.TestEqual(FString::Printf(TEXT("4.6 [%s]: CanCancel.Dodge cleared"), Case.Label), ASC->GetTagCount(TagCanCancelDodge), 0);
+
+			ASC->CancelAbilityHandle(DodgeHandle);
+		}
+
+		// ---------------------------------------------------------------------
+		// 5. Activation Cost Rejection vs True Commit Failure (P2-2)
+		// ---------------------------------------------------------------------
+		Test.TestTrue(TEXT("5.1: Reactivate Front for failure boundary tests"), ActivateBigReaction(FVector(200.0f, 0.0f, 0.0f)));
+		AdvanceMontage(0.28f);
+		Test.TestTrue(TEXT("5.2: Cancel window open"), BigReactionAbility->GetTestDodgeCancelable());
+
+		// 5A: CanActivate Cost Rejection (Stamina = 0 beforehand)
+		ASC->SetNumericAttributeBase(UCharacterAttributeSet::GetStaminaAttribute(), 0.0f);
+		const bool bDodgeCostRejectResult = ASC->TryActivateAbility(DodgeHandle);
+		Test.TestFalse(TEXT("5.3: Dodge rejected by CanActivate cost check when stamina is zero"), bDodgeCostRejectResult);
+		Test.TestTrue(TEXT("5.4: Big reaction retained on CanActivate cost rejection"), BigReactionAbility->IsActive());
+		Test.TestTrue(TEXT("5.5: HitReacting tag preserved"), ASC->HasMatchingGameplayTag(TagHitReacting));
+
+		// 5B: True Commit Failure (CanActivate succeeds with 100 stamina; hook drops stamina before ActivateAbility commits)
+		ASC->SetNumericAttributeBase(UCharacterAttributeSet::GetStaminaAttribute(), 100.0f);
+		const FGameplayTag TagExhausted = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Status.Exhausted")), false);
+		if (TagExhausted.IsValid())
+		{
+			ASC->SetLooseGameplayTagCount(TagExhausted, 0);
+		}
+		bool bCommitFailureReached = false;
+		const FDelegateHandle ActivationHook = ASC->AbilityActivatedCallbacks.AddLambda([&](UGameplayAbility* Activated)
+		{
+			if (Activated == DodgeAbility)
+			{
+				bCommitFailureReached = true;
+				ASC->SetNumericAttributeBase(UCharacterAttributeSet::GetStaminaAttribute(), 0.0f);
+			}
+		});
+		ASC->TryActivateAbility(DodgeHandle);
+		ASC->AbilityActivatedCallbacks.Remove(ActivationHook);
+
+		Test.TestTrue(TEXT("5.6: Commit failure was reached after CanActivate succeeded"), bCommitFailureReached);
+		Test.TestFalse(TEXT("5.7: Dodge spec ended on commit failure"), ASC->FindAbilitySpecFromHandle(DodgeHandle)->IsActive());
+		Test.TestFalse(TEXT("5.8: Dodge ended on commit failure"), DodgeAbility->IsActive());
+		Test.TestTrue(TEXT("5.9: Big reaction retained on Dodge Commit failure"), BigReactionAbility->IsActive());
+		Test.TestTrue(TEXT("5.10: HitReacting tag preserved on Dodge Commit failure"), ASC->HasMatchingGameplayTag(TagHitReacting));
+		Test.TestTrue(TEXT("5.11: Cancel window remains open after failed Dodge commit"), BigReactionAbility->GetTestDodgeCancelable());
+
+		// Restore stamina and close window
+		ASC->SetNumericAttributeBase(UCharacterAttributeSet::GetStaminaAttribute(), 100.0f);
+		if (TagExhausted.IsValid())
+		{
+			ASC->SetLooseGameplayTagCount(TagExhausted, 0);
+		}
+		const FAnimNotifyEventReference WindowRefEnd(&FrontCancelEvent, MontageFront);
+		FrontCancelNotify->NotifyEnd(Player->GetMesh(), MontageFront, WindowRefEnd);
+		Test.TestFalse(TEXT("5.12: Window closed after NotifyEnd"), BigReactionAbility->GetTestDodgeCancelable());
+
+		// ---------------------------------------------------------------------
+		// 6. Idempotence & Foreign Source Filtering (P2-2)
+		// ---------------------------------------------------------------------
+		// 6A: In CLOSED state, verify illegal Begin payloads are rejected and do NOT open the window
+		Test.TestFalse(TEXT("6.1: Cancel window initially closed"), BigReactionAbility->GetTestDodgeCancelable());
+		Test.TestEqual(TEXT("6.2: Initial tag count is 0"), ASC->GetTagCount(TagCanCancelDodge), 0);
+
+		FGameplayEventData ForeignPayload;
+		ForeignPayload.EventTag = TagCancelBegin;
+		ForeignPayload.Instigator = Player;
+		ForeignPayload.Target = Player;
+		ForeignPayload.OptionalObject = ForeignMontage;
+		BigReactionAbility->TestOnCancelWindowBegin(ForeignPayload);
+		Test.TestFalse(TEXT("6.3: Foreign OptionalObject rejected in closed state"), BigReactionAbility->GetTestDodgeCancelable());
+		Test.TestEqual(TEXT("6.4: Tag count remains 0 on foreign OptionalObject"), ASC->GetTagCount(TagCanCancelDodge), 0);
+
+		ForeignPayload.OptionalObject = MontageFront;
+		ForeignPayload.Target = Enemy;
+		BigReactionAbility->TestOnCancelWindowBegin(ForeignPayload);
+		Test.TestFalse(TEXT("6.5: Foreign Target rejected in closed state"), BigReactionAbility->GetTestDodgeCancelable());
+		Test.TestEqual(TEXT("6.6: Tag count remains 0 on foreign Target"), ASC->GetTagCount(TagCanCancelDodge), 0);
+
+		ForeignPayload.Target = Player;
+		ForeignPayload.Instigator = Enemy;
+		BigReactionAbility->TestOnCancelWindowBegin(ForeignPayload);
+		Test.TestFalse(TEXT("6.7: Foreign Instigator rejected in closed state"), BigReactionAbility->GetTestDodgeCancelable());
+		Test.TestEqual(TEXT("6.8: Tag count remains 0 on foreign Instigator"), ASC->GetTagCount(TagCanCancelDodge), 0);
+
+		// 6B: Valid Begin proves the entry point is functional, followed by duplicate Begin for idempotence
+		ForeignPayload.Instigator = Player;
+		BigReactionAbility->TestOnCancelWindowBegin(ForeignPayload);
+		Test.TestTrue(TEXT("6.9: Valid Begin opens cancel window"), BigReactionAbility->GetTestDodgeCancelable());
+		Test.TestEqual(TEXT("6.10: Tag count is 1 after valid Begin"), ASC->GetTagCount(TagCanCancelDodge), 1);
+
+		BigReactionAbility->TestOnCancelWindowBegin(ForeignPayload);
+		Test.TestEqual(TEXT("6.11: Duplicate Begin preserves tag count at 1"), ASC->GetTagCount(TagCanCancelDodge), 1);
+
+		// 6C: In OPEN state, verify illegal End payloads are rejected and window remains open
+		FGameplayEventData ForeignEndPayload;
+		ForeignEndPayload.EventTag = TagCancelEnd;
+		ForeignEndPayload.Instigator = Player;
+		ForeignEndPayload.Target = Player;
+		ForeignEndPayload.OptionalObject = ForeignMontage;
+		BigReactionAbility->TestOnCancelWindowEnd(ForeignEndPayload);
+		Test.TestTrue(TEXT("6.12: Foreign End rejected, window remains open"), BigReactionAbility->GetTestDodgeCancelable());
+		Test.TestEqual(TEXT("6.13: Tag count remains 1 on foreign End"), ASC->GetTagCount(TagCanCancelDodge), 1);
+
+		ForeignEndPayload.OptionalObject = MontageFront;
+		ForeignEndPayload.Target = Enemy;
+		BigReactionAbility->TestOnCancelWindowEnd(ForeignEndPayload);
+		Test.TestTrue(TEXT("6.14: Foreign Target End rejected, window remains open"), BigReactionAbility->GetTestDodgeCancelable());
+		Test.TestEqual(TEXT("6.15: Tag count remains 1 on foreign Target End"), ASC->GetTagCount(TagCanCancelDodge), 1);
+
+		// 6D: Valid End closes the window, followed by duplicate End for idempotence
+		ForeignEndPayload.Target = Player;
+		BigReactionAbility->TestOnCancelWindowEnd(ForeignEndPayload);
+		Test.TestFalse(TEXT("6.16: Valid End closes cancel window"), BigReactionAbility->GetTestDodgeCancelable());
+		Test.TestEqual(TEXT("6.17: Tag count is 0 after valid End"), ASC->GetTagCount(TagCanCancelDodge), 0);
+
+		BigReactionAbility->TestOnCancelWindowEnd(ForeignEndPayload);
+		Test.TestEqual(TEXT("6.18: Duplicate End preserves tag count at 0"), ASC->GetTagCount(TagCanCancelDodge), 0);
+
+		// ---------------------------------------------------------------------
+		// 7. RateWindow Access & Context Token Isolation
+		// ---------------------------------------------------------------------
+		UAnimNotifyState_MontageRateWindow* RateNotifyA = Cast<UAnimNotifyState_MontageRateWindow>(FindRateWindowEvent(MontageFront, 0)->NotifyStateClass.Get());
+		FAnimNotifyEvent* RateEventA = FindRateWindowEvent(MontageFront, 0);
+		const FAnimNotifyEventReference RateRefA(RateEventA, MontageFront);
+
+		RateNotifyA->NotifyBegin(Player->GetMesh(), MontageFront, 1.0f, RateRefA);
+		Test.TestEqual(TEXT("7.1: RateWindow applied 0.5f play rate"), GetMontagePlayRate(MontageFront), 0.5f);
+
+		RateNotifyA->NotifyEnd(Player->GetMesh(), MontageFront, RateRefA);
+		Test.TestEqual(TEXT("7.2: RateWindow restored 1.0f baseline"), GetMontagePlayRate(MontageFront), 1.0f);
+
+		auto* FirstContext = BigReactionAbility->GetTestRateWindowContext();
+		Test.TestNotNull(TEXT("7.3: Active RateWindowContext exists"), FirstContext);
+		TStrongObjectPtr<UObject> KeepFirstContext(FirstContext);
+
+		const bool bRebindOk = BigReactionAbility->TestBindRateWindow(Anim, MontageFront);
+		Test.TestTrue(TEXT("7.4: Rebind on active ability succeeds"), bRebindOk);
+		auto* SecondContext = BigReactionAbility->GetTestRateWindowContext();
+		Test.TestTrue(TEXT("7.5: Rebind creates fresh context instance"), SecondContext != FirstContext);
+
+		FGameplayEventData RatePayload;
+		RatePayload.EventTag = TagRateBegin;
+		RatePayload.Instigator = Player;
+		RatePayload.Target = Player;
+		RatePayload.OptionalObject = MontageFront;
+		RatePayload.OptionalObject2 = RateNotifyA;
+		RatePayload.EventMagnitude = 0.5f;
+
+		FirstContext->OnBegin(RatePayload);
+		Test.TestEqual(TEXT("7.6: Stale context callback rejected (window count 0)"),
+			BigReactionAbility->GetTestRateWindowLifecycle().GetActiveWindowCount(), 0);
+
+		SecondContext->OnBegin(RatePayload);
+		Test.TestEqual(TEXT("7.7: New context callback accepted (window count 1)"),
+			BigReactionAbility->GetTestRateWindowLifecycle().GetActiveWindowCount(), 1);
+
+		RatePayload.EventTag = TagRateEnd;
+		SecondContext->OnEnd(RatePayload);
+		Test.TestEqual(TEXT("7.8: New context callback ended (window count 0)"),
+			BigReactionAbility->GetTestRateWindowLifecycle().GetActiveWindowCount(), 0);
+		// Ending a rate window does not end its owning ability. Close this case
+		// explicitly before section 8 starts a fresh playback; do not flush events.
+		ASC->CancelAbilityHandle(BigReactionHandle);
+		if (!Test.TestFalse(TEXT("7.9: Context isolation case ends its reaction before the next activation"), BigReactionAbility->IsActive())) return false;
+
+		// ---------------------------------------------------------------------
+		// 8. Active Windows Teardown across All Exits (P2-1)
+		// ---------------------------------------------------------------------
+		// 8.1: Natural Montage End from Active Windows
+		Test.TestTrue(TEXT("8.1a: Activate with open windows for natural end"), ActivateAndOpenWindows());
+		Test.TestTrue(TEXT("8.1b: Cancel window is open before natural end"), BigReactionAbility->GetTestDodgeCancelable());
+		Test.TestEqual(TEXT("8.1c: Play rate is modified (0.5f) before natural end"), GetMontagePlayRate(MontageFront), 0.5f);
+
+		for (int32 Step = 0; Step < 40 && BigReactionAbility->IsActive(); ++Step)
+		{
+			AdvanceMontage(0.1f);
+		}
+		Test.TestFalse(TEXT("8.1d: Natural end ends big reaction ability"), BigReactionAbility->IsActive());
+		Test.TestFalse(TEXT("8.1e: Natural end clears HitReacting tag"), ASC->HasMatchingGameplayTag(TagHitReacting));
+		Test.TestEqual(TEXT("8.1f: Natural end clears CanCancel.Dodge tag"), ASC->GetTagCount(TagCanCancelDodge), 0);
+		Test.TestFalse(TEXT("8.1g: Natural end clears RateWindow lifecycle"), BigReactionAbility->GetTestRateWindowLifecycle().IsBound());
+		Test.TestFalse(TEXT("8.1h: Natural end removes cancel tasks"), BigReactionAbility->HasTestCancelTasks());
+		Test.TestFalse(TEXT("8.1i: Natural end removes rate tasks"), BigReactionAbility->HasTestRateWindowTasks());
+
+		// 8.2: External Cancellation from Active Windows
+		Test.TestTrue(TEXT("8.2a: Activate with open windows for external cancel"), ActivateAndOpenWindows());
+		Test.TestTrue(TEXT("8.2b: Cancel window open"), BigReactionAbility->GetTestDodgeCancelable());
+		Test.TestEqual(TEXT("8.2c: Play rate modified (0.5f)"), GetMontagePlayRate(MontageFront), 0.5f);
+
+		ASC->CancelAbilityHandle(BigReactionHandle);
+		Test.TestFalse(TEXT("8.2d: External cancel ends big reaction ability"), BigReactionAbility->IsActive());
+		Test.TestFalse(TEXT("8.2e: External cancel clears HitReacting tag"), ASC->HasMatchingGameplayTag(TagHitReacting));
+		Test.TestEqual(TEXT("8.2f: External cancel clears CanCancel.Dodge tag"), ASC->GetTagCount(TagCanCancelDodge), 0);
+		Test.TestFalse(TEXT("8.2g: External cancel clears RateWindow lifecycle"), BigReactionAbility->GetTestRateWindowLifecycle().IsBound());
+		Test.TestFalse(TEXT("8.2h: External cancel removes cancel tasks"), BigReactionAbility->HasTestCancelTasks());
+		Test.TestFalse(TEXT("8.2i: External cancel removes rate tasks"), BigReactionAbility->HasTestRateWindowTasks());
+
+		// 8.3: Falling from Active Windows
+		Test.TestTrue(TEXT("8.3a: Activate with open windows for falling teardown"), ActivateAndOpenWindows());
+		Test.TestTrue(TEXT("8.3b: Cancel window open"), BigReactionAbility->GetTestDodgeCancelable());
+		Test.TestEqual(TEXT("8.3c: Play rate modified (0.5f)"), GetMontagePlayRate(MontageFront), 0.5f);
+
+		Movement->SetMovementMode(MOVE_Falling);
+		Test.TestFalse(TEXT("8.3d: Falling ended big reaction ability"), BigReactionAbility->IsActive());
+		Test.TestFalse(TEXT("8.3e: Falling cleared HitReacting tag"), ASC->HasMatchingGameplayTag(TagHitReacting));
+		Test.TestEqual(TEXT("8.3f: Falling cleared CanCancel.Dodge tag"), ASC->GetTagCount(TagCanCancelDodge), 0);
+		Test.TestFalse(TEXT("8.3g: Falling cleared RateWindow lifecycle"), BigReactionAbility->GetTestRateWindowLifecycle().IsBound());
+		Test.TestFalse(TEXT("8.3h: Falling removed cancel tasks"), BigReactionAbility->HasTestCancelTasks());
+		Test.TestFalse(TEXT("8.3i: Falling removed rate tasks"), BigReactionAbility->HasTestRateWindowTasks());
+		Movement->SetMovementMode(MOVE_Walking);
+
+		// 8.4: Death from Active Windows
+		Test.TestTrue(TEXT("8.4a: Activate with open windows for death teardown"), ActivateAndOpenWindows());
+		Test.TestTrue(TEXT("8.4b: Cancel window open"), BigReactionAbility->GetTestDodgeCancelable());
+		Test.TestEqual(TEXT("8.4c: Play rate modified (0.5f)"), GetMontagePlayRate(MontageFront), 0.5f);
+
+		const FGameplayTag TagDead = FGameplayTag::RequestGameplayTag(TEXT("State.Status.Dead"));
+		ASC->AddLooseGameplayTag(TagDead);
+		ASC->CancelAbilityHandle(BigReactionHandle);
+		Test.TestFalse(TEXT("8.4d: Death cancel ends big reaction ability"), BigReactionAbility->IsActive());
+		Test.TestFalse(TEXT("8.4e: Death clears HitReacting tag"), ASC->HasMatchingGameplayTag(TagHitReacting));
+		Test.TestEqual(TEXT("8.4f: Death clears CanCancel.Dodge tag"), ASC->GetTagCount(TagCanCancelDodge), 0);
+		Test.TestFalse(TEXT("8.4g: Death clears RateWindow lifecycle"), BigReactionAbility->GetTestRateWindowLifecycle().IsBound());
+		Test.TestFalse(TEXT("8.4h: Death removes cancel tasks"), BigReactionAbility->HasTestCancelTasks());
+		Test.TestFalse(TEXT("8.4i: Death removes rate tasks"), BigReactionAbility->HasTestRateWindowTasks());
+
+		// Death blocks reactivation
+		Test.TestFalse(TEXT("8.4j: Dead state blocks big reaction reactivation"), ActivateBigReaction(FVector(200.0f, 0.0f, 0.0f)));
+		ASC->RemoveLooseGameplayTag(TagDead);
+
+		// 8.5: Playback Startup Failure (Convergence)
+		UAnimMontage* EmptyMontage = NewObject<UAnimMontage>(World);
+		EmptyMontage->SetSkeleton(MontageFront->GetSkeleton());
+		BigReactionAbility->SetTestMontages(EmptyMontage, EmptyMontage, EmptyMontage, EmptyMontage);
+		const bool bStartupFailResult = ActivateBigReaction(FVector(200.0f, 0.0f, 0.0f));
+		Test.TestFalse(TEXT("8.5a: Startup failure fails activation"), bStartupFailResult);
+		Test.TestFalse(TEXT("8.5b: Startup failure leaves ability inactive"), BigReactionAbility->IsActive());
+		Test.TestFalse(TEXT("8.5c: Startup failure leaves no HitReacting tag"), ASC->HasMatchingGameplayTag(TagHitReacting));
+		Test.TestEqual(TEXT("8.5d: Startup failure leaves no CanCancel tag"), ASC->GetTagCount(TagCanCancelDodge), 0);
+		Test.TestFalse(TEXT("8.5e: Startup failure leaves no rate binding"), BigReactionAbility->GetTestRateWindowLifecycle().IsBound());
+		Test.TestFalse(TEXT("8.5f: Startup failure leaves no cancel tasks"), BigReactionAbility->HasTestCancelTasks());
+		Test.TestFalse(TEXT("8.5g: Startup failure leaves no rate tasks"), BigReactionAbility->HasTestRateWindowTasks());
+		Test.TestNull(TEXT("8.5h: Startup failure leaves no rate context"), BigReactionAbility->GetTestRateWindowContext());
+		BigReactionAbility->SetTestMontages(MontageFront, MontageBack, MontageLeft, MontageRight);
+
+		// 8.6: Clean Reactivation after previous teardowns
+		Test.TestTrue(TEXT("8.6a: Clean reactivation succeeds"), ActivateBigReaction(FVector(200.0f, 0.0f, 0.0f)));
+		Test.TestFalse(TEXT("8.6b: Reactivation starts with cancel window closed"), BigReactionAbility->GetTestDodgeCancelable());
+		Test.TestEqual(TEXT("8.6c: Reactivation starts with tag count 0"), ASC->GetTagCount(TagCanCancelDodge), 0);
+		Test.TestEqual(TEXT("8.6d: Reactivation starts with baseline play rate 1.0f"), GetMontagePlayRate(MontageFront), 1.0f);
+		ASC->CancelAbilityHandle(BigReactionHandle);
+
+		// Cancel and replay the same asset BEFORE dispatching the old end event.
+		if (!Test.TestTrue(TEXT("8.6e: Activate old playback for queued-end regression"), ActivateAndOpenWindows())) return false;
+		const int32 OldInstanceID = BigReactionAbility->GetTestRateWindowMontageInstanceID();
+		ASC->CancelAbilityHandle(BigReactionHandle);
+		Anim->UpdateAnimation(0.0f, false); // Queue termination; deliberately do not dispatch yet.
+		if (!Test.TestTrue(TEXT("8.6f: Immediate same-asset reactivation succeeds"), ActivateBigReaction(FVector(200.0f, 0.0f, 0.0f)))) return false;
+		const int32 NewInstanceID = BigReactionAbility->GetTestRateWindowMontageInstanceID();
+		Test.TestNotEqual(TEXT("8.6g: Reactivation owns a different playback instance"), NewInstanceID, OldInstanceID);
+		AdvanceMontage(0.01f);
+		Test.TestTrue(TEXT("8.6h: Queued old end event cannot end new reaction"), BigReactionAbility->IsActive());
+		Test.TestEqual(TEXT("8.6i: New playback binding survives old end event"), BigReactionAbility->GetTestRateWindowMontageInstanceID(), NewInstanceID);
+		Test.TestTrue(TEXT("8.6j: New reaction retains HitReacting"), ASC->HasMatchingGameplayTag(TagHitReacting));
+		ASC->CancelAbilityHandle(BigReactionHandle);
+
+		// 8.7: Player Destruction Teardown
+		Test.TestTrue(TEXT("8.7a: Activate with open windows for player destruction"), ActivateAndOpenWindows());
+		auto* DestroyedContext = BigReactionAbility->GetTestRateWindowContext();
+		TStrongObjectPtr<UObject> KeepDestroyedContext(DestroyedContext);
+		TStrongObjectPtr<UPlayerBigHitReactionAbility> KeepAbility(BigReactionAbility);
+
+		Player->Destroy();
+		Test.TestFalse(TEXT("8.7b: Destroy ends big reaction ability"), BigReactionAbility->IsActive());
+		Test.TestFalse(TEXT("8.7c: Destroy clears RateWindow lifecycle"), BigReactionAbility->GetTestRateWindowLifecycle().IsBound());
+		Test.TestFalse(TEXT("8.7d: Destroy removes cancel tasks"), BigReactionAbility->HasTestCancelTasks());
+		Test.TestFalse(TEXT("8.7e: Destroy removes rate tasks"), BigReactionAbility->HasTestRateWindowTasks());
+		if (DestroyedContext)
+		{
+			Test.TestNull(TEXT("8.7f: Destroy invalidates context owning ability"), DestroyedContext->OwningAbility.Get());
+		}
+
+		return true;
+	}
 }
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FMeleeSkillRateWindowTest, "PolyQuest.Combat.PlayerMontageRateWindow.MeleeSkill", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
@@ -1399,6 +1914,8 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FBowRateWindowTest, "PolyQuest.Combat.PlayerMon
 bool FBowRateWindowTest::RunTest(const FString&) { return PlayerMontageRateWindowAutomation::RunConsumer<UBowDrawFireAbility>(*this, TEXT("BowMontage"), TEXT("Bow")); }
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FDodgeRateWindowTest, "PolyQuest.Combat.PlayerMontageRateWindow.Dodge", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 bool FDodgeRateWindowTest::RunTest(const FString&) { return PlayerMontageRateWindowAutomation::RunConsumer<UDodgeAbility>(*this, TEXT("DodgeMontage"), TEXT("Dodge")); }
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FPlayerBigHitReactionWindowsTest, "PolyQuest.Combat.PlayerBigHitReactionWindows", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+bool FPlayerBigHitReactionWindowsTest::RunTest(const FString&) { return PlayerMontageRateWindowAutomation::RunPlayerBigHitReactionWindowsTest(*this); }
 #endif // WITH_EDITOR
 
 #endif // WITH_DEV_AUTOMATION_TESTS
