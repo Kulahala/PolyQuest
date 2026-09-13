@@ -13,6 +13,8 @@
 #include "AbilitySystem/Abilities/LightAttackAbility.h"
 #include "AbilitySystem/Abilities/PlayerMeleeSkillAbility.h"
 #include "AbilitySystem/Abilities/SprintAttackAbility.h"
+#include "AbilitySystem/Tasks/AbilityTask_PlayActionMontage.h"
+#include "Tests/TestManagedMontageAbility.h"
 #include "AbilitySystem/Abilities/ChargedAttackAbility.h"
 #include "AbilitySystem/Abilities/BowDrawFireAbility.h"
 #include "AbilitySystem/Abilities/DodgeAbility.h"
@@ -34,6 +36,7 @@
 #include "Animation/AnimSequence.h"
 #include "Animation/Skeleton.h"
 #include "Animation/Combat/AnimNotifyState_ActionWindows.h"
+#include "Animation/ActiveMontageInstanceScope.h"
 #include "Character/Enemy/EnemyCharacter.h"
 #include "Character/Player/PlayerCharacter.h"
 #include "Combat/ComboChainDataAsset.h"
@@ -1106,7 +1109,10 @@ namespace PlayerMontageRateWindowAutomation
 		if (!Test.TestNotNull(TEXT("Notify A"), EventA) || !Test.TestNotNull(TEXT("Notify B"), EventB)) return false;
 		auto* NotifyA = CastChecked<UAnimNotifyState_MontageRateWindow>(EventA->NotifyStateClass);
 		auto* NotifyB = CastChecked<UAnimNotifyState_MontageRateWindow>(EventB->NotifyStateClass);
-		const FAnimNotifyEventReference RefA(EventA, Montage), RefB(EventB, Montage);
+		FAnimNotifyEventReference RefA(EventA, Montage);
+		RefA.AddContextData<UE::Anim::FAnimNotifyMontageInstanceContext>(Instance->GetInstanceID());
+		FAnimNotifyEventReference RefB(EventB, Montage);
+		RefB.AddContextData<UE::Anim::FAnimNotifyMontageInstanceContext>(Instance->GetInstanceID());
 		const auto BeginA = [&]() { NotifyA->NotifyBegin(Player->GetMesh(), Montage, 1.0f, RefA); };
 		const auto BeginB = [&]() { NotifyB->NotifyBegin(Player->GetMesh(), Montage, 1.0f, RefB); };
 		const auto EndA = [&]() { NotifyA->NotifyEnd(Player->GetMesh(), Montage, RefA); };
@@ -1902,12 +1908,116 @@ namespace PlayerMontageRateWindowAutomation
 
 		return true;
 	}
+
+	bool RunSprintAttackConsumer(FAutomationTestBase& Test, const TCHAR* MontageProperty, const TCHAR* Name)
+	{
+		FWorldContext& WorldContext = GEngine->CreateNewWorldContext(EWorldType::Game);
+		UWorld* World = UWorld::CreateWorld(EWorldType::Game, false);
+		WorldContext.SetCurrentWorld(World);
+		FTestWorldScope Cleanup{ World };
+		if (!Test.TestNotNull(TEXT("Consumer world exists"), World)) return false;
+		FURL URL;
+		World->InitializeActorsForPlay(URL);
+		World->BeginPlay();
+		APlayerCharacter* Player = FCombatAutomationFixture::SpawnPlayer(World);
+		if (!Test.TestNotNull(TEXT("Player exists"), Player)) return false;
+		UAbilitySystemComponent* ASC = Player->GetAbilitySystemComponent();
+		if (!Test.TestNotNull(TEXT("ASC exists"), ASC)) return false;
+		Player->GetCharacterMovement()->SetMovementMode(MOVE_Walking);
+		ASC->SetNumericAttributeBase(UCharacterAttributeSet::GetMaxStaminaAttribute(), 100.0f);
+		ASC->SetNumericAttributeBase(UCharacterAttributeSet::GetStaminaAttribute(), 100.0f);
+
+		UAnimMontage* Montage = CreatePlayableRateMontage(Test, World, Name);
+		if (!Test.TestNotNull(TEXT("Playable consumer montage exists"), Montage)) return false;
+		UAnimInstance* Anim = NewObject<UAnimInstance>(Player->GetMesh());
+		Anim->InitializeMontageOnly();
+		Anim->CurrentSkeleton = Montage->GetSkeleton();
+		Player->GetMesh()->AnimScriptInstance = Anim;
+		ASC->RefreshAbilityActorInfo();
+
+		ASC->AddLooseGameplayTag(FGameplayTag::RequestGameplayTag(TEXT("State.Movement.Sprinting")));
+		Player->SetTestCurrentMoveInput(FVector2D(0.0f, 1.0f));
+
+		const FGameplayAbilitySpecHandle Handle = ASC->GiveAbility(FGameplayAbilitySpec(USprintAttackAbility::StaticClass(), 1, INDEX_NONE, Player));
+		USprintAttackAbility* Ability = Cast<USprintAttackAbility>(ASC->FindAbilitySpecFromHandle(Handle)->GetPrimaryInstance());
+		if (!Test.TestNotNull(TEXT("ASC instanced the SprintAttack consumer"), Ability)) return false;
+		ON_SCOPE_EXIT { if (IsValid(ASC)) { ASC->CancelAbilityHandle(Handle); ASC->ClearAbility(Handle); } };
+
+		if (!Test.TestTrue(TEXT("Fixture assigns authored montage"), SetFixtureObject(Ability, MontageProperty, Montage))) return false;
+		for (const FName EffectProperty : { FName(TEXT("CostGameplayEffectClass")), FName(TEXT("CooldownGameplayEffectClass")),
+			FName(TEXT("DamageGameplayEffectClass")), FName(TEXT("StaminaRegenDelayGameplayEffectClass")), FName(TEXT("InvulnerabilityGameplayEffectClass")) })
+		{
+			SetFixtureObject(Ability, EffectProperty, UGameplayEffect::StaticClass());
+		}
+
+		const bool bActivated = ASC->TryActivateAbility(Handle);
+		if (!Test.TestTrue(TEXT("Real ASC activation keeps SprintAttack active"), bActivated && Ability->IsActive()
+			&& ASC->FindAbilitySpecFromHandle(Handle)->IsActive()))
+		{
+			return false;
+		}
+
+		Test.TestTrue(TEXT("SprintAttack RateWindow lifecycle is bound"), Ability->GetTestRateWindowLifecycle().IsBound());
+		Test.TestTrue(TEXT("SprintAttack has active montage task"), Ability->HasTestRateWindowTasks());
+
+		const FAnimMontageInstance* Instance = Anim->GetActiveInstanceForMontage(Montage);
+		if (!Test.TestNotNull(TEXT("Actual montage instance exists"), Instance)) return false;
+		Test.TestEqual(TEXT("SprintAttack owns actual instance ID"), Ability->GetTestRateWindowMontageInstanceID(), Instance->GetInstanceID());
+
+		FAnimNotifyEvent* EventA = FindRateWindowEvent(Montage, 0);
+		FAnimNotifyEvent* EventB = FindRateWindowEvent(Montage, 1);
+		if (!Test.TestNotNull(TEXT("Notify A exists"), EventA) || !Test.TestNotNull(TEXT("Notify B exists"), EventB)) return false;
+		auto* NotifyA = CastChecked<UAnimNotifyState_MontageRateWindow>(EventA->NotifyStateClass);
+		auto* NotifyB = CastChecked<UAnimNotifyState_MontageRateWindow>(EventB->NotifyStateClass);
+		FAnimNotifyEventReference RefA(EventA, Montage);
+		RefA.AddContextData<UE::Anim::FAnimNotifyMontageInstanceContext>(Instance->GetInstanceID());
+		FAnimNotifyEventReference RefB(EventB, Montage);
+		RefB.AddContextData<UE::Anim::FAnimNotifyMontageInstanceContext>(Instance->GetInstanceID());
+
+		const auto BeginA = [&]() { NotifyA->NotifyBegin(Player->GetMesh(), Montage, 1.0f, RefA); };
+		const auto BeginB = [&]() { NotifyB->NotifyBegin(Player->GetMesh(), Montage, 1.0f, RefB); };
+		const auto EndA = [&]() { NotifyA->NotifyEnd(Player->GetMesh(), Montage, RefA); };
+		const auto EndB = [&]() { NotifyB->NotifyEnd(Player->GetMesh(), Montage, RefB); };
+		const auto Rate = [&](float Expected) { Test.TestEqual(TEXT("Actual montage rate"), Anim->Montage_GetPlayRate(Montage), Expected); };
+
+		// Exercise RateWindow via standard AnimNotify transport
+		BeginA(); Rate(0.5f);
+		BeginB(); Rate(0.2f);
+		EndA(); Rate(0.2f);
+		EndB(); Rate(1.0f);
+
+		// Rejection of invalid payloads (missing TargetData, mismatched ID, INDEX_NONE ID)
+		const FGameplayTag BeginTag = FGameplayTag::RequestGameplayTag(TEXT("Event.Action.RateWindow.Begin"));
+		FGameplayEventData InvalidData;
+		InvalidData.EventTag = BeginTag;
+		InvalidData.EventMagnitude = 0.3f;
+		ASC->HandleGameplayEvent(BeginTag, &InvalidData);
+		Rate(1.0f); // Rejected (missing TargetData), rate unaffected
+
+		FGameplayEventData WrongIDData = InvalidData;
+		WrongIDData.TargetData = FManagedMontageTestHelpers::MakeRateWindowTargetData(Anim, Instance->GetInstanceID() + 9999);
+		ASC->HandleGameplayEvent(BeginTag, &WrongIDData);
+		Rate(1.0f); // Rejected (mismatched ID), rate unaffected
+
+		FGameplayEventData IndexNoneData = InvalidData;
+		IndexNoneData.TargetData = FManagedMontageTestHelpers::MakeRateWindowTargetData(Anim, INDEX_NONE);
+		ASC->HandleGameplayEvent(BeginTag, &IndexNoneData);
+		Rate(1.0f); // Rejected (INDEX_NONE ID), rate unaffected
+
+		// End ability
+		ASC->CancelAbilityHandle(Handle);
+		Test.TestFalse(TEXT("SprintAttack ended"), Ability->IsActive());
+		Test.TestFalse(TEXT("SprintAttack lifecycle unbound"), Ability->GetTestRateWindowLifecycle().IsBound());
+		Test.TestFalse(TEXT("SprintAttack montage task cleaned up"), Ability->HasTestRateWindowTasks());
+
+		return true;
+	}
 }
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FMeleeSkillRateWindowTest, "PolyQuest.Combat.PlayerMontageRateWindow.MeleeSkill", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 bool FMeleeSkillRateWindowTest::RunTest(const FString&) { return PlayerMontageRateWindowAutomation::RunConsumer<UPlayerMeleeSkillAbility>(*this, TEXT("SkillMontage"), TEXT("MeleeSkill")); }
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSprintAttackRateWindowTest, "PolyQuest.Combat.PlayerMontageRateWindow.Sprint", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
-bool FSprintAttackRateWindowTest::RunTest(const FString&) { return PlayerMontageRateWindowAutomation::RunConsumer<USprintAttackAbility>(*this, TEXT("SprintAttackMontage"), TEXT("Sprint")); }
+bool FSprintAttackRateWindowTest::RunTest(const FString&) { return PlayerMontageRateWindowAutomation::RunSprintAttackConsumer(*this, TEXT("SprintAttackMontage"), TEXT("Sprint")); }
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FChargedAttackRateWindowTest, "PolyQuest.Combat.PlayerMontageRateWindow.Charged", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 bool FChargedAttackRateWindowTest::RunTest(const FString&) { return PlayerMontageRateWindowAutomation::RunConsumer<UChargedAttackAbility>(*this, TEXT("ChargedAttackMontage"), TEXT("Charged")); }
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FBowRateWindowTest, "PolyQuest.Combat.PlayerMontageRateWindow.Bow", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)

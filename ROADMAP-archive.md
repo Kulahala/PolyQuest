@@ -1741,3 +1741,13 @@ TODO-03A3E World Pickup Interaction Prompt v1
 - **边界与债务**：Execution证明回调状态契约，不证明真实播放/自然派发；VitalHUD证明离散Tick行为。旧失败日志保留，不声称修复前重新独立跑过两个套件，不判定引入版本。03H7当前编译/Automation已补齐，唯一剩余修复后PIE收据归ROADMAP的Debt-03H7-PostRepairValidation；H6-F14及其他债务未核销。
 - **交接**：用户批准三文档收尾，plan.md第8节保留完成态，ROADMAP下一入口更新为独立规划TODO-03C。两份测试与三份文档尚未暂存/提交，提交仍待用户批准；全部无关WIP保留，不改ARCHITECTURE，不推送。
 - **提交授权补充**：用户随后批准两份测试与三份文档一并提交，明确包含另一会话制定的RateWindow/CancelWindow封装排期。下一入口以最新ROADMAP为准：03H9-A → 03H9-B → 03H9-C → 03C；此排期不代表封装已实现。保留无关WIP，不推送。
+
+## TODO-03H9-A — Implementation And Review Record（2026-09-13）
+
+- **基线与范围**：HEAD `6ca8a39923c6d00d12f84b0ae850c72a0dd9b178`；plan.md批准的14个源码/测试文件。Gemini经用户手动交接实施，Main负责计划与有界终审并曾接手EndTask停止修复；后续修复回路单兵完成，保留全部无关Content/Config WIP。
+- **实现结果**：新增ASC-owned PlayActionMontage Task组合既有RateWindow Lifecycle；SprintAttack/EnemySmallHitReaction迁移，移除专属窗口监听及并行停止。Notify本地来源数据区分AnimInstance/InstanceID；Queued与Branching Point互斥单发，未知身份拒收。取消、EndTask和自然完成保留各自结果语义，幂等清理维护原实例停止权。
+- **修复沉淀**：关闭EndTask不停止原实例、自然结束吞Completed、未知ID补填/放行、Editor API宏泄漏、取消先停后恢复及默认取消通知缺失。Root Motion恢复记录自身实际应用状态并排除其他资产/新实例接管，覆盖失败Task及旧Task污染新播放两个反例。
+- **验证证据**：用户明确确认Development Editor编译通过；本片报告PlayerMontageRateWindow六组、EnemyMontageRateWindow、ManagedMontageRateWindow Success和PIE通过，最终Root Motion授权修复后再次确认Managed Success。公共测试含真实时间推进Queued/Branching Point派发计数、自然完成次数和动作/移动Tag清除；不同资产迟到清理用例有意解除旧实例委托以构造尚未终结的旧Task，不宣称该延迟来自引擎自然调度。
+- **终审**：Main最终增量Fresh Review通过，无未关闭P0–P2；Ponytail辅审无新增独立复杂度建议。最终五文件Rider 0 errors及Source空白检查为Gemini报告，Main未代跑编译/Automation/Editor/PIE。
+- **证据边界与交接**：本记录沉淀已完成实现/审查，不宣称总验收所有门禁关闭；未单独报告的构建/回归/readback唯一归ROADMAP的Debt-03H9-A-ValidationReceipts。plan.md第6节保留当前凭据，ARCHITECTURE仅更新两个已迁移试点的运行时事实。路线保持A → B → C → 03C，不自动实施后续阶段。
+- **文档与Git**：用户确认编译后要求继续，Main更新plan.md、ROADMAP.md、ROADMAP-archive.md与ARCHITECTURE.md。用户随后明确回复“可以提交”，批准本片14个源码/测试文件与4份阶段文档共18文件有界提交；显式暂存并核验清单，排除全部无关WIP，不推送。剩余验证收据按原边界保留，不因提交批准追认为已执行。

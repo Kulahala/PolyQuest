@@ -7,7 +7,7 @@
 #include "AbilitySystem/Abilities/MontageRateWindowLifecycle.h"
 #include "SprintAttackAbility.generated.h"
 
-class UAbilityTask_PlayMontageAndWait;
+class UAbilityTask_PlayActionMontage;
 class UAbilityTask_MeleeTraceWindow;
 class UAbilityTask_WaitGameplayEvent;
 class UAnimInstance;
@@ -15,23 +15,6 @@ class UAnimMontage;
 class UGameplayEffect;
 
 class USprintAttackAbility;
-
-/** Transient receiver scoped to one RateWindow playback binding. */
-UCLASS(Transient)
-class POLYQUEST_API USprintAttackRateWindowContext : public UObject
-{
-	GENERATED_BODY()
-
-public:
-	TWeakObjectPtr<USprintAttackAbility> OwningAbility;
-	uint32 Token = 0;
-
-	UFUNCTION()
-	void OnBegin(FGameplayEventData Payload);
-
-	UFUNCTION()
-	void OnEnd(FGameplayEventData Payload);
-};
 
 /**
  * A Root Motion attack that may begin only from a real active Sprint state.
@@ -92,7 +75,7 @@ protected:
 
 private:
 	UPROPERTY(Transient)
-	TObjectPtr<UAbilityTask_PlayMontageAndWait> MontageTask;
+	TObjectPtr<UAbilityTask_PlayActionMontage> MontageTask;
 
 	UPROPERTY(Transient)
 	TObjectPtr<UAbilityTask_WaitGameplayEvent> TraceWindowBeginTask;
@@ -110,12 +93,6 @@ private:
 	TObjectPtr<UAbilityTask_WaitGameplayEvent> DodgeCancelWindowEndTask;
 
 	UPROPERTY(Transient)
-	TObjectPtr<UAbilityTask_WaitGameplayEvent> RateWindowBeginTask;
-
-	UPROPERTY(Transient)
-	TObjectPtr<UAbilityTask_WaitGameplayEvent> RateWindowEndTask;
-
-	UPROPERTY(Transient)
 	TObjectPtr<UAnimInstance> BoundAnimInstance;
 
 	UPROPERTY(Transient)
@@ -130,8 +107,6 @@ private:
 	FGameplayTag TraceWindowEndEventTag;
 	FGameplayTag DodgeCancelWindowBeginEventTag;
 	FGameplayTag DodgeCancelWindowEndEventTag;
-	FGameplayTag RateWindowBeginEventTag;
-	FGameplayTag RateWindowEndEventTag;
 	FGameplayTag DodgeCancelableStateTag;
 	FGameplayTag DefenseCancelableStateTag;
 	bool bDodgeCancelable = false;
@@ -139,7 +114,16 @@ private:
 	bool bEndAbilityRequested = false;
 
 	UFUNCTION()
-	void OnActiveMontageEnded(UAnimMontage* Montage, bool bInterrupted);
+	void OnMontageCompleted();
+
+	UFUNCTION()
+	void OnMontageInterrupted();
+
+	UFUNCTION()
+	void OnMontageCancelled();
+
+	UFUNCTION()
+	void OnMontageFailed();
 
 	UFUNCTION()
 	void OnTraceWindowBegin(FGameplayEventData Payload);
@@ -152,10 +136,6 @@ private:
 
 	UFUNCTION()
 	void OnDodgeCancelWindowEnd(FGameplayEventData Payload);
-
-	void OnRateWindowBegin(const FGameplayEventData& Payload);
-
-	void OnRateWindowEnd(const FGameplayEventData& Payload);
 
 	void EndFromMontage(bool bWasCancelled);
 	bool IsGameplayEventFromActiveMontage(const FGameplayEventData& Payload) const;
@@ -200,31 +180,11 @@ private:
 	bool bTestBypassMontageActiveCheck = false;
 #endif
 
-private:
-	friend struct FMontageRateWindowBinding;
-	friend class USprintAttackRateWindowContext;
-
-	UPROPERTY(Transient)
-	TObjectPtr<USprintAttackRateWindowContext> RateWindowContext;
-
-	FAbilityMontageRateWindowLifecycle RateWindowLifecycle;
-	TWeakObjectPtr<UAnimInstance> RateWindowAnimInstance;
-	TWeakObjectPtr<UAnimMontage> RateWindowMontage;
-	uint32 RateWindowBindingToken = 0;
-	int32 RateWindowMontageInstanceID = INDEX_NONE;
-
-	bool BindRateWindow(UAnimInstance* AnimInstance, UAnimMontage* Montage);
-	bool HasOwnedRateWindowMontageInstance() const;
-	void ClearRateWindow();
-
 #if WITH_DEV_AUTOMATION_TESTS
 public:
-	const FAbilityMontageRateWindowLifecycle& GetTestRateWindowLifecycle() const { return RateWindowLifecycle; }
-	FAbilityMontageRateWindowLifecycle& GetTestRateWindowLifecycle_Mutable() { return RateWindowLifecycle; }
-	USprintAttackRateWindowContext* GetTestRateWindowContext() const { return RateWindowContext.Get(); }
-	int32 GetTestRateWindowMontageInstanceID() const { return RateWindowMontageInstanceID; }
-	bool HasTestRateWindowTasks() const { return RateWindowBeginTask != nullptr || RateWindowEndTask != nullptr; }
-	void TestClearRateWindow() { ClearRateWindow(); }
-	bool TestBindRateWindow(UAnimInstance* AnimInstance, UAnimMontage* Montage) { return BindRateWindow(AnimInstance, Montage); }
+	const FAbilityMontageRateWindowLifecycle& GetTestRateWindowLifecycle() const;
+	int32 GetTestRateWindowMontageInstanceID() const;
+	bool HasTestRateWindowTasks() const;
+	UAbilityTask_PlayActionMontage* GetTestMontageTask() const { return MontageTask.Get(); }
 #endif
 };

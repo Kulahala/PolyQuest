@@ -6,6 +6,7 @@
 #include "Abilities/GameplayAbility.h"
 #include "Abilities/GameplayAbilityTypes.h"
 #include "Abilities/Tasks/AbilityTask_PlayMontageAndWait.h"
+#include "AbilitySystem/Tasks/AbilityTask_PlayActionMontage.h"
 #include "AbilitySystem/Abilities/EnemyHitReactionAbility.h"
 #include "AbilitySystem/Abilities/EnemyLaunchReactionAbility.h"
 #include "AbilitySystem/Abilities/EnemyMeleeAbility.h"
@@ -2056,7 +2057,7 @@ bool FHitReactionAutomationTest::RunTest(const FString& Parameters)
 				EnemyAbility->SetTestRightSmallHitReactionMontage(DummyRight);
 
 				// 7.2a: Round 1 setup with Task1 (Front montage)
-				UAbilityTask_PlayMontageAndWait* Task1 = UAbilityTask_PlayMontageAndWait::CreatePlayMontageAndWaitProxy(EnemyAbility, NAME_None, DummyFront);
+				UAbilityTask_PlayActionMontage* Task1 = UAbilityTask_PlayActionMontage::PlayActionMontage(EnemyAbility, NAME_None, DummyFront);
 				TestNotNull(TEXT("7.2a: Enemy Task1 created"), Task1);
 				if (Task1)
 				{
@@ -2068,7 +2069,7 @@ bool FHitReactionAutomationTest::RunTest(const FString& Parameters)
 					EnemyAbility->TestUnbindTaskCallbacks(Task1);
 					Task1->EndTask();
 
-					UAbilityTask_PlayMontageAndWait* Task2 = UAbilityTask_PlayMontageAndWait::CreatePlayMontageAndWaitProxy(EnemyAbility, NAME_None, DummyBack);
+					UAbilityTask_PlayActionMontage* Task2 = UAbilityTask_PlayActionMontage::PlayActionMontage(EnemyAbility, NAME_None, DummyBack);
 					TestNotNull(TEXT("7.2b: Enemy Task2 created"), Task2);
 					if (Task2)
 					{

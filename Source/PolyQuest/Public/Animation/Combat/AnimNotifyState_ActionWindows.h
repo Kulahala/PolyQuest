@@ -1,9 +1,34 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "Abilities/GameplayAbilityTargetTypes.h"
 #include "Animation/AnimNotifies/AnimNotify.h"
 #include "Animation/AnimNotifies/AnimNotifyState.h"
 #include "AnimNotifyState_ActionWindows.generated.h"
+
+class UAnimInstance;
+struct FBranchingPointNotifyPayload;
+
+/**
+ * Target data carrying local source playback identity (AnimInstance and MontageInstanceID)
+ * for Montage RateWindow event routing and fail-closed validation.
+ */
+USTRUCT()
+struct POLYQUEST_API FGameplayAbilityTargetData_MontageRateWindowSource : public FGameplayAbilityTargetData
+{
+	GENERATED_BODY()
+
+	UPROPERTY()
+	TWeakObjectPtr<UAnimInstance> AnimInstance;
+
+	UPROPERTY()
+	int32 MontageInstanceID = INDEX_NONE;
+
+	virtual UScriptStruct* GetScriptStruct() const override
+	{
+		return StaticStruct();
+	}
+};
 
 UCLASS()
 class POLYQUEST_API UAnimNotifyState_ActionDodgeCancelWindow : public UAnimNotifyState
@@ -111,6 +136,8 @@ class POLYQUEST_API UAnimNotifyState_MontageRateWindow : public UAnimNotifyState
 public:
 	virtual void NotifyBegin(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, float TotalDuration, const FAnimNotifyEventReference& EventReference) override;
 	virtual void NotifyEnd(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, const FAnimNotifyEventReference& EventReference) override;
+	virtual void BranchingPointNotifyBegin(FBranchingPointNotifyPayload& BranchingPointPayload) override;
+	virtual void BranchingPointNotifyEnd(FBranchingPointNotifyPayload& BranchingPointPayload) override;
 	virtual FString GetNotifyName_Implementation() const override;
 
 	/** Playback-rate multiplier the identity-matched active Montage applies while this window is open. */

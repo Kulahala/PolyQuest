@@ -1,9 +1,8 @@
 #include "AbilitySystem/Abilities/SprintAttackAbility.h"
 
 #include "AbilitySystem/Abilities/MeleeTraceWindowLifecycle.h"
-#include "AbilitySystem/Abilities/MontageRateWindowBinding.h"
+#include "AbilitySystem/Tasks/AbilityTask_PlayActionMontage.h"
 #include "AbilitySystemComponent.h"
-#include "Abilities/Tasks/AbilityTask_PlayMontageAndWait.h"
 #include "Abilities/Tasks/AbilityTask_WaitGameplayEvent.h"
 #include "Animation/AnimInstance.h"
 #include "Animation/AnimMontage.h"
@@ -40,8 +39,6 @@ USprintAttackAbility::USprintAttackAbility()
 	TraceWindowEndEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Attack.TraceWindow.End")), false);
 	DodgeCancelWindowBeginEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Action.CancelWindow.Dodge.Begin")), false);
 	DodgeCancelWindowEndEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Action.CancelWindow.Dodge.End")), false);
-	RateWindowBeginEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Action.RateWindow.Begin")), false);
-	RateWindowEndEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Action.RateWindow.End")), false);
 	DodgeCancelableStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Action.CanCancel.Dodge")), false);
 	DefenseCancelableStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Action.CanCancel.Defense")), false);
 }
@@ -72,10 +69,6 @@ void USprintAttackAbility::ActivateAbility(
 	const FGameplayAbilityActivationInfo ActivationInfo,
 	const FGameplayEventData*)
 {
-	ClearRateWindow();
-#if WITH_DEV_AUTOMATION_TESTS
-	bTestBypassMontageActiveCheck = false;
-#endif
 	bEndAbilityRequested = false;
 	bDodgeCancelable = false;
 	bRuntimeActionTagsApplied = false;
@@ -96,7 +89,6 @@ void USprintAttackAbility::ActivateAbility(
 		|| !MovementInputBlockedTag.IsValid() || !JumpInputBlockedTag.IsValid() || !StaminaRegenBlockedTag.IsValid()
 		|| !TraceWindowBeginEventTag.IsValid() || !TraceWindowEndEventTag.IsValid()
 		|| !DodgeCancelWindowBeginEventTag.IsValid() || !DodgeCancelWindowEndEventTag.IsValid() || !DodgeCancelableStateTag.IsValid() || !DefenseCancelableStateTag.IsValid()
-		|| !RateWindowBeginEventTag.IsValid() || !RateWindowEndEventTag.IsValid()
 		|| !AbilitySystemComponent->HasMatchingGameplayTag(SprintStateTag) || !PlayerCharacter->ShouldRequestSprintAttack())
 	{
 		UE_LOG(LogPolyQuest, Warning, TEXT("Sprint attack activation aborted for '%s': active grounded Sprint, montage, cost/damage/regen effects, and required gameplay tags are required."), *GetNameSafe(PlayerCharacter));
@@ -104,7 +96,7 @@ void USprintAttackAbility::ActivateAbility(
 		return;
 	}
 
-	UAbilityTask_PlayMontageAndWait* CreatedMontageTask = UAbilityTask_PlayMontageAndWait::CreatePlayMontageAndWaitProxy(this, NAME_None, SprintAttackMontage);
+	UAbilityTask_PlayActionMontage* CreatedMontageTask = UAbilityTask_PlayActionMontage::PlayActionMontage(this, NAME_None, SprintAttackMontage);
 	MontageTask = CreatedMontageTask;
 	TraceWindowBeginTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, TraceWindowBeginEventTag, nullptr, false, true);
 	TraceWindowEndTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, TraceWindowEndEventTag, nullptr, false, true);
@@ -129,8 +121,10 @@ void USprintAttackAbility::ActivateAbility(
 
 	BoundAnimInstance = AnimInstance;
 	ActiveMontage = SprintAttackMontage;
-	BoundAnimInstance->OnMontageEnded.RemoveDynamic(this, &USprintAttackAbility::OnActiveMontageEnded);
-	BoundAnimInstance->OnMontageEnded.AddDynamic(this, &USprintAttackAbility::OnActiveMontageEnded);
+	CreatedMontageTask->OnCompleted.AddDynamic(this, &USprintAttackAbility::OnMontageCompleted);
+	CreatedMontageTask->OnInterrupted.AddDynamic(this, &USprintAttackAbility::OnMontageInterrupted);
+	CreatedMontageTask->OnCancelled.AddDynamic(this, &USprintAttackAbility::OnMontageCancelled);
+	CreatedMontageTask->OnFailed.AddDynamic(this, &USprintAttackAbility::OnMontageFailed);
 	TraceWindowBeginTask->EventReceived.AddDynamic(this, &USprintAttackAbility::OnTraceWindowBegin);
 	TraceWindowEndTask->EventReceived.AddDynamic(this, &USprintAttackAbility::OnTraceWindowEnd);
 	DodgeCancelWindowBeginTask->EventReceived.AddDynamic(this, &USprintAttackAbility::OnDodgeCancelWindowBegin);
@@ -184,11 +178,6 @@ void USprintAttackAbility::ActivateAbility(
 		return;
 	}
 
-	if (!BindRateWindow(BoundAnimInstance.Get(), ActiveMontage.Get()))
-	{
-		return;
-	}
-
 	TryApplyMeleeMotionWarpTarget(PlayerCharacter);
 
 	PlayerCharacter->CancelActiveGuardAfterConfirmedAction(true);
@@ -214,7 +203,6 @@ void USprintAttackAbility::EndAbility(
 	SetDodgeCancelable(false);
 	SetRuntimeActionTags(false);
 	CloseTraceWindow();
-	ClearRateWindow();
 
 	if (APlayerCharacter* PlayerCharacter = Cast<APlayerCharacter>(GetAvatarActorFromActorInfo()))
 	{
@@ -222,21 +210,18 @@ void USprintAttackAbility::EndAbility(
 	}
 	ResetMeleeMotionWarpState();
 
-	if (BoundAnimInstance)
-	{
-		BoundAnimInstance->OnMontageEnded.RemoveDynamic(this, &USprintAttackAbility::OnActiveMontageEnded);
-		if (ActiveMontage && BoundAnimInstance->Montage_IsActive(ActiveMontage.Get()))
-		{
-			BoundAnimInstance->Montage_Stop(0.0f, ActiveMontage.Get());
-		}
-		BoundAnimInstance = nullptr;
-	}
-
 	if (MontageTask)
 	{
+		MontageTask->OnCompleted.RemoveDynamic(this, &USprintAttackAbility::OnMontageCompleted);
+		MontageTask->OnInterrupted.RemoveDynamic(this, &USprintAttackAbility::OnMontageInterrupted);
+		MontageTask->OnCancelled.RemoveDynamic(this, &USprintAttackAbility::OnMontageCancelled);
+		MontageTask->OnFailed.RemoveDynamic(this, &USprintAttackAbility::OnMontageFailed);
 		MontageTask->EndTask();
 		MontageTask = nullptr;
 	}
+
+	BoundAnimInstance = nullptr;
+	ActiveMontage = nullptr;
 
 	if (TraceWindowBeginTask)
 	{
@@ -267,14 +252,24 @@ void USprintAttackAbility::EndAbility(
 	Super::EndAbility(Handle, ActorInfo, ActivationInfo, bReplicateEndAbility, bWasCancelled);
 }
 
-void USprintAttackAbility::OnActiveMontageEnded(UAnimMontage* Montage, bool bInterrupted)
+void USprintAttackAbility::OnMontageCompleted()
 {
-	if (bEndAbilityRequested || Montage != ActiveMontage.Get())
-	{
-		return;
-	}
+	EndFromMontage(false);
+}
 
-	EndFromMontage(bInterrupted);
+void USprintAttackAbility::OnMontageInterrupted()
+{
+	EndFromMontage(true);
+}
+
+void USprintAttackAbility::OnMontageCancelled()
+{
+	EndFromMontage(true);
+}
+
+void USprintAttackAbility::OnMontageFailed()
+{
+	EndFromMontage(true);
 }
 
 void USprintAttackAbility::OnTraceWindowBegin(FGameplayEventData Payload)
@@ -608,83 +603,20 @@ void USprintAttackAbility::TryApplyMeleeMotionWarpTarget(APlayerCharacter* Playe
 	}
 }
 
-void USprintAttackRateWindowContext::OnBegin(FGameplayEventData Payload)
+#if WITH_DEV_AUTOMATION_TESTS
+const FAbilityMontageRateWindowLifecycle& USprintAttackAbility::GetTestRateWindowLifecycle() const
 {
-	if (USprintAttackAbility* Ability = OwningAbility.Get())
-	{
-		if (Ability->RateWindowContext.Get() == this && Ability->RateWindowBindingToken == Token)
-		{
-			Ability->OnRateWindowBegin(Payload);
-		}
-	}
+	static const FAbilityMontageRateWindowLifecycle EmptyLifecycle;
+	return MontageTask ? MontageTask->GetRateWindowLifecycle() : EmptyLifecycle;
 }
 
-void USprintAttackRateWindowContext::OnEnd(FGameplayEventData Payload)
+int32 USprintAttackAbility::GetTestRateWindowMontageInstanceID() const
 {
-	if (USprintAttackAbility* Ability = OwningAbility.Get())
-	{
-		if (Ability->RateWindowContext.Get() == this && Ability->RateWindowBindingToken == Token)
-		{
-			Ability->OnRateWindowEnd(Payload);
-		}
-	}
+	return MontageTask ? MontageTask->GetBoundMontageInstanceID() : INDEX_NONE;
 }
 
-bool USprintAttackAbility::HasOwnedRateWindowMontageInstance() const
+bool USprintAttackAbility::HasTestRateWindowTasks() const
 {
-	return FAbilityMontageRateWindowLifecycle::IsCurrentMontageInstance(
-		RateWindowAnimInstance.Get(), RateWindowMontage.Get(), RateWindowMontageInstanceID);
+	return MontageTask != nullptr && !MontageTask->IsTerminated();
 }
-
-bool USprintAttackAbility::BindRateWindow(UAnimInstance* AnimInstance, UAnimMontage* Montage)
-{
-	return FMontageRateWindowBinding::Bind<USprintAttackAbility, USprintAttackRateWindowContext>(
-		this, AnimInstance, Montage, bEndAbilityRequested);
-}
-
-void USprintAttackAbility::OnRateWindowBegin(const FGameplayEventData& Payload)
-{
-	const AActor* Avatar = GetAvatarActorFromActorInfo();
-	if (!IsActive() || bEndAbilityRequested || !IsValid(Avatar) || Avatar->IsActorBeingDestroyed() || !HasOwnedRateWindowMontageInstance())
-	{
-		return;
-	}
-	RateWindowLifecycle.HandleBegin(Payload);
-}
-
-void USprintAttackAbility::OnRateWindowEnd(const FGameplayEventData& Payload)
-{
-	const AActor* Avatar = GetAvatarActorFromActorInfo();
-	if (!IsActive() || bEndAbilityRequested || !IsValid(Avatar) || Avatar->IsActorBeingDestroyed() || !HasOwnedRateWindowMontageInstance())
-	{
-		return;
-	}
-	RateWindowLifecycle.HandleEnd(Payload);
-}
-
-void USprintAttackAbility::ClearRateWindow()
-{
-	if (RateWindowContext)
-	{
-		RateWindowContext->OwningAbility.Reset();
-		RateWindowContext = nullptr;
-	}
-	if (RateWindowBeginTask)
-	{
-		RateWindowBeginTask->EndTask();
-		RateWindowBeginTask = nullptr;
-	}
-	if (RateWindowEndTask)
-	{
-		RateWindowEndTask->EndTask();
-		RateWindowEndTask = nullptr;
-	}
-	if (HasOwnedRateWindowMontageInstance())
-	{
-		RateWindowLifecycle.RestoreAndClear();
-	}
-	RateWindowLifecycle = FAbilityMontageRateWindowLifecycle();
-	RateWindowAnimInstance.Reset();
-	RateWindowMontage.Reset();
-	RateWindowMontageInstanceID = INDEX_NONE;
-}
+#endif

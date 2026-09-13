@@ -451,8 +451,10 @@ and unknown Ends do not change the set. Ending the newest window restores the
 previous active window, and ending the last window restores the baseline
 captured after successful playback. The rate is not multiplied by that baseline.
 
-Each consumer owns a transient RateWindow context, binding generation, instance
-ID, and exact-tag event tasks. Player and Enemy consumers share the native
+SprintAttack delegates playback and RateWindow ownership to
+`UAbilityTask_PlayActionMontage`; the other listed Player consumers retain their
+transient contexts, binding generations, instance IDs, and exact-tag event tasks.
+Player and Enemy consumers share the native
 `FAbilityMontageRateWindowLifecycle::IsCurrentMontageInstance` rule: both UObjects
 must be valid, the bound ID must not be `INDEX_NONE`, and
 `GetActiveInstanceForMontage()` must return the same Montage and instance ID
@@ -462,7 +464,7 @@ instance. Cleanup invalidates the context, removes listeners, restores only a
 still-owned current instance, then clears local state. Normal termination
 continues through the Ability's existing GAS `EndAbility()` path.
 
-ChargedAttack, SprintAttack, MeleeSkill, BowDrawFire, Dodge, and
+ChargedAttack, MeleeSkill, BowDrawFire, Dodge, and
 PlayerBigHitReaction share the private,
 stateless `FMontageRateWindowBinding` template helper through their existing
 `BindRateWindow` methods. The helper reads each Ability's ending flag by reference,
@@ -472,6 +474,28 @@ A superseded binding returns without cleaning up its successor; current-binding
 failure uses the owning Ability's existing `EndAbility()` exit. Concrete contexts,
 UPROPERTY ownership, and action-specific cleanup remain in each Ability. Light
 and Enemy consumers retain their distinct binding order.
+
+`UAbilityTask_PlayActionMontage` directly plays through the ASC and composes the
+existing RateWindow lifecycle. SprintAttack and EnemySmallHitReaction use this
+entry and no longer own RateWindow-only contexts/listeners or parallel Montage
+stop calls. The Ability retains Commit, gameplay effects and its `EndAbility()`
+exit; the task owns playback, event subscriptions, rate restoration and stopping.
+
+RateWindow Notify payloads additionally carry local
+`FGameplayAbilityTargetData_MontageRateWindowSource` data with a weak AnimInstance
+and Montage instance ID. Queued events obtain the ID from the actual notify
+context; Branching Point overrides obtain it from the payload and do not call
+Super. The managed task rejects missing/mismatched source identity before the
+existing lifecycle validation. It never fills an unknown ID from current playback.
+
+Managed cleanup removes listeners, restores a still-owned rate before stopping,
+and checks the original instance and ASC playback ownership before a zero-blend
+stop. Natural completion still reports Completed after the instance stops.
+Root Motion scale recovery requires that the task actually applied it and that
+no other Montage or newer instance has taken over; BlendOut and cleanup share
+that check. Failed startup cannot reset another playback's scale. These facts
+cover the two adopted consumers; other actions retain their existing playback
+and cancellation ownership.
 
 Light creates a new binding for each combo entry. MeleeSkill binds only after
 playback confirmation and successful Commit. Charged Pause/Resume and Bow
@@ -1086,7 +1110,8 @@ matching Small event. Both set `bRetriggerInstancedAbility = true`, own
 `State.Action.SmallHitReacting`, and block activation while Dead or Stunned.
 They do not change CharacterMovement, cancel an attack, or add movement/input
 locks. A validated four-way Montage is played through
-`UAbilityTask_PlayMontageAndWait`; completion, interruption, cancellation,
+`UAbilityTask_PlayMontageAndWait` for Player Small and
+`UAbilityTask_PlayActionMontage` for Enemy Small; completion, interruption, cancellation,
 invalid startup, retrigger replacement, and teardown remove the old callbacks
 and converge on idempotent `EndAbility()`. The four Montage references and
 their overlay-slot wiring are [Authored asset] / [Not verified in this pass].
@@ -1222,11 +1247,13 @@ binding cannot change either windows through Begin/End or the new instance's
 rate; Clear always discards its own state. Development-only bypass preserves
 existing synthetic tests without bypassing UObject validity; without a real
 instance the stored ID remains `INDEX_NONE`. The public static rule has no
-bypass branch. Context/token ownership and Montage stopping policies remain
-specific to each Ability.
+bypass branch. Enemy Small delegates context-free event ownership and stopping
+to `UAbilityTask_PlayActionMontage`; other consumers retain their Ability-specific
+context/token ownership and Montage stopping policies.
 
-The five added consumers own transient RateWindow-only contexts, activation
-tokens, Montage instance checks, and Begin/End AbilityTasks. Their existing
+Melee, Big Hit, Launch and non-lethal Victim recovery retain transient
+RateWindow-only contexts, activation tokens, Montage instance checks and
+Begin/End AbilityTasks. Enemy Small uses the managed playback task. Their existing
 damage, Trace, HyperArmor, movement, and execution delegates retain their
 ownership. Victim binds only after its non-lethal recovery Montage successfully
 starts; initial victim locking and lethal execution do not listen for RateWindow.

@@ -4,6 +4,8 @@
 #include "AbilitySystemBlueprintLibrary.h"
 #include "AbilitySystemComponent.h"
 #include "AbilitySystemInterface.h"
+#include "Animation/ActiveMontageInstanceScope.h"
+#include "Animation/AnimInstance.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "GameplayTagContainer.h"
 #include "PolyQuest.h"
@@ -60,6 +62,47 @@ namespace
 		EventData.OptionalObject = Animation;
 		EventData.OptionalObject2 = OptionalObject2;
 		EventData.EventMagnitude = EventMagnitude;
+		UAbilitySystemBlueprintLibrary::SendGameplayEventToActor(Owner, EventTag, EventData);
+	}
+
+	void SendRateWindowEvent(
+		USkeletalMeshComponent* MeshComp,
+		UAnimSequenceBase* Animation,
+		const FName EventTagName,
+		float EventMagnitude,
+		const TCHAR* NotifyName,
+		const UObject* OptionalObject2,
+		int32 MontageInstanceID)
+	{
+		AActor* Owner = MeshComp ? MeshComp->GetOwner() : nullptr;
+		IAbilitySystemInterface* AbilitySystemInterface = Cast<IAbilitySystemInterface>(Owner);
+		if (!Owner || !AbilitySystemInterface || !AbilitySystemInterface->GetAbilitySystemComponent())
+		{
+			UE_LOG(LogPolyQuest, Warning, TEXT("%s could not find an ASC owner."), NotifyName);
+			return;
+		}
+
+		const FGameplayTag EventTag = FGameplayTag::RequestGameplayTag(EventTagName, false);
+		if (!EventTag.IsValid())
+		{
+			UE_LOG(LogPolyQuest, Warning, TEXT("%s could not send invalid event '%s'."), NotifyName, *EventTagName.ToString());
+			return;
+		}
+
+		FGameplayEventData EventData;
+		EventData.EventTag = EventTag;
+		EventData.Instigator = Owner;
+		EventData.Target = Owner;
+		EventData.OptionalObject = Animation;
+		EventData.OptionalObject2 = OptionalObject2;
+		EventData.EventMagnitude = EventMagnitude;
+
+		UAnimInstance* AnimInst = MeshComp ? MeshComp->GetAnimInstance() : nullptr;
+		FGameplayAbilityTargetData_MontageRateWindowSource* SourceData = new FGameplayAbilityTargetData_MontageRateWindowSource();
+		SourceData->AnimInstance = AnimInst;
+		SourceData->MontageInstanceID = MontageInstanceID;
+		EventData.TargetData.Add(SourceData);
+
 		UAbilitySystemBlueprintLibrary::SendGameplayEventToActor(Owner, EventTag, EventData);
 	}
 }
@@ -179,14 +222,34 @@ FString UAnimNotifyState_EnemyHyperArmor::GetNotifyName_Implementation() const
 	return FString("Enemy Hyper Armor");
 }
 
-void UAnimNotifyState_MontageRateWindow::NotifyBegin(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, float, const FAnimNotifyEventReference&)
+void UAnimNotifyState_MontageRateWindow::NotifyBegin(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, float, const FAnimNotifyEventReference& EventReference)
 {
-	SendGameplayEventWithMagnitude(MeshComp, Animation, TEXT("Event.Action.RateWindow.Begin"), FMath::Max(RateMultiplier, 0.01f), TEXT("Montage rate window"), this);
+	int32 InstanceID = INDEX_NONE;
+	if (const UE::Anim::FAnimNotifyMontageInstanceContext* Context = EventReference.GetContextData<UE::Anim::FAnimNotifyMontageInstanceContext>())
+	{
+		InstanceID = Context->MontageInstanceID;
+	}
+	SendRateWindowEvent(MeshComp, Animation, TEXT("Event.Action.RateWindow.Begin"), FMath::Max(RateMultiplier, 0.01f), TEXT("Montage rate window"), this, InstanceID);
 }
 
-void UAnimNotifyState_MontageRateWindow::NotifyEnd(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, const FAnimNotifyEventReference&)
+void UAnimNotifyState_MontageRateWindow::NotifyEnd(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, const FAnimNotifyEventReference& EventReference)
 {
-	SendGameplayEvent(MeshComp, Animation, TEXT("Event.Action.RateWindow.End"), TEXT("Montage rate window"), this);
+	int32 InstanceID = INDEX_NONE;
+	if (const UE::Anim::FAnimNotifyMontageInstanceContext* Context = EventReference.GetContextData<UE::Anim::FAnimNotifyMontageInstanceContext>())
+	{
+		InstanceID = Context->MontageInstanceID;
+	}
+	SendRateWindowEvent(MeshComp, Animation, TEXT("Event.Action.RateWindow.End"), 0.0f, TEXT("Montage rate window"), this, InstanceID);
+}
+
+void UAnimNotifyState_MontageRateWindow::BranchingPointNotifyBegin(FBranchingPointNotifyPayload& BranchingPointPayload)
+{
+	SendRateWindowEvent(BranchingPointPayload.SkelMeshComponent, BranchingPointPayload.SequenceAsset, TEXT("Event.Action.RateWindow.Begin"), FMath::Max(RateMultiplier, 0.01f), TEXT("Montage rate window (BranchingPoint)"), this, BranchingPointPayload.MontageInstanceID);
+}
+
+void UAnimNotifyState_MontageRateWindow::BranchingPointNotifyEnd(FBranchingPointNotifyPayload& BranchingPointPayload)
+{
+	SendRateWindowEvent(BranchingPointPayload.SkelMeshComponent, BranchingPointPayload.SequenceAsset, TEXT("Event.Action.RateWindow.End"), 0.0f, TEXT("Montage rate window (BranchingPoint)"), this, BranchingPointPayload.MontageInstanceID);
 }
 
 FString UAnimNotifyState_MontageRateWindow::GetNotifyName_Implementation() const
