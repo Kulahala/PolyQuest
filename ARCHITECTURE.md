@@ -461,6 +461,16 @@ instance. Cleanup invalidates the context, removes listeners, restores only a
 still-owned current instance, then clears local state. Normal termination
 continues through the Ability's existing GAS `EndAbility()` path.
 
+ChargedAttack, SprintAttack, MeleeSkill, BowDrawFire, and Dodge share the private,
+stateless `FMontageRateWindowBinding` template helper through their existing
+`BindRateWindow` methods. The helper reads each Ability's ending flag by reference,
+captures the baseline before installing exact-tag listeners, and checks binding
+generation/context identity before task validity after each `ReadyForActivation()`.
+A superseded binding returns without cleaning up its successor; current-binding
+failure uses the owning Ability's existing `EndAbility()` exit. Concrete contexts,
+UPROPERTY ownership, and action-specific cleanup remain in each Ability. Light
+and Enemy consumers retain their distinct binding order.
+
 Light creates a new binding for each combo entry. MeleeSkill binds only after
 playback confirmation and successful Commit. Charged Pause/Resume and Bow
 Section changes retain the same baseline; changing rate never resumes a paused

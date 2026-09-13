@@ -1,6 +1,6 @@
 #include "Misc/AutomationTest.h"
 
-#if WITH_DEV_AUTOMATION_TESTS
+#if WITH_DEV_AUTOMATION_TESTS && WITH_EDITOR
 
 #include "AbilitySystem/Abilities/EnemyLaunchReactionAbility.h"
 #include "AbilitySystemComponent.h"
@@ -8,6 +8,8 @@
 #include "Animation/AnimInstance.h"
 #include "Animation/AnimMontage.h"
 #include "Animation/AnimSequence.h"
+#include "Animation/AnimData/IAnimationDataController.h"
+#include "Animation/Skeleton.h"
 #include "Character/Enemy/EnemyCharacter.h"
 #include "Character/Player/PlayerCharacter.h"
 #include "Components/SkeletalMeshComponent.h"
@@ -17,8 +19,8 @@
 #include "GameplayEffect.h"
 #include "GameplayEffectTypes.h"
 #include "GameplayTagContainer.h"
+#include "ReferenceSkeleton.h"
 #include "Tests/CombatAutomationFixture.h"
-#include "UObject/Package.h"
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 	FEnemyLaunchReactionRootMotionAutomationTest,
@@ -78,13 +80,17 @@ namespace
 			}
 		}
 
-		void Activate(const FGameplayEventData* TriggerPayload = nullptr)
+		bool Activate(const FGameplayEventData* TriggerPayload = nullptr)
 		{
-			if (AbilityInstance && ASC)
+			if (AbilityInstance && ASC && ASC->AbilityActorInfo.IsValid())
 			{
 				UTestLaunchAbilityAccessHelper::CallAbilityActivation(
 					AbilityInstance, Handle, ASC->AbilityActorInfo.Get(), FGameplayAbilityActivationInfo(), TriggerPayload);
+				UAnimInstance* Anim = ASC->AbilityActorInfo.IsValid() ? ASC->AbilityActorInfo->GetAnimInstance() : nullptr;
+				return AbilityInstance->IsActive() && Anim
+					&& Anim->Montage_IsPlaying(AbilityInstance->GetTestRootMotionKnockdownMontage());
 			}
+			return false;
 		}
 
 		~FTestAbilityFixtureScope()
@@ -108,12 +114,53 @@ namespace
 		}
 	};
 
-	UAnimMontage* CreateSyntheticKnockdownMontage(UObject* Outer = nullptr, float Length = 1.5f, bool bHasRootMotion = true)
+	UAnimInstance* CreateKnockdownAnimInstance(AEnemyCharacter* Enemy)
 	{
-		(void)Outer;
-		UAnimMontage* Montage = NewObject<UAnimMontage>(GetTransientPackage());
-		UAnimSequence* Seq = NewObject<UAnimSequence>(GetTransientPackage());
+		USkeleton* Skeleton = NewObject<USkeleton>(Enemy);
+		FReferenceSkeletonModifier Modifier(Skeleton);
+		Modifier.Add(FMeshBoneInfo(TEXT("root"), TEXT("root"), INDEX_NONE), FTransform::Identity);
+		USkeletalMeshComponent* Mesh = Enemy->GetMesh();
+		Mesh->VisibilityBasedAnimTickOption = EVisibilityBasedAnimTickOption::OnlyTickMontagesWhenNotRendered;
+		UAnimInstance* Anim = NewObject<UAnimInstance>(Mesh);
+		Anim->InitializeMontageOnly();
+		Anim->CurrentSkeleton = Skeleton;
+		Mesh->AnimScriptInstance = Anim;
+		Enemy->GetAbilitySystemComponent()->RefreshAbilityActorInfo();
+		return Anim;
+	}
+
+	UAnimMontage* CreateSyntheticKnockdownMontage(
+		FAutomationTestBase& Test, AEnemyCharacter* Enemy, float Length = 1.5f, bool bHasRootMotion = true)
+	{
+		USkeleton* Skeleton = Enemy->GetMesh()->GetAnimInstance()->CurrentSkeleton;
+		UAnimMontage* Montage = NewObject<UAnimMontage>(Enemy);
+		UAnimSequence* Seq = NewObject<UAnimSequence>(Enemy);
+		Seq->SetSkeleton(Skeleton);
 		Seq->bEnableRootMotion = bHasRootMotion;
+		IAnimationDataController& Controller = Seq->GetController();
+		Controller.InitializeModel();
+		{
+			IAnimationDataController::FScopedBracket Populate(Controller,
+				FText::FromString(TEXT("Populate Enemy Launch test root track")), false);
+			Controller.SetFrameRate(FFrameRate(30, 1), false);
+			// Invalid Montage lengths still use valid sequence data, isolating each negative case.
+			const float SequenceLength = FMath::IsFinite(Length) && Length > 0.0f ? Length : 1.5f;
+			const int32 FrameCount = FMath::Max(1, FMath::RoundToInt(SequenceLength * 30.0f));
+			Controller.SetNumberOfFrames(FFrameNumber(FrameCount), false);
+			const FName RootBoneName(TEXT("root"));
+			const bool bTrackAdded = Controller.AddBoneCurve(RootBoneName, false);
+			TArray<FVector3f> Positions;
+			TArray<FQuat4f> Rotations;
+			TArray<FVector3f> Scales;
+			Positions.Init(FVector3f::ZeroVector, FrameCount + 1);
+			Rotations.Init(FQuat4f::Identity, FrameCount + 1);
+			Scales.Init(FVector3f::OneVector, FrameCount + 1);
+			Test.TestTrue(TEXT("Fixture: root track populated"), bTrackAdded
+				&& Controller.SetBoneTrackKeys(RootBoneName, Positions, Rotations, Scales, false));
+			Controller.NotifyPopulated();
+		}
+		Seq->WaitOnExistingCompression();
+		Montage->SetSkeleton(Skeleton);
 
 		FSlotAnimationTrack Track;
 		Track.SlotName = FName(TEXT("DefaultSlot"));
@@ -121,10 +168,17 @@ namespace
 		Segment.SetAnimReference(Seq);
 		Segment.StartPos = 0.0f;
 		Segment.AnimStartTime = 0.0f;
-		Segment.AnimEndTime = Length;
+		Segment.AnimEndTime = Seq->GetPlayLength();
 		Segment.AnimPlayRate = 1.0f;
 		Track.AnimTrack.AnimSegments.Add(Segment);
+		Montage->SlotAnimTracks.Reset();
 		Montage->SlotAnimTracks.Add(Track);
+		FCompositeSection Section;
+		Section.SectionName = FName(TEXT("Default"));
+		Section.SetTime(0.0f);
+		Montage->CompositeSections.Add(Section);
+		Montage->BlendIn.SetBlendTime(0.0f);
+		Montage->BlendOut.SetBlendTime(0.0f);
 
 		UTestMontageAccessHelper::SetMontageLength(Montage, Length);
 		return Montage;
@@ -198,37 +252,18 @@ bool FEnemyLaunchReactionRootMotionAutomationTest::RunTest(const FString& Parame
 	DefaultTriggerPayload.Instigator = Attacker;
 	DefaultTriggerPayload.Target = Enemy;
 
-	UAnimInstance* MockAnimInstance = NewObject<UAnimInstance>(Enemy->GetMesh());
-	if (!TestNotNull(TEXT("MockAnimInstance created"), MockAnimInstance))
+	UAnimInstance* AnimInstance = CreateKnockdownAnimInstance(Enemy);
+	if (!TestTrue(TEXT("Fixture: ASC resolves the enemy montage-only AnimInstance"),
+		EnemyASC->AbilityActorInfo.IsValid() && EnemyASC->AbilityActorInfo->GetAnimInstance() == AnimInstance))
 	{
 		return false;
 	}
-
-	UEnemyLaunchReactionAbility* EnemyLaunchCDO = UEnemyLaunchReactionAbility::StaticClass()->GetDefaultObject<UEnemyLaunchReactionAbility>();
-	UAnimInstance* OriginalCDOBoundAnimInstance = EnemyLaunchCDO ? EnemyLaunchCDO->GetTestBoundAnimInstance() : nullptr;
-	if (EnemyLaunchCDO)
-	{
-		EnemyLaunchCDO->SetTestBoundAnimInstance(MockAnimInstance);
-	}
-
-	struct FCDOAnimInstanceGuard
-	{
-		UEnemyLaunchReactionAbility* CDO = nullptr;
-		UAnimInstance* Original = nullptr;
-		~FCDOAnimInstanceGuard()
-		{
-			if (CDO)
-			{
-				CDO->SetTestBoundAnimInstance(Original);
-			}
-		}
-	} CDOGuard{ EnemyLaunchCDO, OriginalCDOBoundAnimInstance };
 
 	// -------------------------------------------------------------------------
 	// SECTION 2: SelectsRootMotionBranchWhenConfigured
 	// -------------------------------------------------------------------------
 	{
-		UAnimMontage* ValidRootMotionMontage = CreateSyntheticKnockdownMontage(Enemy, 2.0f, true);
+		UAnimMontage* ValidRootMotionMontage = CreateSyntheticKnockdownMontage(*this, Enemy, 2.0f, true);
 		TestNotNull(TEXT("2.1: ValidRootMotionMontage created"), ValidRootMotionMontage);
 		TestTrue(TEXT("2.2: ValidRootMotionMontage HasRootMotion is true"), ValidRootMotionMontage->HasRootMotion());
 
@@ -237,14 +272,15 @@ bool FEnemyLaunchReactionRootMotionAutomationTest::RunTest(const FString& Parame
 		if (Scope.AbilityInstance)
 		{
 			Scope.AbilityInstance->SetTestRootMotionKnockdownMontage(ValidRootMotionMontage);
-			Scope.AbilityInstance->SetTestBoundAnimInstance(MockAnimInstance);
-			Scope.AbilityInstance->SetTestBypassMontageActiveCheck(true);
 
 			TestTrue(TEXT("2.4: CanActivateAbility passes with Root Motion configuration alone"),
 				Scope.AbilityInstance->CanActivateAbility(Scope.Handle, EnemyASC->AbilityActorInfo.Get()));
 
 			// Activate Ability
-			Scope.Activate(&DefaultTriggerPayload);
+			if (!TestTrue(TEXT("Fixture: knockdown Ability is active and Montage is playing"), Scope.Activate(&DefaultTriggerPayload)))
+			{
+				return false; // Preserve the first startup failure instead of cascading through lifecycle cases.
+			}
 
 			TestTrue(TEXT("2.5: Ability entered RootMotionKnockdown phase"),
 				Scope.AbilityInstance->IsTestPhaseRootMotionKnockdown());
@@ -261,7 +297,7 @@ bool FEnemyLaunchReactionRootMotionAutomationTest::RunTest(const FString& Parame
 	// SECTION 3: InvalidRootCandidateFailsClosedWithoutSideEffects
 	// -------------------------------------------------------------------------
 	{
-		UAnimMontage* ValidRootMontage = CreateSyntheticKnockdownMontage(Enemy, 2.0f, true);
+		UAnimMontage* ValidRootMontage = CreateSyntheticKnockdownMontage(*this, Enemy, 2.0f, true);
 
 		auto AssertActivationFailedClosed = [&](const TCHAR* CaseName, FTestAbilityFixtureScope& InScope)
 		{
@@ -291,88 +327,81 @@ bool FEnemyLaunchReactionRootMotionAutomationTest::RunTest(const FString& Parame
 			if (Scope.AbilityInstance)
 			{
 				Scope.AbilityInstance->SetTestRootMotionKnockdownMontage(nullptr);
-				Scope.AbilityInstance->SetTestBoundAnimInstance(MockAnimInstance);
 				AssertActivationFailedClosed(TEXT("3.1 (Null Montage)"), Scope);
 			}
 		}
 
 		// 3.2 Montage without Root Motion
 		{
-			UAnimMontage* NoRootMotionMontage = CreateSyntheticKnockdownMontage(Enemy, 1.5f, false);
+			UAnimMontage* NoRootMotionMontage = CreateSyntheticKnockdownMontage(*this, Enemy, 1.5f, false);
 			FTestAbilityFixtureScope Scope(EnemyASC, Enemy);
 			TestNotNull(TEXT("3.2: NoRootMotion Ability created"), Scope.AbilityInstance);
 			if (Scope.AbilityInstance)
 			{
 				Scope.AbilityInstance->SetTestRootMotionKnockdownMontage(NoRootMotionMontage);
-				Scope.AbilityInstance->SetTestBoundAnimInstance(MockAnimInstance);
 				AssertActivationFailedClosed(TEXT("3.2 (No Root Motion)"), Scope);
 			}
 		}
 
 		// 3.3 Montage with zero slot tracks
 		{
-			UAnimMontage* NoSlotMontage = CreateSyntheticKnockdownMontage(Enemy, 1.5f, true);
+			UAnimMontage* NoSlotMontage = CreateSyntheticKnockdownMontage(*this, Enemy, 1.5f, true);
 			NoSlotMontage->SlotAnimTracks.Empty();
 			FTestAbilityFixtureScope Scope(EnemyASC, Enemy);
 			TestNotNull(TEXT("3.3: NoSlotTracks Ability created"), Scope.AbilityInstance);
 			if (Scope.AbilityInstance)
 			{
 				Scope.AbilityInstance->SetTestRootMotionKnockdownMontage(NoSlotMontage);
-				Scope.AbilityInstance->SetTestBoundAnimInstance(MockAnimInstance);
 				AssertActivationFailedClosed(TEXT("3.3 (No Slot Tracks)"), Scope);
 			}
 		}
 
 		// 3.4 Montage with zero length
 		{
-			UAnimMontage* ZeroLengthMontage = CreateSyntheticKnockdownMontage(Enemy, 0.0f, true);
+			UAnimMontage* ZeroLengthMontage = CreateSyntheticKnockdownMontage(*this, Enemy, 0.0f, true);
 			FTestAbilityFixtureScope Scope(EnemyASC, Enemy);
 			TestNotNull(TEXT("3.4: ZeroLengthMontage Ability created"), Scope.AbilityInstance);
 			if (Scope.AbilityInstance)
 			{
 				Scope.AbilityInstance->SetTestRootMotionKnockdownMontage(ZeroLengthMontage);
-				Scope.AbilityInstance->SetTestBoundAnimInstance(MockAnimInstance);
 				AssertActivationFailedClosed(TEXT("3.4 (Zero Length Montage)"), Scope);
 			}
 		}
 
 		// 3.5 Montage with negative length
 		{
-			UAnimMontage* NegativeLengthMontage = CreateSyntheticKnockdownMontage(Enemy, -1.0f, true);
+			UAnimMontage* NegativeLengthMontage = CreateSyntheticKnockdownMontage(*this, Enemy, -1.0f, true);
 			FTestAbilityFixtureScope Scope(EnemyASC, Enemy);
 			TestNotNull(TEXT("3.5: NegativeLengthMontage Ability created"), Scope.AbilityInstance);
 			if (Scope.AbilityInstance)
 			{
 				Scope.AbilityInstance->SetTestRootMotionKnockdownMontage(NegativeLengthMontage);
-				Scope.AbilityInstance->SetTestBoundAnimInstance(MockAnimInstance);
 				AssertActivationFailedClosed(TEXT("3.5 (Negative Length Montage)"), Scope);
 			}
 		}
 
 		// 3.6 Montage with NaN length
 		{
-			UAnimMontage* NanLengthMontage = CreateSyntheticKnockdownMontage(Enemy, 1.0f, true);
+			UAnimMontage* NanLengthMontage = CreateSyntheticKnockdownMontage(*this, Enemy, 1.0f, true);
 			UTestMontageAccessHelper::SetMontageLength(NanLengthMontage, NAN);
 			FTestAbilityFixtureScope Scope(EnemyASC, Enemy);
 			TestNotNull(TEXT("3.6: NanLengthMontage Ability created"), Scope.AbilityInstance);
 			if (Scope.AbilityInstance)
 			{
 				Scope.AbilityInstance->SetTestRootMotionKnockdownMontage(NanLengthMontage);
-				Scope.AbilityInstance->SetTestBoundAnimInstance(MockAnimInstance);
 				AssertActivationFailedClosed(TEXT("3.6 (NaN Length Montage)"), Scope);
 			}
 		}
 
 		// 3.7 Montage with positive infinity length
 		{
-			UAnimMontage* InfLengthMontage = CreateSyntheticKnockdownMontage(Enemy, 1.0f, true);
+			UAnimMontage* InfLengthMontage = CreateSyntheticKnockdownMontage(*this, Enemy, 1.0f, true);
 			UTestMontageAccessHelper::SetMontageLength(InfLengthMontage, INFINITY);
 			FTestAbilityFixtureScope Scope(EnemyASC, Enemy);
 			TestNotNull(TEXT("3.7: InfLengthMontage Ability created"), Scope.AbilityInstance);
 			if (Scope.AbilityInstance)
 			{
 				Scope.AbilityInstance->SetTestRootMotionKnockdownMontage(InfLengthMontage);
-				Scope.AbilityInstance->SetTestBoundAnimInstance(MockAnimInstance);
 				AssertActivationFailedClosed(TEXT("3.7 (Positive Infinity Length Montage)"), Scope);
 			}
 		}
@@ -385,7 +414,6 @@ bool FEnemyLaunchReactionRootMotionAutomationTest::RunTest(const FString& Parame
 			if (Scope.AbilityInstance)
 			{
 				Scope.AbilityInstance->SetTestRootMotionKnockdownMontage(ValidRootMontage);
-				Scope.AbilityInstance->SetTestBoundAnimInstance(MockAnimInstance);
 				AssertActivationFailedClosed(TEXT("3.8 (Non-Walking MOVE_Falling)"), Scope);
 			}
 			MovementComponent->SetMovementMode(MOVE_Walking);
@@ -428,14 +456,12 @@ bool FEnemyLaunchReactionRootMotionAutomationTest::RunTest(const FString& Parame
 		// 4.2 Applied instant facing on Actor
 		Enemy->SetActorRotation(FRotator(0.0f, 30.0f, 0.0f));
 
-		UAnimMontage* ValidRootMontage = CreateSyntheticKnockdownMontage(Enemy, 2.0f, true);
+		UAnimMontage* ValidRootMontage = CreateSyntheticKnockdownMontage(*this, Enemy, 2.0f, true);
 		FTestAbilityFixtureScope Scope(EnemyASC, Enemy);
 		TestNotNull(TEXT("4.2: FacingAbility created"), Scope.AbilityInstance);
 		if (Scope.AbilityInstance)
 		{
 			Scope.AbilityInstance->SetTestRootMotionKnockdownMontage(ValidRootMontage);
-			Scope.AbilityInstance->SetTestBoundAnimInstance(MockAnimInstance);
-			Scope.AbilityInstance->SetTestBypassMontageActiveCheck(true);
 
 			// Payload with Instigator at local +Y (to the right)
 			APlayerCharacter* Player = FCombatAutomationFixture::SpawnPlayer(World, FTransform(FRotator::ZeroRotator, FVector(0.0f, 200.0f, 0.0f)));
@@ -445,7 +471,7 @@ bool FEnemyLaunchReactionRootMotionAutomationTest::RunTest(const FString& Parame
 			TriggerPayload.Instigator = Player;
 			TriggerPayload.Target = Enemy;
 
-			Scope.Activate(&TriggerPayload);
+			TestTrue(TEXT("Fixture: knockdown Ability is active and Montage is playing"), Scope.Activate(&TriggerPayload));
 
 			TestTrue(TEXT("4.2: Enemy yaw rotated to face attacker directly"),
 				FMath::IsNearlyEqual(Enemy->GetActorRotation().Yaw, 90.0f, 1.0f));
@@ -464,7 +490,7 @@ bool FEnemyLaunchReactionRootMotionAutomationTest::RunTest(const FString& Parame
 	// SECTION 5: LedgeProtectionRestoredOnAllExitPaths
 	// -------------------------------------------------------------------------
 	{
-		UAnimMontage* ValidRootMontage = CreateSyntheticKnockdownMontage(Enemy, 2.0f, true);
+		UAnimMontage* ValidRootMontage = CreateSyntheticKnockdownMontage(*this, Enemy, 2.0f, true);
 
 		// 5.1 Natural Completion restores ledge walk-off
 		{
@@ -475,10 +501,8 @@ bool FEnemyLaunchReactionRootMotionAutomationTest::RunTest(const FString& Parame
 			if (Scope.AbilityInstance)
 			{
 				Scope.AbilityInstance->SetTestRootMotionKnockdownMontage(ValidRootMontage);
-				Scope.AbilityInstance->SetTestBoundAnimInstance(MockAnimInstance);
-				Scope.AbilityInstance->SetTestBypassMontageActiveCheck(true);
 
-				Scope.Activate(&DefaultTriggerPayload);
+				TestTrue(TEXT("Fixture: knockdown Ability is active and Montage is playing"), Scope.Activate(&DefaultTriggerPayload));
 
 				TestFalse(TEXT("5.1a: bCanWalkOffLedges disabled upon activation"), MovementComponent->bCanWalkOffLedges);
 				TestTrue(TEXT("5.1b: bLedgeSettingModified marked true"), Scope.AbilityInstance->GetTestLedgeSettingModified());
@@ -503,10 +527,8 @@ bool FEnemyLaunchReactionRootMotionAutomationTest::RunTest(const FString& Parame
 			if (Scope.AbilityInstance)
 			{
 				Scope.AbilityInstance->SetTestRootMotionKnockdownMontage(ValidRootMontage);
-				Scope.AbilityInstance->SetTestBoundAnimInstance(MockAnimInstance);
-				Scope.AbilityInstance->SetTestBypassMontageActiveCheck(true);
 
-				Scope.Activate(&DefaultTriggerPayload);
+				TestTrue(TEXT("Fixture: knockdown Ability is active and Montage is playing"), Scope.Activate(&DefaultTriggerPayload));
 
 				TestFalse(TEXT("5.2a: bCanWalkOffLedges disabled upon activation"), MovementComponent->bCanWalkOffLedges);
 				TestTrue(TEXT("5.2a2: State.Block.Facing active during reaction"), EnemyASC->HasMatchingGameplayTag(TagBlockFacing));
@@ -524,16 +546,14 @@ bool FEnemyLaunchReactionRootMotionAutomationTest::RunTest(const FString& Parame
 	// SECTION 6: PrematureFallingAbortsReactionAndStanceBreak
 	// -------------------------------------------------------------------------
 	{
-		UAnimMontage* ValidRootMontage = CreateSyntheticKnockdownMontage(Enemy, 2.0f, true);
+		UAnimMontage* ValidRootMontage = CreateSyntheticKnockdownMontage(*this, Enemy, 2.0f, true);
 		FTestAbilityFixtureScope Scope(EnemyASC, Enemy);
 		TestNotNull(TEXT("6.1: FallingAbility created"), Scope.AbilityInstance);
 		if (Scope.AbilityInstance)
 		{
 			Scope.AbilityInstance->SetTestRootMotionKnockdownMontage(ValidRootMontage);
-			Scope.AbilityInstance->SetTestBoundAnimInstance(MockAnimInstance);
-			Scope.AbilityInstance->SetTestBypassMontageActiveCheck(true);
 
-			Scope.Activate(&DefaultTriggerPayload);
+			TestTrue(TEXT("Fixture: knockdown Ability is active and Montage is playing"), Scope.Activate(&DefaultTriggerPayload));
 
 			TestTrue(TEXT("6.1: Active phase is RootMotionKnockdown"),
 				Scope.AbilityInstance->IsTestPhaseRootMotionKnockdown());
@@ -563,7 +583,7 @@ bool FEnemyLaunchReactionRootMotionAutomationTest::RunTest(const FString& Parame
 	// SECTION 7: CommitNotifyIsNonBlocking and Completion vs Abort Differentiation
 	// -------------------------------------------------------------------------
 	{
-		UAnimMontage* ValidRootMontage = CreateSyntheticKnockdownMontage(Enemy, 2.0f, true);
+		UAnimMontage* ValidRootMontage = CreateSyntheticKnockdownMontage(*this, Enemy, 2.0f, true);
 
 		const FGameplayTag TagStanceBreakEvent = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Reaction.Enemy.StanceBreak")), false);
 		TestTrue(TEXT("7.0: Tag Event.Reaction.Enemy.StanceBreak is valid"), TagStanceBreakEvent.IsValid());
@@ -585,10 +605,8 @@ bool FEnemyLaunchReactionRootMotionAutomationTest::RunTest(const FString& Parame
 			if (Scope.AbilityInstance)
 			{
 				Scope.AbilityInstance->SetTestRootMotionKnockdownMontage(ValidRootMontage);
-				Scope.AbilityInstance->SetTestBoundAnimInstance(MockAnimInstance);
-				Scope.AbilityInstance->SetTestBypassMontageActiveCheck(true);
 
-				Scope.Activate(&DefaultTriggerPayload);
+				TestTrue(TEXT("Fixture: knockdown Ability is active and Montage is playing"), Scope.Activate(&DefaultTriggerPayload));
 
 				TestTrue(TEXT("7.1: Active phase is RootMotionKnockdown"),
 					Scope.AbilityInstance->IsTestPhaseRootMotionKnockdown());
@@ -633,10 +651,8 @@ bool FEnemyLaunchReactionRootMotionAutomationTest::RunTest(const FString& Parame
 			if (Scope2.AbilityInstance)
 			{
 				Scope2.AbilityInstance->SetTestRootMotionKnockdownMontage(ValidRootMontage);
-				Scope2.AbilityInstance->SetTestBoundAnimInstance(MockAnimInstance);
-				Scope2.AbilityInstance->SetTestBypassMontageActiveCheck(true);
 
-				Scope2.Activate(&DefaultTriggerPayload);
+				TestTrue(TEXT("Fixture: knockdown Ability is active and Montage is playing"), Scope2.Activate(&DefaultTriggerPayload));
 
 				TestTrue(TEXT("7.2a: Active phase is RootMotionKnockdown"),
 					Scope2.AbilityInstance->IsTestPhaseRootMotionKnockdown());
@@ -666,7 +682,7 @@ bool FEnemyLaunchReactionRootMotionAutomationTest::RunTest(const FString& Parame
 	// SECTION 8: State.Block.Facing Lifecycle, UnPossess Teardown, and Cancel
 	// -------------------------------------------------------------------------
 	{
-		UAnimMontage* ValidRootMontage = CreateSyntheticKnockdownMontage(Enemy, 2.0f, true);
+		UAnimMontage* ValidRootMontage = CreateSyntheticKnockdownMontage(*this, Enemy, 2.0f, true);
 
 		// 8.1 UnPossess Teardown cancels ability and removes State.Block.Facing
 		{
@@ -675,10 +691,8 @@ bool FEnemyLaunchReactionRootMotionAutomationTest::RunTest(const FString& Parame
 			if (Scope.AbilityInstance)
 			{
 				Scope.AbilityInstance->SetTestRootMotionKnockdownMontage(ValidRootMontage);
-				Scope.AbilityInstance->SetTestBoundAnimInstance(MockAnimInstance);
-				Scope.AbilityInstance->SetTestBypassMontageActiveCheck(true);
 
-				Scope.Activate(&DefaultTriggerPayload);
+				TestTrue(TEXT("Fixture: knockdown Ability is active and Montage is playing"), Scope.Activate(&DefaultTriggerPayload));
 
 				TestTrue(TEXT("8.1a: Ability active"), Scope.AbilityInstance->IsActive());
 				TestTrue(TEXT("8.1b: State.Block.Facing granted upon activation"), EnemyASC->HasMatchingGameplayTag(TagBlockFacing));
@@ -702,10 +716,8 @@ bool FEnemyLaunchReactionRootMotionAutomationTest::RunTest(const FString& Parame
 			if (Scope2.AbilityInstance)
 			{
 				Scope2.AbilityInstance->SetTestRootMotionKnockdownMontage(ValidRootMontage);
-				Scope2.AbilityInstance->SetTestBoundAnimInstance(MockAnimInstance);
-				Scope2.AbilityInstance->SetTestBypassMontageActiveCheck(true);
 
-				Scope2.Activate(&DefaultTriggerPayload);
+				TestTrue(TEXT("Fixture: knockdown Ability is active and Montage is playing"), Scope2.Activate(&DefaultTriggerPayload));
 
 				TestTrue(TEXT("8.2a: Ability active"), Scope2.AbilityInstance->IsActive());
 				TestTrue(TEXT("8.2b: State.Block.Facing granted"), EnemyASC->HasMatchingGameplayTag(TagBlockFacing));
@@ -735,8 +747,15 @@ bool FEnemyLaunchReactionRootMotionAutomationTest::RunTest(const FString& Parame
 			{
 				TempMovement->SetMovementMode(MOVE_Walking);
 				TempMovement->bCanWalkOffLedges = true;
+				UAnimInstance* TempAnimInstance = CreateKnockdownAnimInstance(TempEnemy);
+				if (!TestTrue(TEXT("9.1d: ASC resolves TempEnemy's own AnimInstance"),
+					TempEnemyASC->AbilityActorInfo.IsValid()
+					&& TempEnemyASC->AbilityActorInfo->GetAnimInstance() == TempAnimInstance))
+				{
+					return false;
+				}
 
-				UAnimMontage* TempRootMontage = CreateSyntheticKnockdownMontage(TempEnemy, 2.0f, true);
+				UAnimMontage* TempRootMontage = CreateSyntheticKnockdownMontage(*this, TempEnemy, 2.0f, true);
 
 				FGameplayAbilitySpec Spec(UEnemyLaunchReactionAbility::StaticClass(), 1, INDEX_NONE, TempEnemy);
 				const FGameplayAbilitySpecHandle TempHandle = TempEnemyASC->GiveAbility(Spec);
@@ -747,8 +766,6 @@ bool FEnemyLaunchReactionRootMotionAutomationTest::RunTest(const FString& Parame
 				if (TempAbility)
 				{
 					TempAbility->SetTestRootMotionKnockdownMontage(TempRootMontage);
-					TempAbility->SetTestBoundAnimInstance(MockAnimInstance);
-					TempAbility->SetTestBypassMontageActiveCheck(true);
 
 					FGameplayEventData TempPayload;
 					TempPayload.Instigator = Attacker;
@@ -756,6 +773,8 @@ bool FEnemyLaunchReactionRootMotionAutomationTest::RunTest(const FString& Parame
 
 					UTestLaunchAbilityAccessHelper::CallAbilityActivation(
 						TempAbility, TempHandle, TempEnemyASC->AbilityActorInfo.Get(), FGameplayAbilityActivationInfo(), &TempPayload);
+					TestTrue(TEXT("9.2b: TempEnemy knockdown actually plays before destruction"),
+						TempAbility->IsActive() && TempAnimInstance->Montage_IsPlaying(TempRootMontage));
 
 					TestTrue(TEXT("9.3a: Ability active in RootMotionKnockdown"), TempAbility->IsTestPhaseRootMotionKnockdown());
 					TestTrue(TEXT("9.3b: Ledge setting modified latch set"), TempAbility->GetTestLedgeSettingModified());
@@ -790,4 +809,4 @@ bool FEnemyLaunchReactionRootMotionAutomationTest::RunTest(const FString& Parame
 	return true;
 }
 
-#endif // WITH_DEV_AUTOMATION_TESTS
+#endif // WITH_DEV_AUTOMATION_TESTS && WITH_EDITOR

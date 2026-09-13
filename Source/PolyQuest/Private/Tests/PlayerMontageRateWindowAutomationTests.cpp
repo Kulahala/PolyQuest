@@ -1333,6 +1333,44 @@ namespace PlayerMontageRateWindowAutomation
 			FailurePlayer->Destroy();
 		}
 
+		// =====================================================================
+		// SHRINK: Shared FMontageRateWindowBinding Rebind, Failure, and Inactive Rejection
+		// =====================================================================
+		if (!Activate()) return false;
+		auto* FirstBoundContext = Ability->GetTestRateWindowContext();
+		if (!Test.TestNotNull(TEXT("SHRINK: Active ability has valid context"), FirstBoundContext)) return false;
+		TStrongObjectPtr<UObject> KeepFirstBoundContext(FirstBoundContext);
+
+		// 1. Same active ability rebinds sequentially: generates independent Context/Token, isolates old callback
+		const bool bRebindSuccess = Ability->TestBindRateWindow(Anim, Montage);
+		Test.TestTrue(TEXT("SHRINK: Sequential rebind on active ability succeeds"), bRebindSuccess);
+		auto* SecondBoundContext = Ability->GetTestRateWindowContext();
+		if (!Test.TestNotNull(TEXT("SHRINK: Rebind produces valid new Context"), SecondBoundContext)) return false;
+		Test.TestTrue(TEXT("SHRINK: Rebind generates independent Context instance"), SecondBoundContext != FirstBoundContext);
+		Test.TestTrue(TEXT("SHRINK: Rebind maintains active rate lifecycle"), Lifecycle.IsBound());
+		Test.TestTrue(TEXT("SHRINK: Rebind maintains active wait tasks"), Ability->HasTestRateWindowTasks());
+
+		// Old Context callback must be rejected by token mismatch and not modify active windows
+		FirstBoundContext->OnBegin(Valid);
+		Test.TestEqual(TEXT("SHRINK: Stale first context callback rejected, window count remains 0"), Lifecycle.GetActiveWindowCount(), 0);
+
+		// New Context callback operates normally
+		SecondBoundContext->OnBegin(Valid);
+		Test.TestEqual(TEXT("SHRINK: Second context valid callback accepted, window count is 1"), Lifecycle.GetActiveWindowCount(), 1);
+		Payload = Valid; Payload.EventTag = EndTag;
+		SecondBoundContext->OnEnd(Payload);
+		Test.TestEqual(TEXT("SHRINK: Second context valid end callback accepted, window count is 0"), Lifecycle.GetActiveWindowCount(), 0);
+
+		// 2. Active ability encounters invalid AnimInstance / Montage: fails closed, ends ability and cleans up
+		const bool bInvalidBindResult = Ability->TestBindRateWindow(nullptr, Montage);
+		Test.TestFalse(TEXT("SHRINK: Invalid AnimInstance binding returns false"), bInvalidBindResult);
+		CheckEnded();
+
+		// 3. Inactive/Ended ability rejects binding: returns false, does not re-end or recreate state
+		const bool bInactiveBindResult = Ability->TestBindRateWindow(Anim, Montage);
+		Test.TestFalse(TEXT("SHRINK: Inactive ability rejects binding"), bInactiveBindResult);
+		CheckEnded();
+
 		if (!Activate()) return false;
 		BeginA(); Rate(0.5f);
 		auto* DestroyedContext = Ability->GetTestRateWindowContext();

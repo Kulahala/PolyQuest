@@ -1,6 +1,7 @@
 #include "AbilitySystem/Abilities/SprintAttackAbility.h"
 
 #include "AbilitySystem/Abilities/MeleeTraceWindowLifecycle.h"
+#include "AbilitySystem/Abilities/MontageRateWindowBinding.h"
 #include "AbilitySystemComponent.h"
 #include "Abilities/Tasks/AbilityTask_PlayMontageAndWait.h"
 #include "Abilities/Tasks/AbilityTask_WaitGameplayEvent.h"
@@ -637,76 +638,8 @@ bool USprintAttackAbility::HasOwnedRateWindowMontageInstance() const
 
 bool USprintAttackAbility::BindRateWindow(UAnimInstance* AnimInstance, UAnimMontage* Montage)
 {
-	ClearRateWindow();
-	const uint32 BindingToken = ++RateWindowBindingToken;
-	const auto FailBinding = [this, BindingToken]()
-	{
-		if (RateWindowBindingToken == BindingToken && IsActive() && !bEndAbilityRequested && CurrentActorInfo)
-		{
-			EndAbility(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, true, true);
-		}
-		return false;
-	};
-
-	if (!IsActive() || bEndAbilityRequested || !IsValid(AnimInstance) || !IsValid(Montage))
-	{
-		return FailBinding();
-	}
-	const FAnimMontageInstance* Instance = AnimInstance->GetActiveInstanceForMontage(Montage);
-	if (!Instance || Instance->IsStopped())
-	{
-		return FailBinding();
-	}
-	RateWindowAnimInstance = AnimInstance;
-	RateWindowMontage = Montage;
-	RateWindowMontageInstanceID = Instance->GetInstanceID();
-	RateWindowLifecycle.BindAndCapture(this, AnimInstance, Montage, RateWindowBeginEventTag, RateWindowEndEventTag);
-	if (!RateWindowLifecycle.IsBound())
-	{
-		return FailBinding();
-	}
-
-	USprintAttackRateWindowContext* Context = NewObject<USprintAttackRateWindowContext>(this);
-	RateWindowContext = Context;
-	Context->OwningAbility = this;
-	Context->Token = BindingToken;
-	UAbilityTask_WaitGameplayEvent* BeginTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, RateWindowBeginEventTag, nullptr, false, true);
-	UAbilityTask_WaitGameplayEvent* EndTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, RateWindowEndEventTag, nullptr, false, true);
-	RateWindowBeginTask = BeginTask;
-	RateWindowEndTask = EndTask;
-	if (!BeginTask || !EndTask)
-	{
-		return FailBinding();
-	}
-	BeginTask->EventReceived.AddDynamic(Context, &USprintAttackRateWindowContext::OnBegin);
-	EndTask->EventReceived.AddDynamic(Context, &USprintAttackRateWindowContext::OnEnd);
-
-	const auto IsCurrentBinding = [this, Context, BindingToken]()
-	{
-		return IsActive() && !bEndAbilityRequested && RateWindowBindingToken == BindingToken
-			&& RateWindowContext.Get() == Context;
-	};
-	BeginTask->ReadyForActivation();
-	if (!IsCurrentBinding())
-	{
-		return false; // A synchronous end/retrigger owns its own cleanup.
-	}
-	if (RateWindowBeginTask.Get() != BeginTask || !IsValid(BeginTask) || !BeginTask->IsActive()
-		|| RateWindowEndTask.Get() != EndTask || !IsValid(EndTask) || !HasOwnedRateWindowMontageInstance())
-	{
-		return FailBinding();
-	}
-	EndTask->ReadyForActivation();
-	if (!IsCurrentBinding())
-	{
-		return false;
-	}
-	if (RateWindowEndTask.Get() != EndTask || !IsValid(EndTask) || !EndTask->IsActive()
-		|| !HasOwnedRateWindowMontageInstance())
-	{
-		return FailBinding();
-	}
-	return true;
+	return FMontageRateWindowBinding::Bind<USprintAttackAbility, USprintAttackRateWindowContext>(
+		this, AnimInstance, Montage, bEndAbilityRequested);
 }
 
 void USprintAttackAbility::OnRateWindowBegin(const FGameplayEventData& Payload)

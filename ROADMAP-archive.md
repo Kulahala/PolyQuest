@@ -1688,3 +1688,19 @@ TODO-03A3E World Pickup Interaction Prompt v1
 - **证据归属**：Gemini执行且用户转交的Development Editor编译成功及11/11 Automation，Main已读取本机日志；后续只有专项测试改动，采用用户最后手动PolyQuest.Projectile.ImpactGeometry Success回执，保留其余10项既有回归。Main未重跑编译、Automation或操作Editor，未把旧11/11冒充新版全套重跑；最终静态差异/白名单/空白检查通过。
 - **验证边界**：用户因远程敌人尚未实现接受本片PIE豁免，不是PIE通过；唯一后续实测归ROADMAP的Debt-03H6-FIX2-PIE。Native死亡冲量段复用真实捕获Context，不是第二次真实飞行或视觉Ragdoll证明。Guard人工活跃fixture日志不证明资产激活与恢复延迟配置；World缺EndPlay清理日志保留为非阻塞测试维护项，唯一触发见REC-03H6-AdditionalShrink。其余ProjectileIntegration终态集成矩阵仍归03C。
 - **授权与下一阶段**：用户在回传专项Success后明确允许Fresh Review完成即文档收尾并提交；按19文件精确清单提交，未授权推送。下一阶段为已接受有限TODO-03H6-SHRINK，03C仍须该前置完成，不自动启动新切片。
+
+## TODO-03H6-FIX2 → TODO-03H6-SHRINK Handoff (2026-09-13)
+
+- 用户接受有限 SHRINK 修订计划并要求写入 plan.md、提供 Gemini 执行提示词；当前活跃交接转为 TODO-03H6-SHRINK，Execution route 为 manual/out-of-band Gemini。本轮仅文档落盘，不实施 Source/Test、不编译、不运行 Automation/Editor/PIE、不提交。
+- FIX2 已提交于 3271323b91386fd5f5d23e471c23f64f3a9197dd；完整完成态凭据固定为 git show 3271323b91386fd5f5d23e471c23f64f3a9197dd:plan.md 第8节。上方 FIX2 收尾正文原样保留，PIE 豁免和测试维护边界继续唯一归 ROADMAP 的 Debt-03H6-FIX2-PIE 与 REC-03H6-AdditionalShrink。
+- SHRINK 只迁移 Charged/Sprint/MeleeSkill/Bow/Dodge 的同义 BindRateWindow，并逐项删除11个无消费者测试 getter；Light、Enemy 动作、Victim、StanceBreak 的不同绑定时序明确保留。不合并 Context，不改变 GAS/实例授权/清理权属，不增加 Ready 注入钩子，不扩展到跨文件 fixture 或其他候选。
+- 封闭 Source/Test 白名单、冻结契约、编译/Automation/用户PIE/Fresh Review 门禁及 Executor 红线见当前 plan.md。额外候选继续按原唯一归属和触发维护；SHRINK 尚未实现或验收，03C 尚未准入。既有 Content/Config/tmp WIP 保留并排除。
+
+## TODO-03H6-SHRINK Main Implementation Closeout (2026-09-13)
+
+- **结果与边界**：基线3271323b91386fd5f5d23e471c23f64f3a9197dd；Gemini交付五个玩家BindRateWindow共用Private无状态FMontageRateWindowBinding及11个无消费者测试getter净删。保留独立Context/Token、实时结束标志、当前实例授权、两次Ready返回检查和原EndAbility出口；Light/Enemy等不同绑定时序不迁移，不增加生产测试注入钩子。15份Source/Test合计增加264行、删除444行，净减180行。
+- **追加窄修复**：首次日志为8 Success与EnemyLaunchReactionRootMotion 1 Fail，播放前置不足导致Ability提前结束。用户批准Main仅在该第15份测试文件补齐Skeleton/root track、敌人自身AnimInstance及ASC ActorInfo引用，移除原CDO Mock注入/播放bypass并断言实际播放；非法配置、自然结束、取消、非Walking及销毁断言保留。未改生产EnemyLaunch或公共fixture，失败不归旧Launch退役债。
+- **验证归属**：Main已核实原6项PlayerRateWindow及Niagara/Victim专项共8项Success；修复后采纳用户Test Run 3的EnemyLaunch专项Success，其余8项沿用未受影响收据，不声称新版九项同时重跑。用户随后确认编译、PIE通过并授权收尾提交，关闭本片Development Editor与Scene01五动作门禁。Rider和git diff --check为静态证据，Main未代跑编译、Automation或Editor。
+- **终审与边界**：Main Fresh Review通过，无P0–P2发现。Ready防御分支按计划保留静态覆盖，合成动画播放断言不额外证明真实跨帧Root Motion位移；本片PIE不关闭FIX2远程投射物或旧Launch资产readback债。Debt-03H6-TestSeamCandidates已随11项getter删除及验证关闭，其余债务保持ROADMAP唯一归属。
+- **归档与授权**：本提交包括15份Source/Test与plan.md、ROADMAP.md、ROADMAP-archive.md、ARCHITECTURE.md共19文件；用户明确批准，2,122项既有Content/Config/tmp WIP排除，不推送。当前plan保留第9节修复过程与第10节完成态；下一片替换前以本次提交固定引用。
+- **下一入口**：用户已接受独立TODO-03H6-TEST-SHRINK，仅收敛同义World Tick/GFrameCounter测试样板，须另行冻结计划后实施；其后为TODO-03C。不将Montage工厂、Execution fixture或其他未接受候选自动追加到前置。

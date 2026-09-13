@@ -67,10 +67,6 @@ public:
 	const FGameplayTagContainer& GetTestActivationOwnedTags() const { return ActivationOwnedTags; }
 	const FGameplayTagContainer& GetTestActivationBlockedTags() const { return ActivationBlockedTags; }
 	FGameplayTag GetTestDodgeCancelableStateTag() const { return DodgeCancelableStateTag; }
-	FGameplayTag GetTestAttackingStateTag() const { return AttackingStateTag; }
-	FGameplayTag GetTestDodgingStateTag() const { return DodgingStateTag; }
-	FGameplayTag GetTestHitReactingStateTag() const { return HitReactingStateTag; }
-	FGameplayTag GetTestPlayerLaunchReactionAbilityTag() const { return PlayerLaunchReactionAbilityTag; }
 	bool GetTestDodgeCancelable() const { return bDodgeCancelable; }
 	bool GetTestRetriggerInstancedAbility() const { return bRetriggerInstancedAbility; }
 	void SetTestActiveMontage(UAnimMontage* Montage) { ActiveMontage = Montage; }
@@ -168,6 +164,7 @@ private:
 	bool IsGameplayEventFromActiveMontage(const FGameplayEventData& Payload) const;
 
 private:
+	friend struct FMontageRateWindowBinding;
 	friend class UDodgeRateWindowContext;
 
 	UPROPERTY(Transient)
@@ -191,5 +188,6 @@ public:
 	int32 GetTestRateWindowMontageInstanceID() const { return RateWindowMontageInstanceID; }
 	bool HasTestRateWindowTasks() const { return RateWindowBeginTask != nullptr || RateWindowEndTask != nullptr; }
 	void TestClearRateWindow() { ClearRateWindow(); }
+	bool TestBindRateWindow(UAnimInstance* AnimInstance, UAnimMontage* Montage) { return BindRateWindow(AnimInstance, Montage); }
 #endif
 };

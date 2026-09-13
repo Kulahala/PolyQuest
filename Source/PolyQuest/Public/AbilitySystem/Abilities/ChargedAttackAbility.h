@@ -291,13 +291,9 @@ public:
 	bool IsTestForceSpawnNull() const { return bTestForceSpawnNull; }
 
 	void SetTestChargeVFXSystem(UNiagaraSystem* InSystem) { ChargeVFXSystem = InSystem; }
-	UNiagaraSystem* GetTestChargeVFXSystem() const { return ChargeVFXSystem; }
 	void SetTestChargeVFXTraceSourceName(FName InSourceName) { ChargeVFXTraceSourceName = InSourceName; }
-	FName GetTestChargeVFXTraceSourceName() const { return ChargeVFXTraceSourceName; }
 	void SetTestMaximumChargeDuration(float InDuration) { MaximumChargeDuration = InDuration; }
-	float GetTestMaximumChargeDuration() const { return MaximumChargeDuration; }
 
-	UNiagaraComponent* GetTestChargeVFXComponent() const { return ChargeVFXComponent; }
 	UAbilityTask_WaitDelay* GetTestWaitDelayTask() const { return WaitDelayTask; }
 
 	int32 GetTestStartChargeFeedbackCallCount() const { return TestStartChargeFeedbackCallCount; }
@@ -305,7 +301,6 @@ public:
 	int32 GetTestFullCallbackCount() const { return TestFullCallbackCount; }
 	bool IsTestChargeVFXActive() const { return bTestChargeVFXActive; }
 	float GetTestRecordedChargePhase() const { return TestRecordedChargePhase; }
-	USceneComponent* GetTestAttachParent() const { return TestAttachParent.Get(); }
 	FName GetTestAttachSocketName() const { return TestAttachSocketName; }
 	float GetTestDelayDuration() const { return TestDelayDuration; }
 
@@ -333,6 +328,7 @@ private:
 #endif
 
 private:
+	friend struct FMontageRateWindowBinding;
 	friend class UChargedAttackRateWindowContext;
 
 	UPROPERTY(Transient)
@@ -356,5 +352,6 @@ public:
 	int32 GetTestRateWindowMontageInstanceID() const { return RateWindowMontageInstanceID; }
 	bool HasTestRateWindowTasks() const { return RateWindowBeginTask != nullptr || RateWindowEndTask != nullptr; }
 	void TestClearRateWindow() { ClearRateWindow(); }
+	bool TestBindRateWindow(UAnimInstance* AnimInstance, UAnimMontage* Montage) { return BindRateWindow(AnimInstance, Montage); }
 #endif
 };

@@ -75,7 +75,6 @@ public:
 	const FGameplayTagContainer& GetTestAbilitiesToCancel() const { return AbilitiesToCancel; }
 	const TArray<FAbilityTriggerData>& GetTestAbilityTriggers() const { return AbilityTriggers; }
 	const FVector& GetImpactDirectionSnapshot() const { return ImpactDirectionSnapshot; }
-	bool GetTestRootMotionKnockdownCompletedNaturally() const { return bRootMotionKnockdownCompletedNaturally; }
 	void SetTestRootMotionKnockdownCompletedNaturally(bool bValue) { bRootMotionKnockdownCompletedNaturally = bValue; }
 
 	UAnimMontage* GetTestRootMotionKnockdownMontage() const { return RootMotionKnockdownMontage.Get(); }

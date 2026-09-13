@@ -107,7 +107,6 @@ public:
 	void TestTriggerVictimMontageBlendOut() { OnVictimMontageBlendOut(); }
 	void TestTriggerVictimMontageInterrupted() { OnVictimMontageInterrupted(); }
 	bool IsTestNonLethalRecoveryActive() const { return bNonLethalRecoveryActive; }
-	bool GetTestHasSavedCanWalkOffLedges() const { return bHasSavedCanWalkOffLedges; }
 	bool GetTestSavedCanWalkOffLedges() const { return bSavedCanWalkOffLedges; }
 	int32 GetTestActiveVictimMontageInstanceID() const { return ActiveVictimMontageInstanceID; }
 	void SetTestActiveVictimMontageInstanceID(int32 InID) { ActiveVictimMontageInstanceID = InID; }

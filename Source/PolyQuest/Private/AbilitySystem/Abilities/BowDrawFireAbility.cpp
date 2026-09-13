@@ -2,6 +2,7 @@
 
 #include "Abilities/Tasks/AbilityTask_PlayMontageAndWait.h"
 #include "Abilities/Tasks/AbilityTask_WaitGameplayEvent.h"
+#include "AbilitySystem/Abilities/MontageRateWindowBinding.h"
 #include "AbilitySystemComponent.h"
 #include "Animation/AnimInstance.h"
 #include "Animation/AnimMontage.h"
@@ -795,76 +796,8 @@ bool UBowDrawFireAbility::HasOwnedRateWindowMontageInstance() const
 
 bool UBowDrawFireAbility::BindRateWindow(UAnimInstance* AnimInstance, UAnimMontage* Montage)
 {
-	ClearRateWindow();
-	const uint32 BindingToken = ++RateWindowBindingToken;
-	const auto FailBinding = [this, BindingToken]()
-	{
-		if (RateWindowBindingToken == BindingToken && IsActive() && !bEndAbilityInProgress && CurrentActorInfo)
-		{
-			EndAbility(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, true, true);
-		}
-		return false;
-	};
-
-	if (!IsActive() || bEndAbilityInProgress || !IsValid(AnimInstance) || !IsValid(Montage))
-	{
-		return FailBinding();
-	}
-	const FAnimMontageInstance* Instance = AnimInstance->GetActiveInstanceForMontage(Montage);
-	if (!Instance || Instance->IsStopped())
-	{
-		return FailBinding();
-	}
-	RateWindowAnimInstance = AnimInstance;
-	RateWindowMontage = Montage;
-	RateWindowMontageInstanceID = Instance->GetInstanceID();
-	RateWindowLifecycle.BindAndCapture(this, AnimInstance, Montage, RateWindowBeginEventTag, RateWindowEndEventTag);
-	if (!RateWindowLifecycle.IsBound())
-	{
-		return FailBinding();
-	}
-
-	UBowDrawFireRateWindowContext* Context = NewObject<UBowDrawFireRateWindowContext>(this);
-	RateWindowContext = Context;
-	Context->OwningAbility = this;
-	Context->Token = BindingToken;
-	UAbilityTask_WaitGameplayEvent* BeginTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, RateWindowBeginEventTag, nullptr, false, true);
-	UAbilityTask_WaitGameplayEvent* EndTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, RateWindowEndEventTag, nullptr, false, true);
-	RateWindowBeginTask = BeginTask;
-	RateWindowEndTask = EndTask;
-	if (!BeginTask || !EndTask)
-	{
-		return FailBinding();
-	}
-	BeginTask->EventReceived.AddDynamic(Context, &UBowDrawFireRateWindowContext::OnBegin);
-	EndTask->EventReceived.AddDynamic(Context, &UBowDrawFireRateWindowContext::OnEnd);
-
-	const auto IsCurrentBinding = [this, Context, BindingToken]()
-	{
-		return IsActive() && !bEndAbilityInProgress && RateWindowBindingToken == BindingToken
-			&& RateWindowContext.Get() == Context;
-	};
-	BeginTask->ReadyForActivation();
-	if (!IsCurrentBinding())
-	{
-		return false; // A synchronous end/retrigger owns its own cleanup.
-	}
-	if (RateWindowBeginTask.Get() != BeginTask || !IsValid(BeginTask) || !BeginTask->IsActive()
-		|| RateWindowEndTask.Get() != EndTask || !IsValid(EndTask) || !HasOwnedRateWindowMontageInstance())
-	{
-		return FailBinding();
-	}
-	EndTask->ReadyForActivation();
-	if (!IsCurrentBinding())
-	{
-		return false;
-	}
-	if (RateWindowEndTask.Get() != EndTask || !IsValid(EndTask) || !EndTask->IsActive()
-		|| !HasOwnedRateWindowMontageInstance())
-	{
-		return FailBinding();
-	}
-	return true;
+	return FMontageRateWindowBinding::Bind<UBowDrawFireAbility, UBowDrawFireRateWindowContext>(
+		this, AnimInstance, Montage, bEndAbilityInProgress);
 }
 
 void UBowDrawFireAbility::OnRateWindowBegin(const FGameplayEventData& Payload)

@@ -1,219 +1,166 @@
-# TODO-03H6-FIX2：投射物命中几何与防御方向修复
+# TODO-03H6-SHRINK：RateWindow 绑定去重与测试接口清理
 
 ## 1. 目标、基线与职责
 
-**状态（2026-09-13）：TODO-03H6-FIX2 完成实现、验证与 Fresh Review，H6-F02 关闭。Gemini 的编译及11/11 Automation收据已核实；Main补测并隔离死亡来源fixture后，用户手动回传 ImpactGeometry Success，其余10项回归沿用未受影响的成功收据。Main最终差异审查通过，无未关闭P0–P2。PIE按用户豁免记录。用户已明确授权文档收尾与提交，本片按15份Source/Test及4份文档封闭提交。**
+**状态（2026-09-13）：TODO-03H6-SHRINK实现、验证及Main Fresh Review已完成。用户回传修复后的EnemyLaunchReactionRootMotion Success，并确认编译、PIE通过，明确授权文档收尾及提交。批准范围为15份Source/Test及4份Main文档；本plan保留完成态，证据见第9、10节。下一阶段为独立TODO-03H6-TEST-SHRINK，尚未启动实施。**
 
-修复 H6-F02：投射物的 Guard、防御弧、受击及死亡方向使用命中瞬间飞行方向的反向；射手在飞行期间移动不改变判定，伤害继续由原来源 ASC 结算。
+完成已接受的有限 SHRINK：五个玩家 Ability 共用一份 RateWindow 绑定实现，删除11个无消费者测试 getter。完成验证及 Fresh Review 后，解除 SHRINK 对 TODO-03C 的排期阻塞；不将本片关闭等同于全项目不存在重复。
 
-- 工作区：E:\GameDevelop\PolyQuest；引擎：D:\UE\UE_5.8。
-- 基线 HEAD：f2fea459b6ff8e7cd3cdae3ea45c4b8079ffd36d，FIX1 已提交。落盘前 Source 和阶段文档无未提交差异；既有 Content、Config、tmp WIP 保留并排除，不纳入本片。
-- FIX1 完整凭据固定读取：git show f2fea459b6ff8e7cd3cdae3ea45c4b8079ffd36d:plan.md；其收尾已在 ROADMAP-archive.md 归档。FULL-AUDIT 证据固定为 git show 851c7ac:plan.md，不重新全库审计。
-- Outer：ue-stage-workflow；Primary：ue5-cpp-gameplay；Support：none。
-- Route reason：既有 Native Projectile / Guard / GAS Context / Reaction 的单次命中方向接缝修复，不改变战斗权属。
+- 工作区：E:\GameDevelop\PolyQuest；引擎唯一依据：D:\UE\UE_5.8。
+- 基线 HEAD：3271323b91386fd5f5d23e471c23f64f3a9197dd，FIX2 已提交。落盘前 Source 和阶段文档无未提交差异；既有 Content、Config、tmp WIP 保留并排除。
+- FIX2 完整凭据：git show 3271323b91386fd5f5d23e471c23f64f3a9197dd:plan.md 第8节；FIX2 完成态及本次交接已归档 ROADMAP-archive.md。
+- FULL-AUDIT 台账固定为 git show 851c7ac:plan.md 第4节；不重新全库审计。
+- Outer：ue-stage-workflow；Primary：ue5-cpp-gameplay；Support：ponytail lite。
+- Route reason：五个 Native GAS 消费者的同义绑定样板抽取及普通测试接口删除，不改变运行时所有权。
 - Execution route：manual/out-of-band Gemini；Implementation executors：1，由用户手动交接，本轮不自动派发。
-- Main：架构、计划、范围、Fresh Review、文档及提交；Gemini：批准路径内源码、测试、实施自审和问题排查；用户：编译、Automation、Editor/PIE 与最终提交批准。
+- Main：架构、计划、范围、Fresh Review、文档、暂存和提交；Gemini：批准范围内 C++/测试实现、静态检查、实施自审和问题排查；用户：编译、Automation、Editor/PIE 与最终提交批准。未经另行明确委托，Agent 不自行运行编译或用户验证。
 
-### 用户决定与 Gemini 建议裁决
+### 1.1 已接受的技术裁决
 
-- 用户已选择命中瞬间飞行方向的反向，追踪弹采用转弯后的实际方向。
-- 用户已选择退化几何时伤害照常、Guard 不吸收、方向返回零；不回退射手位置。
-- 采纳 Gemini 的 UE 反射识别、显式基类序列化、提前采样速度与真实碰撞前置检查。
-- MovementComponent 无效时直接零方向，不增加 GetVelocity 后备。原生 Player/Enemy 构造函数已配置阵营，测试断言实际值即可；300cm、3000cm/s 是测试设置，不将“2～3 次 Tick 必命中”作为前置假设。
+1. 不给生产 helper 添加测试注入钩子。本机 UE5.8 AbilityTask_WaitGameplayEvent.cpp 的 Activate 只注册监听、不主动广播 GameplayEvent；但 GameplayTask.cpp 的 ReadyForActivation 还包含任务激活、Owner 通知和失败时 EndTask 等路径，不能据此删除返回检查。保留防御检查，静态审查其重入边界，不强求人为注入逐分支覆盖。
+2. Private helper 使用非模板 struct FMontageRateWindowBinding，内部提供模板静态 Bind 方法。Public 头文件只添加 friend struct FMontageRateWindowBinding;，不包含 Private 头文件、不增加复杂模板 friend。
+3. 使用正常 AddDynamic(Context, &TContext::OnBegin/OnEnd)。本机 Delegate.h 的名称提取对简单模板别名 TContext 可得到 OnBegin/OnEnd；没有模板反射异常的编译证据，不预设改用 __Internal_AddDynamic。真实编译失败时基于首条错误定向修复。
+4. 11 getter 经当前 Source 检索仍仅有定义。只删除对应方法，不连带字段、setter 或有效测试接口。
 
-### Deliberate Non-goals
+### 1.2 Deliberate Non-goals
 
-不实现远程敌人，不修改追踪算法、生产碰撞配置、资产、RateWindow/SHRINK、阵营分派、Tag、Config、Build.cs 或 GAS 权属。不铺设网络复制、Iris 或全局 Context 分配器。无新增 Tick、轨迹历史、通用 fixture 框架或生产测试开关。
+不重新全库审计，不统一 Ability/Context 类型，不重做 FIX1，不调整玩法，不抽取跨文件测试 fixture，不退役 Launch，不清理额外 getter/setter，不处理其他 FULL-AUDIT 候选。无 Blueprint API、Tag、Config、Build.cs、外部库、资产、网络复制或 GAS 外动作状态新增。
 
-## 2. Runtime Contracts 与接口
+额外候选继续由 ROADMAP 的 REC-03H6-AdditionalShrink、REC-03A7-01 和 RET 闭包分别承接；只在相关模块下次维护或用户明确接受后独立冻结范围，不自动纳入本片或成为新03C前置。
 
-### 2.1 投射物方向采样
+## 2. A：共享绑定实现与 Runtime Contracts
 
-FCombatProjectileHitRequest 新增 FVector WorldIncomingDirection = FVector::ZeroVector，语义为世界空间中从目标指向来袭侧的水平单位向量。
+### 2.1 五消费者迁移
 
-ACombatProjectile::HandlePawnImpact 通过现有有效性与初始化检查后，立即读取有效 MovementComponent 的 Velocity，在调用命中 resolver、忽略目标、停止移动或尾迹清理前完成采样。来向为速度反向投影到 XY 后归一化，追踪弹采用转弯后的速度。检查原始速度 XYZ 有限性；零速度、水平分量近零、NaN/Inf 或组件失效均归零。保留原始 HitResult 的接触点、法线和目标信息。
+迁移 ChargedAttack、SprintAttack、PlayerMeleeSkill、BowDrawFire、Dodge。当前五个 BindRateWindow 在类型名和结束标志名称归一后完全相同。
 
-合法敌对命中方向为零时，伤害照常进入 GAS，Guard 不吸收，受击/死亡方向返回零并沿用既有无方向处理。不得回退射手位置、初始发射方向或 ImpactNormal。请求默认零值表示明确的退化来向，不表示使用旧位置规则。
+新增 Private、无状态、非反射的 FMontageRateWindowBinding，内部提供模板静态 Bind。参数包括具体 Ability、AnimInstance、Montage 和实时结束标志引用，保留具体 Context 类型。五个原 BindRateWindow 方法保留为薄转发。helper 不保存状态、不创建新的 UObject 类型、不引入运行时策略表。
 
-### 2.2 按值保存 GAS 命中几何
+### 2.2 顺序与失败契约
 
-新增窄用途 USTRUCT FCombatImpactEffectContext : FGameplayEffectContext，仅增加 WorldIncomingDirection。
+1. 原 ClearRateWindow() → 增加 RateWindowBindingToken。
+2. 检查 Ability 活动与结束状态、AnimInstance/Montage 有效性、实际活动实例及未停止状态。
+3. 保存 RateWindowAnimInstance、RateWindowMontage 和实例ID，调用既有 BindAndCapture，检查 IsBound。
+4. 创建各自 Context，写入原有持有成员、OwningAbility 和 token；创建 Begin/End Task 并在激活前写入原有持有成员，检查创建结果后绑定动态委托。
+5. 依次调用 Begin、End 的 ReadyForActivation；每次返回后先检查当前 Ability/结束标志/token/Context 身份，再按原顺序检查 Task 指针、有效性、活动状态及实例资格。
+6. 当前绑定失败沿用原 EndAbility 出口。若同步结束或重触发已经改变身份，只返回 false，不清理新绑定、不恢复旧状态、不结束新一代 Ability。
 
-- 从 SourceASC->MakeEffectContext() 复制原生来源信息，写入校验后的来向和原始 HitResult。保留 Instigator、EffectCauser、来源 ASC、SourceObject 及其他原生上下文信息；SourceObject 沿用 Request.SourceObject 有值时优先，否则 SourceActor 的规则。
-- Context 类型表示显式方向存在，即使字段为零也不能执行普通来源位置后备。方向按值保存，后续消费不依赖射手或投射物仍然存活。
-- 实现 GetScriptStruct()、Duplicate()、NetSerialize() 及必要 traits。Duplicate 保留派生类型与方向，并深拷贝 HitResult。
-- NetSerialize 显式调用 FGameplayEffectContext::NetSerialize(...)，再序列化方向；分别处理函数返回值、bOutSuccess 与归档错误，不用无条件成功掩盖失败。仅实现原生 Context 协议，不配置复制或 Iris，不宣称网络验证。
-- 不替换全局 Context 分配器；若真实来源 Context 已有本计划未覆盖的派生状态，停止相关实现并向 Main 报告，不能静默切片丢失数据。
+### 2.3 权属与接口边界
 
-FHitReactionImpactResolver::ResolveImpactDirectionFromContext 的类型判断必须走 UE 反射：
+- Bow 保留 bEndAbilityInProgress，其余四个保留 bEndAbilityRequested；不统一改名，不按值快照结束标志。
+- Context、Task 的 UPROPERTY 持有关系、Owner/token 门禁、反射回调和具体类型保持不变。
+- FIX1 的 FAbilityMontageRateWindowLifecycle::IsCurrentMontageInstance 继续作为实例授权依据；不修改共享状态算法、Tag、baseline 和恢复政策。
+- ClearRateWindow、EndAbility、OnRateWindowBegin/End、Montage 播放及 BindRateWindow 的调用位置均保留在原 Ability。
+- 不新增 Blueprint API、运行时注入钩子、全局测试状态或生产测试开关。GAS 和原 ASC 权属不变。
+- 对象/状态有效性防护、两次 Ready 返回检查以及单一清理出口不能因抽取而删除或放宽。
 
-1. 取得 ContextHandle.Get()，检查原始指针及 GetScriptStruct()。
-2. 通过 IsChildOf(FCombatImpactEffectContext::StaticStruct()) 后才能 static_cast。
-3. 禁止 dynamic_cast、未经类型检查的强转和通过 SourceObject 猜测类别。
-4. 派生 Context 使用保存的方向，再转换到目标局部水平坐标；无效或零方向直接返回零。
-5. 普通 Context 保持 Instigator 优先、ImpactNormal 后备；近战与处决原契约不变。
+### 2.4 其他消费者的封闭裁决
 
-### 2.3 Guard 接缝与生命周期
+| 消费者 | 本片裁决与依据 |
+|---|---|
+| Light | 保留。Combo entry 切换、失败恢复及监听建立后捕获基线的顺序不同。 |
+| Enemy Melee、Big、Small、Launch | 保留。监听建立与 Montage/其他 Task 启动交织，并承担各自动作清理。 |
+| Enemy Victim | 保留。仅在非致死 Recovery 中条件绑定，失败存在局部清理出口。 |
+| Enemy StanceBreak | 保留。ExecutionContext 同时承载 Montage 回调，启动顺序独立。 |
 
-下列三个现有 Native 接口追加末尾可选参数 const FVector* WorldIncomingDirection = nullptr：
+上述保留裁决满足其他消费者适用性核对，不要求新增迁移阶段。只共享五份完整同义流程，不为几行相似 Task 创建代码扩展公共框架。
 
-- APlayerCharacter::TryResolveIncomingDefense
-- APlayerCharacter::TryGuardIncomingMeleeHit
-- UPlayerGuardAbility::TryGuardMeleeHit
+## 3. B：11 getter 逐项删除
 
-参数仅在同步调用中读取，不保存指针。nullptr 保持原近战行为；非空参数使用显式方向，零值或非有限值拒绝 Guard，不回退射手位置。内部 IsAttackerInGuardArc 适配显式方向，保持目标命中时朝向、现有 GuardHalfArcDegrees 和 Dot >= Cos(HalfArc) 边界。普通调用方不必改动；不增加 Blueprint 暴露。
+全部位于 WITH_DEV_AUTOMATION_TESTS 内，为普通非虚、非反射方法。实施前再次核验消费面。
 
-- 投射物入口固定 bAllowParry=false：允许 Guard、禁止 Parry。
-- Guard 消耗、反馈、体力恢复延迟、GuardBreak 和 EndAbility 清理保持现有流程；恰好耗尽或超过剩余体力的本次格挡仍吸收命中。
-- 来源失效/死亡、目标死亡/无敌、同阵营、缺少 ASC/GE 继续拒绝。方向有效不能绕过来源和目标资格校验。
-- 成功命中只投递一次，继续使用现有终止尾迹与清理出口；不改变 Ability 激活、取消、委托或 ASC 权属。
+| 头文件（目录见第4节） | 删除符号 |
+|---|---|
+| EnemyVictimExecutionAbility.h | GetTestHasSavedCanWalkOffLedges |
+| EnemyLaunchReactionAbility.h | GetTestRootMotionKnockdownCompletedNaturally |
+| DodgeAbility.h | GetTestAttackingStateTag、GetTestDodgingStateTag、GetTestHitReactingStateTag、GetTestPlayerLaunchReactionAbilityTag |
+| ChargedAttackAbility.h | GetTestChargeVFXSystem、GetTestChargeVFXTraceSourceName、GetTestMaximumChargeDuration、GetTestChargeVFXComponent、GetTestAttachParent |
 
-## 3. Approved Paths 与符号白名单
+只删除11个单行方法，保留关联生产字段、setter 和有效 GetTestSavedCanWalkOffLedges；当前 Victim getter 的真实消费者位于 ExecutionVictimRootMotionAutomationTests.cpp。若实施基线出现新消费者，对该项记录确切保留用途，不迁移清单外调用方，不为追求11项删除而削弱测试。
 
-以下为封闭清单。既有文件仅修改指定符号、必要 include 与接口注释，不因同文件在白名单内扩大到其他方法。
+## 4. Approved Paths 与符号白名单
+
+原封闭清单为14份 Source/Test（含1份新增 Private header）；2026-09-13用户明确追加批准下列EnemyLaunch专项测试文件，现为15份。同文件不等于批准其他符号。新增项由Main按单文件测试窄修复例外处理，不扩大Gemini原14文件交付范围。除此之外的源码、测试、资产、Config、Build.cs 和工具文件均不可修改。
 
 | 批准绝对路径 | 符号 / 允许修改范围 |
 |---|---|
-| E:\GameDevelop\PolyQuest\Source\PolyQuest\Private\Combat\Projectile\CombatProjectile.cpp | ACombatProjectile::HandlePawnImpact 的来向采样与请求填充 |
-| E:\GameDevelop\PolyQuest\Source\PolyQuest\Public\Combat\Projectile\CombatProjectileHitResolver.h | FCombatProjectileHitRequest::WorldIncomingDirection 及契约注释 |
-| E:\GameDevelop\PolyQuest\Source\PolyQuest\Private\Combat\Projectile\CombatProjectileHitResolver.cpp | FCombatProjectileHitResolver::TryResolveHit 的方向校验、Guard 转发、Context 构造；必要文件内私有数学辅助 |
-| E:\GameDevelop\PolyQuest\Source\PolyQuest\Public\Character\Player\PlayerCharacter.h | TryResolveIncomingDefense、TryGuardIncomingMeleeHit 声明与注释 |
-| E:\GameDevelop\PolyQuest\Source\PolyQuest\Private\Character\Player\PlayerCharacter.cpp | TryResolveIncomingDefense、TryGuardIncomingMeleeHit 参数转发 |
-| E:\GameDevelop\PolyQuest\Source\PolyQuest\Public\AbilitySystem\Abilities\PlayerGuardAbility.h | TryGuardMeleeHit、IsAttackerInGuardArc 声明与注释 |
-| E:\GameDevelop\PolyQuest\Source\PolyQuest\Private\AbilitySystem\Abilities\PlayerGuardAbility.cpp | TryGuardMeleeHit、IsAttackerInGuardArc 的方向接缝；不改消耗、反馈或清理策略 |
-| E:\GameDevelop\PolyQuest\Source\PolyQuest\Public\Combat\Reaction\HitReactionImpactResolver.h | ResolveImpactDirection / ResolveImpactDirectionFromContext 契约注释 |
-| E:\GameDevelop\PolyQuest\Source\PolyQuest\Private\Combat\Reaction\HitReactionImpactResolver.cpp | ResolveImpactDirectionFromContext 的显式方向分支，必要文件内私有数学辅助 |
-| E:\GameDevelop\PolyQuest\Source\PolyQuest\Public\Combat\CombatImpactEffectContext.h | 新增 FCombatImpactEffectContext 与必要 traits，generated.h 置于 include 末尾 |
-| E:\GameDevelop\PolyQuest\Source\PolyQuest\Private\Combat\CombatImpactEffectContext.cpp | 新增 Context 构造、类型、复制与序列化实现 |
-| E:\GameDevelop\PolyQuest\Source\PolyQuest\Private\Tests\ProjectileImpactGeometryAutomationTests.cpp | 新增本片专项及必要文件内 fixture 辅助 |
-| E:\GameDevelop\PolyQuest\Source\PolyQuest\Private\Tests\PlayerDefenseAudioAutomationTests.cpp | 仅为现有投射物 Guard 用例补充显式来向，保留原断言 |
+| E:\GameDevelop\PolyQuest\Source\PolyQuest\Private\AbilitySystem\Abilities\MontageRateWindowBinding.h | 新增无状态 FMontageRateWindowBinding 及模板静态 Bind；必要 include 和契约注释；禁止测试注入钩子 |
+| E:\GameDevelop\PolyQuest\Source\PolyQuest\Private\AbilitySystem\Abilities\ChargedAttackAbility.cpp | BindRateWindow 薄转发及必要 include |
+| E:\GameDevelop\PolyQuest\Source\PolyQuest\Private\AbilitySystem\Abilities\SprintAttackAbility.cpp | BindRateWindow 薄转发及必要 include |
+| E:\GameDevelop\PolyQuest\Source\PolyQuest\Private\AbilitySystem\Abilities\PlayerMeleeSkillAbility.cpp | BindRateWindow 薄转发及必要 include |
+| E:\GameDevelop\PolyQuest\Source\PolyQuest\Private\AbilitySystem\Abilities\BowDrawFireAbility.cpp | BindRateWindow 薄转发及必要 include |
+| E:\GameDevelop\PolyQuest\Source\PolyQuest\Private\AbilitySystem\Abilities\DodgeAbility.cpp | BindRateWindow 薄转发及必要 include |
+| E:\GameDevelop\PolyQuest\Source\PolyQuest\Public\AbilitySystem\Abilities\ChargedAttackAbility.h | 单行 helper friend、第3节5个 getter 删除；必要时在现有测试宏内增加直接调用原 BindRateWindow 的单行薄入口 |
+| E:\GameDevelop\PolyQuest\Source\PolyQuest\Public\AbilitySystem\Abilities\SprintAttackAbility.h | 单行 helper friend；必要时在现有测试宏内增加直接调用原 BindRateWindow 的单行薄入口 |
+| E:\GameDevelop\PolyQuest\Source\PolyQuest\Public\AbilitySystem\Abilities\PlayerMeleeSkillAbility.h | 单行 helper friend；必要时在现有测试宏内增加直接调用原 BindRateWindow 的单行薄入口 |
+| E:\GameDevelop\PolyQuest\Source\PolyQuest\Public\AbilitySystem\Abilities\BowDrawFireAbility.h | 单行 helper friend；必要时在现有测试宏内增加直接调用原 BindRateWindow 的单行薄入口 |
+| E:\GameDevelop\PolyQuest\Source\PolyQuest\Public\AbilitySystem\Abilities\DodgeAbility.h | 单行 helper friend、第3节4个 getter 删除；必要时在现有测试宏内增加直接调用原 BindRateWindow 的单行薄入口 |
+| E:\GameDevelop\PolyQuest\Source\PolyQuest\Public\AbilitySystem\Abilities\EnemyVictimExecutionAbility.h | 仅删除 GetTestHasSavedCanWalkOffLedges |
+| E:\GameDevelop\PolyQuest\Source\PolyQuest\Public\AbilitySystem\Abilities\EnemyLaunchReactionAbility.h | 仅删除 GetTestRootMotionKnockdownCompletedNaturally |
+| E:\GameDevelop\PolyQuest\Source\PolyQuest\Private\Tests\PlayerMontageRateWindowAutomationTests.cpp | 复用现有真实 ASC fixture，补充绑定拒绝、失败回退及重新绑定测试；不抽取跨文件 fixture，不删除有效断言 |
+| E:\GameDevelop\PolyQuest\Source\PolyQuest\Private\Tests\EnemyLaunchReactionRootMotionAutomationTests.cpp | 用户追加批准：仅修复文件内合成Montage/AnimInstance/ASC播放前置，补充真实播放及Ability活动断言；保留非法配置负例、自然结束/取消/销毁清理断言；不改生产Ability、不新增bypass或公共fixture |
 
-复用既有 FCombatAutomationFixture 和测试 GE，不修改共享 fixture，不增加生产测试开关。除以下补充授权外，其余测试仅运行回归。
+薄测试入口只能直接调用原生产方法，不能改变过程、伪造返回值或提供回调注入。
 
-补充授权（首次交付后由用户转交 Gemini 执行；原始清单仍为13路径）：
+Main 专属文档清单：E:\GameDevelop\PolyQuest\plan.md、E:\GameDevelop\PolyQuest\ROADMAP.md、E:\GameDevelop\PolyQuest\ROADMAP-archive.md；E:\GameDevelop\PolyQuest\ARCHITECTURE.md 仅在验证和终审后更新稳定事实。本次计划落盘只改前三份。
 
-| 批准绝对路径 | 符号 / 允许修改范围 |
+## 5. Editor 清单与验证矩阵
+
+Editor 制作、资产写入、资产迁移与 readback 清单均为空。PIE 使用既有场景/资产；若验证必须修改资产，先向 Main 报告具体对象和原因，未经用户另批不得写入。
+
+| 门禁 | 执行要求与证据 |
 |---|---|
-| E:\GameDevelop\PolyQuest\Source\PolyQuest\Private\Tests\FrontExecutionAutomationTests.cpp | RunTest 内局部地面 fixture、Player 对该地面的碰撞忽略、release / blocked cancel 的真实 FindFloor 前置断言；保留 Walking 断言 |
-| E:\GameDevelop\PolyQuest\Source\PolyQuest\Private\Tests\BackstabExecutionAutomationTests.cpp | 同上，不改生产移动逻辑或共享 fixture |
+| 静态 | 核对原14路径及追加测试文件共15路径和符号白名单、getter消费面、Public不包含Private、两次Ready返回检查、单一清理出口；执行 git diff --check。Rider可用且适用时补充error-level诊断；不可用记录coverage fallback。 |
+| 编译 | 用户执行 UE5.8 PolyQuestEditor / Development Editor，验证UHT、五种模板实例化、friend访问及AddDynamic；真实错误按首条证据定位，不预设内部宏后备。 |
+| 玩家既有Automation | PolyQuest.Combat.PlayerMontageRateWindow 全部六项：Light、MeleeSkill、Sprint、Charged、Bow、Dodge。保留真实ASC激活、Begin/End实际回调、非法事件、取消、旧Context拒绝、同资产替换及Dodge重触发断言。 |
+| 新增绑定测试 | 在现有五消费者fixture中覆盖：结束态绑定拒绝；活动Ability遇到非法AnimInstance/Montage后失败并完整结束；同一活动Ability连续绑定产生独立Context/token，旧回调不能影响新绑定，最终无旧监听残留。失败路径检查GAS活动状态、Context、Task和生命周期清理，不能只断言返回false。 |
+| 防御分支证据 | Ready内部同步结束/重入防御保留并静态审查；不使用helper注入钩子强行覆盖，不把普通取消/重触发测试称为该返回点动态覆盖。 |
+| getter回归 | PolyQuest.Combat.ChargedAttackNiagaraFeedback、PolyQuest.Combat.ExecutionVictimRootMotion、PolyQuest.Combat.EnemyLaunchReactionRootMotion；EnemyLaunch专项按用户追加批准修复并经用户重新编译/运行，其余通过收据按未受影响范围保留。 |
+| 用户PIE | 既有Scene01中五个迁移动作分别验证窗口速率、退出恢复、取消后再次激活；重点检查Charged暂停/释放、Bow Section切换、Dodge连续重触发。getter删除不另加PIE。 |
+| Fresh Review | Main应用ue-strict-review，在批准diff内核验绑定等价性、实例/Context隔离、Ready重入边界、失败出口、测试有效性及范围；不重新全库审计。 |
 
-Main 文档白名单（Gemini 不得写入）：
+静态、编译、Automation、PIE和视觉证据分别记录；本计划制定时没有本片编译/Automation/PIE或实现Fresh Review收据。对同一失败根因最多一次有证据修复加一次针对性复跑；复现仍在则报告，不自动循环或扩大范围。
 
-- E:\GameDevelop\PolyQuest\plan.md：本片交接、门禁与结果。
-- E:\GameDevelop\PolyQuest\ROADMAP-archive.md：核对已有 FIX1 归档，追加 FIX1 → FIX2 指针及最终收口，避免重复归档。
-- E:\GameDevelop\PolyQuest\ROADMAP.md：活跃指针、H6-F02 唯一风险与关闭状态。
-- E:\GameDevelop\PolyQuest\ARCHITECTURE.md：仅验证与终审通过后更新稳定契约，本轮规划落盘不改。
+## 6. Executor 自包含交付要求
 
-## 4. 测试与验证矩阵
+1. 先读实时 AGENTS.md、本 plan、git status及目标源码/直接依赖。基线参考第1节；若HEAD变化先检查是否触及批准契约，不回滚或覆盖既有WIP。源码导航遵守CodeGraph优先；图谱缺失、过期或未覆盖时记录coverage fallback并聚焦读取，不重跑全库审计。
+2. 先Charged/Sprint完成抽取，再迁移MeleeSkill/Bow/Dodge，最后删getter；保持同一封闭切片，不因局部命名、算法或测试细节反复请示。
+3. 本片首次交付按项目规则优先派发1个干净只读子代理做严格实施自审；只审批准diff及必要契约，不写文件。后续微调/Bug修复单兵复核，不再派发。不可用则明确记录，不冒充独立自审。
+4. Gemini只改第4节14份Source/Test清单。不修改Main文档，不操作资产/Config/Build.cs，不引入依赖，不暂存、不提交、不推送、不自动进入03C。
+5. 超出白名单、需要资产写入、架构/生命周期契约改变或验收标准放宽时，向Main报告具体证据和最小必要扩展；不能自行放宽。已批准范围内常规细节自主闭环。
+6. 交付说明列出实际修改文件/符号、共享实现及五消费者迁移、其他消费者保留裁决、11 getter逐项结果、实际diff统计（生产缩减/测试增量/getter删除分列）、静态与实施自审证据、待用户编译/Automation/PIE门禁和真实剩余风险。
+7. 不将计划、静态结果、历史绿色收据或普通取消测试当本片运行时证据。Ready防御分支没有动态覆盖时明确写静态覆盖边界。
 
-新增专项：PolyQuest.Projectile.ImpactGeometry。
+## 7. 完成标准与文档 / 提交门禁
 
-| 场景 | 核心断言 |
-|---|---|
-| 射手移动 | 横移/绕后不改变相同来向的 Guard 与反应方向；Instigator、EffectCauser、SourceObject 和来源 ASC 仍正确 |
-| 目标转向 | 改变目标朝向后，局部方向和防御弧相应变化；覆盖弧内、边界、弧外 |
-| 转弯后命中 | 当前速度与初始方向、射手位置、ImpactNormal 冲突时，以当前速度为准 |
-| 退化方向 | 零、纯竖直、NaN、Inf 不触发 Guard；合法伤害生效、方向为零，无位置后备 |
-| 防御与体力 | 充足、恰好耗尽、超过剩余体力、初始零体力；当前 GuardBreak 命中仍吸收；Parry 激活也不能弹反投射物 |
-| 资格拒绝 | 来源 Actor/ASC 失效、来源 Dead、目标 Dead/Invulnerable、友军继续拒绝 |
-| Context | 实际 GE 捕获正确派生类型、来源和方向；复制后 HitResult 独立；Actor 销毁后已存方向仍可解析；原生序列化往返保留方向 |
-| 命中链路 | 至少一例真实 UWorld 移动碰撞进入 GAS；补充 sweep/非 sweep 和重复回调用例，断言只投递一次 |
-| 受击与死亡 | Player/Enemy 受击来向正确；Enemy 致死冲量沿远离来袭侧方向；零方向不产生伪造定向冲量 |
-| 近战/处决兼容 | 普通 Context 的 Instigator 与 ImpactNormal 冲突时，仍以 Instigator 为先 |
+- 五消费者迁移、其他消费者保留裁决、11 getter逐项删除或基线漂移后的证据保留全部交付；只做A或B不能关闭本片。不按预设净行数扩容。
+- 编译、适用Automation、用户PIE与Main Fresh Review门禁完成。用户明确接受豁免时，在ROADMAP写唯一债务与具体关闭触发；不能自行豁免。
+- Ready防御分支的静态覆盖边界记录在交付/收口证据中，不增设阻塞任务；未来任务类型或激活流程改变、出现实际同步回调路径时补对应集成测试。
+- Debt-03H6-FIX2-PIE和其他已知债务保持原归属，不因SHRINK完成而消失；REC-03H6-AdditionalShrink继续承接额外候选，相关fixture维护前处理既定前置，不顺手加片。
+- Main验收后更新ARCHITECTURE稳定事实、ROADMAP下一入口及风险唯一归属、归档完成态，并保留可追溯的当前plan。按用户在本计划落盘后接受的新排期，完成后进入独立TODO-03H6-TEST-SHRINK，再到TODO-03C；不扩展当前实现范围。
+- Git提交必须用户明确批准。届时仅暂存批准清单内实际改动，核对cached diff与空白检查；既有Content/Config/tmp WIP排除，严禁git add -A。提交标题/正文遵守AGENTS，未获批准不提交。
 
-### 真实碰撞测试前置
+## 8. 本轮计划落盘记录
 
-- 创建并初始化独立 Game World，完成 BeginPlay；复用现有 fixture，保留初始化顺序。
-- 断言 Sphere/Capsule 已注册、参与查询、生成重叠事件、通道响应兼容，ProjectileMovement 已激活且绑定正确 UpdatedComponent。测试所需配置只作用于 transient fixture，不改生产预设。
-- 断言生产 resolver 实际读取 Team.Player 与 Team.Enemy，不用生产分派 bypass 或新增阵营 setter 修测试。
-- 初始采用约 300cm 距离、3000cm/s 速度，避免初始重叠；目标保持稳定，排除角色下落等无关运动干扰。
-- 使用现有 World Tick 与 GFrameCounter 推进惯例，以 0.05s 步长、最多 10 步等待实际命中。未命中报告前置状态与失败，不无限推进。
-- 断言实际位移、伤害/消费和 Context 捕获；手工 Broadcast 单独标注为回调消费证据，不能替代真实碰撞。
+2026-09-13：Main按用户接受的修订方案建立本计划，追加FIX2→SHRINK归档并同步ROADMAP交接指针；Source/Test、ARCHITECTURE及资产/Config未修改。不运行编译、Automation、Editor/PIE，不派发子代理、不暂存、不提交。文档检查收据由本次交付回复给出，不将本节作为实现验收。
 
-### 既有回归入口
+## 9. 用户批准的 EnemyLaunch 测试前置窄修复（2026-09-13）
 
-- PolyQuest.Projectile.Lifecycle
-- PolyQuest.Projectile.TargetAssist
-- PolyQuest.Projectile.FlightTrail
-- PolyQuest.Combat.DefenseAudio
-- PolyQuest.Combat.ParrySuccessFeedback
-- PolyQuest.Combat.HitReaction
-- PolyQuest.Enemy.DeathRagdoll
-- PolyQuest.Combat.FrontExecution
-- PolyQuest.Combat.Backstab
-- PolyQuest.Combat.ExecutionImpactFeedback
+- 首次失败证据：Saved/Logs/PolyQuest.log，2026.09.13-03.07.44 UTC；原6项PlayerMontageRateWindow和ChargedAttackNiagaraFeedback、ExecutionVictimRootMotion为Success，EnemyLaunchReactionRootMotion为Fail。首个异常链为PlayMontage失败 → root motion knockdown montage did not start → 2.5活动阶段/2.5b Facing状态断言失败。8项绿色不能关闭第9项门禁。
+- 当前失败路径涉及的生产EnemyLaunch .cpp与专项测试在修复前均与3271323基线一致；本片EnemyLaunch头文件只删未调用getter。无证据把播放失败归因于getter删除，也未做同环境基线复跑，不能声称已排除一切环境/顺序因素。Debt-03H6-LaunchRetirementReadback属于旧Launch退役，不承接本失败。
+- 用户明确批准将EnemyLaunchReactionRootMotionAutomationTests.cpp加入本片，由Main单兵窄修复。只修改该测试文件及当前计划/路线图记录，不动Gemini原交付、生产Ability、公共fixture、资产或Config，不派发后续修复子代理。
+- 修复：沿用既有RateWindow suite的本地可播放合成动画做法，创建Skeleton/root track/Default section；Montage-only AnimInstance挂入对应敌人Mesh并刷新ASC ActorInfo，临时敌人使用独立实例。取消该suite原先的CDO Mock注入及播放bypass调用，保留原自然完成、取消、非Walking、非法Montage和销毁晚回调测试目的与断言。
+- 测试增加root track建立、ASC动画引用一致及实际Montage播放/Ability活动检查。首个合法激活失败时早停；非法Montage长度仍使用有效Sequence数据以隔离单一负例。动画数据构建依赖WITH_EDITOR，因此该EditorContext suite明确同时受WITH_DEV_AUTOMATION_TESTS与WITH_EDITOR保护。
+- 静态证据：Rider专项文件error-level检查无错误，git diff --check通过；原98个编号标签保留，修复前后其余Source文件SHA-256一致。此处不是UE编译、Automation运行、真实跨帧Root Motion移动或视觉证明。
+- 验收结果：用户回传Test Run 3的PolyQuest.Combat.EnemyLaunchReactionRootMotion为Success，随后明确确认编译、PIE通过。其余8项保留原未受影响通过收据，不冒充全套新版复跑。非法前置拒绝、Walking转Falling中止及无StanceBreak消费者恢复Poise日志与负例/生命周期场景一致，专项失败已关闭，不转挂旧Launch退役债。
 
-### 门禁与证据所有者
+## 10. Main完成态与提交凭据（2026-09-13）
 
-| 门禁 | 要求 | 当前状态 / 所有者 |
-|---|---|---|
-| 静态与实施自审 | 白名单 diff、git diff --check、适用且可用的 Rider 诊断、严格实施自审 | Main 完成批准15路径的两轮静态审查及窄补测差异核对；diff check 成功。Rider 未执行，静态覆盖回退到源码、UE 5.8 API 和图谱；报告未附干净子代理自审记录，不冒充独立自审 |
-| 编译 | UE 5.8 PolyQuestEditor / Development Editor 成功 | Gemini 的 Development Editor 成功收据已核对；后续测试补丁按用户在重新编译/复跑请求后回传的专项 Success 验收，未另附一次全量重编收据；Main 未运行编译 |
-| Automation | 新增专项与上述既有回归成功 | Gemini 修复后11/11 Success已核对；Main补测的8.3曾失败，隔离死亡来源fixture后用户最新手动专项Success。其余10项保留既有成功收据，不声称新版全套重跑 |
-| PIE | 原计划验证 Bow 命中/死亡方向、尾迹终止，以及近战 Guard、GuardBreak、Parry、前处决和背刺 | 用户本轮明确接受本片豁免；未提供实际 PIE 成功回执，不计为已执行或已通过。后续验证归 ROADMAP 的 Debt-03H6-FIX2-PIE |
-| Fresh Review | Main 按 ue-strict-review 审查批准 diff，无未关闭 P0–P2 | 通过：两轮静态审查及用户最新Success后的限定delta review完成；P2测试覆盖与fixture污染已关闭，无新增P0–P2 |
-
-敌对投射物命中 Player 的完整几何矩阵由 Native Automation 覆盖，不提前实现远程敌人。本片没有 Editor 资产写入、迁移或资产 readback 门禁。模拟 Guard 活跃状态只证明命中消费，不证明 Montage 激活；手工回调不证明真实碰撞；Context 序列化测试不证明网络运行。
-
-本片默认修复与回归一并交付，不增加独立等待旧版 RED 回执的暂停门禁。未实际运行的修复前失败不得声称已验证。相同失败根因最多一次有依据修复和一次定向复跑，不削弱断言换绿灯。
-
-初次交接未授权自动运行；后续两份处决测试修复提示词已明确委托 Gemini 编译及运行11项 Automation，用户已转交执行结果。Main 本轮不自动运行编译、Automation、live Editor 或 PIE；新增补测的编译与定向复跑继续由用户/Gemini 执行。查询 live Editor 前应用 unreal-mcp。
-
-## 5. Executor 交付、停止条件与文档收口
-
-### Gemini 自包含交接
-
-- 首先读取 E:\GameDevelop\PolyQuest\AGENTS.md 与本计划，核对实际 HEAD、Source diff 和既有 WIP；仅探索目标、直接依赖与必要测试，不重新 FULL-AUDIT。
-- 在第3节封闭路径与符号内完成源码和专项测试，常规算法/私有辅助/测试细节自主闭环，不因局部选择频繁请示。
-- 首次交付按项目规则优先使用一个干净只读子代理严格实施自审；后续微调或 Bug 修复单兵复核，不重复派发。自审不冒充 Main Fresh Review。
-- 交付精确路径清单、接口变化、关键断言、实际检查收据、自审 Findings/结论与剩余用户门禁。显式核验回调对象/状态有效性、同步 GAS 回调边界和单次命中/统一清理；不改变既有 ReadyForActivation 或 EndAbility 时序。
-- 不写文档、资产、Tag、Config、Build.cs、全局工具或清单外文件；不暂存、提交、推送或回滚 WIP。
-
-### 停止条件
-
-发现必须扩大路径、改变生命周期/来源权属、来源 Context 基线不符，或真实碰撞前置无法成立时，停止相关扩展并报告具体证据。按第4节失败重试上限执行，不能以放宽契约、手工 Broadcast 替换真实碰撞或弱化断言消除失败。
-
-### 完成与债务归口
-
-- 当前规划证据：实时源码、定向 CodeGraph、图谱未覆盖区段的聚焦测试读取及本机 UE 5.8 API。全部为静态证据，不是编译、Automation、Editor/PIE、视觉或网络证明。
-- 编译、新增专项/既有回归、适用 PIE 和 Main Fresh Review 通过后，关闭 H6-F02，更新 ARCHITECTURE 稳定事实，并由 Main 完成三份阶段文档收尾。
-- 未通过门禁或接受的延期风险只在 ROADMAP 保留唯一记录和闭环触发条件；不静默将证据不足写成通过。
-- Debt-03H6-ProjectileIntegration 的方向相关覆盖由 FIX2 关闭；剩余发射/飞行到 Dead、Ragdoll、Destroy、SourceASC 失效和重复碰撞终止的完整集成矩阵仍按 ROADMAP 归 03C，不能因新增部分用例关闭整个既有债务。
-- FIX1 已关闭及其非阻塞 Debt-03H6-FIX1-PreFixProof 保持原归属，不继承其历史 RED 门禁为本片暂停条件。
-- FIX2 完成后进入已排期的有限 SHRINK，不直接放行 TODO-03C。用户现已明确批准本片收尾后提交，仅暂存最终批准的精确路径。
-## 6. 首次交付接收与用户 PIE 豁免（历史记录，2026-09-13）
-
-- 用户本轮请求以 ue-strict-review 为主、ponytail-review 为辅进行验收，并表示尚无远程敌人、PIE 难以完成，接受本片免于实测并要求文档记录。此授权按 PIE 验证豁免处理，不伪造 PIE 成功记录；未授权提交，也不自动豁免报告中失败的 Automation。
-- 接收报告：C:\Users\Administrator\.codex\attachments\ce19acad-bd19-4f46-8c8c-6ff0feabd877\pasted-text.txt。报告与 Git 路径清单显示 10 个既有 Source 文件修改、3 个新增文件，对应第3节13路径；这只是入口范围核对，不代表源码正确性或测试覆盖已审查。
-- Gemini 执行、用户转交的编译结果：PolyQuestEditor Win64 Development Succeeded，增量5.48s。Automation 明列 Success 的9项：ImpactGeometry、Lifecycle、TargetAssist、FlightTrail、DefenseAudio、ParrySuccessFeedback、HitReaction、DeathRagdoll、ExecutionImpactFeedback（完整前缀见第4节）。Main 未重复执行，也不把报告中的“8个Section完整覆盖”当作源码复核结论。
-- 报告同时列明 FrontExecution 与 Backstab 失败：release 步期望 MOVE_Walking，实际 MOVE_Falling（3）。Gemini 归因为无地面的 transient world fixture，但未提供同环境修复前基线对照。当前只能记录“执行者归因、尚未排除回归”，不能写成已证实既有问题或计划内全量通过。两文件不在本片写入白名单，不擅自修复或放宽断言。
-- ue-strict-review 的入口要求验证门禁完成，缺门禁时非收口静态审查需用户明确指定。本轮停在入口核对，未进入源码/图谱 Fresh Review、对抗审查或 ponytail 复杂度判断；不输出无 Findings 或可提交结论。后续取得两项回归成功/明确验收裁决，或用户明确请求先只读静态审查时继续。
-- PIE 豁免的唯一后续验证记录为 ROADMAP 的 Debt-03H6-FIX2-PIE；H6-F02 的自动化与审查仍开放。ARCHITECTURE 和完成态归档本轮不更新，FIX2 不关闭，03C 不放行。现有源码及用户WIP保留。
-
-## 7. 处决测试修复复核与 Main 窄补测（过程记录，最终状态见第8节）
-
-- 接收修复报告：C:\Users\Administrator\.codex\attachments\7e26dede-9fca-40bd-b929-1d14de133282\pasted-text.txt。两份局部地面以 Enemy 实际 Capsule 底部定位；Player 只忽略该测试地面，原 Snap 几何断言、释放/取消的 Walking 断言均保留，并增加 FindFloor/IsWalkableFloor 前置证据。可接受为受害者释放验证，不把它当作 Player 接地物理验证；无生产修复。
-- 收据所有者：Gemini 执行、用户转交、Main 读取核实。UBT 日志 C:\Users\Administrator\AppData\Local\UnrealBuildTool\Log.txt:161 为 Result: Succeeded；Saved/Logs/PolyQuest.log:2348–2588 含计划内11项 Success。覆盖原来的 FrontExecution/Backstab 两项失败；这些是 Main 补测前的证据，不声称修复前基线已复现。
-- Review 范围：基线 f2fea459b6ff8e7cd3cdae3ea45c4b8079ffd36d 的15个批准 Source 路径及必要直接依赖。一次 code-review-graph 变更雷达辅助导航；源码、UE 5.8 API 和必要测试为实证，图谱不作为运行时证明。未派发应用内子代理。
-- 第一轮缺陷审查：未发现生产逻辑 bug；P2 为专项测试覆盖缺口：实际碰撞只断言扣血，手工构造 Context 无法验证 Actor 的方向赋值与真实 GE 接线；原“Actor destruction”在销毁无关 Actor 前解析，不构成来源销毁后的快照证明。
-- 第二轮对抗审查：派生 Context 保留来源 ASC 的伤害权属、方向按值且显式零无后备、默认 nullptr 保留普通近战/处决行为、单次投递与清理出口不变，均有当前源码支持。删除 Actor 方向赋值仍可能通过原碰撞测试，故 P2 不能凭已有11/11辩护消除。未发现另一个可复现生产缺陷。
-- Main 依据 AGENTS 的单文件窄改动例外，结束只读审查后只修改原批准 ProjectileImpactGeometryAutomationTests.cpp：真实发射初始+Y、当前速度改+X、射手移至侧方；从实际 Health GE 回调捕获 Context 深拷贝，断言类型、来源、HitResult 目标、-X 来向与局部方向；保留真实 Tick 与非致死重复碰撞断言。回调句柄在推进结束后移除，不留下栈引用。
-- 补测还将实际捕获的 Context 复用于致死 GE，断言沿+X远离来袭侧的死亡冲量；此段是 GAS 消费测试，不宣称第二次真实飞行。销毁真实投射物和射手后再解析快照，删除旧的伪销毁覆盖。ponytail 辅助仅删除同文件三个无用声明/赋值，不扩展重构 Context 或共享 fixture。
-- 当前验证：Main 仅完成修改后的静态差异、UE API 与空白检查，其他 Source 文件内容哈希不变。待 Development Editor 编译及 PolyQuest.Projectile.ImpactGeometry 定向复跑；若修复引起生产/共享代码变化，才扩大到受影响回归。现有其余10项成功收据继续有效；不无理由重复全套。
-- H6-F02 的唯一开放状态和闭环条件见 ROADMAP；PIE 延期仍仅归 Debt-03H6-FIX2-PIE。暂不更新 ARCHITECTURE 的稳定事实或追加完成态归档，不提交。
-
-### Test Run 3 失败修复（用户手动运行）
-
-- 用户提供 ImpactGeometry Fail：8.3 的致死GE使Health由20归零，但Dead仍为false、死亡冲量/捕获次数均为0。此前11/11不覆盖此新增断言。
-- 根因证据：第5.2节曾给共用Enemy添加Dead Tag，触发HandleDeath设置bDeathTeardownStarted；移除Tag和恢复Health不会复活Actor。OnHealthAttributeChanged遇到该终态标记直接返回。Main补测时漏查此前用例的终态污染，本次修复测试前置，不修改生产死亡契约。
-- 单文件修复：第5.2节改用独立SpawnPassiveEnemy作为死亡来源，完成拒绝断言后销毁；第8节增加死亡清理消费次数为0的前置断言。移除排查期间的两条Error级DIAG日志，保留8.3全部行为断言。Instant GE的ActiveHandle无效本身不代表应用失败。
-- 本次为该根因的一次修复，静态差异及空白检查通过；由用户重新编译并定向复跑PolyQuest.Projectile.ImpactGeometry。若同根因仍失败，保留结果并报告，不继续盲目试改。Guard fixture提示和World Cleanup缺EndPlay日志不作为本次8.3失败根因；未扩展共享fixture或生产生命周期。
-## 8. 最终验收与文档收尾（2026-09-13）
-
-- **最新用户回执**：死亡来源隔离修复后，用户手动运行PolyQuest.Projectile.ImpactGeometry，Result=Success；回执保留Guard恢复延迟/GuardBreak fixture提示与World Cleanup缺EndPlay日志。该成功关闭新增8.0/8.3/8.4及实际Context断言的门禁，不抹去第7节首次失败。
-- **Fresh Review通过**：只复核补测及死亡来源隔离差异，其他Source内容与先前审查基线哈希一致。独立DeadSource不再污染共用Enemy；实际Context捕获使用同步Health委托，推进后移除句柄，SourceObject在投递时取证以适应投射物终止销毁。原扣血/重复回调、来源与方向、死亡冲量和销毁后断言全部保留。对抗检查未发现依赖复活已终态Actor或放宽断言的路径；无未关闭P0–P2，ponytail无新增必要删改。
-- **有界证据**：本次delta是单文件测试隔离，没有新的共享调用/生命周期疑问，图查询skipped；沿用此前有界雷达和已读取的UE源码契约，不重跑生产审查或派发子代理。Rider未执行，不把静态或图谱证明称为运行时证明。
-- **验证组合**：Gemini的Development Editor编译与11项Automation收据，加用户最后专项Success；后续只改该测试，其他10项回归保留。Main仅执行静态、文档与Git检查，未编译/运行Automation/操作Editor。没有另一次最新版全量Automation、PIE、视觉、网络或打包证明。
-- **日志边界**：Guard测试人工激活且未配置完整恢复延迟/GuardBreak资产，其日志不证明生产激活或表现；World Cleanup缺EndPlay不影响本次命中/死亡断言的Success，但不作为清理生命周期证明。非阻塞测试维护仅归ROADMAP的REC-03H6-AdditionalShrink，首次维护对应fixture时补正确EndPlay和清理回归，不扩大本片。
-- **收口**：H6-F02关闭，ARCHITECTURE更新当前显式几何与来源契约，ROADMAP移除已关闭风险并指向有限SHRINK，ROADMAP-archive只追加本片结果。PIE豁免及剩余ProjectileIntegration矩阵各保留唯一原归属；03C仍须有限SHRINK完成。
-- **Git授权与范围**：用户明确表示“fresh review完成就可以开始文档收尾然后提交”。仅15份Source/Test和4份阶段文档，共19路径；2,122项既有Content/Config/tmp WIP排除，历史归档前缀保留。先检查精确暂存清单及cached diff --check，再执行本地提交；不推送。
+- **实现**：Gemini交付原14文件；五个玩家Ability共用Private无状态FMontageRateWindowBinding，原Context/Token、结束标志引用、实例授权、两次Ready返回检查及EndAbility出口保持。Public只加friend和测试宏内薄入口；11个普通无消费者getter净删，字段/setter及有效Getter保留。Main追加的第15文件仅修复EnemyLaunch测试播放前置，未改生产Ability或公共fixture。
+- **实际行数**：相对3271323，五个生产cpp合计净减335行，新增helper99行及friend5行，绑定抽取合计净减231行；getter净减11行；五个薄测试入口增加5行，PlayerRateWindow测试增加38行，EnemyLaunch测试修复净增19行。15份Source/Test合计增加264行、删除444行，净减180行；不计文档及既有WIP，不继承审计预估。
+- **静态与自审**：Gemini报告Rider无错误、首次独立只读实施自审Pass；Main的EnemyLaunch窄修复Rider error-level结果为空。Main核对批准diff、11 getter残余引用及git diff --check通过。图谱基线匹配3271323；动态测试关系覆盖不足以源码核对，不将图谱Untested标签当真实缺测试。
+- **Automation**：Main此前核实本机日志的PlayerMontageRateWindow.Bow/Charged/Dodge/Light/MeleeSkill/Sprint、ChargedAttackNiagaraFeedback、ExecutionVictimRootMotion共8项Success；追加修复后采用用户回传EnemyLaunchReactionRootMotion专项Success。九项均有适用成功收据，不声明当前版本全套同时重跑。
+- **用户门禁**：用户在本片验证矩阵及Fresh Review回执后确认“编译通过，pie通过，可以开始文档收尾然后提交”，据此关闭Development Editor编译与Scene01五动作PIE门禁。无本片资产制作/readback要求；不把该回执扩展为打包、网络、旧Launch资产退役readback或FIX2远程投射物PIE证明。Main未代跑编译、Automation或Editor/PIE。
+- **Fresh Review**：Main按ue-strict-review审查15份批准Source/Test及直接契约，通过，无P0–P2发现。Ready防御分支保留静态覆盖，不添加生产注入钩子；未来任务类型/激活流程出现真实同步回调路径时再补集成覆盖。合成root轨道及播放断言不额外证明真实跨帧Root Motion位移。
+- **债务与路线**：本片无未关闭门禁，Debt-03H6-TestSeamCandidates随11 getter清理关闭；FIX2-PIE、旧Launch退役readback及其他审计项保持原归属。按用户已接受排期，下一步独立制定TODO-03H6-TEST-SHRINK（仅World Tick样板）计划，其后进入TODO-03C，不自动追加Montage/Execution fixture瘦身。
+- **文档与提交授权**：更新plan.md、ROADMAP.md、ROADMAP-archive.md、ARCHITECTURE.md；archive仅追加完成态。用户已明确批准提交，精确暂存15份Source/Test及4份文档，共19文件；2,122项既有Content/Config/tmp WIP保留并排除，不推送。新切片替换plan前以本次提交固定本凭据。

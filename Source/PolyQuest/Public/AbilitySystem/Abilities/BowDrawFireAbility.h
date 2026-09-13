@@ -228,6 +228,7 @@ private:
 #endif
 
 private:
+	friend struct FMontageRateWindowBinding;
 	friend class UBowDrawFireRateWindowContext;
 
 	UPROPERTY(Transient)
@@ -251,5 +252,6 @@ public:
 	int32 GetTestRateWindowMontageInstanceID() const { return RateWindowMontageInstanceID; }
 	bool HasTestRateWindowTasks() const { return RateWindowBeginTask != nullptr || RateWindowEndTask != nullptr; }
 	void TestClearRateWindow() { ClearRateWindow(); }
+	bool TestBindRateWindow(UAnimInstance* AnimInstance, UAnimMontage* Montage) { return BindRateWindow(AnimInstance, Montage); }
 #endif
 };
