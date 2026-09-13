@@ -1731,3 +1731,13 @@ TODO-03A3E World Pickup Interaction Prompt v1
 - **验收例外**：完整编译/回归/PIE收据早于最终生产修复；用户知悉后批准收尾提交，唯一延期记录及关闭触发见ROADMAP的Debt-03H7-PostRepairValidation。资产未改，先前readback仍有效。实现/审查收口不等于最终版全部运行时门禁重新执行。
 - **日志与后续**：空Montage启动失败属于专项8.5负向场景；ExecutionReleaseOutcomes与VitalHUD真实失败另排TODO-03H8，根因与引入版本未确认，不归为已知历史问题。之后独立规划03C，不自动实现后续阶段。
 - **交接与提交**：plan.md第9节保留完成态；四份Source/Test与plan.md、ROADMAP.md、ROADMAP-archive.md、ARCHITECTURE.md共八文件纳入用户批准的有界提交。Content/Config和其他WIP排除，未推送。
+
+## TODO-03H8 — Main Implementation Closeout（2026-09-13）
+
+- **基线与范围**：52ce3078d72b8a139d05c048d533313591dd8f0d；ExecutionReleaseOutcomesAutomationTests.cpp Section 13、VitalHudAutomationTests.cpp Section 1.14 两处局部测试修改，38行新增、5行删除。无生产代码、CDO、共享helper、Tag、API、Config或资产变化。
+- **结果**：Execution激活后恢复实例测试前置，补上下文/恢复态/锁断言与失败清理；VitalHUD拆分延迟耗尽、插值介入和单步收敛。既有有效断言保留，测试没有扩大容差或用生产校验放宽换取通过。
+- **用户验证**：明确确认Development Editor编译、53项Automation全部通过，包含两个目标套件和03H7相关回归；全套后同一Editor会话再次ExecutionReleaseOutcomes Success。附件f01a3271-595e-43c1-bc38-e9b81276b203/pasted-text.txt的Test Run 3直接证明重复Execution结果。
+- **审查与静态**：Gemini报告两文件Rider无问题、diff检查及独立实施自审通过；Main按ue-strict-review与ponytail-review完成只读Fresh Review，无P0–P2缺陷，无P3建议，无修复。Main未代跑编译、Automation、Editor/PIE。
+- **边界与债务**：Execution证明回调状态契约，不证明真实播放/自然派发；VitalHUD证明离散Tick行为。旧失败日志保留，不声称修复前重新独立跑过两个套件，不判定引入版本。03H7当前编译/Automation已补齐，唯一剩余修复后PIE收据归ROADMAP的Debt-03H7-PostRepairValidation；H6-F14及其他债务未核销。
+- **交接**：用户批准三文档收尾，plan.md第8节保留完成态，ROADMAP下一入口更新为独立规划TODO-03C。两份测试与三份文档尚未暂存/提交，提交仍待用户批准；全部无关WIP保留，不改ARCHITECTURE，不推送。
+- **提交授权补充**：用户随后批准两份测试与三份文档一并提交，明确包含另一会话制定的RateWindow/CancelWindow封装排期。下一入口以最新ROADMAP为准：03H9-A → 03H9-B → 03H9-C → 03C；此排期不代表封装已实现。保留无关WIP，不推送。

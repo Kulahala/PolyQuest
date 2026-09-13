@@ -838,16 +838,31 @@ bool FExecutionReleaseOutcomesAutomationTest::RunTest(const FString& Parameters)
 
 	// =========================================================================
 	// 13. Natural BlendOut Retains Session, Only Completed Finishes Victim Recovery
+	// Callback state contract test: verifies session retention across BlendOut
+	// and clean release on Completed without asserting real animation playback.
 	// =========================================================================
 	{
 		Enemy->RestorePoiseToMax();
 		Enemy->GetCharacterMovement()->SetMovementMode(MOVE_Walking);
 
 		auto [FrontHandle, FrontAbility, VictimHandle, VictimAbility] = SetupFrontAndVictimExec(100.0f, true);
-		if (!TestNotNull(TEXT("FrontAbility valid"), FrontAbility) ||
+		if (!TestNotNull(TEXT("FrontAbility valid in Sec 13"), FrontAbility) ||
 			!TestTrue(TEXT("Front ability active in Section 13"), FrontAbility->IsActive()) ||
-			!TestNotNull(TEXT("VictimAbility valid"), VictimAbility))
+			!TestNotNull(TEXT("VictimAbility valid in Sec 13"), VictimAbility) ||
+			!TestTrue(TEXT("Victim ability active in Section 13"), VictimAbility->IsActive()))
 		{
+			CleanupFrontExec(FrontHandle, VictimHandle);
+			return false;
+		}
+
+		// Re-establish test pre-requisites on the active Victim instance because ActivateAbility -> ClearRateWindow(false) resets bypass
+		VictimAbility->SetTestBoundAnimInstance(MockAnimInstance);
+		VictimAbility->SetTestBypassMontageActiveCheck(true);
+
+		UExecutionLockContext* Context = FrontAbility->GetTestExecutionContext();
+		if (!TestNotNull(TEXT("Context valid in Sec 13"), Context))
+		{
+			CleanupFrontExec(FrontHandle, VictimHandle);
 			return false;
 		}
 
@@ -860,6 +875,7 @@ bool FExecutionReleaseOutcomesAutomationTest::RunTest(const FString& Parameters)
 		FrontAbility->TestTriggerHitEvent(HitPayload);
 
 		TestTrue(TEXT("Damage consumed on Hit in Sec 13"), FrontAbility->IsTestDamageEventConsumed());
+		TestEqual(TEXT("HitState is NonLethal in Sec 13"), Context->GetHitState(), EExecutionSessionHitState::NonLethal);
 
 		// Step B: VictimStart arrives second (draw blade: starts recovery)
 		FGameplayEventData VictimStartPayload;
@@ -869,14 +885,20 @@ bool FExecutionReleaseOutcomesAutomationTest::RunTest(const FString& Parameters)
 		VictimStartPayload.OptionalObject = PlayerExecutionMontage;
 		FrontAbility->TestTriggerVictimStartEvent(VictimStartPayload);
 
+		TestTrue(TEXT("Victim ability remains active after VictimStart"), VictimAbility->IsActive());
+		TestTrue(TEXT("Victim non-lethal recovery is active after VictimStart"), VictimAbility->IsTestNonLethalRecoveryActive());
+		TestTrue(TEXT("Victim remains locked after VictimStart"), EnemyASC->HasMatchingGameplayTag(VictimLockedTag));
+
 		// Step C: Trigger montage BlendOut: locks must be retained
 		VictimAbility->TestTriggerVictimMontageBlendOut();
 		TestTrue(TEXT("Victim ability remains active during BlendOut"), VictimAbility->IsActive());
+		TestTrue(TEXT("Victim non-lethal recovery remains active during BlendOut"), VictimAbility->IsTestNonLethalRecoveryActive());
 		TestTrue(TEXT("Victim remains locked during BlendOut"), EnemyASC->HasMatchingGameplayTag(VictimLockedTag));
 
 		// Step D: Trigger montage completion: ability ends and locks cleared
 		VictimAbility->TestTriggerVictimMontageCompleted();
 		TestFalse(TEXT("Victim released upon montage completion"), VictimAbility->IsActive());
+		TestFalse(TEXT("Victim non-lethal recovery cleared upon completion"), VictimAbility->IsTestNonLethalRecoveryActive());
 		TestFalse(TEXT("Victim lock removed upon montage completion"), EnemyASC->HasMatchingGameplayTag(VictimLockedTag));
 
 		FrontAbility->TestEndAbility(false);

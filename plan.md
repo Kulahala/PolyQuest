@@ -1,145 +1,129 @@
-# TODO-03H7：玩家大硬直 Dodge 取消窗口与 RateWindow
+# TODO-03H8：修复 ExecutionReleaseOutcomes / VitalHUD 自动化红错
 
-## 1. 目标、基线与职责
+## 1. 目标、基线与执行路线
 
-**状态（2026-09-13）：实现与 Main Fresh Review 收口，用户已批准文档归档和有界提交；修复后验证收据缺口按 ROADMAP 的 Debt-03H7-PostRepairValidation 保留。第 1–7 节保留批准时的计划，最新完成态以第 9 节为准。**
+**状态（2026-09-13）：实现、用户编译/Automation/同会话重复执行与 Main Fresh Review 已通过，文档收尾完成；用户已批准有界提交。第 1–6 节保留批准计划，最新完成态以第 8 节为准。**
 
-让玩家四向大硬直正确消费既有Dodge Cancel Window和RateWindow：窗口外不能闪避，窗口内通过既有Dodge检查与消耗后取消大硬直，反应结束时不残留取消Tag或调速状态。
+修正两个测试的前置与时序错误，保留有效断言，使 PolyQuest.Combat.ExecutionReleaseOutcomes 与 PolyQuest.UI.VitalHUD 两个完整套件通过。
 
-- 工作区：E:\GameDevelop\PolyQuest；引擎基准：D:\UE\UE_5.8。
-- 规划基线：22cd208dfaeec48ea89f89c6c804e482bcd2fe66。落盘前Source与plan.md无未提交差异；已有ROADMAP、Content、Config等WIP保留，不归因于本次。
-- 上一片TEST-SHRINK完成态已存在于ROADMAP-archive.md的2026-09-13 Main Implementation Closeout；完整交接固定读取git show 22cd208dfaeec48ea89f89c6c804e482bcd2fe66:plan.md。无需重复归档。历史文档当时的下一入口03C保留为历史；当前按最新ROADMAP执行TEST-SHRINK → 03H7 → 03H8 → 03C。
-- Outer：ue-stage-workflow；Primary：ue5-cpp-gameplay；Support：ponytail:ponytail lite。
-- Route reason：Native玩家反应Ability接入现有GAS取消目标与Montage窗口设施，无共享架构调整。
+- 工作区：E:\GameDevelop\PolyQuest；引擎：D:\UE\UE_5.8。
+- 规划基线：52ce3078d72b8a139d05c048d533313591dd8f0d。既有 Content、Config 等 WIP 全部保留；不得暂存、回滚或归因给本片。
+- 03H7 已归档于 ROADMAP-archive.md 的“TODO-03H7 — Main Implementation Closeout（2026-09-13）”；完整旧交接读取 git show 52ce3078d72b8a139d05c048d533313591dd8f0d:plan.md，不重复归档。其修复后收据缺口仍唯一归 Debt-03H7-PostRepairValidation。
+- Outer：ue-stage-workflow；Primary：ue5-debug-validation；Support：ponytail:ponytail lite。
+- Route reason：两项 Automation 的测试前置与离散 Tick 预期修复，无生产行为变更。
 - Execution route：manual/out-of-band Gemini；Implementation executors：1（用户手动交接）；本轮实际派发：0。
-- Main负责计划、范围、Fresh Review、文档与提交；Gemini负责批准源码/测试和实施自审；用户负责资产制作、Development Editor编译、Automation、Editor readback、Scene01 PIE与最终提交批准。
+- Main 负责计划、终审、文档与提交；Gemini 负责批准测试修复及实施自审；用户负责编译、Automation、PIE 和最终提交批准。
 
-规划证据为真实AGENTS、源码、配置、Git及文档静态核对；CodeGraph返回不足的函数区段已聚焦读取。未执行编译、Automation或live Editor/PIE，不把图谱或静态检查作为运行时证明。
+用户已选择最小方案：Execution 保留回调单测，不升级真实 Montage 播放集成。Ponytail lite：复用既有 setter、清理 lambda 与 Tick 测试入口，不新增公共 fixture 或生产接口。
 
-## 2. Deliberate Non-goals与修订决策
+## 2. 证据与冻结决策
 
-不改敌人、不做敌人排障，不改Small/Launch行为，不扩展攻击/Guard/Parry取消权限，不改Dodge或PlayerCharacter输入路由。不新增Tag、作者配置字段、Blueprint可调用接口、模块依赖、Build.cs、外部库、全局时间膨胀、网络机制或通用取消框架。不重构共享RateWindow，不追加测试瘦身或修改共享fixture。
+### 2.1 ExecutionReleaseOutcomes
 
-采纳Gemini建议：取消窗口直接AddDynamic绑定Ability，不新增取消Context或独立代次；仅RateWindow保留微型Context与binding token，承担现有模板绑定及旧回调隔离。新测试聚焦Big Reaction接入，不复制共享RateWindow的完整排列组合。
+已有失败日志 Saved/Logs/PolyQuest-backup-2026.09.13-05.42.13.log 记录 Victim Montage 播放失败，随后 Section 13 的 Victim active/locked during BlendOut 断言失败。
 
-取消监听的跨激活保证是旧任务结束并解除订阅、新激活重新建立监听；不声称具有RateWindow的token隔离。共享取消Notify载荷没有历史激活编号，本片不扩展载荷，也不承诺识别重新构造并投递给新监听器的同资产旧事件。
+当前源码链路：GrantAndConfigureVictimAbility 在激活前设置实例 bypass；EnemyVictimExecutionAbility::ActivateAbility 调用 ClearRateWindow(false)，重置该实例 bypass；Section 13 未像同文件移动模式用例那样在激活后重新设置测试前置。不具备真实播放条件的瞬态 Montage 因而进入播放路径，恢复态未建立就发生清理。
 
-Ponytail lite最省方案：复用Ability.Action.CancelableBy.Dodge和FMontageRateWindowBinding，不修改共享Dodge，不新建取消框架。
+修复保留回调状态契约单测，不声称真实 Montage 播放、自然 BlendOut 时刻或动画队列派发已验证。不判定错误的引入版本。
 
-## 3. Approved Paths
+### 2.2 VitalHUD
 
-Gemini仅可修改以下四个文件及限定符号；同文件不等于允许修改其他功能。
+当前 Section 1.14 受伤后仅调用一次 SimulateTickForTesting(0.60f)，随即期望缓冲条为 0.4。UpdateBufferHealth 在帧入口 BufferDelayTimer > 0 时扣减时间后直接返回，因此该帧仍为 1.0 符合生产实现。
 
-| 绝对路径 | 允许修改范围 |
+默认 BufferCatchUpDelay=0.5f、BufferCatchUpSpeed=4.0f。UE 5.8 Engine/Source/Runtime/Core/Public/Math/UnrealMathUtility.h 的 FInterpTo 实际计算为：
+
+```cpp
+Current + (Target - Current) * Clamp(DeltaTime * InterpSpeed, 0, 1)
+```
+
+单次 DeltaTime=0.25f、速度 4.0f 的系数为 1，可直接到达目标。连续指数衰减公式不适用于这个单次 Tick 调用；无需改成至少 1.60 秒。这里验证离散 Tick 行为，不证明实际帧率下的收敛耗时。
+
+证据为真实 AGENTS、源码、引擎实现、Git 与已有日志静态核对。本轮未重新编译或运行 Automation。CodeGraph 已先行查询但未返回目标测试区段，采用聚焦源码读取作为 coverage fallback。
+
+## 3. Approved Paths 与实施步骤
+
+Gemini 仅可修改以下两份文件的限定区段及必要注释；同文件不等于可修改其他功能。
+
+| 绝对路径 | 符号与区段 |
 |---|---|
-| E:\GameDevelop\PolyQuest\Source\PolyQuest\Public\AbilitySystem\Abilities\PlayerBigHitReactionAbility.h | 取消任务/回调/状态、RateWindow瞬态Context与绑定成员、必要测试访问点；四向Montage属性原名保持 |
-| E:\GameDevelop\PolyQuest\Source\PolyQuest\Private\AbilitySystem\Abilities\PlayerBigHitReactionAbility.cpp | 构造、ActivateAbility、EndAbility、ValidateActivationSetup、窗口授权/绑定/清理 |
-| E:\GameDevelop\PolyQuest\Source\PolyQuest\Private\Tests\HitReactionAutomationTests.cpp | 仅PlayerBig的十项阻止、十一项打断及Dodge取消标记断言 |
-| E:\GameDevelop\PolyQuest\Source\PolyQuest\Private\Tests\PlayerMontageRateWindowAutomationTests.cpp | 新增PolyQuest.Combat.PlayerBigHitReactionWindows，复用本文件可播放Montage和局部支撑，保留既有测试行为 |
+| E:\GameDevelop\PolyQuest\Source\PolyQuest\Private\Tests\ExecutionReleaseOutcomesAutomationTests.cpp | FExecutionReleaseOutcomesAutomationTest::RunTest，仅 Section 13 |
+| E:\GameDevelop\PolyQuest\Source\PolyQuest\Private\Tests\VitalHudAutomationTests.cpp | FVitalHudAutomationTest::RunTest，仅 Section 1.14 的 HealthInterpWidget 受伤后缓冲条追赶片段 |
 
-不为四向反应扩展现有单Montage泛型消费者，不新增测试框架。测试访问点仅在WITH_DEV_AUTOMATION_TESTS内增加，且必须有直接断言消费者。
+### 3.1 Execution：激活后恢复前置并保全退出路径
 
-Main文档白名单：E:\GameDevelop\PolyQuest\plan.md、E:\GameDevelop\PolyQuest\ROADMAP.md、E:\GameDevelop\PolyQuest\ROADMAP-archive.md、E:\GameDevelop\PolyQuest\ARCHITECTURE.md。Gemini不得修改这些文档。规划时用户要求仅写plan.md；现已批准其他文档在收口时按职责更新，ARCHITECTURE只记录验证和终审后的稳定事实。
+1. SetupFrontAndVictimExec 返回后检查 Front/Victim 指针及两者 Active。
+2. 在当前 Victim 实例调用既有 SetTestBoundAnimInstance(MockAnimInstance) 与 SetTestBypassMontageActiveCheck(true)。不改 CDO 或共享 setup helper。
+3. 通过 FrontAbility->GetTestExecutionContext() 获取 Context 并判空。
+4. 保留 Hit → VictimStart 顺序。Hit 后检查 DamageConsumed，并用 Context->GetHitState() 断言 EExecutionSessionHitState::NonLethal。
+5. VictimStart 后、手动 BlendOut 前，断言 Victim Active、IsTestNonLethalRecoveryActive() 为真、VictimLocked 存在。
+6. 手动调用既有 BlendOut 测试入口，保留 Active/锁不释放的断言；Completed 后检查 Ability 结束、Recovery 关闭、锁移除。
+7. Setup 后原有及新增前置失败出口，均先调用 CleanupFrontExec(FrontHandle, VictimHandle)，再 return false；正常出口保留现有清理，不重复清理。
+8. 注释明确“回调状态契约单测”；不得补写未执行的真实播放或自然派发结论。
 
-## 4. Runtime Contracts与实施顺序
+清理用于保证退出路径完整；不预判原代码已造成跨套件污染，因为本套件另有 World 析构清理。
 
-### 4.1 Dodge取消闭环
+### 3.2 VitalHUD：分开延迟与追赶阶段
 
-1. Big Reaction的AbilityTags增加现有Ability.Action.CancelableBy.Dodge，复用UDodgeAbility在Commit成功后的取消目标。
-2. BlockAbilitiesWithTag仅排除Ability.Dodge，其余十项保持；AbilitiesToCancel保持十一项，仍能打断先前Dodge。同步修正ValidateActivationSetup集合数量检查及CDO断言。
-3. 创建精确匹配Event.Action.CancelWindow.Dodge.Begin/End的WaitGameplayEvent任务，EventReceived直接AddDynamic(this, ...)到本Ability。
-4. SetDodgeCancelable以bDodgeCancelable幂等管理自身一份State.Action.CanCancel.Dodge，使用AddLooseGameplayTag/RemoveLooseGameplayTag；不清空其他贡献者，不添加防御取消Tag。
-5. 回调检查IsActive、bEndAbilityRequested、Avatar/AnimInstance/ActiveMontage有效及宿主未销毁、当前Montage活动、精确事件类型、自身Instigator/Target；OptionalObject只能是ActiveMontage或其直接引用的Sequence。
-6. 窗口外由既有HitReacting + CanCancel.Dodge判定阻止Dodge；每次激活初始关闭自身取消状态，不继承旧监听任务。
+保留初始化与受伤当帧主条 0.4、缓冲条 1.0 的断言。受伤后按以下顺序执行：
 
-用户已确认成功边界：精力不足、阻止状态、前置配置或Commit失败，原大硬直继续；Commit成功后、自身Montage启动阶段异常沿用现有Dodge行为，不增加动作回滚。输入维持短按释放时请求Dodge，不能把按下时刻当作激活时刻。
+| 步骤 | 调用 | 断言 |
+|---|---|---|
+| 延迟耗尽 | SimulateTickForTesting(0.60f) | GetTestBufferDelayTimer() <= 0；缓冲条仍为 1.0 |
+| 追赶介入 | SimulateTickForTesting(0.05f) | 缓冲条严格介于 0.4 与 1.0 |
+| 单步收敛 | SimulateTickForTesting(0.25f) | 缓冲条按现有容差等于 0.4 |
 
-### 4.2 启动与RateWindow绑定
+第三步注释说明默认速度 4.0f 与 0.25f 单次 Tick 使插值系数达到 1。保留后续治疗、跟随及死亡断言，不修改生产计时逻辑、不扩大容差。
 
-1. 激活入口清除上次窗口资源，重置结束标志和取消状态，执行原有四向选择及前置检查。
-2. 创建取消监听并直接绑定Ability，在Montage启动前准备监听；每个ReadyForActivation返回后检查任务有效性、Ability Active及结束标志。
-3. 保留原Commit与Montage启动关系。MontageTask->ReadyForActivation返回后先检查同步结束，再确认BoundAnimInstance与ActiveMontage有效且Montage_IsActive。
-4. 仅在上述确认后调用BindRateWindow，复用FMontageRateWindowBinding和FAbilityMontageRateWindowLifecycle；不能前置，因为helper要求真实活动Montage实例。绑定失败沿用helper fail-closed，返回，不继续修改移动状态。
-5. 保持原停止速度、悬崖设置、MovementMode委托及打断旧动作的相对顺序。每个同步重入边界后不得恢复旧任务/状态。
+## 4. Runtime Contracts 与 Deliberate Non-goals
 
-RateWindow保留SourceAnimation/Notify身份、binding token、当前实例ID、窗口优先级和捕获基准恢复契约。窗口值仍直接设置Montage播放速率，不改成乘以基准速率。不修改共享设施或放宽实例校验。
+- 零生产代码、公开 API、类型、Tag、ASC 权属、Release 握手及生命周期变更。
+- 保留非致死 Recovery 的 BlendOut 保锁、Completed 清理契约。
+- 保留 HUD 延迟帧直接返回、后续帧插值，以及治疗和死亡行为。
+- 不新增测试入口、bypass、公共 fixture、依赖或框架，不修改共享 helper。
+- 不修改资产、Config、Build.cs、其他测试，不开展真实播放升级、全库测试瘦身或 TODO-03C 实施。
+- 无 Editor 制作或资产 readback 操作，Agent 无资产写入授权。
 
-### 4.3 EndAbility单一出口
+若修正前置后暴露生产缺陷，停止并提交首个分歧证据，由 Main 重新冻结范围；不得放宽生产校验或删除有效断言让测试变绿。
 
-1. 幂等检查后立即置bEndAbilityRequested=true。
-2. SetDodgeCancelable(false)。
-3. ClearRateWindow：失效Context、结束RateWindow任务；仅仍持有原Montage实例时恢复捕获速率，然后清除绑定状态。
-4. EndTask并清空取消窗口监听。
-5. 执行原Montage/移动委托解绑、Montage停止、悬崖设置恢复和Super::EndAbility。
+## 5. 验证矩阵
 
-自然结束、取消、死亡、Falling、启动失败统一走该出口。Tag/速率清理必须先于Montage_Stop；同步结束后不还原旧状态。保持ASC权属、InstancedPerActor、ServerOnly、接地要求、四向属性、Root Motion位移与移动恢复策略。
-
-## 5. 用户资产清单与Readback
-
-Agent无资产写入权限。只读核实/Game/_Abilities/Player/HitReaction/GA_PlayerBigHitReaction的原生父类、继承Ability/Block Tags及四向引用。
-
-用户已接受按需补齐窗口的四个现有Montage：
-
-- /Game/BP/Montages/Hit/AM_BigHitReaction_F
-- /Game/BP/Montages/Hit/AM_BigHitReaction_B
-- /Game/BP/Montages/Hit/AM_BigHitReaction_L
-- /Game/BP/Montages/Hit/AM_BigHitReaction_R
-
-上述资产目前仅确认文件存在，尚无live Editor内容证明。优先保留已放置窗口和现有手感参数；缺失时由用户补齐并提供readback。记录方向、完整实际引用、Slot/Sequence、Dodge Cancel Window与Montage RateWindow区间及速率数值。
-
-实际引用超出清单，或需要修改GA默认值、底层Sequence、AnimBP时，暂停该资产步骤并确认新范围；不得自行扩围、手工编辑二进制或猜测关系。
-
-## 6. 验证矩阵
-
-新增专项使用真实ASC授予/激活、可播放Montage及原生Notify → ASC → Ability路径。不以直接调用Activate或绕过实例校验代替集成证明。
-
-| 验证组 | 最小必要覆盖 |
+| 门禁 | 执行者与通过标准 |
 |---|---|
-| CDO | 十项阻止、十一项打断、Dodge取消标记正确；其他权限不变 |
-| 四向接入 | 四方向选中正确Montage，各自窗口可使真实Dodge成功取消反应 |
-| 取消边界 | 窗口外拒绝、窗口内成功；精力不足、阻止状态、前置配置/Commit失败保留反应；重复Begin/End无Tag泄漏 |
-| RateWindow接入 | 选中Montage的Begin改速、End恢复；反应中断清理绑定/速率；保留一个旧RateWindow Context回调隔离用例 |
-| 生命周期 | 自然结束、取消、死亡、Falling、启动失败后无自身取消Tag/任务残留；重新激活初始关闭，旧取消任务已结束 |
-| 真实派发 | 至少一条实际推进Montage时间触发Notify的用例；其他边界可调用原生Notify补充 |
+| 修复前记录 | 用户分别运行两个原始套件，保存版本、时间与首个失败；已有日志不冒充当前版本复现。若结果不同，先核对差异 |
+| 静态检查 | Gemini 检查两文件限定 diff，git diff --check；适用且可用时做 Rider 诊断，否则记录覆盖缺口 |
+| 编译 | 用户运行 UE 5.8 PolyQuestEditor / Development Editor，保留成功收据 |
+| 专项 Automation | 用户运行两个完整套件，均 Success，所有新增前置和阶段断言通过 |
+| 顺序回归 | 用户在同一会话执行 ExecutionReleaseOutcomes → VitalHUD → ExecutionReleaseOutcomes，均成功 |
+| Main Fresh Review | 按 ue-strict-review 检查前置真实性、断言保全、退出清理、范围与证据，无未关闭 P0–P2 |
 
-共享RateWindow重叠/乱序、非法载荷及完整实例授权矩阵沿用已有测试，不在Big Reaction专项复制。新增取消回调自身的角色/来源拒绝仍需窄断言，不因共享设施已测试而跳过新代码。
+本片测试修复不新增 PIE 要求。按既有 Debt-03H7-PostRepairValidation，验收时另行补齐最终代码的编译、PolyQuest.Combat.PlayerBigHitReactionWindows、PolyQuest.Combat.PlayerMontageRateWindow 六组（Bow、Charged、Dodge、Light、MeleeSkill、Sprint）、PolyQuest.Combat.HitReaction、PolyQuest.Combat.PlayerLaunchReactionRootMotion，以及 Scene01 四向取消、连续受击/立即重激活、自然结束/死亡/Falling 收据。该债务独立记账，缺失时保留，不随本片自动关闭。
 
-- Gemini静态：四文件范围、Tag和生命周期契约、适用且可用的Rider诊断、git diff --check；诊断不可用记录coverage fallback，不擅自探测无关端点。
-- 用户编译：UE 5.8 Development Editor、PolyQuestEditor，保留结果收据；Agent未经明确委托不代跑UBT/UAT/Editor编译。
-- 用户Automation：PolyQuest.Combat.PlayerBigHitReactionWindows；PolyQuest.Combat.HitReaction；PolyQuest.Combat.PlayerMontageRateWindow全组；PolyQuest.Combat.PlayerLaunchReactionRootMotion。
-- 用户Editor/Scene01 PIE：四向引用和窗口readback；窗口内外短按释放Dodge；失败保留反应；速率与自然结束/取消/死亡/Falling恢复；攻击/防御权限不变。
-- Main Fresh Review：按ue-strict-review审查批准diff，重点检查取消闭环、清理次序、接入测试和证据边界。
+## 6. Executor 交付与停止条件
 
-## 7. Executor交付与完成态
+1. 先读真实 AGENTS.md 与本计划，核对工作区、基线和两份目标文件差异；保留 WIP。只探索目标与直接依赖，证据充分即实施，不全库漫游。
+2. 在第 3 节两个区段内自主完成局部实现与静态检查；不得修改生产代码、共享 helper、文档或清单外路径。
+3. 首次交付按项目规则优先安排一个干净只读子代理进行严格实施自审，禁止递归派发；后续微修单兵复核。Main 另行承担终审。
+4. 交付两文件 diff 摘要、静态结果、自审记录、证据归属及未执行门禁，不把静态检查或回调单测说成真实播放/PIE 成功。
+5. 同一根因最多一次有据修复和一次针对性重跑；再次失败时保留首个失败证据并停止。需要越界或修改生产契约时报告所需范围，不自行扩围。
+6. 不暂存、不提交、不推送，不未经明确授权代跑编译、Automation 或 Editor，不自动实施 TODO-03C。
 
-1. 先读真实AGENTS.md和本plan，核对工作区、基线、四文件差异；只探索目标与必要直接依赖，证据充分即实现，不全库漫游。
-2. 按四文件白名单连续完成局部实现与必要测试；不得修改Dodge、共享RateWindow、Main文档、资产、Config、Build.cs或清单外Source。需要越界或改变运行时契约时停止报告，不自行扩大范围。
-3. 首次交付按项目规则优先使用一个干净只读子代理严格实施自审，禁止递归派发；后续微修单兵复核，不再派发。Main另行承担终审。
-4. 交付四文件diff摘要、静态检查、严格实施自审记录、证据来源与未执行门禁。显式核验回调对象/状态有效性、ReadyForActivation重入及单一EndAbility出口。不把静态结果说成编译或PIE通过。
-5. 同一根因最多一次有据修复和一次针对性重跑；再次失败或两轮连续修复失败时保留首个错误并停止，不重复跑未变化命令。
-6. 不暂存、不提交、不推送，不自动进入03C，不代用户运行编译/Automation/Editor/PIE，除非用户另行明确委托。
+## 7. 文档与完成态
 
-适用门禁全部通过后才关闭03H7；真实延期风险在ROADMAP保留唯一记录与关闭条件。既有H6债务不随本片关闭，也不增加无依据前置。Main维护完成态、归档及稳定架构事实；随后独立规划03C。最终Git Commit须用户明确批准，只暂存批准路径并保留无关WIP。
+规划时仅授权 plan.md；用户现已批准 plan.md、ROADMAP.md、ROADMAP-archive.md 三文档收尾。03H7 核心已归档，第 1 节固定旧交接提交指针。
 
-## 8. Main Fresh Review定向修复（2026-09-13）
+后续 Main 文档维护范围为 E:\GameDevelop\PolyQuest\plan.md、E:\GameDevelop\PolyQuest\ROADMAP.md、E:\GameDevelop\PolyQuest\ROADMAP-archive.md，现已获用户授权收尾；Gemini 不得修改。该测试片不改变稳定架构，无需更新 ARCHITECTURE.md。
 
-- 用户确认本阶段编译、PIE、Editor readback通过；此前专项Automation成功日志已核实。上述收据属于本轮生产修复前版本，不追认为修复后验证。
-- 用户批准将上一轮单测试文件修复扩至必要生产文件。本轮使用Main狭窄修复例外，仅修改PlayerBigHitReactionAbility.cpp的OnActiveMontageEnded和PlayerMontageRateWindowAutomationTests.cpp的Big Reaction专项；不改头文件、共享设施、资产、Config或Build.cs，不派发子代理，不提交。
-- 结束广播仅携带Montage资产；同资产仍有运行实例时忽略旧结束广播，避免取消后立即重激活被旧广播结束。保留原单一EndAbility清理出口。
-- 专项删除激活前停止/冲刷旧Montage的逻辑，以及自动Notify/自然结束失败后的手工Notify与Broadcast兜底。使用UE公开TickMontageOnly与DispatchQueuedAnimEvents推进真实播放/派发；新增取消后排队旧结束事件、同资产立即重激活、再派发旧事件的实例ID及活动状态断言。
-- 非收口静态复核：Rider两份修改文件errors为空，git diff --check通过。初次静态检查发现Montage_UpdateWeight/Montage_Advance为不可访问成员，已一次修正为公开入口并复查通过。未编译、未运行Automation或PIE；本轮没有修复后Success收据。
-- 待用户门禁：Development Editor编译；PolyQuest.Combat.PlayerBigHitReactionWindows及PlayerMontageRateWindow全组、HitReaction、PlayerLaunchReactionRootMotion；Scene01四向受击取消/连续受击与自然结束回归。资产未改，既有readback继续有效。通过后进行有界delta复核，尚不宣布03H7关闭。
-- ExecutionReleaseOutcomes和VitalHUD日志失败按用户要求留待独立安排，本次不排障、不修改其代码，不将其称为已证实的历史问题或本轮已修复项。
+编译、两个完整套件、顺序回归及 Main 终审通过后关闭 TODO-03H8，并归档核心结果。03H7 未补齐收据继续归原唯一债务，不声明最终版全门禁或干净可发布基线。
 
-### 第8.1节测试前置修复
+用户现已批准两份测试与三份文档一并提交，包含另一会话制定的 ROADMAP 03H9-A/B/C 封装排期；仅暂存批准路径，保留无关 WIP，不推送。下一入口按最新 ROADMAP 为 TODO-03H9-A。
 
-用户回传专项Fail：8.1a/b/c失败，期望活动窗口及0.5速率，实际速率1.0。源码确认第7节仅结束RateWindow，Big Reaction仍Active；第8.1节重发事件被HitReacting阻止，而helper仅凭旧实例IsActive误报激活成功。Main在该测试文件内显式取消第7节Ability并断言结束，helper同时要求HandleGameplayEvent返回激活数大于0。未恢复队列冲刷、手工Notify或自然结束广播兜底；生产回调未再修改。此根因本轮一次修复后，用户回传专项 Success，随后 Main 有界 delta Fresh Review 通过。日志中的空Montage启动失败Warning属于第8.5节既有负向场景，不作为本次8.1失败根因。
+## 8. Main Closeout（2026-09-13）
 
-## 9. Main Closeout（2026-09-13）
-
-- **交付与终审**：四份批准 Source/Test 完成玩家四向 Dodge 取消及 RateWindow 接入。两轮严格审查及定向修复复核后，无未关闭 P0–P2；P3 四向测试 getter 简化建议不阻塞、不自动扩展修改。
-- **修复结果**：同资产旧 Montage 结束广播不再提前结束当前仍运行的新实例；测试以真实 TickMontageOnly/DispatchQueuedAnimEvents 验证 Notify、自然结束和立即重激活，不用播放失败后的手工事件兜底。取消来源与幂等断言区分 Closed/Open；真实 Commit 失败与 CanActivate 拒绝分开验证。
-- **证据归属**：用户最新回传 PolyQuest.Combat.PlayerBigHitReactionWindows 为 Success。更早日志已确认 PlayerMontageRateWindow 六组（Bow、Charged、Dodge、Light、MeleeSkill、Sprint）、HitReaction、PlayerLaunchReactionRootMotion 成功；用户曾确认编译、Editor readback 和 PIE 通过，但这些完整收据早于最终生产回调修复。Main 实际执行适用 Rider 诊断及 git diff --check，通过；Main 未代跑编译、Automation 或 PIE。
-- **验收边界**：用户知悉修复后完整收据缺口后授权收尾提交；实现/终审收口不代表所有运行时门禁在最终版本重新执行。唯一延期记录和关闭触发见 ROADMAP 的 Debt-03H7-PostRepairValidation；资产未改，先前 readback 仍有效。
-- **日志归口**：空 Montage 启动失败输出属于专项 8.5 负向场景。ExecutionReleaseOutcomes、VitalHUD 的真实失败统一进入独立 TODO-03H8，不认定为已证实的历史问题或本片回归；本次不修改其代码。
-- **归档与提交**：ROADMAP-archive.md 保存本片摘要，ARCHITECTURE.md 更新稳定契约；提交精确包含第 3 节四份 Source/Test 与四份 Main 文档。Content、Config 及其他 WIP 保留并排除，不推送。下一入口为独立制定 TODO-03H8 计划，随后 TODO-03C；本 plan 保留完成态至下一片替换。
+- **实现范围**：两份批准测试仅修改 ExecutionReleaseOutcomes Section 13 和 VitalHUD Section 1.14，共增加38行、删除5行。无生产代码、CDO、共享 helper、Tag、API、Config 或资产改动。
+- **修复内容**：Section 13 在激活后恢复既有实例测试前置，补齐上下文/Recovery/锁断言与前置失败清理；VitalHUD 分别验证延迟耗尽、追赶介入和单步收敛，保持原治疗与死亡断言。
+- **Executor 证据**：Gemini 报告 git diff --check、两文件 Rider 诊断及干净只读子代理实施自审通过。Main 不将执行者报告描述为自己执行。
+- **用户验证**：用户明确确认 Development Editor 编译通过、53项 Automation 全部通过，包含两个目标套件及03H7专项/六组RateWindow/HitReaction/PlayerLaunchReactionRootMotion；并确认全套后未重启 Editor，再单独运行 ExecutionReleaseOutcomes Success，覆盖同会话重复执行。用户附件 f01a3271-595e-43c1-bc38-e9b81276b203/pasted-text.txt 的 Test Run 3 直接记录该次 Execution Success。
+- **Main Fresh Review**：按 ue-strict-review 主审、ponytail-review 辅审完成只读检查，无 P0–P2 缺陷，无需提出 P3 简化建议，无修复。局部测试改动无共享契约疑点，跳过图查询；Main 未代跑编译、Automation 或 Editor/PIE。
+- **证据边界**：Execution 仍为回调状态契约单测，不证明真实 Montage 播放/自然派发；VitalHUD 为离散 Tick 验证。保留既有失败日志，不追认修复前曾按计划重新独立执行两个套件，也不判定引入版本。
+- **债务**：Debt-03H7-PostRepairValidation 的当前编译与 Automation 已补齐，仅余 Scene01 四向取消、连续受击/立即重激活、自然结束/死亡/Falling 的修复后 PIE 收据；唯一记录仍在 ROADMAP。H6-F14/其他H6债务不随本片关闭。
+- **完成态与后续**：TODO-03H8 实现、验证、Main终审与文档收尾完成，下一入口按用户新增排期为 TODO-03H9-A → 03H9-B → 03H9-C → TODO-03C。用户已批准两份测试与三份文档的有界提交，保留全部无关 WIP，不推送。

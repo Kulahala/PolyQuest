@@ -738,10 +738,21 @@ bool FVitalHudAutomationTest::RunTest(const FString&)
 			TestEqual(TEXT("Damage instantly snaps main health bar to 0.4 on frame 0"), HPBar->GetPercent(), 0.4f);
 			TestEqual(TEXT("Damage holds buffer bar at 1.0 during catch-up delay"), BufferBar->GetPercent(), 1.0f);
 			TestEqual(TEXT("CurrentHealthPercent matches target 0.4 immediately after damage"), HealthInterpWidget->GetTestCurrentHealthPercent(), 0.4f);
-
-			// Advance 0.60s: buffer bar catches up and converges to 0.4
+			// Advance 0.60s (delay expiration): delay timer finishes and returns on frame 0 of expiration, buffer bar holds at 1.0
 			HealthInterpWidget->SimulateTickForTesting(0.60f);
-			TestEqual(TEXT("Buffer bar catches up to 0.4 after delay"), BufferBar->GetPercent(), 0.4f);
+			TestTrue(TEXT("Buffer delay timer is exhausted (<=0.0) after 0.60s tick"), HealthInterpWidget->GetTestBufferDelayTimer() <= 0.0f);
+			TestEqual(TEXT("Buffer bar holds at 1.0 on delay expiration frame"), BufferBar->GetPercent(), 1.0f);
+
+			// Advance 0.05s (catch-up engagement): begins smooth interpolation towards target 0.4
+			HealthInterpWidget->SimulateTickForTesting(0.05f);
+			TestTrue(TEXT("Buffer bar smoothly catches up below 1.0"), BufferBar->GetPercent() < 1.0f);
+			TestTrue(TEXT("Buffer bar has not overshot target 0.4 during catch-up"), BufferBar->GetPercent() > 0.4f);
+
+			// Advance 0.25s (single-step convergence): with default BufferCatchUpSpeed=4.0f,
+			// UE 5.8 FInterpTo calculates DeltaMove = Dist * Clamp(0.25f * 4.0f, 0, 1) = Dist * 1.0f,
+			// causing buffer bar to directly converge to 0.4 in this discrete test tick.
+			HealthInterpWidget->SimulateTickForTesting(0.25f);
+			TestEqual(TEXT("Buffer bar converges to 0.4 after catch-up"), BufferBar->GetPercent(), 0.4f);
 
 			// Healing received (40 -> 80): smooth healing fill-up
 			HealthInterpWidget->SetHealth(80.0f, 100.0f);
