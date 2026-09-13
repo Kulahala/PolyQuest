@@ -41,26 +41,6 @@ namespace
 			}
 		}
 	};
-
-	void TickFlightTrailTestWorld(UWorld* World, const float DeltaSeconds)
-	{
-		if (World)
-		{
-			World->Tick(ELevelTick::LEVELTICK_All, DeltaSeconds);
-			++GFrameCounter;
-		}
-	}
-
-	void AdvanceFlightTrailTimer(UWorld* World, float DeltaSeconds)
-	{
-		constexpr float MaxTickStepSeconds = 0.05f;
-		while (DeltaSeconds > KINDA_SMALL_NUMBER)
-		{
-			const float TickStep = FMath::Min(DeltaSeconds, MaxTickStepSeconds);
-			TickFlightTrailTestWorld(World, TickStep);
-			DeltaSeconds -= TickStep;
-		}
-	}
 }
 
 bool FProjectileFlightTrailAutomationTest::RunTest(const FString& Parameters)
@@ -426,7 +406,7 @@ bool FProjectileFlightTrailAutomationTest::RunTest(const FString& Parameters)
 				TestFalse(TEXT("Actor not destroyed immediately on hit"), TimeoutProj->IsActorBeingDestroyed());
 
 				// Advance world clock past the 0.05s timeout
-				AdvanceFlightTrailTimer(World, 0.15f);
+				FCombatAutomationFixture::AdvanceWorld(World, 0.15f);
 				TestTrue(TEXT("Actor destroyed automatically via timeout fallback"), TimeoutProj->IsActorBeingDestroyed());
 			}
 		}
@@ -561,7 +541,7 @@ bool FProjectileFlightTrailAutomationTest::RunTest(const FString& Parameters)
 				TestFalse(TEXT("Actor not destroyed immediately on hit"), BadTimeoutProj->IsActorBeingDestroyed());
 
 				// Advance past 0.35s fallback window (0.45s)
-				AdvanceFlightTrailTimer(World, 0.45f);
+				FCombatAutomationFixture::AdvanceWorld(World, 0.45f);
 				TestTrue(TEXT("Actor destroyed automatically via 0.35s fallback timeout"), BadTimeoutProj->IsActorBeingDestroyed());
 			}
 		}

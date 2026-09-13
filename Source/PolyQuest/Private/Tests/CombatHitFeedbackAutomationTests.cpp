@@ -10,7 +10,6 @@
 #include "Character/Player/PlayerCharacter.h"
 #include "Combat/Feedback/CombatFeedbackDataAsset.h"
 #include "Engine/Engine.h"
-#include "EngineGlobals.h"
 #include "Engine/World.h"
 #include "Framework/PolyQuestPlayerController.h"
 #include "Kismet/GameplayStatics.h"
@@ -39,26 +38,6 @@ namespace
 			}
 		}
 	};
-
-	void TickHitFeedbackTestWorld(UWorld* World, const float DeltaSeconds)
-	{
-		if (World)
-		{
-			World->Tick(ELevelTick::LEVELTICK_All, DeltaSeconds);
-			++GFrameCounter;
-		}
-	}
-
-	void AdvanceHitFeedbackTimer(UWorld* World, float DeltaSeconds)
-	{
-		constexpr float MaxTickStepSeconds = 0.05f;
-		while (DeltaSeconds > KINDA_SMALL_NUMBER)
-		{
-			const float TickStep = FMath::Min(DeltaSeconds, MaxTickStepSeconds);
-			TickHitFeedbackTestWorld(World, TickStep);
-			DeltaSeconds -= TickStep;
-		}
-	}
 
 	bool ApplyDamage(
 		UAbilitySystemComponent* SourceASC,
@@ -186,14 +165,14 @@ bool FCombatHitFeedbackAutomationTest::RunTest(const FString& Parameters)
 	TestNull(TEXT("None tier hit leaves active camera shake null"), Player->GetTestActiveHitFeedbackCameraShake());
 
 	// 2. Same-tier restart keeps overlay active and valid, shake remains null.
-	TickHitFeedbackTestWorld(World, 0.06f);
+	FCombatAutomationFixture::TickWorld(World, 0.06f);
 	TestTrue(TEXT("Second nonlethal Player Health GE applies"), ApplyDamage(SourceASC, PlayerASC));
 	TestEqual(TEXT("Repeated None tier hit does not increment shake count"), Player->GetTestHitFeedbackCameraShakeStartCount(), 0);
 	TestNull(TEXT("Active shake remains null"), Player->GetTestActiveHitFeedbackCameraShake());
-	TickHitFeedbackTestWorld(World, 0.06f);
+	FCombatAutomationFixture::TickWorld(World, 0.06f);
 	TestTrue(TEXT("Repeated hit refresh keeps flash active past first expiry"), Player->IsTestHitFeedbackOverlayActive());
 	TestTrue(TEXT("Repeated hit refresh keeps timer valid"), Player->HasTestHitFeedbackOverlayTimer());
-	AdvanceHitFeedbackTimer(World, 0.15f);
+	FCombatAutomationFixture::AdvanceWorld(World, 0.15f);
 	TestFalse(TEXT("Refreshed flash expires after the refreshed duration"), Player->IsTestHitFeedbackOverlayActive());
 
 	// 3. Small tier selects Small test shake.
@@ -208,12 +187,12 @@ bool FCombatHitFeedbackAutomationTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("Player active shake matches Small shake"), Player->GetTestActiveHitFeedbackCameraShake() == SmallShake);
 
 	// 4. Repeated Small tier reuses single-instance Small shake.
-	TickHitFeedbackTestWorld(World, 0.06f);
+	FCombatAutomationFixture::TickWorld(World, 0.06f);
 	TestTrue(TEXT("Repeated Small tier Health GE applies"), ApplyDamage(SourceASC, PlayerASC, &SmallTags));
 	TestEqual(TEXT("Repeated Small tier increments shake count"), Player->GetTestHitFeedbackCameraShakeStartCount(), 2);
 	TestTrue(TEXT("Repeated Small tier reuses active Small shake"), SmallShake && Player->GetTestLastHitFeedbackCameraShake() == SmallShake);
 	TestTrue(TEXT("Small shake remains active after same-tier hit"), SmallShake && SmallShake->IsActive());
-	AdvanceHitFeedbackTimer(World, 0.25f);
+	FCombatAutomationFixture::AdvanceWorld(World, 0.25f);
 
 	// 5. Big tier selects Big test shake and stops Small shake.
 	FGameplayTagContainer BigTags;
@@ -226,7 +205,7 @@ bool FCombatHitFeedbackAutomationTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("Big shake is active"), BigShake && BigShake->IsActive());
 	TestFalse(TEXT("Small shake stopped on transition to Big tier"), SmallShake && SmallShake->IsActive());
 	TestTrue(TEXT("Player active shake matches Big shake"), Player->GetTestActiveHitFeedbackCameraShake() == BigShake);
-	AdvanceHitFeedbackTimer(World, 0.25f);
+	FCombatAutomationFixture::AdvanceWorld(World, 0.25f);
 
 	// 6. Launch tier selects Launch test shake and stops Big shake.
 	FGameplayTagContainer LaunchTags;
@@ -239,7 +218,7 @@ bool FCombatHitFeedbackAutomationTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("Launch shake is active"), LaunchShake && LaunchShake->IsActive());
 	TestFalse(TEXT("Big shake stopped on transition to Launch tier"), BigShake && BigShake->IsActive());
 	TestTrue(TEXT("Player active shake matches Launch shake"), Player->GetTestActiveHitFeedbackCameraShake() == LaunchShake);
-	AdvanceHitFeedbackTimer(World, 0.25f);
+	FCombatAutomationFixture::AdvanceWorld(World, 0.25f);
 
 	// 7. Enemy damage does not increase Player shake count.
 	const int32 PlayerShakeCountBeforeEnemyHit = Player->GetTestHitFeedbackCameraShakeStartCount();
@@ -249,7 +228,7 @@ bool FCombatHitFeedbackAutomationTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("Enemy damage does not increase Player shake count"), Player->GetTestHitFeedbackCameraShakeStartCount(), PlayerShakeCountBeforeEnemyHit);
 
 	// Direct base writes do not carry GEModData and must not start a new flash.
-	AdvanceHitFeedbackTimer(World, 0.25f);
+	FCombatAutomationFixture::AdvanceWorld(World, 0.25f);
 	TestFalse(TEXT("Player flash timer expires"), Player->IsTestHitFeedbackOverlayActive());
 	TestFalse(TEXT("Enemy flash timer expires"), Enemy->IsTestHitFeedbackOverlayActive());
 	TestTrue(TEXT("Player baseline overlay is restored"), Player->GetMesh()->GetOverlayMaterial() == PlayerBaseline);
@@ -281,7 +260,7 @@ bool FCombatHitFeedbackAutomationTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("Invalid multi-tier damage does not increment shake start count"), Player->GetTestHitFeedbackCameraShakeStartCount(), PlayerShakeCountBeforeEnemyHit);
 	TestTrue(TEXT("Active Launch shake remains active through invalid multi-tier hit"), LaunchShake && LaunchShake->IsActive());
 	TestTrue(TEXT("Player active shake remains Launch shake"), Player->GetTestActiveHitFeedbackCameraShake() == LaunchShake);
-	AdvanceHitFeedbackTimer(World, 0.25f);
+	FCombatAutomationFixture::AdvanceWorld(World, 0.25f);
 
 	// 9. Stunned Player receives tier-matched shake.
 	PlayerASC->AddLooseGameplayTag(StunnedTag);
@@ -294,7 +273,7 @@ bool FCombatHitFeedbackAutomationTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("Stunned Big shake is active"), StunnedBigShake && StunnedBigShake->IsActive());
 	TestFalse(TEXT("Previous Launch shake stopped when Big tier started in Stunned"), LaunchShake && LaunchShake->IsActive());
 	PlayerASC->RemoveLooseGameplayTag(StunnedTag);
-	AdvanceHitFeedbackTimer(World, 0.25f);
+	FCombatAutomationFixture::AdvanceWorld(World, 0.25f);
 
 	// Enemy Poise-broken and Poise-only feedback checks.
 	Enemy->BeginLaunchStanceBreakDeferral();
@@ -302,7 +281,7 @@ bool FCombatHitFeedbackAutomationTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("Poise-broken Enemy damage applies"), ApplyDamage(SourceASC, EnemyASC));
 	TestTrue(TEXT("Poise-broken Enemy damage still flashes"), Enemy->IsTestHitFeedbackOverlayActive());
 	Enemy->AbortLaunchStanceBreakDeferral();
-	AdvanceHitFeedbackTimer(World, 0.25f);
+	FCombatAutomationFixture::AdvanceWorld(World, 0.25f);
 
 	EnemyASC->SetNumericAttributeBase(UCharacterAttributeSet::GetPoiseAttribute(), 100.0f);
 	EnemyASC->SetNumericAttributeBase(UCharacterAttributeSet::GetMaxPoiseAttribute(), 100.0f);
@@ -317,7 +296,7 @@ bool FCombatHitFeedbackAutomationTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("External-overlay setup damage applies"), ApplyDamage(SourceASC, PlayerASC));
 	UMaterialInstanceDynamic* ExternalOverlay = UMaterialInstanceDynamic::Create(UMaterial::GetDefaultMaterial(MD_Surface), Player);
 	Player->GetMesh()->SetOverlayMaterial(ExternalOverlay);
-	AdvanceHitFeedbackTimer(World, 0.25f);
+	FCombatAutomationFixture::AdvanceWorld(World, 0.25f);
 	TestFalse(TEXT("External overlay does not leave B1 flash active"), Player->IsTestHitFeedbackOverlayActive());
 	TestTrue(TEXT("External overlay is preserved after B1 expiry"), Player->GetMesh()->GetOverlayMaterial() == ExternalOverlay);
 
@@ -326,9 +305,9 @@ bool FCombatHitFeedbackAutomationTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("External-overlay second setup damage applies"), ApplyDamage(SourceASC, PlayerASC));
 	UMaterialInstanceDynamic* ExternalOverlayAfterHit = UMaterialInstanceDynamic::Create(UMaterial::GetDefaultMaterial(MD_Surface), Player);
 	Player->GetMesh()->SetOverlayMaterial(ExternalOverlayAfterHit);
-	TickHitFeedbackTestWorld(World, 0.05f);
+	FCombatAutomationFixture::TickWorld(World, 0.05f);
 	TestTrue(TEXT("Second hit after external replacement applies"), ApplyDamage(SourceASC, PlayerASC));
-	AdvanceHitFeedbackTimer(World, 0.25f);
+	FCombatAutomationFixture::AdvanceWorld(World, 0.25f);
 	TestTrue(TEXT("Later hit restores external overlay captured during the active flash"), Player->GetMesh()->GetOverlayMaterial() == ExternalOverlayAfterHit);
 
 	// A lethal application is rejected before the overlay trigger.
@@ -364,7 +343,7 @@ bool FCombatHitFeedbackAutomationTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("Global time dilation is set to 0.1"), FMath::IsNearlyEqual(UGameplayStatics::GetGlobalTimeDilation(World), 0.1f, KINDA_SMALL_NUMBER));
 
 	// Tick across real-time duration and verify controller restoration via Tick()
-	AdvanceHitFeedbackTimer(World, 0.05f);
+	FCombatAutomationFixture::AdvanceWorld(World, 0.05f);
 	TestFalse(TEXT("Hit-stop expires after real-time duration"), Controller->IsTestHitStopActive());
 	TestTrue(TEXT("Global time dilation restored to 1.0"), FMath::IsNearlyEqual(UGameplayStatics::GetGlobalTimeDilation(World), 1.0f, KINDA_SMALL_NUMBER));
 
@@ -373,7 +352,7 @@ bool FCombatHitFeedbackAutomationTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("Big hit selects 0.05s duration"), Enemy->GetTestLastImpactHitStopDuration(), 0.05f);
 	TestEqual(TEXT("Big hit selects 0.03 dilation"), Enemy->GetTestLastImpactHitStopTimeDilation(), 0.03f);
 	TestTrue(TEXT("Global time dilation is set to 0.03"), FMath::IsNearlyEqual(UGameplayStatics::GetGlobalTimeDilation(World), 0.03f, KINDA_SMALL_NUMBER));
-	AdvanceHitFeedbackTimer(World, 0.08f);
+	FCombatAutomationFixture::AdvanceWorld(World, 0.08f);
 	TestFalse(TEXT("Big hit-stop expires"), Controller->IsTestHitStopActive());
 	TestTrue(TEXT("Global time dilation restored to 1.0 after Big hit"), FMath::IsNearlyEqual(UGameplayStatics::GetGlobalTimeDilation(World), 1.0f, KINDA_SMALL_NUMBER));
 
@@ -382,7 +361,7 @@ bool FCombatHitFeedbackAutomationTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("Launch hit selects 0.05s duration"), Enemy->GetTestLastImpactHitStopDuration(), 0.05f);
 	TestEqual(TEXT("Launch hit selects 0.05 dilation"), Enemy->GetTestLastImpactHitStopTimeDilation(), 0.05f);
 	TestTrue(TEXT("Global time dilation is set to 0.05 for Launch"), FMath::IsNearlyEqual(UGameplayStatics::GetGlobalTimeDilation(World), 0.05f, KINDA_SMALL_NUMBER));
-	AdvanceHitFeedbackTimer(World, 0.08f);
+	FCombatAutomationFixture::AdvanceWorld(World, 0.08f);
 	TestFalse(TEXT("Launch hit-stop expires"), Controller->IsTestHitStopActive());
 	TestTrue(TEXT("Global time dilation restored to 1.0 after Launch hit"), FMath::IsNearlyEqual(UGameplayStatics::GetGlobalTimeDilation(World), 1.0f, KINDA_SMALL_NUMBER));
 
@@ -391,7 +370,7 @@ bool FCombatHitFeedbackAutomationTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("None tier hit selects Small preset duration 0.03s"), Enemy->GetTestLastImpactHitStopDuration(), 0.03f);
 	TestEqual(TEXT("None tier hit selects Small preset dilation 0.1"), Enemy->GetTestLastImpactHitStopTimeDilation(), 0.1f);
 	TestTrue(TEXT("Global time dilation set to 0.1 for None tier"), FMath::IsNearlyEqual(UGameplayStatics::GetGlobalTimeDilation(World), 0.1f, KINDA_SMALL_NUMBER));
-	AdvanceHitFeedbackTimer(World, 0.05f);
+	FCombatAutomationFixture::AdvanceWorld(World, 0.05f);
 	TestFalse(TEXT("None tier hit-stop expires"), Controller->IsTestHitStopActive());
 
 	// 14. Invalid multi-tier uses Small preset for C3K while warning/skipping reaction event
@@ -399,7 +378,7 @@ bool FCombatHitFeedbackAutomationTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("Invalid multi-tier selects Small preset duration 0.03s"), Enemy->GetTestLastImpactHitStopDuration(), 0.03f);
 	TestEqual(TEXT("Invalid multi-tier selects Small preset dilation 0.1"), Enemy->GetTestLastImpactHitStopTimeDilation(), 0.1f);
 	TestTrue(TEXT("Global time dilation set to 0.1 for Invalid tier"), FMath::IsNearlyEqual(UGameplayStatics::GetGlobalTimeDilation(World), 0.1f, KINDA_SMALL_NUMBER));
-	AdvanceHitFeedbackTimer(World, 0.05f);
+	FCombatAutomationFixture::AdvanceWorld(World, 0.05f);
 	TestFalse(TEXT("Invalid tier hit-stop expires"), Controller->IsTestHitStopActive());
 
 	// 15. Stunned Enemy receives C3K feedback before early return
@@ -409,7 +388,7 @@ bool FCombatHitFeedbackAutomationTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("Stunned Enemy hit selects Big preset dilation"), Enemy->GetTestLastImpactHitStopTimeDilation(), 0.03f);
 	TestTrue(TEXT("Stunned Enemy hit activates hit-stop"), Controller->IsTestHitStopActive());
 	EnemyASC->RemoveLooseGameplayTag(StunnedTag);
-	AdvanceHitFeedbackTimer(World, 0.08f);
+	FCombatAutomationFixture::AdvanceWorld(World, 0.08f);
 
 	// 16. Rapid hit monotonic arbitration:
 	// 16.1 Big followed by Small: Dilation stays at 0.03 (min), expiry extends to max
@@ -418,7 +397,7 @@ bool FCombatHitFeedbackAutomationTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("Rapid hit 2: Small hit applies immediately"), ApplyDamage(SourceASC, EnemyASC, &SmallTags));
 	TestTrue(TEXT("Dilation stays at 0.03 after subsequent weaker Small hit"), FMath::IsNearlyEqual(UGameplayStatics::GetGlobalTimeDilation(World), 0.03f, KINDA_SMALL_NUMBER));
 	TestTrue(TEXT("Expiry is at least the Big hit expiry"), Controller->GetTestHitStopExpireRealTimeSeconds() >= BigExpiry);
-	AdvanceHitFeedbackTimer(World, 0.08f);
+	FCombatAutomationFixture::AdvanceWorld(World, 0.08f);
 	TestFalse(TEXT("Rapid hit stop expires completely"), Controller->IsTestHitStopActive());
 	TestTrue(TEXT("Global time dilation restored after rapid hit sequence"), FMath::IsNearlyEqual(UGameplayStatics::GetGlobalTimeDilation(World), 1.0f, KINDA_SMALL_NUMBER));
 
@@ -427,7 +406,7 @@ bool FCombatHitFeedbackAutomationTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("Dilation starts at 0.1"), FMath::IsNearlyEqual(UGameplayStatics::GetGlobalTimeDilation(World), 0.1f, KINDA_SMALL_NUMBER));
 	TestTrue(TEXT("Rapid hit 4: Big hit applies immediately"), ApplyDamage(SourceASC, EnemyASC, &BigTags));
 	TestTrue(TEXT("Dilation decreases to 0.03 after stronger Big hit"), FMath::IsNearlyEqual(UGameplayStatics::GetGlobalTimeDilation(World), 0.03f, KINDA_SMALL_NUMBER));
-	AdvanceHitFeedbackTimer(World, 0.08f);
+	FCombatAutomationFixture::AdvanceWorld(World, 0.08f);
 	TestFalse(TEXT("Arbitrated hit stop expires"), Controller->IsTestHitStopActive());
 
 	// 17. External Time Dilation Override & Preservation
@@ -436,7 +415,7 @@ bool FCombatHitFeedbackAutomationTest::RunTest(const FString& Parameters)
 	// External system overrides global dilation to 0.5
 	UGameplayStatics::SetGlobalTimeDilation(World, 0.5f);
 	// Single Tick detects override and relinquishes C3K ownership without overwriting 0.5
-	TickHitFeedbackTestWorld(World, 0.01f);
+	FCombatAutomationFixture::TickWorld(World, 0.01f);
 	TestFalse(TEXT("Controller hit-stop relinquished after external dilation change"), Controller->IsTestHitStopActive());
 	TestTrue(TEXT("External dilation 0.5 is preserved"), FMath::IsNearlyEqual(UGameplayStatics::GetGlobalTimeDilation(World), 0.5f, KINDA_SMALL_NUMBER));
 
@@ -444,7 +423,7 @@ bool FCombatHitFeedbackAutomationTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("New Small hit applies under external 0.5 baseline"), ApplyDamage(SourceASC, EnemyASC, &SmallTags));
 	TestEqual(TEXT("Captured pre-hit-stop baseline is 0.5"), Controller->GetTestPreHitStopGlobalTimeDilation(), 0.5f);
 	TestTrue(TEXT("Dilation temporarily set to 0.1"), FMath::IsNearlyEqual(UGameplayStatics::GetGlobalTimeDilation(World), 0.1f, KINDA_SMALL_NUMBER));
-	AdvanceHitFeedbackTimer(World, 0.05f);
+	FCombatAutomationFixture::AdvanceWorld(World, 0.05f);
 	TestFalse(TEXT("Hit-stop expires"), Controller->IsTestHitStopActive());
 	TestTrue(TEXT("Global time dilation restored to external baseline 0.5"), FMath::IsNearlyEqual(UGameplayStatics::GetGlobalTimeDilation(World), 0.5f, KINDA_SMALL_NUMBER));
 	// Reset back to standard 1.0
@@ -467,7 +446,7 @@ bool FCombatHitFeedbackAutomationTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("Blood normal is normalized Z vector"), Enemy->GetTestLastImpactBloodNormal(), FVector(0.0f, 0.0f, 1.0f));
 	const FRotator ExpectedZRot = FRotationMatrix::MakeFromZ(FVector(0.0f, 0.0f, 1.0f)).Rotator();
 	TestTrue(TEXT("Blood rotation aligns local +Z to impact normal"), Enemy->GetTestLastImpactBloodRotation().Equals(ExpectedZRot, 1e-2f));
-	AdvanceHitFeedbackTimer(World, 0.05f);
+	FCombatAutomationFixture::AdvanceWorld(World, 0.05f);
 
 	// 18.2 Non-unit diagonal normal is safely normalized
 	FHitResult DiagonalHit;
@@ -479,7 +458,7 @@ bool FCombatHitFeedbackAutomationTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("Blood normal safely normalized"), Enemy->GetTestLastImpactBloodNormal().Equals(ExpectedDiagNormal, 1e-4f));
 	const FRotator ExpectedDiagRot = FRotationMatrix::MakeFromZ(ExpectedDiagNormal).Rotator();
 	TestTrue(TEXT("Blood rotation matches normalized diagonal matrix"), Enemy->GetTestLastImpactBloodRotation().Equals(ExpectedDiagRot, 1e-2f));
-	AdvanceHitFeedbackTimer(World, 0.05f);
+	FCombatAutomationFixture::AdvanceWorld(World, 0.05f);
 
 	// 18.3 Missing HitResult: Sound falls back to Enemy actor location, Blood skipped
 	const int32 BloodCountBeforeMissing = Enemy->GetTestImpactBloodDispatchCount();
@@ -489,7 +468,7 @@ bool FCombatHitFeedbackAutomationTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("Sound location falls back to Enemy ActorLocation"), Enemy->GetTestLastImpactSoundLocation(), Enemy->GetActorLocation());
 	TestEqual(TEXT("Blood is skipped on missing HitResult"), Enemy->GetTestImpactBloodDispatchCount(), BloodCountBeforeMissing);
 	TestTrue(TEXT("Hit-stop still functions without HitResult"), Controller->IsTestHitStopActive());
-	AdvanceHitFeedbackTimer(World, 0.05f);
+	FCombatAutomationFixture::AdvanceWorld(World, 0.05f);
 
 	// 18.4 Zero Normal: Sound dispatches, Blood skipped
 	const int32 BloodCountBeforeZeroNorm = Enemy->GetTestImpactBloodDispatchCount();
@@ -500,7 +479,7 @@ bool FCombatHitFeedbackAutomationTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("Damage with zero-normal HitResult applies"), ApplyDamage(SourceASC, EnemyASC, &SmallTags, &ZeroNormHit));
 	TestEqual(TEXT("Blood skipped on zero normal"), Enemy->GetTestImpactBloodDispatchCount(), BloodCountBeforeZeroNorm);
 	TestTrue(TEXT("Hit-stop still functions with zero normal"), Controller->IsTestHitStopActive());
-	AdvanceHitFeedbackTimer(World, 0.05f);
+	FCombatAutomationFixture::AdvanceWorld(World, 0.05f);
 
 	// 18.5 HitResult targeting Player (Mismatched Actor): Blood skipped
 	const int32 BloodCountBeforeMismatch = Enemy->GetTestImpactBloodDispatchCount();
@@ -511,7 +490,7 @@ bool FCombatHitFeedbackAutomationTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("Damage with mismatched HitResult applies to Enemy"), ApplyDamage(SourceASC, EnemyASC, &SmallTags, &MismatchedHit));
 	TestEqual(TEXT("Blood skipped when HitResult actor is not Enemy"), Enemy->GetTestImpactBloodDispatchCount(), BloodCountBeforeMismatch);
 	TestTrue(TEXT("Hit-stop still functions with mismatched HitResult"), Controller->IsTestHitStopActive());
-	AdvanceHitFeedbackTimer(World, 0.05f);
+	FCombatAutomationFixture::AdvanceWorld(World, 0.05f);
 
 	// 18.6 Multi-modifier GE deduplication: single GE with two negative Health modifiers produces exactly one feedback burst
 	const int32 MultiModSoundBefore = Enemy->GetTestImpactSoundDispatchCount();
@@ -542,7 +521,7 @@ bool FCombatHitFeedbackAutomationTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("Sound count incremented exactly once for multi-modifier GE"), Enemy->GetTestImpactSoundDispatchCount(), MultiModSoundBefore + 1);
 	TestEqual(TEXT("Blood count incremented exactly once for multi-modifier GE"), Enemy->GetTestImpactBloodDispatchCount(), MultiModBloodBefore + 1);
 	TestEqual(TEXT("Hit-stop requested exactly once for multi-modifier GE"), Enemy->GetTestCombatImpactHitStopRequestCount(), MultiModHitStopBefore + 1);
-	AdvanceHitFeedbackTimer(World, 0.05f);
+	FCombatAutomationFixture::AdvanceWorld(World, 0.05f);
 
 	// 18.7 Two independent GE applications sharing the same EffectContext: each produces one feedback dispatch
 	const int32 IndependentSoundBefore = Enemy->GetTestImpactSoundDispatchCount();
@@ -566,7 +545,7 @@ bool FCombatHitFeedbackAutomationTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("Sound count incremented for independent GE 2"), Enemy->GetTestImpactSoundDispatchCount(), IndependentSoundBefore + 2);
 	TestEqual(TEXT("Blood count incremented for independent GE 2"), Enemy->GetTestImpactBloodDispatchCount(), IndependentBloodBefore + 2);
 	TestEqual(TEXT("Hit-stop requested for independent GE 2"), Enemy->GetTestCombatImpactHitStopRequestCount(), IndependentHitStopBefore + 2);
-	AdvanceHitFeedbackTimer(World, 0.05f);
+	FCombatAutomationFixture::AdvanceWorld(World, 0.05f);
 
 	// 19. Team / Source Exclusions
 	// 19.1 Enemy attacking Player: Player receives overlay & camera shake, but NO C3K hit-stop, sound, or blood
@@ -578,7 +557,7 @@ bool FCombatHitFeedbackAutomationTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("Enemy sound dispatch unchanged on Player damage"), Enemy->GetTestImpactSoundDispatchCount(), EnemySoundBeforePlayerHit);
 	TestEqual(TEXT("Enemy blood dispatch unchanged on Player damage"), Enemy->GetTestImpactBloodDispatchCount(), EnemyBloodBeforePlayerHit);
 	TestFalse(TEXT("Controller hit-stop not active on Player damage"), Controller->IsTestHitStopActive());
-	AdvanceHitFeedbackTimer(World, 0.25f);
+	FCombatAutomationFixture::AdvanceWorld(World, 0.25f);
 
 	// 19.2 Non-Player team instigator (Enemy-to-Enemy self hit): no C3K feedback
 	TestTrue(TEXT("Enemy-to-Enemy damage applies"), ApplyDamage(EnemyASC, EnemyASC, &BigTags));
@@ -586,7 +565,7 @@ bool FCombatHitFeedbackAutomationTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("Enemy sound dispatch unchanged on non-Player instigator"), Enemy->GetTestImpactSoundDispatchCount(), EnemySoundBeforePlayerHit);
 	TestEqual(TEXT("Enemy blood dispatch unchanged on non-Player instigator"), Enemy->GetTestImpactBloodDispatchCount(), EnemyBloodBeforePlayerHit);
 	TestFalse(TEXT("Controller hit-stop not active on non-Player instigator"), Controller->IsTestHitStopActive());
-	AdvanceHitFeedbackTimer(World, 0.25f);
+	FCombatAutomationFixture::AdvanceWorld(World, 0.25f);
 
 	// 20. Lethal Enemy feedback and Dead exclusion
 	EnemyASC->SetNumericAttributeBase(UCharacterAttributeSet::GetHealthAttribute(), 25.0f);
@@ -600,7 +579,7 @@ bool FCombatHitFeedbackAutomationTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("Lethal Enemy without HitResult skips blood"), Enemy->GetTestImpactBloodDispatchCount(), LethalBloodBefore);
 	TestTrue(TEXT("Lethal Enemy activates C3K hit-stop"), Controller->IsTestHitStopActive());
 	TestFalse(TEXT("Lethal Enemy does not flash the overlay"), Enemy->IsTestHitFeedbackOverlayActive());
-	AdvanceHitFeedbackTimer(World, 0.05f);
+	FCombatAutomationFixture::AdvanceWorld(World, 0.05f);
 	TestFalse(TEXT("Lethal Enemy hit-stop expires"), Controller->IsTestHitStopActive());
 	const int32 DeadHitStopBefore = Enemy->GetTestCombatImpactHitStopRequestCount();
 	const int32 DeadSoundBefore = Enemy->GetTestImpactSoundDispatchCount();
@@ -697,7 +676,7 @@ bool FCombatHitFeedbackAutomationTest::RunTest(const FString& Parameters)
 		TestTrue(TEXT("Damage applies to Player with mismatched Enemy profile"), ApplyDamage(MismatchEnemyASC, MismatchPlayerASC, &BigTags));
 		TestTrue(TEXT("Common Overlay still flashes for Player with mismatched profile"), MismatchPlayer->IsTestHitFeedbackOverlayActive());
 		TestEqual(TEXT("Player shake does not trigger with mismatched Enemy profile"), MismatchPlayer->GetTestHitFeedbackCameraShakeStartCount(), ShakeCountBeforeMismatch);
-		AdvanceHitFeedbackTimer(World, 0.25f);
+		FCombatAutomationFixture::AdvanceWorld(World, 0.25f);
 
 		// 24.2 Enemy assigned Player profile (Mismatched Profile)
 		// Overlay continues to function, but Enemy-specific hit-stop, sound, and blood do not trigger.
@@ -714,7 +693,7 @@ bool FCombatHitFeedbackAutomationTest::RunTest(const FString& Parameters)
 		TestEqual(TEXT("Enemy hit-stop does not trigger with mismatched Player profile"), MismatchEnemy->GetTestCombatImpactHitStopRequestCount(), HitStopBeforeEnemyMismatch);
 		TestEqual(TEXT("Enemy sound does not trigger with mismatched Player profile"), MismatchEnemy->GetTestImpactSoundDispatchCount(), SoundBeforeEnemyMismatch);
 		TestEqual(TEXT("Enemy blood does not trigger with mismatched Player profile"), MismatchEnemy->GetTestImpactBloodDispatchCount(), BloodBeforeEnemyMismatch);
-		AdvanceHitFeedbackTimer(World, 0.25f);
+		FCombatAutomationFixture::AdvanceWorld(World, 0.25f);
 
 		// 24.3 Null Profile on Player: fail-closed, damage applies, no crash, no overlay, no shake
 		MismatchPlayer->SetTestCombatFeedbackData(nullptr);
@@ -860,16 +839,16 @@ bool FCombatAttackerImpactCameraShakeAutomationTest::RunTest(const FString& Para
 	TestTrue(TEXT("Controller hit-stop is active after Small hit"), Controller->IsTestHitStopActive());
 	TestEqual(TEXT("Small hit selects 0.03s duration"), Enemy->GetTestLastImpactHitStopDuration(), 0.03f);
 	TestEqual(TEXT("Small hit selects 0.1 dilation"), Enemy->GetTestLastImpactHitStopTimeDilation(), 0.1f);
-	AdvanceHitFeedbackTimer(World, 0.05f);
+	FCombatAutomationFixture::AdvanceWorld(World, 0.05f);
 	TestFalse(TEXT("Small hit-stop expires"), Controller->IsTestHitStopActive());
 
 	// 3. Repeated Small tier reuses single-instance Small shake
-	TickHitFeedbackTestWorld(World, 0.06f);
+	FCombatAutomationFixture::TickWorld(World, 0.06f);
 	TestTrue(TEXT("Repeated Small tier attack applies"), ApplyDamage(SourceASC, EnemyASC, &SmallTags));
 	TestEqual(TEXT("Repeated Small tier increments shake count"), Player->GetTestHitFeedbackCameraShakeStartCount(), 2);
 	TestTrue(TEXT("Repeated Small tier reuses active Small shake"), SmallShake && Player->GetTestLastHitFeedbackCameraShake() == SmallShake);
 	TestTrue(TEXT("Small shake remains active after same-tier restart"), SmallShake && SmallShake->IsActive());
-	AdvanceHitFeedbackTimer(World, 0.25f);
+	FCombatAutomationFixture::AdvanceWorld(World, 0.25f);
 
 	// 4. Big tier attack selects Big test shake and stops Small shake
 	TestTrue(TEXT("Big tier attack on Enemy applies"), ApplyDamage(SourceASC, EnemyASC, &BigTags));
@@ -883,7 +862,7 @@ bool FCombatAttackerImpactCameraShakeAutomationTest::RunTest(const FString& Para
 	TestTrue(TEXT("Controller hit-stop is active after Big hit"), Controller->IsTestHitStopActive());
 	TestEqual(TEXT("Big hit selects 0.05s duration"), Enemy->GetTestLastImpactHitStopDuration(), 0.05f);
 	TestEqual(TEXT("Big hit selects 0.03 dilation"), Enemy->GetTestLastImpactHitStopTimeDilation(), 0.03f);
-	AdvanceHitFeedbackTimer(World, 0.08f);
+	FCombatAutomationFixture::AdvanceWorld(World, 0.08f);
 	TestFalse(TEXT("Big hit-stop expires"), Controller->IsTestHitStopActive());
 
 	// 5. Launch tier attack selects Launch test shake and stops Big shake
@@ -898,7 +877,7 @@ bool FCombatAttackerImpactCameraShakeAutomationTest::RunTest(const FString& Para
 	TestTrue(TEXT("Controller hit-stop is active after Launch hit"), Controller->IsTestHitStopActive());
 	TestEqual(TEXT("Launch hit selects 0.05s duration"), Enemy->GetTestLastImpactHitStopDuration(), 0.05f);
 	TestEqual(TEXT("Launch hit selects 0.05 dilation"), Enemy->GetTestLastImpactHitStopTimeDilation(), 0.05f);
-	AdvanceHitFeedbackTimer(World, 0.08f);
+	FCombatAutomationFixture::AdvanceWorld(World, 0.08f);
 	TestFalse(TEXT("Launch hit-stop expires"), Controller->IsTestHitStopActive());
 
 	// 6. Decoupling: Player received hit path still uses received hit classes independently of attacker classes
@@ -917,7 +896,7 @@ bool FCombatAttackerImpactCameraShakeAutomationTest::RunTest(const FString& Para
 	UCameraShakeBase* ReceivedSmallShake = Player->GetTestLastHitFeedbackCameraShake();
 	TestNotNull(TEXT("Received hit started Small shake"), ReceivedSmallShake);
 	TestTrue(TEXT("Received hit selects Small test shake"), ReceivedSmallShake && ReceivedSmallShake->IsA<UTestSmallHitFeedbackCameraShake>());
-	AdvanceHitFeedbackTimer(World, 0.25f);
+	FCombatAutomationFixture::AdvanceWorld(World, 0.25f);
 
 	// Restore attacker classes for remaining attacker tests
 	if (PlayerFeedback)
@@ -946,20 +925,20 @@ bool FCombatAttackerImpactCameraShakeAutomationTest::RunTest(const FString& Para
 	TestEqual(TEXT("Invalid multi-tier attack does not increment Player shake count"), Player->GetTestHitFeedbackCameraShakeStartCount(), ShakeCountBeforeNone);
 	TestTrue(TEXT("Active Launch shake remains active after Invalid multi-tier hit"), LaunchShake && LaunchShake->IsActive());
 	TestTrue(TEXT("Active shake unchanged after Invalid multi-tier hit"), Player->GetTestActiveHitFeedbackCameraShake() == LaunchShake);
-	AdvanceHitFeedbackTimer(World, 0.25f);
+	FCombatAutomationFixture::AdvanceWorld(World, 0.25f);
 
 	// 8. Single GE Spec with multiple Health modifiers triggers exactly one Player shake (deduplication)
 	const int32 ShakeCountBeforeMultiMod = Player->GetTestHitFeedbackCameraShakeStartCount();
 	TestTrue(TEXT("Multi-modifier Health GE applies to Enemy"), ApplyMultiModifierDamage(SourceASC, EnemyASC, &BigTags));
 	TestEqual(TEXT("Single GE Spec with multiple Health modifiers triggers exactly one Player shake"), Player->GetTestHitFeedbackCameraShakeStartCount(), ShakeCountBeforeMultiMod + 1);
-	AdvanceHitFeedbackTimer(World, 0.25f);
+	FCombatAutomationFixture::AdvanceWorld(World, 0.25f);
 
 	// 9. Two independent GE Specs each trigger Player shake
 	const int32 ShakeCountBeforeTwoSpecs = Player->GetTestHitFeedbackCameraShakeStartCount();
 	TestTrue(TEXT("First independent GE applies"), ApplyDamage(SourceASC, EnemyASC, &SmallTags));
 	TestTrue(TEXT("Second independent GE applies"), ApplyDamage(SourceASC, EnemyASC, &SmallTags));
 	TestEqual(TEXT("Two independent GE Specs each trigger Player shake"), Player->GetTestHitFeedbackCameraShakeStartCount(), ShakeCountBeforeTwoSpecs + 2);
-	AdvanceHitFeedbackTimer(World, 0.25f);
+	FCombatAutomationFixture::AdvanceWorld(World, 0.25f);
 
 	// 10. Lethal hit triggers exactly once before Enemy Dead state, subsequent damage is silent
 	EnemyASC->SetNumericAttributeBase(UCharacterAttributeSet::GetHealthAttribute(), 25.0f);
@@ -971,7 +950,7 @@ bool FCombatAttackerImpactCameraShakeAutomationTest::RunTest(const FString& Para
 	const int32 ShakeCountAfterLethal = Player->GetTestHitFeedbackCameraShakeStartCount();
 	TestTrue(TEXT("Attack on Dead Enemy applies"), ApplyDamage(SourceASC, EnemyASC, &BigTags));
 	TestEqual(TEXT("Attack on Dead Enemy does not trigger attacker shake"), Player->GetTestHitFeedbackCameraShakeStartCount(), ShakeCountAfterLethal);
-	AdvanceHitFeedbackTimer(World, 0.25f);
+	FCombatAutomationFixture::AdvanceWorld(World, 0.25f);
 
 	// 11. Poise-only, direct base write, and non-Player source exclusions
 	AEnemyCharacter* FreshEnemy = FCombatAutomationFixture::SpawnPassiveEnemy(World, FTransform(FRotator::ZeroRotator, FVector(500.0f, 0.0f, 0.0f)));

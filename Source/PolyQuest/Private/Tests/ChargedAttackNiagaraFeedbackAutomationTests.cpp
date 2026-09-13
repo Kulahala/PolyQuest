@@ -37,26 +37,6 @@ namespace
 			}
 		}
 	};
-
-	void TickChargedAttackTestWorld(UWorld* World, const float DeltaSeconds)
-	{
-		if (World)
-		{
-			World->Tick(ELevelTick::LEVELTICK_All, DeltaSeconds);
-			++GFrameCounter;
-		}
-	}
-
-	void AdvanceChargedAttackTimer(UWorld* World, float DeltaSeconds)
-	{
-		constexpr float MaxTickStepSeconds = 0.05f;
-		while (DeltaSeconds > KINDA_SMALL_NUMBER)
-		{
-			const float TickStep = FMath::Min(DeltaSeconds, MaxTickStepSeconds);
-			TickChargedAttackTestWorld(World, TickStep);
-			DeltaSeconds -= TickStep;
-		}
-	}
 }
 
 bool FChargedAttackNiagaraFeedbackAutomationTest::RunTest(const FString& Parameters)
@@ -216,7 +196,7 @@ bool FChargedAttackNiagaraFeedbackAutomationTest::RunTest(const FString& Paramet
 
 		// Simulate input held for 0.6s (>= 0.5s)
 		Player->TriggerTestHandleCombatInputStarted(PrimaryAttackInputTag);
-		AdvanceChargedAttackTimer(World, 0.6f);
+		FCombatAutomationFixture::AdvanceWorld(World, 0.6f);
 
 		FullAbility->Test_SetAbilityActive(true);
 		FullAbility->Test_SetChargingStateApplied(true);
@@ -240,7 +220,7 @@ bool FChargedAttackNiagaraFeedbackAutomationTest::RunTest(const FString& Paramet
 
 		// Hold input for 0.2s; Remaining to full = 0.6s
 		Player->TriggerTestHandleCombatInputStarted(PrimaryAttackInputTag);
-		AdvanceChargedAttackTimer(World, 0.2f);
+		FCombatAutomationFixture::AdvanceWorld(World, 0.2f);
 
 		DelayAbility->Test_SetAbilityActive(true);
 		DelayAbility->Test_SetChargingStateApplied(true);
@@ -252,12 +232,12 @@ bool FChargedAttackNiagaraFeedbackAutomationTest::RunTest(const FString& Paramet
 		TestEqual(TEXT("Delay duration matches remaining (0.6s)"), DelayAbility->GetTestDelayDuration(), 0.6f);
 
 		// Tick partially by 0.3s (total 0.3s < 0.6s remaining): Still Gather
-		AdvanceChargedAttackTimer(World, 0.3f);
+		FCombatAutomationFixture::AdvanceWorld(World, 0.3f);
 		TestEqual(TEXT("Phase remains Gather before threshold"), DelayAbility->GetTestRecordedChargePhase(), 0.0f);
 		TestEqual(TEXT("No full callback fired yet"), DelayAbility->GetTestFullCallbackCount(), 0);
 
 		// Tick remaining 0.5s (total 0.8s >= 0.6s remaining): Transitions to Full
-		AdvanceChargedAttackTimer(World, 0.5f);
+		FCombatAutomationFixture::AdvanceWorld(World, 0.5f);
 		TestEqual(TEXT("Full callback fired"), DelayAbility->GetTestFullCallbackCount(), 1);
 		TestEqual(TEXT("Phase transitioned to Full (1.0f)"), DelayAbility->GetTestRecordedChargePhase(), 1.0f);
 

@@ -5,6 +5,7 @@
 #include "Components/SkeletalMeshComponent.h"
 #include "Engine/SkeletalMesh.h"
 #include "Engine/World.h"
+#include "EngineGlobals.h"
 #include "InputAction.h"
 #include "Materials/Material.h"
 #include "Materials/MaterialInstanceDynamic.h"
@@ -143,6 +144,26 @@ AEnemyCharacter* FCombatAutomationFixture::SpawnPassiveEnemy(
 	Enemy->FinishSpawning(Transform);
 	DispatchBeginPlayOnce(Enemy);
 	return Enemy;
+}
+
+void FCombatAutomationFixture::TickWorld(UWorld* World, float DeltaSeconds)
+{
+	if (World)
+	{
+		World->Tick(ELevelTick::LEVELTICK_All, DeltaSeconds);
+		++GFrameCounter;
+	}
+}
+
+void FCombatAutomationFixture::AdvanceWorld(UWorld* World, float DeltaSeconds)
+{
+	constexpr float MaxTickStepSeconds = 0.05f;
+	while (DeltaSeconds > KINDA_SMALL_NUMBER)
+	{
+		const float TickStep = FMath::Min(DeltaSeconds, MaxTickStepSeconds);
+		TickWorld(World, TickStep);
+		DeltaSeconds -= TickStep;
+	}
 }
 
 #endif

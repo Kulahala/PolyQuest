@@ -26,6 +26,15 @@ struct FCombatAutomationFixture
 		UWorld* World,
 		const FTransform& Transform = FTransform::Identity,
 		FEnemyPreBeginPlaySetup PreBeginPlaySetup = {});
+
+	/** Ticks the test world by DeltaSeconds and increments GFrameCounter once. No-op if World is null. */
+	static void TickWorld(UWorld* World, float DeltaSeconds);
+
+	/**
+	 * Advances the test world in fixed 0.05s steps (using TickWorld) until DeltaSeconds is exhausted.
+	 * Preserves standard float termination (> KINDA_SMALL_NUMBER) and the final partial step.
+	 */
+	static void AdvanceWorld(UWorld* World, float DeltaSeconds);
 };
 
 #endif

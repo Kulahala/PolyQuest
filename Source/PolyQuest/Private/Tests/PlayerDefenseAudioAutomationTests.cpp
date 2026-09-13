@@ -46,26 +46,6 @@ namespace
 		}
 	};
 
-	void TickPlayerDefenseAudioTestWorld(UWorld* World, const float DeltaSeconds)
-	{
-		if (World)
-		{
-			World->Tick(ELevelTick::LEVELTICK_All, DeltaSeconds);
-			++GFrameCounter;
-		}
-	}
-
-	void AdvancePlayerDefenseAudioTestWorld(UWorld* World, float DeltaSeconds)
-	{
-		constexpr float MaxTickStepSeconds = 0.05f;
-		while (DeltaSeconds > KINDA_SMALL_NUMBER)
-		{
-			const float TickStep = FMath::Min(DeltaSeconds, MaxTickStepSeconds);
-			TickPlayerDefenseAudioTestWorld(World, TickStep);
-			DeltaSeconds -= TickStep;
-		}
-	}
-
 	bool ApplyDamageSpec(
 		UAbilitySystemComponent* SourceASC,
 		UAbilitySystemComponent* TargetASC,
@@ -474,7 +454,7 @@ bool FPlayerDefenseAudioAutomationTest::RunTest(const FString& Parameters)
 
 		// 3.7 Null ReceivedHitSound (graceful silence, camera shake still plays)
 		PlayerASC->SetNumericAttributeBase(UCharacterAttributeSet::GetHealthAttribute(), 500.0f);
-		AdvancePlayerDefenseAudioTestWorld(World, 0.25f);
+		FCombatAutomationFixture::AdvanceWorld(World, 0.25f);
 		FGameplayTagContainer LaunchTags;
 		LaunchTags.AddTag(FGameplayTag::RequestGameplayTag(FName(TEXT("Data.Reaction.Launch")), false));
 		if (PlayerFeedback)
@@ -491,7 +471,7 @@ bool FPlayerDefenseAudioAutomationTest::RunTest(const FString& Parameters)
 		{
 			PlayerFeedback->ReceivedHitSound = TestReceivedHitSound;
 		}
-		AdvancePlayerDefenseAudioTestWorld(World, 0.25f);
+		FCombatAutomationFixture::AdvanceWorld(World, 0.25f);
 	}
 
 	// =========================================================================

@@ -1704,3 +1704,20 @@ TODO-03A3E World Pickup Interaction Prompt v1
 - **终审与边界**：Main Fresh Review通过，无P0–P2发现。Ready防御分支按计划保留静态覆盖，合成动画播放断言不额外证明真实跨帧Root Motion位移；本片PIE不关闭FIX2远程投射物或旧Launch资产readback债。Debt-03H6-TestSeamCandidates已随11项getter删除及验证关闭，其余债务保持ROADMAP唯一归属。
 - **归档与授权**：本提交包括15份Source/Test与plan.md、ROADMAP.md、ROADMAP-archive.md、ARCHITECTURE.md共19文件；用户明确批准，2,122项既有Content/Config/tmp WIP排除，不推送。当前plan保留第9节修复过程与第10节完成态；下一片替换前以本次提交固定引用。
 - **下一入口**：用户已接受独立TODO-03H6-TEST-SHRINK，仅收敛同义World Tick/GFrameCounter测试样板，须另行冻结计划后实施；其后为TODO-03C。不将Montage工厂、Execution fixture或其他未接受候选自动追加到前置。
+
+## TODO-03H6-SHRINK → TODO-03H6-TEST-SHRINK Handoff (2026-09-13)
+
+- 用户接受结合Gemini建议修订的方案，要求写入plan.md并提供执行提示词；当前活跃交接转为TEST-SHRINK，Execution route为manual/out-of-band Gemini。本轮仅三文档落盘，未实施Source/Test、编译、运行Automation或Editor/PIE，未暂存或提交。
+- SHRINK已提交于a19630d065bc9e342c0a5c786d1c61a2cb811879；完整修复/完成态凭据固定为git show a19630d065bc9e342c0a5c786d1c61a2cb811879:plan.md第9–10节。前述历史正文原样保留，FIX2-PIE及其他既有债务不变。
+- TEST-SHRINK冻结七份测试支撑文件，仅合并五份同义的Tick后递增GFrameCounter及0.05秒Advance循环；账本为6次外部Tick、53次Advance。复用FCombatAutomationFixture，无新文件或生产变化，不迁移0.1秒/预热、World生命周期、Montage/Execution fixture。
+- 用户已确认的基线编译和适用ChargedNiagara成功收据复用，其余六项先取得适用收据或基线运行；工作树干净不是测试证据。实施后Development Editor编译、七项Automation及Main Fresh Review为门禁，无资产readback或PIE要求。
+- Source与既有Content/Config/tmp WIP保留，当前plan为唯一实施白名单。此阶段完成后进入TODO-03C，不自动追加更多清理或提前开始远程敌人实现。
+
+## TODO-03H6-TEST-SHRINK Main Implementation Closeout (2026-09-13)
+
+- **完成范围**：基线a19630d065bc9e342c0a5c786d1c61a2cb811879；Gemini在既有CombatAutomationFixture两文件及五份测试中共享TickWorld/AdvanceWorld，无新文件。六次外部Tick、53次Advance保持原实参与时序；0.05f循环、尾步、帧号顺序及World生命周期保留。七文件增加89行、删除160行，净减71行。
+- **审查**：Gemini报告七文件Rider无错误和首次干净只读实施自审PASS；Main Fresh Review通过，无P0–P2发现。五消费者与基线按批准迁移归一后内容一致，原断言、配置和生命周期未改变；未重构生产、Spawn fixture、0.1秒/预热或其他测试支撑。
+- **验证**：用户确认Development Editor编译与七项Automation全部通过；Main读取Saved/Logs/PolyQuest.log，在2026.09.13-04.04.22 UTC核实七项Result={Success}及TEST COMPLETE. EXIT CODE: 0。Main未代跑编译、Automation或Editor。纯测试支撑片按计划无需PIE/readback，不是豁免或新增视觉证明。
+- **历史证据边界**：除可复用Charged专项外，其余六项迁移前成功收据未提供。用户在获知该缺口后批准收尾提交，当前代码验收依据源码等价和实施后结果，不追认原计划先基线后迁移已执行；非阻塞历史证据债唯一归ROADMAP的Debt-03H6-TEST-SHRINK-Baseline。原FIX2-PIE、World缺EndPlay及其他审计债务不随本片关闭。
+- **归档与授权**：用户明确批准文档收尾提交，精确包含七份Source/Test及plan.md、ROADMAP.md、ROADMAP-archive.md共10文件；2,122项既有Content/Config/tmp WIP排除，不改ARCHITECTURE或资产，不推送。当前plan第9节保留完成态与日志锚点，新切片替换前以本次提交固定凭据。
+- **下一阶段**：TODO-03C Ranged Enemy v1；不自动扩展测试瘦身或将其他未接受候选变成03C前置，本轮不启动远程敌人实现。

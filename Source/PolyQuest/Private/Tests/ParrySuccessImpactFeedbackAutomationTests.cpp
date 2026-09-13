@@ -44,26 +44,6 @@ namespace
 			}
 		}
 	};
-
-	void TickTestWorld(UWorld* World, const float DeltaSeconds)
-	{
-		if (World)
-		{
-			World->Tick(ELevelTick::LEVELTICK_All, DeltaSeconds);
-			++GFrameCounter;
-		}
-	}
-
-	void AdvanceTestTimer(UWorld* World, float DeltaSeconds)
-	{
-		constexpr float MaxTickStepSeconds = 0.05f;
-		while (DeltaSeconds > KINDA_SMALL_NUMBER)
-		{
-			const float TickStep = FMath::Min(DeltaSeconds, MaxTickStepSeconds);
-			TickTestWorld(World, TickStep);
-			DeltaSeconds -= TickStep;
-		}
-	}
 }
 
 bool FParrySuccessImpactFeedbackAutomationTest::RunTest(const FString& Parameters)
@@ -204,7 +184,7 @@ bool FParrySuccessImpactFeedbackAutomationTest::RunTest(const FString& Parameter
 	TestEqual(TEXT("Sound dispatched at exact non-zero impact point"), TestParryAbility->GetTestLastParrySuccessSoundLocation(), NonZeroImpactPoint);
 
 	// Advance time to restore Hit-Stop
-	AdvanceTestTimer(World, 0.08f);
+	FCombatAutomationFixture::AdvanceWorld(World, 0.08f);
 	TestFalse(TEXT("Hit-stop restored after duration"), Controller->IsTestHitStopActive());
 	TestTrue(TEXT("Global time dilation restored to 1.0"), FMath::IsNearlyEqual(UGameplayStatics::GetGlobalTimeDilation(World), 1.0f, KINDA_SMALL_NUMBER));
 
@@ -222,7 +202,7 @@ bool FParrySuccessImpactFeedbackAutomationTest::RunTest(const FString& Parameter
 	TestEqual(TEXT("Feedback count incremented to 2"), TestParryAbility->GetTestParrySuccessFeedbackCount(), 2);
 	TestEqual(TEXT("Sound count incremented to 2"), TestParryAbility->GetTestParrySuccessSoundDispatchCount(), 2);
 	TestEqual(TEXT("Sound location fell back to Player ActorLocation"), TestParryAbility->GetTestLastParrySuccessSoundLocation(), Player->GetActorLocation());
-	AdvanceTestTimer(World, 0.08f);
+	FCombatAutomationFixture::AdvanceWorld(World, 0.08f);
 
 	// B: Null sound asset does not block hit-stop or camera shake
 	if (PlayerFeedback)
@@ -236,7 +216,7 @@ bool FParrySuccessImpactFeedbackAutomationTest::RunTest(const FString& Parameter
 	TestTrue(TEXT("Parry with null sound succeeds"), TestParryAbility->TryParryMeleeHit(Enemy, ValidHitResult));
 	TestEqual(TEXT("Camera shake still triggered without sound"), Player->GetTestHitFeedbackCameraShakeStartCount(), ShakeCountBeforeNullSound + 1);
 	TestEqual(TEXT("Sound dispatch count unchanged with null sound"), TestParryAbility->GetTestParrySuccessSoundDispatchCount(), SoundCountBeforeNullSound);
-	AdvanceTestTimer(World, 0.08f);
+	FCombatAutomationFixture::AdvanceWorld(World, 0.08f);
 
 	// Restore sound asset for subsequent tests
 	if (PlayerFeedback)
@@ -294,7 +274,7 @@ bool FParrySuccessImpactFeedbackAutomationTest::RunTest(const FString& Parameter
 	const int32 FeedbackCountBeforeDummy = TestParryAbility->GetTestParrySuccessFeedbackCount();
 	TestTrue(TEXT("Attacker without ASC still yields valid parry success"), TestParryAbility->TryParryMeleeHit(DummyAttackerWithoutASC, ValidHitResult));
 	TestEqual(TEXT("Feedback count incremented for attacker without ASC"), TestParryAbility->GetTestParrySuccessFeedbackCount(), FeedbackCountBeforeDummy + 1);
-	AdvanceTestTimer(World, 0.08f);
+	FCombatAutomationFixture::AdvanceWorld(World, 0.08f);
 	DummyAttackerWithoutASC->Destroy();
 
 	// -------------------------------------------------------------------------
@@ -323,7 +303,7 @@ bool FParrySuccessImpactFeedbackAutomationTest::RunTest(const FString& Parameter
 	// A: Normal expiry restores dilation
 	TestParryAbility->TryParryMeleeHit(Enemy, ValidHitResult);
 	TestTrue(TEXT("Hit-stop active before expiry"), Controller->IsTestHitStopActive());
-	AdvanceTestTimer(World, 0.08f);
+	FCombatAutomationFixture::AdvanceWorld(World, 0.08f);
 	TestFalse(TEXT("Hit-stop expired and restored"), Controller->IsTestHitStopActive());
 	TestTrue(TEXT("Global dilation 1.0 after normal expiry"), FMath::IsNearlyEqual(UGameplayStatics::GetGlobalTimeDilation(World), 1.0f, KINDA_SMALL_NUMBER));
 
