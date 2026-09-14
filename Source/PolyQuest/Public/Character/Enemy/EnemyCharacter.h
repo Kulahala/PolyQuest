@@ -65,6 +65,14 @@ public:
 	void TriggerTestBindUIHealthEvents() { BindUIHealthEvents(); }
 	void TriggerTestUnbindUIHealthEvents() { UnbindUIHealthEvents(); }
 	void TriggerTestRefreshEnemyHealthBar() { RefreshEnemyHealthBar(); }
+	UWidgetComponent* GetTestStanceBreakMarkerWidgetComponent() const { return StanceBreakMarkerWidgetComponent; }
+	bool HasBoundStanceBreakMarkerDelegates() const;
+	bool HasPendingStanceBreakMarkerFade() const { return StanceBreakMarkerFadeCompletionTimerHandle.IsValid(); }
+	float GetTestStanceBreakMarkerTintAlpha() const { return StanceBreakMarkerTintAlpha; }
+	void TriggerTestBindStanceBreakMarkerEvents() { BindStanceBreakMarkerEvents(); }
+	void TriggerTestUnbindStanceBreakMarkerEvents() { UnbindStanceBreakMarkerEvents(); }
+	void TriggerTestRefreshStanceBreakMarker() { RefreshStanceBreakMarker(); }
+	void TriggerTestCompleteStanceBreakMarkerFade() { HideStanceBreakMarker(); }
 	void TriggerTestUnPossessed() { UnPossessed(); }
 
 	void ConfigureTestDeathRagdollImpact(
@@ -154,6 +162,14 @@ private:
 	void OnUIMaxHealthAttributeChanged(const FOnAttributeChangeData& ChangeData);
 	void RefreshEnemyHealthBar();
 	void HideEnemyHealthBar();
+	void BindStanceBreakMarkerEvents();
+	void UnbindStanceBreakMarkerEvents();
+	void OnStanceBreakMarkerRelevantTagChanged(const FGameplayTag Tag, int32 NewCount);
+	void RefreshStanceBreakMarker();
+	void BeginStanceBreakMarkerFadeOut();
+	void UpdateStanceBreakMarkerFadeOut();
+	void SetStanceBreakMarkerRenderOpacity(float Opacity);
+	void HideStanceBreakMarker();
 	void HandleCombatImpactFeedback(const FGameplayEffectSpec& EffectSpec, EHitReactionTier ReactionTier);
 	void DispatchImpactHitStop(float DurationSeconds, float TimeDilation);
 	void DispatchImpactSound(const UEnemyCombatFeedbackDataAsset* FeedbackData, const FHitResult* HitResult);
@@ -161,6 +177,9 @@ private:
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "UI|Enemy", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<UWidgetComponent> EnemyHealthBarWidgetComponent;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "UI|Enemy", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<UWidgetComponent> StanceBreakMarkerWidgetComponent;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Enemy", meta = (AllowPrivateAccess = "true", ToolTip = "敌人使用的攻击集合配置资产（EnemyAttackSet）。"))
 	TObjectPtr<UEnemyAttackSet> AttackSet;
@@ -211,6 +230,15 @@ private:
 	TWeakObjectPtr<UAbilitySystemComponent> UIBoundAbilitySystemComponent;
 	TWeakObjectPtr<UEnemyHealthBarWidget> EnemyHealthBarWidget;
 
+	FDelegateHandle StanceBreakMarkerStunnedTagChangedHandle;
+	FDelegateHandle StanceBreakMarkerVictimLockedTagChangedHandle;
+	FDelegateHandle StanceBreakMarkerDeathPendingTagChangedHandle;
+	FDelegateHandle StanceBreakMarkerDeadTagChangedHandle;
+	TWeakObjectPtr<UAbilitySystemComponent> StanceBreakMarkerBoundAbilitySystemComponent;
+	FTimerHandle StanceBreakMarkerFadeUpdateTimerHandle;
+	FTimerHandle StanceBreakMarkerFadeCompletionTimerHandle;
+	float StanceBreakMarkerTintAlpha = 1.0f;
+
 	bool bDeathTeardownStarted = false;
 	bool bDeathRagdollStarted = false;
 	bool bStanceBreakDispatchPending = false;
@@ -227,6 +255,7 @@ private:
 	TWeakObjectPtr<UEnemyVictimExecutionAbility> ActiveVictimExecutionAbility;
 
 	FGameplayTag DeathPendingTag;
+	FGameplayTag VictimLockedStateTag;
 
 	FVector PendingDeathRagdollVelocityChange = FVector::ZeroVector;
 	bool bHasLoggedInvalidDeathRagdollBone = false;

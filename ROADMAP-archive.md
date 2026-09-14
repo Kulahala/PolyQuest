@@ -1785,3 +1785,11 @@ TODO-03A3E World Pickup Interaction Prompt v1
 - **读回结果**：GA/Combo/武器到 Montage、双方四向受击与处决配对、Skeleton/Slot/Section、Rate/Cancel/HoldReady 类型/数值/区间/派发模式，以及真实 Parry/Guard 效果配置均已核对，未发现阻塞问题；所查相关蓝图未发现额外 Montage 播放入口。未配置窗口不等于未接入 Task，None 策略也不因共用动画上的 Cancel Notify 获得取消权限。
 - **总验收**：结合此前最终 Editor/非 Editor Development 构建、单次 34 项 Automation、用户最终测试/PIE 和独立审查后的 P2 修复闭环，关闭 Debt-03H9-A-ValidationReceipts、Debt-03H9-B-RepairValidation、Debt-03H9-C-Validation，A/B/C 及父阶段 03H9 总验收完成。
 - **边界与提交**：本轮读回未修改或保存资产，也未重复运行已通过测试；H6/H7、Shipping/Test、打包和干净资产基线仍按原条件处理。用户随后批准精简归档并提交 C 源码/测试及阶段文档，排除 Content/Config/tmp WIP，不推送。归档保留范围、结论和证据边界，不保存易过期的全量资产数值快照；以后调参时读取实际资产。
+
+## TODO-03H10：StanceBreak 胸口红点标识（2026-09-14）
+
+- **基线与范围**：基于 `25f251692834d59d9218a3dd98431d184a2c6baa`，在 `AEnemyCharacter` 增加独立 Screen Space `StanceBreakMarkerWidgetComponent`，并补 `PolyQuest.UI.VitalHUD` 与 `PolyQuest.Combat.EnemyStanceBreakRateWindow` 覆盖。资产范围仅为 `BP_Enemy_Base`、`WBP_StanceBreakMarker` 和 `T_StanceBreakMarker`；未修改头顶血条、GA、Montage、Config 或 Build.cs。
+- **运行时契约**：ASC Tag 是唯一权威，显示谓词为 `Stunned && !VictimLocked && !DeathPending && !Dead && !DeathTeardown`。组件附着 Character Mesh 的 `spine_03` 并随动画骨骼运动；自然移除 Stunned 时通过内部 `UUserWidget::SetRenderOpacity()` 进行 `0.15s` 游戏时间线性淡出，重新 Stunned 恢复满 Alpha，处决接管、待死亡、死亡、UnPossess、解绑和 teardown 立即隐藏。未增加距离、角度、输入、锁定、LOS、Actor Tick、Widget 动画或通用标记框架。
+- **资产与视觉**：Main 经用户授权通过 live Unreal MCP 创建/配置并 readback 独立 Widget 与 Enemy 组件，后续按用户视觉反馈将 Image Brush 替换为 `/Game/_UI/HUD/Combat/Materials/T_StanceBreakMarker`。用户删除并重新放置旧场景 Enemy 实例后确认 `spine_03` 跟随正常；最终 Scene01 PIE 确认红点随 StanceBreak 后倾动作贴合胸口、自然恢复淡出可见，处决接管和死亡仍瞬间熄灭，头顶血条无观察到的布局、Lock-On 或 AutoFade 回归。
+- **验证与审查**：用户明确确认 PIE 基于当前代码编译；最终 `PolyQuest.Combat.EnemyStanceBreakRateWindow` 与 `PolyQuest.UI.VitalHUD` 均为 Success。headless 测试中的 `spine_03: No SkeletalMesh` 是 transient fixture warning，不是失败。Rider 对四个批准 C++/测试文件为零 error，限定 diff whitespace 检查通过；Main Fresh Review 无 P0-P2，Ponytail review 结论为无需删减生产复杂度。
+- **关闭与边界**：03H10 全部门禁完成且无新增债务。用户授权提交四个原生/测试文件、三个 StanceBreak Marker 资产和四份阶段文档；三个 `.uasset` 按 Git LFS pointer 核验，全部无关 Content/Config/地图/动画 WIP 保留并排除，不推送。当前 `plan.md` 保留最近完成交接，下一规划入口为 TODO-03H11。

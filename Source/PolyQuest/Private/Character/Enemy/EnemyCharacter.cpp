@@ -24,16 +24,24 @@
 #include "NiagaraFunctionLibrary.h"
 #include "PolyQuest.h"
 #include "AbilitySystem/Abilities/EnemyVictimExecutionAbility.h"
+#include "Blueprint/UserWidget.h"
 #include "Combat/Execution/ExecutionLockContext.h"
 #include "Sound/SoundBase.h"
 #include "TimerManager.h"
 #include "UI/EnemyHealthBarWidget.h"
+
+namespace
+{
+	constexpr float StanceBreakMarkerFadeDurationSeconds = 0.15f;
+	constexpr float StanceBreakMarkerFadeTickIntervalSeconds = 0.01f;
+}
 
 AEnemyCharacter::AEnemyCharacter()
 {
 	DeathPendingTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Status.DeathPending")), false);
 	CombatTeamTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Team.Enemy")), false);
 	DeadStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Status.Dead")), false);
+	VictimLockedStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Action.Execution.VictimLocked")), false);
 	HitReactionEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Reaction.Enemy.Big")), false);
 	SmallHitReactionEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Reaction.Enemy.Small")), false);
 	LaunchReactionEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Reaction.Enemy.Launch")), false);
@@ -54,6 +62,16 @@ AEnemyCharacter::AEnemyCharacter()
 	EnemyHealthBarWidgetComponent->SetPivot(FVector2D(0.5f, 1.0f));
 	EnemyHealthBarWidgetComponent->SetRelativeLocation(FVector(0.0f, 0.0f, 130.0f));
 	EnemyHealthBarWidgetComponent->SetDrawSize(FVector2D(160.0f, 20.0f));
+
+	StanceBreakMarkerWidgetComponent = CreateDefaultSubobject<UWidgetComponent>(TEXT("StanceBreakMarkerWidgetComponent"));
+	StanceBreakMarkerWidgetComponent->SetupAttachment(GetMesh(), FName(TEXT("spine_03")));
+	StanceBreakMarkerWidgetComponent->SetWidgetSpace(EWidgetSpace::Screen);
+	StanceBreakMarkerWidgetComponent->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	StanceBreakMarkerWidgetComponent->SetGenerateOverlapEvents(false);
+	StanceBreakMarkerWidgetComponent->SetPivot(FVector2D(0.5f, 0.5f));
+	StanceBreakMarkerWidgetComponent->SetRelativeLocation(FVector::ZeroVector);
+	StanceBreakMarkerWidgetComponent->SetDrawSize(FVector2D(20.0f, 20.0f));
+	StanceBreakMarkerWidgetComponent->SetVisibility(false, true);
 }
 
 #if WITH_DEV_AUTOMATION_TESTS
@@ -75,11 +93,20 @@ void AEnemyCharacter::BeginPlay()
 	{
 		DeathPendingTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Status.DeathPending")), false);
 	}
+	if (!StunnedStateTag.IsValid())
+	{
+		StunnedStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Status.Stunned")), false);
+	}
+	if (!VictimLockedStateTag.IsValid())
+	{
+		VictimLockedStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Action.Execution.VictimLocked")), false);
+	}
 
 	Super::BeginPlay();
 	bHasLoggedInvalidDeathRagdollBone = false;
 	BindDeathEvents();
 	BindUIHealthEvents();
+	BindStanceBreakMarkerEvents();
 
 	if (!HasValidPoiseRecoveryConfiguration() && !bHasLoggedInvalidPoiseRecoveryConfiguration)
 	{
@@ -91,6 +118,7 @@ void AEnemyCharacter::BeginPlay()
 void AEnemyCharacter::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
 	bDeathTeardownStarted = true;
+	UnbindStanceBreakMarkerEvents();
 	ActiveVictimExecutionAbility = nullptr;
 	if (UWorld* World = GetWorld())
 	{
@@ -126,6 +154,8 @@ void AEnemyCharacter::EndPlay(const EEndPlayReason::Type EndPlayReason)
 
 void AEnemyCharacter::UnPossessed()
 {
+	UnbindStanceBreakMarkerEvents();
+
 	if (IsDeathPending() && HasAuthority() && !IsDead() && !bDeathTeardownStarted)
 	{
 		SetDeadState();
@@ -143,6 +173,10 @@ void AEnemyCharacter::UnPossessed()
 	}
 
 	Super::UnPossessed();
+	if (!bDeathTeardownStarted && !IsActorBeingDestroyed())
+	{
+		BindStanceBreakMarkerEvents();
+	}
 }
 
 bool AEnemyCharacter::IsDead() const
@@ -1103,6 +1137,7 @@ void AEnemyCharacter::SetDeadState()
 
 void AEnemyCharacter::HandleDeath()
 {
+	HideStanceBreakMarker();
 	UAbilitySystemComponent* CharacterASC = GetAbilitySystemComponent();
 	if (!HasAuthority() || bDeathTeardownStarted || !CharacterASC || !IsDead())
 	{
@@ -1326,7 +1361,203 @@ void AEnemyCharacter::HideEnemyHealthBar()
 	}
 }
 
+void AEnemyCharacter::BindStanceBreakMarkerEvents()
+{
+	UAbilitySystemComponent* CharacterASC = GetAbilitySystemComponent();
+	if (!CharacterASC)
+	{
+		UnbindStanceBreakMarkerEvents();
+		return;
+	}
+
+	if (StanceBreakMarkerBoundAbilitySystemComponent.Get() == CharacterASC)
+	{
+		RefreshStanceBreakMarker();
+		return;
+	}
+
+	UnbindStanceBreakMarkerEvents();
+	StanceBreakMarkerBoundAbilitySystemComponent = CharacterASC;
+	StanceBreakMarkerStunnedTagChangedHandle = CharacterASC->RegisterGameplayTagEvent(StunnedStateTag, EGameplayTagEventType::NewOrRemoved)
+		.AddUObject(this, &AEnemyCharacter::OnStanceBreakMarkerRelevantTagChanged);
+	StanceBreakMarkerVictimLockedTagChangedHandle = CharacterASC->RegisterGameplayTagEvent(VictimLockedStateTag, EGameplayTagEventType::NewOrRemoved)
+		.AddUObject(this, &AEnemyCharacter::OnStanceBreakMarkerRelevantTagChanged);
+	StanceBreakMarkerDeathPendingTagChangedHandle = CharacterASC->RegisterGameplayTagEvent(DeathPendingTag, EGameplayTagEventType::NewOrRemoved)
+		.AddUObject(this, &AEnemyCharacter::OnStanceBreakMarkerRelevantTagChanged);
+	StanceBreakMarkerDeadTagChangedHandle = CharacterASC->RegisterGameplayTagEvent(DeadStateTag, EGameplayTagEventType::NewOrRemoved)
+		.AddUObject(this, &AEnemyCharacter::OnStanceBreakMarkerRelevantTagChanged);
+	RefreshStanceBreakMarker();
+}
+
+void AEnemyCharacter::UnbindStanceBreakMarkerEvents()
+{
+	if (UAbilitySystemComponent* BoundASC = StanceBreakMarkerBoundAbilitySystemComponent.Get())
+	{
+		if (StanceBreakMarkerStunnedTagChangedHandle.IsValid() && StunnedStateTag.IsValid())
+		{
+			BoundASC->UnregisterGameplayTagEvent(StanceBreakMarkerStunnedTagChangedHandle, StunnedStateTag);
+		}
+		if (StanceBreakMarkerVictimLockedTagChangedHandle.IsValid() && VictimLockedStateTag.IsValid())
+		{
+			BoundASC->UnregisterGameplayTagEvent(StanceBreakMarkerVictimLockedTagChangedHandle, VictimLockedStateTag);
+		}
+		if (StanceBreakMarkerDeathPendingTagChangedHandle.IsValid() && DeathPendingTag.IsValid())
+		{
+			BoundASC->UnregisterGameplayTagEvent(StanceBreakMarkerDeathPendingTagChangedHandle, DeathPendingTag);
+		}
+		if (StanceBreakMarkerDeadTagChangedHandle.IsValid() && DeadStateTag.IsValid())
+		{
+			BoundASC->UnregisterGameplayTagEvent(StanceBreakMarkerDeadTagChangedHandle, DeadStateTag);
+		}
+	}
+
+	StanceBreakMarkerStunnedTagChangedHandle.Reset();
+	StanceBreakMarkerVictimLockedTagChangedHandle.Reset();
+	StanceBreakMarkerDeathPendingTagChangedHandle.Reset();
+	StanceBreakMarkerDeadTagChangedHandle.Reset();
+	StanceBreakMarkerBoundAbilitySystemComponent.Reset();
+	HideStanceBreakMarker();
+}
+
+void AEnemyCharacter::OnStanceBreakMarkerRelevantTagChanged(const FGameplayTag Tag, int32 NewCount)
+{
+	if (Tag == StunnedStateTag && NewCount == 0)
+	{
+		UAbilitySystemComponent* BoundASC = StanceBreakMarkerBoundAbilitySystemComponent.Get();
+		if (BoundASC
+			&& StanceBreakMarkerWidgetComponent
+			&& StanceBreakMarkerWidgetComponent->GetVisibleFlag()
+			&& !BoundASC->HasMatchingGameplayTag(VictimLockedStateTag)
+			&& !BoundASC->HasMatchingGameplayTag(DeathPendingTag)
+			&& !BoundASC->HasMatchingGameplayTag(DeadStateTag)
+			&& !bDeathTeardownStarted)
+		{
+			BeginStanceBreakMarkerFadeOut();
+			return;
+		}
+	}
+
+	RefreshStanceBreakMarker();
+}
+
+void AEnemyCharacter::RefreshStanceBreakMarker()
+{
+	UAbilitySystemComponent* BoundASC = StanceBreakMarkerBoundAbilitySystemComponent.Get();
+	const bool bShouldShow = BoundASC
+		&& BoundASC->HasMatchingGameplayTag(StunnedStateTag)
+		&& !BoundASC->HasMatchingGameplayTag(VictimLockedStateTag)
+		&& !BoundASC->HasMatchingGameplayTag(DeathPendingTag)
+		&& !BoundASC->HasMatchingGameplayTag(DeadStateTag)
+		&& !bDeathTeardownStarted;
+
+	if (StanceBreakMarkerWidgetComponent)
+	{
+		if (bShouldShow)
+		{
+			if (UWorld* World = GetWorld())
+			{
+				World->GetTimerManager().ClearTimer(StanceBreakMarkerFadeUpdateTimerHandle);
+				World->GetTimerManager().ClearTimer(StanceBreakMarkerFadeCompletionTimerHandle);
+			}
+			StanceBreakMarkerTintAlpha = 1.0f;
+			SetStanceBreakMarkerRenderOpacity(StanceBreakMarkerTintAlpha);
+			StanceBreakMarkerWidgetComponent->SetVisibility(true, true);
+		}
+		else
+		{
+			HideStanceBreakMarker();
+		}
+	}
+}
+
+void AEnemyCharacter::BeginStanceBreakMarkerFadeOut()
+{
+	UWorld* World = GetWorld();
+	if (!World || !StanceBreakMarkerWidgetComponent || bDeathTeardownStarted)
+	{
+		HideStanceBreakMarker();
+		return;
+	}
+
+	World->GetTimerManager().ClearTimer(StanceBreakMarkerFadeUpdateTimerHandle);
+	World->GetTimerManager().ClearTimer(StanceBreakMarkerFadeCompletionTimerHandle);
+	StanceBreakMarkerTintAlpha = 1.0f;
+	SetStanceBreakMarkerRenderOpacity(StanceBreakMarkerTintAlpha);
+	StanceBreakMarkerWidgetComponent->SetVisibility(true, true);
+	World->GetTimerManager().SetTimer(
+		StanceBreakMarkerFadeCompletionTimerHandle,
+		this,
+		&AEnemyCharacter::HideStanceBreakMarker,
+		StanceBreakMarkerFadeDurationSeconds,
+		false);
+	World->GetTimerManager().SetTimer(
+		StanceBreakMarkerFadeUpdateTimerHandle,
+		this,
+		&AEnemyCharacter::UpdateStanceBreakMarkerFadeOut,
+		StanceBreakMarkerFadeTickIntervalSeconds,
+		true);
+}
+
+void AEnemyCharacter::UpdateStanceBreakMarkerFadeOut()
+{
+	UWorld* World = GetWorld();
+	if (!World || !StanceBreakMarkerWidgetComponent)
+	{
+		HideStanceBreakMarker();
+		return;
+	}
+
+	const float RemainingSeconds = World->GetTimerManager().GetTimerRemaining(StanceBreakMarkerFadeCompletionTimerHandle);
+	if (RemainingSeconds < 0.0f)
+	{
+		HideStanceBreakMarker();
+		return;
+	}
+
+	StanceBreakMarkerTintAlpha = FMath::Clamp(RemainingSeconds / StanceBreakMarkerFadeDurationSeconds, 0.0f, 1.0f);
+	SetStanceBreakMarkerRenderOpacity(StanceBreakMarkerTintAlpha);
+
+	if (StanceBreakMarkerTintAlpha <= KINDA_SMALL_NUMBER)
+	{
+		HideStanceBreakMarker();
+	}
+}
+
+void AEnemyCharacter::SetStanceBreakMarkerRenderOpacity(const float Opacity)
+{
+	if (StanceBreakMarkerWidgetComponent)
+	{
+		if (UUserWidget* MarkerWidget = StanceBreakMarkerWidgetComponent->GetUserWidgetObject())
+		{
+			MarkerWidget->SetRenderOpacity(Opacity);
+		}
+	}
+}
+
+void AEnemyCharacter::HideStanceBreakMarker()
+{
+	if (UWorld* World = GetWorld())
+	{
+		World->GetTimerManager().ClearTimer(StanceBreakMarkerFadeUpdateTimerHandle);
+		World->GetTimerManager().ClearTimer(StanceBreakMarkerFadeCompletionTimerHandle);
+	}
+	StanceBreakMarkerTintAlpha = 1.0f;
+	if (StanceBreakMarkerWidgetComponent)
+	{
+		SetStanceBreakMarkerRenderOpacity(StanceBreakMarkerTintAlpha);
+		StanceBreakMarkerWidgetComponent->SetVisibility(false, true);
+	}
+}
+
 #if WITH_DEV_AUTOMATION_TESTS
+bool AEnemyCharacter::HasBoundStanceBreakMarkerDelegates() const
+{
+	return StanceBreakMarkerStunnedTagChangedHandle.IsValid()
+		&& StanceBreakMarkerVictimLockedTagChangedHandle.IsValid()
+		&& StanceBreakMarkerDeathPendingTagChangedHandle.IsValid()
+		&& StanceBreakMarkerDeadTagChangedHandle.IsValid();
+}
+
 UEnemyHealthBarWidget* AEnemyCharacter::GetTestHealthBarWidget() const
 {
 	return EnemyHealthBarWidget.Get();

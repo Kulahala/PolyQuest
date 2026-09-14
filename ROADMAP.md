@@ -4,9 +4,9 @@
 
 ## Current State
 
-- 最近交付：TODO-03H9 的 A/B/C 实现、构建/Automation、源码审查修复、用户最终测试及合并资产 readback 已完成，2026-09-14 总验收关闭。Unreal MCP 读回 32 份 GA、15 份相关数据资产、39 份 Montage 和 48 份源动画，闭环 A/B/C 三条资产收据债。固定收据见 ROADMAP-archive 的“TODO-03H9：A/B/C 合并资产 readback 与总验收关闭”条目。
-- 当前交接：[plan.md](plan.md) 保留 C 的最近完成交接，尚未替换，本次与 C 实现一并提交。下一规划入口为 TODO-03H10。A/B 历史契约分别固定为 `git show 08f4214:plan.md`、`git show 931f5de:plan.md`，本次合并验收不改写历史执行时点。
-- 已确认排期：**03H10 StanceBreak 处决机会标识 → 03H11 Small 小幅击退 → 03C → 03C-B**。正式实施前各自冻结最小计划、参数及路径。Big 倍率配置仅按 TODO-03H12 条件开启；其他条件阶段也不自动加入前置。
+- 最近交付：TODO-03H10 已于 2026-09-14 完成。敌人以独立 Screen Space WidgetComponent 显示 StanceBreak 胸口红点，随 Mesh `spine_03` 骨骼运动；自然恢复使用 `0.15s` 游戏时间淡出，处决接管、待死亡、死亡与 teardown 瞬间熄灭。用户确认当前代码编译、两组 Automation 和 Scene01 PIE/视觉门禁通过，Main Fresh Review 无 P0-P2。固定收据见 ROADMAP-archive 的“TODO-03H10：StanceBreak 胸口红点标识”条目。
+- 当前交接：[plan.md](plan.md) 保留 TODO-03H10 最近完成交接。下一规划入口为 TODO-03H11；03H9 总验收及 03H10 完成证据固定于归档。
+- 已确认排期：**03H11 Small 小幅击退 → 03H13 处决命中帧消费红点 → 03C → 03C-B**。正式实施前各自冻结最小计划、参数及路径。Big 倍率配置仅按 TODO-03H12 条件开启；其他条件阶段也不自动加入前置。
 - 既有 Content/Config WIP 与各阶段资产收据债保持独立；当前状态不构成干净检出可复现或打包就绪证明。
 
 ## Contents
@@ -28,12 +28,6 @@
 
 ### Combat Experience Before Ranged Enemy
 
-- [ ] TODO-03H10: StanceBreak Execution Opportunity Marker
-  - 已确认目标：敌人进入允许处决的 StanceBreak 状态时显示单一红色标记，退出时消失，表达敌人的破韧处决机会。沿用 GAS 的实际状态/事件，复用现有敌人表现承载；不以 Poise 数值归零、动画计时或 UI 自有布尔副本充当玩法权威。
-  - 提示须在退出 StanceBreak、死亡/待死亡、VictimLocked、销毁/解绑时隐藏；订阅时读取初始状态，避免出生/重新显示时遗漏，多个敌人独立。正式计划核对 Stunned 的真实来源和已确认播放边界，防止无效启动或其他 Stunned 来源误亮。
-  - 当前 FrontExecution 还检查玩家状态、武器、锁定目标、正面角度、距离和目标可用性。默认红标只表示敌人的破韧机会，不等同完整 CanActivate 成功；若要表达“现在可以按键处决”，须在本阶段明确接入现有目标/几何判定，不能另写一套近似规则。先做单一红色图标，不增加闪烁、通用指示器框架或玩法 Tag。
-  - 验收：实际 GAS 进入/退出、启动失败、自然恢复、死亡、处决锁定、连续破韧和多目标清理；用户 readback/PIE 确认图标可读且不残留。新 Widget/材质/蓝图资产路径在正式计划单独批准。
-
 - [ ] TODO-03H11: Small Hit Reaction Knockback
   - 已确认目标：为 Enemy Small 增加短促、可关闭的小幅地面击退，增强轻受击反馈并保持近战连段可接续。范围仅为 Small；Big 保留现有 Montage Root Motion，Launch 保留现有接地 RootMotionKnockdown。不增加 Big 自动回退、Motion Warping 或强制根锁定改造。Player Small 不自动纳入，若需要须在正式计划明确批准。
   - 位移由现有 GAS 受击生命周期和原生 CMC 能力管理，沿用真实来袭方向快照，胶囊碰撞/地面处理仍由 CMC 负责，不直接逐帧移动 Actor 或 Mesh，不新增通用位移框架。Small 现有不强制取消攻击、不加移动锁的契约保留；正式计划核对导航和攻击并行时序，不为反馈暗改打断等级。
@@ -41,10 +35,16 @@
   - 距离、短时长和衰减可配置，提供零距离关闭；具体数值通过代表性场景试调，不在路线图硬定。连续 Small 默认替换旧击退，不无限累计；旧实例结束不得停止新位移，死亡、Big/Launch、处决、销毁/解绑及其他终止路径撤销自身贡献，不清除其他动作的速度或移动资源。
   - 验收：真实受击方向、重复命中、零距离、导航/攻击并行、Root Motion 冲突、墙角/坡面/悬崖、升级受击/死亡/处决打断，以及 RateWindow/HitStop 时序。先做有/无击退对照，确认反馈更清楚、不把敌人持续推出下一刀有效范围、不出现足滑/无限推行；补对应 Automation 与用户 readback/PIE。正式实施另冻结调用点、批准路径及最小资产范围。
 
+- [ ] TODO-03H13: Execution Hit-Timed StanceBreak Marker Consumption v1
+  - 排在 TODO-03H11 之后、TODO-03C 之前。仅当 Front 处决由真实 StanceBreak 交接而来时，红点在锁定、吸附和攻击前摇期间继续跟随胸口显示，并在既有处决伤害成功结算的命中帧瞬间熄灭；普通 Backstab 不得因 Victim Ability 临时持有 `State.Status.Stunned` 而生成红点。
+  - 复用现有 `Event.Action.Execution.Hit -> FMeleeHitResolver::TryResolveHit -> UExecutionLockContext::CompleteHitScope` 授权链，以命中上下文成功进入 `NonLethal` 或 `DeathPending` 作为消费边界；原始 AnimNotify、重复事件、无效几何、GameplayEffect 失败或中断均不得单独消费。不得新增 `HitOccurred` Gameplay Tag、延迟 Timer、Poise 判定或第二套处决状态。
+  - 处决命中前取消或失败时不伪造消费，并按最终 GAS 状态恢复或隐藏；DeathPending、Dead、死亡拆卸和销毁继续瞬间隐藏。正式计划需冻结最小的 Victim Ability/Execution Context/Enemy Character 接口与批准路径，不改伤害权属、命中顺序、处决锁或自然恢复淡出规则。
+  - 验收覆盖真实 Front StanceBreak 交接的前摇保留与命中熄灭、普通 Backstab 不显示、非致死/致死命中、重复 Notify、伤害失败、命中前取消、Release/死亡/teardown 和后续再次破韧；补 focused Automation、用户 Development Editor 编译与 Scene01 PIE 视觉对帧验证。
+
 ### Ranged Enemy
 
 - [ ] TODO-03C: Ranged Enemy v1
-  - 按用户新增体验排期，在 03H10/03H11 后独立规划；03H9 总验收已关闭。已完成前置的历史不再展开；开放债务按下方各自阻塞性和关闭条件处理，不自动豁免或扩大前置。FIX2 PIE 债务在远程敌人首次可玩时实测；其余未接受建议与 fixture 候选不自动延迟本片。
+  - 按用户新增体验排期，在 03H11 与 03H13 后独立规划；03H9/03H10 已关闭。已完成前置的历史不再展开；开放债务按下方各自阻塞性和关闭条件处理，不自动豁免或扩大前置。FIX2 PIE 债务在远程敌人首次可玩时实测；其余未接受建议与 fixture 候选不自动延迟本片。
   - 规划建议：复用现有 Controller 的请求/pending/冷却所有权，保留远程局部距离/LOS 策略；有界扩展 EnemyAttackProfile 并兼容近战默认值，远程 DamageGE 仅取 ProjectileDefinition。接口、校验和资产路径由本片计划冻结，不构成当前实现授权。
   - Reuse the existing immutable 03B projectile runtime and GAS delivery path. Add only enemy ranged Profile/Ability/StateTree timing and an AI-owned target snapshot; enemy projectiles are explicitly authored straight/non-homing by default.
   - Do not create Player Lock-On, global Target Assist, a second projectile hierarchy, or a second damage path.

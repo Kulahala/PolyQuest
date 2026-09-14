@@ -1451,6 +1451,7 @@ widget; it does not own gameplay state.
 | UPlayerSkillBarHUDWidget | Reads prepared slots/cooldowns from Equipment and ASC; no independent gameplay timer |
 | UWorldInteractionPromptWidget | Passive candidate text/view; no input or equipment mutation |
 | Enemy health bar component | Enemy-owned screen-space component with configured draw size, relative Z, and collision disabled |
+| Enemy StanceBreak marker | Enemy-owned screen-space component attached to the skeletal mesh chest bone; GAS Tag-driven and independent of the health bar |
 
 `UPlayerVitalHUDWidget` rejects non-finite or non-positive-Max inputs to a zero
 display:
@@ -1484,6 +1485,16 @@ behavior: damage wakes the bar, lock-on keeps it visible, and full-health unlock
 can enter the auto-fade path governed by `AutoFadeDelay` and `FadeOutDuration`.
 The configured Widget classes, hierarchy, bindings, animations, fonts, colors,
 and final appearance are [Authored asset] / [Not verified in this pass].
+
+Each Enemy also owns a separate collision-disabled Screen-space
+`StanceBreakMarkerWidgetComponent`, attached to the skeletal mesh at `spine_03`
+so it follows the animated chest pose. Four ASC Tag events drive one predicate:
+`Stunned && !VictimLocked && !DeathPending && !Dead && !DeathTeardown`.
+Natural removal of `Stunned` linearly fades the internal `UUserWidget` render
+opacity over `0.15s` of game time; execution takeover, death states, ASC unbind,
+and teardown cancel the timers and hide immediately. This component does not
+read Poise, Montage timing, input eligibility, lock-on, distance, angle, LOS, or
+the Enemy health-bar visibility/auto-fade state.
 
 The Skill Bar (`UPlayerSkillBarHUDWidget`) manages four index-aligned slots. Each
 refresh validates the Equipment slot's exact prepared handle, current component

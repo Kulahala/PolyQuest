@@ -11,6 +11,7 @@
 #include "Character/Player/PlayerCharacter.h"
 #include "Components/Image.h"
 #include "Components/ProgressBar.h"
+#include "Components/SkeletalMeshComponent.h"
 #include "Components/TextBlock.h"
 #include "Components/WidgetComponent.h"
 #include "Engine/Engine.h"
@@ -805,6 +806,29 @@ bool FVitalHudAutomationTest::RunTest(const FString&)
 				TestEqual(TEXT("Enemy WidgetComponent draw size is 160x20"),
 					WidgetComp->GetDrawSize(), FVector2D(160.0, 20.0));
 			}
+
+			const UWidgetComponent* MarkerComp = EnemyCDO->GetTestStanceBreakMarkerWidgetComponent();
+			TestNotNull(TEXT("StanceBreakMarkerWidgetComponent exists on CDO"), MarkerComp);
+			if (MarkerComp)
+			{
+				TestEqual(TEXT("StanceBreak marker attaches to the character mesh"),
+					MarkerComp->GetAttachParent(), static_cast<USceneComponent*>(EnemyCDO->GetMesh()));
+				TestEqual(TEXT("StanceBreak marker uses the upper-chest spine_03 socket"),
+					MarkerComp->GetAttachSocketName(), FName(TEXT("spine_03")));
+				TestEqual(TEXT("StanceBreak marker WidgetComponent space is Screen"),
+					MarkerComp->GetWidgetSpace(), EWidgetSpace::Screen);
+				TestEqual(TEXT("StanceBreak marker collision is NoCollision"),
+					MarkerComp->GetCollisionEnabled(), ECollisionEnabled::NoCollision);
+				TestFalse(TEXT("StanceBreak marker overlap generation is disabled"),
+					MarkerComp->GetGenerateOverlapEvents());
+				TestEqual(TEXT("StanceBreak marker pivot is (0.5, 0.5)"),
+					MarkerComp->GetPivot(), FVector2D(0.5, 0.5));
+				TestEqual(TEXT("StanceBreak marker has no socket-relative location offset"),
+					MarkerComp->GetRelativeLocation(), FVector::ZeroVector);
+				TestEqual(TEXT("StanceBreak marker draw size is 20x20"),
+					MarkerComp->GetDrawSize(), FVector2D(20.0, 20.0));
+				TestFalse(TEXT("StanceBreak marker is hidden by default"), MarkerComp->GetVisibleFlag());
+			}
 		}
 	}
 
@@ -843,6 +867,122 @@ bool FVitalHudAutomationTest::RunTest(const FString&)
 
 		if (Enemy)
 		{
+			UWidgetComponent* MarkerComp = Enemy->GetTestStanceBreakMarkerWidgetComponent();
+			UEnemyHealthBarWidget* MarkerWidget = MarkerComp ? NewObject<UEnemyHealthBarWidget>(MarkerComp) : nullptr;
+			if (MarkerComp && MarkerWidget)
+			{
+				MarkerComp->SetWidget(MarkerWidget);
+			}
+			TestNotNull(TEXT("StanceBreak marker exists on spawned enemy"), MarkerComp);
+			TestNotNull(TEXT("StanceBreak marker owns a test UserWidget"), MarkerWidget);
+			TestTrue(TEXT("Enemy bound StanceBreak marker delegates"), Enemy->HasBoundStanceBreakMarkerDelegates());
+			TestFalse(TEXT("StanceBreak marker starts hidden without Stunned"), MarkerComp && MarkerComp->GetVisibleFlag());
+
+			const FGameplayTag TagStunned = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Status.Stunned")), false);
+			const FGameplayTag TagVictimLocked = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Action.Execution.VictimLocked")), false);
+			const FGameplayTag TagDeathPending = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Status.DeathPending")), false);
+			const FGameplayTag TagDead = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Status.Dead")), false);
+			TestTrue(TEXT("StanceBreak marker Stunned tag is valid"), TagStunned.IsValid());
+			TestTrue(TEXT("StanceBreak marker VictimLocked tag is valid"), TagVictimLocked.IsValid());
+			TestTrue(TEXT("StanceBreak marker DeathPending tag is valid"), TagDeathPending.IsValid());
+			TestTrue(TEXT("StanceBreak marker Dead tag is valid"), TagDead.IsValid());
+
+			if (UAbilitySystemComponent* EnemyASC = Enemy->GetAbilitySystemComponent())
+			{
+				EnemyASC->AddLooseGameplayTag(TagStunned);
+				TestTrue(TEXT("StanceBreak marker shows for Stunned"), MarkerComp && MarkerComp->GetVisibleFlag());
+				TestEqual(TEXT("StanceBreak marker starts at full render opacity"), MarkerWidget ? MarkerWidget->GetRenderOpacity() : -1.0f, 1.0f);
+
+				EnemyASC->AddLooseGameplayTag(TagVictimLocked);
+				TestFalse(TEXT("StanceBreak marker hides for VictimLocked"), MarkerComp && MarkerComp->GetVisibleFlag());
+				EnemyASC->RemoveLooseGameplayTag(TagVictimLocked);
+				TestTrue(TEXT("StanceBreak marker restores after VictimLocked removal"), MarkerComp && MarkerComp->GetVisibleFlag());
+
+				// Execution owns both tags after taking over the original StanceBreak contribution.
+				FGameplayTagContainer ExecutionOwnedTags;
+				ExecutionOwnedTags.AddTag(TagVictimLocked);
+				ExecutionOwnedTags.AddTag(TagStunned);
+				EnemyASC->AddLooseGameplayTags(ExecutionOwnedTags);
+				EnemyASC->RemoveLooseGameplayTag(TagStunned);
+				TestFalse(TEXT("Execution takeover keeps StanceBreak marker hidden"), MarkerComp && MarkerComp->GetVisibleFlag());
+				EnemyASC->RemoveLooseGameplayTags(ExecutionOwnedTags);
+				TestFalse(TEXT("Execution-owned tag removal does not flash the hidden marker"), MarkerComp && MarkerComp->GetVisibleFlag());
+				TestFalse(TEXT("Execution-owned tag removal does not start marker fade"), Enemy->HasPendingStanceBreakMarkerFade());
+				EnemyASC->AddLooseGameplayTag(TagStunned);
+				TestTrue(TEXT("A later StanceBreak still shows the marker"), MarkerComp && MarkerComp->GetVisibleFlag());
+
+				EnemyASC->AddLooseGameplayTag(TagDeathPending);
+				TestFalse(TEXT("StanceBreak marker hides for DeathPending"), MarkerComp && MarkerComp->GetVisibleFlag());
+				EnemyASC->RemoveLooseGameplayTag(TagDeathPending);
+				TestTrue(TEXT("StanceBreak marker restores after DeathPending removal"), MarkerComp && MarkerComp->GetVisibleFlag());
+
+				// Natural Stunned removal keeps the marker visible while its 0.15s fade runs.
+				EnemyASC->RemoveLooseGameplayTag(TagStunned);
+				TestTrue(TEXT("StanceBreak marker stays visible when natural recovery starts"), MarkerComp && MarkerComp->GetVisibleFlag());
+				TestTrue(TEXT("Natural recovery starts the marker fade timer"), Enemy->HasPendingStanceBreakMarkerFade());
+				FCombatAutomationFixture::TickWorld(World, 0.0f);
+				FCombatAutomationFixture::AdvanceWorld(World, 0.05f);
+				TestTrue(TEXT("StanceBreak marker remains visible during natural recovery fade"), MarkerComp && MarkerComp->GetVisibleFlag());
+				TestTrue(TEXT("Natural recovery fade alpha is between 0 and 1"),
+					Enemy->GetTestStanceBreakMarkerTintAlpha() > 0.0f
+					&& Enemy->GetTestStanceBreakMarkerTintAlpha() < 1.0f);
+				TestEqual(TEXT("Natural recovery applies alpha to the Screen Space UserWidget"),
+					MarkerWidget ? MarkerWidget->GetRenderOpacity() : -1.0f,
+					Enemy->GetTestStanceBreakMarkerTintAlpha());
+				FCombatAutomationFixture::AdvanceWorld(World, 0.11f);
+				TestFalse(TEXT("StanceBreak marker hides after natural recovery fade"), MarkerComp && MarkerComp->GetVisibleFlag());
+				TestFalse(TEXT("Natural recovery fade timer completes"), Enemy->HasPendingStanceBreakMarkerFade());
+				TestEqual(TEXT("Natural recovery restores marker alpha to 1"), Enemy->GetTestStanceBreakMarkerTintAlpha(), 1.0f);
+				TestEqual(TEXT("Natural recovery restores UserWidget render opacity to 1"), MarkerWidget ? MarkerWidget->GetRenderOpacity() : -1.0f, 1.0f);
+
+				// Re-entering Stunned during a fade immediately restores full visibility.
+				EnemyASC->AddLooseGameplayTag(TagStunned);
+				EnemyASC->RemoveLooseGameplayTag(TagStunned);
+				TestTrue(TEXT("Second natural recovery starts marker fade"), Enemy->HasPendingStanceBreakMarkerFade());
+				EnemyASC->AddLooseGameplayTag(TagStunned);
+				TestTrue(TEXT("Re-entering Stunned restores marker visibility immediately"), MarkerComp && MarkerComp->GetVisibleFlag());
+				TestFalse(TEXT("Re-entering Stunned cancels marker fade"), Enemy->HasPendingStanceBreakMarkerFade());
+				TestEqual(TEXT("Re-entering Stunned restores marker alpha to 1"), Enemy->GetTestStanceBreakMarkerTintAlpha(), 1.0f);
+
+				// Suppression tags interrupt a fade immediately.
+				EnemyASC->RemoveLooseGameplayTag(TagStunned);
+				EnemyASC->AddLooseGameplayTag(TagVictimLocked);
+				TestFalse(TEXT("VictimLocked interrupts marker fade immediately"), MarkerComp && MarkerComp->GetVisibleFlag());
+				TestFalse(TEXT("VictimLocked clears marker fade timer"), Enemy->HasPendingStanceBreakMarkerFade());
+				EnemyASC->RemoveLooseGameplayTag(TagVictimLocked);
+				EnemyASC->AddLooseGameplayTag(TagStunned);
+				EnemyASC->RemoveLooseGameplayTag(TagStunned);
+				EnemyASC->AddLooseGameplayTag(TagDeathPending);
+				TestFalse(TEXT("DeathPending interrupts marker fade immediately"), MarkerComp && MarkerComp->GetVisibleFlag());
+				TestFalse(TEXT("DeathPending clears marker fade timer"), Enemy->HasPendingStanceBreakMarkerFade());
+				EnemyASC->RemoveLooseGameplayTag(TagDeathPending);
+				EnemyASC->AddLooseGameplayTag(TagStunned);
+				EnemyASC->RemoveLooseGameplayTag(TagStunned);
+				TestTrue(TEXT("UnPossess interruption starts from an active marker fade"), Enemy->HasPendingStanceBreakMarkerFade());
+				Enemy->TriggerTestUnPossessed();
+				TestFalse(TEXT("UnPossess hides marker immediately"), MarkerComp && MarkerComp->GetVisibleFlag());
+				TestFalse(TEXT("UnPossess clears marker fade timer"), Enemy->HasPendingStanceBreakMarkerFade());
+
+				Enemy->TriggerTestUnbindStanceBreakMarkerEvents();
+				TestFalse(TEXT("StanceBreak marker delegates cleanly unbound"), Enemy->HasBoundStanceBreakMarkerDelegates());
+				TestFalse(TEXT("Unbinding hides StanceBreak marker"), MarkerComp && MarkerComp->GetVisibleFlag());
+				TestFalse(TEXT("Unbinding clears marker fade timer"), Enemy->HasPendingStanceBreakMarkerFade());
+				EnemyASC->RemoveLooseGameplayTag(TagStunned);
+				EnemyASC->AddLooseGameplayTag(TagStunned);
+				Enemy->TriggerTestRefreshStanceBreakMarker();
+				TestFalse(TEXT("Unbound StanceBreak marker ignores ASC tag changes"), MarkerComp && MarkerComp->GetVisibleFlag());
+
+				Enemy->TriggerTestBindStanceBreakMarkerEvents();
+				TestTrue(TEXT("StanceBreak marker delegates rebound"), Enemy->HasBoundStanceBreakMarkerDelegates());
+				TestTrue(TEXT("Rebound StanceBreak marker reads current Stunned state"), MarkerComp && MarkerComp->GetVisibleFlag());
+				EnemyASC->RemoveLooseGameplayTag(TagStunned);
+				TestTrue(TEXT("Rebound marker remains visible during natural recovery fade"), MarkerComp && MarkerComp->GetVisibleFlag());
+				TestTrue(TEXT("Rebound marker natural recovery starts fade timer"), Enemy->HasPendingStanceBreakMarkerFade());
+				FCombatAutomationFixture::TickWorld(World, 0.0f);
+				FCombatAutomationFixture::AdvanceWorld(World, 0.16f);
+				TestFalse(TEXT("StanceBreak marker hides after natural recovery fade"), MarkerComp && MarkerComp->GetVisibleFlag());
+			}
+
 			// Headless environment: GetUserWidgetObject() is null, weak reference is safely null
 			TestNull(TEXT("Headless enemy widget instance is safely null"), Enemy->GetTestHealthBarWidget());
 			TestTrue(TEXT("Enemy bound UI health attribute delegates"), Enemy->HasBoundUIHealthDelegates());
@@ -882,8 +1022,59 @@ bool FVitalHudAutomationTest::RunTest(const FString&)
 			Enemy->TriggerTestRefreshEnemyHealthBar();
 			TestEqual(TEXT("Rebound enemy widget percent reflects current health 40/120"), EnemyBar->GetPercent(), 40.0f / 120.0f);
 
+			// A second enemy owns an independent marker state.
+			AEnemyCharacter* SiblingEnemy = FCombatAutomationFixture::SpawnPassiveEnemy(World);
+			TestNotNull(TEXT("Sibling enemy spawned for marker isolation"), SiblingEnemy);
+			if (SiblingEnemy)
+			{
+				UWidgetComponent* SiblingMarker = SiblingEnemy->GetTestStanceBreakMarkerWidgetComponent();
+				if (UAbilitySystemComponent* EnemyASC = Enemy->GetAbilitySystemComponent())
+				{
+					if (UAbilitySystemComponent* SiblingASC = SiblingEnemy->GetAbilitySystemComponent())
+					{
+						EnemyASC->AddLooseGameplayTag(TagStunned);
+						SiblingASC->AddLooseGameplayTag(TagStunned);
+						TestTrue(TEXT("Primary enemy marker shows independently"), MarkerComp && MarkerComp->GetVisibleFlag());
+						TestTrue(TEXT("Sibling enemy marker shows independently"), SiblingMarker && SiblingMarker->GetVisibleFlag());
+						EnemyASC->RemoveLooseGameplayTag(TagStunned);
+						TestTrue(TEXT("Primary enemy marker fades without affecting sibling"), MarkerComp && MarkerComp->GetVisibleFlag());
+						TestTrue(TEXT("Sibling enemy marker remains visible during primary fade"), SiblingMarker && SiblingMarker->GetVisibleFlag());
+						FCombatAutomationFixture::TickWorld(World, 0.0f);
+						FCombatAutomationFixture::AdvanceWorld(World, 0.16f);
+						TestFalse(TEXT("Primary enemy marker hides after its independent fade"), MarkerComp && MarkerComp->GetVisibleFlag());
+						TestTrue(TEXT("Sibling enemy marker remains visible after primary fade"), SiblingMarker && SiblingMarker->GetVisibleFlag());
+						SiblingASC->RemoveLooseGameplayTag(TagStunned);
+					}
+				}
+				SiblingEnemy->Destroy();
+			}
+
 			// Destroy enemy and verify teardown
 			Enemy->Destroy();
+		}
+	}
+
+	// 3.2 Dead is a terminal enemy state: the marker hides and never re-enters the visible state.
+	{
+		AEnemyCharacter* DeadEnemy = FCombatAutomationFixture::SpawnPassiveEnemy(World);
+		TestNotNull(TEXT("Terminal marker fixture enemy spawned"), DeadEnemy);
+		if (DeadEnemy)
+		{
+			UWidgetComponent* MarkerComp = DeadEnemy->GetTestStanceBreakMarkerWidgetComponent();
+			if (UAbilitySystemComponent* EnemyASC = DeadEnemy->GetAbilitySystemComponent())
+			{
+				const FGameplayTag TagStunned = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Status.Stunned")), false);
+				const FGameplayTag TagDead = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Status.Dead")), false);
+				EnemyASC->AddLooseGameplayTag(TagStunned);
+				TestTrue(TEXT("Terminal marker fixture shows for Stunned"), MarkerComp && MarkerComp->GetVisibleFlag());
+				EnemyASC->RemoveLooseGameplayTag(TagStunned);
+				TestTrue(TEXT("Terminal marker fixture starts natural recovery fade"), DeadEnemy->HasPendingStanceBreakMarkerFade());
+				EnemyASC->AddLooseGameplayTag(TagDead);
+				TestFalse(TEXT("StanceBreak marker hides for terminal Dead"), MarkerComp && MarkerComp->GetVisibleFlag());
+				TestFalse(TEXT("Dead clears marker fade timer"), DeadEnemy->HasPendingStanceBreakMarkerFade());
+				TestEqual(TEXT("Dead restores marker alpha to 1"), DeadEnemy->GetTestStanceBreakMarkerTintAlpha(), 1.0f);
+			}
+			DeadEnemy->Destroy();
 		}
 	}
 

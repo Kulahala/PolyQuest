@@ -30,6 +30,7 @@
 #include "Animation/AnimSequence.h"
 #include "Animation/Skeleton.h"
 #include "Components/SkeletalMeshComponent.h"
+#include "Components/WidgetComponent.h"
 #include "ReferenceSkeleton.h"
 #include "UObject/Package.h"
 #include <limits>
@@ -336,6 +337,9 @@ bool FEnemyStanceBreakRateWindowAutomationTest::RunTest(const FString& Parameter
 		const bool bCanActivateUnbroken = EnemyASC->TryActivateAbility(Handle);
 		TestFalse(TEXT("Cannot activate StanceBreak when Poise is full/unbroken"), bCanActivateUnbroken);
 		TestFalse(TEXT("Enemy does not have Stunned tag"), EnemyASC->HasMatchingGameplayTag(TagStunned));
+		TestFalse(TEXT("StanceBreak marker remains hidden when activation fails"),
+			Enemy->GetTestStanceBreakMarkerWidgetComponent()
+			&& Enemy->GetTestStanceBreakMarkerWidgetComponent()->GetVisibleFlag());
 
 		EnemyASC->ClearAbility(Handle);
 	}
@@ -394,6 +398,9 @@ bool FEnemyStanceBreakRateWindowAutomationTest::RunTest(const FString& Parameter
 
 		if (TestNotNull(TEXT("Active UEnemyStanceBreakAbility instance exists"), StanceBreakAbility))
 		{
+			TestTrue(TEXT("StanceBreak marker is visible while real StanceBreak is active"),
+				Enemy->GetTestStanceBreakMarkerWidgetComponent()
+				&& Enemy->GetTestStanceBreakMarkerWidgetComponent()->GetVisibleFlag());
 			// 4. Verify production path components are live and active
 			TestTrue(TEXT("Ability is active"), StanceBreakAbility->IsActive());
 			TestTrue(TEXT("Enemy ASC has Stunned tag"), EnemyASC->HasMatchingGameplayTag(TagStunned));
@@ -567,6 +574,9 @@ bool FEnemyStanceBreakRateWindowAutomationTest::RunTest(const FString& Parameter
 				TestFalse(TEXT("Movement lock released"), StanceBreakAbility->IsMovementLockedByStanceBreak());
 				TestFalse(TEXT("RateWindow test bypass reset after EndAbility"), WindowTask->GetRateWindowLifecycle().GetTestBypassMontageActiveCheck());
 				TestFalse(TEXT("Stunned tag removed from Enemy ASC"), EnemyASC->HasMatchingGameplayTag(TagStunned));
+				TestFalse(TEXT("StanceBreak marker hidden after UnPossess teardown"),
+					Enemy->GetTestStanceBreakMarkerWidgetComponent()
+					&& Enemy->GetTestStanceBreakMarkerWidgetComponent()->GetVisibleFlag());
 				TestFalse(TEXT("State.Block.Facing tag removed from Enemy ASC after UnPossessed"), EnemyASC->HasMatchingGameplayTag(TagBlockFacing));
 				TestTrue(TEXT("Poise restored to MaxPoise"), EnemyASC->GetNumericAttribute(UCharacterAttributeSet::GetPoiseAttribute()) >= EnemyASC->GetNumericAttribute(UCharacterAttributeSet::GetMaxPoiseAttribute()));
 			}
@@ -577,10 +587,22 @@ bool FEnemyStanceBreakRateWindowAutomationTest::RunTest(const FString& Parameter
 				const bool bReactivated = EnemyASC->TryActivateAbility(StanceBreakHandle);
 
 				TestTrue(TEXT("StanceBreak ability successfully re-activated on same instance"), bReactivated);
+				TestTrue(TEXT("StanceBreak marker is visible after re-activation"),
+					Enemy->GetTestStanceBreakMarkerWidgetComponent()
+					&& Enemy->GetTestStanceBreakMarkerWidgetComponent()->GetVisibleFlag());
 				TestTrue(TEXT("FacingBlock tag present on re-activation"), EnemyASC->HasMatchingGameplayTag(TagBlockFacing));
 
 				EnemyASC->CancelAbilityHandle(StanceBreakHandle);
 				TestFalse(TEXT("StanceBreak ability cancelled on manual CancelAbility"), StanceBreakAbility->IsActive());
+				TestTrue(TEXT("StanceBreak marker remains visible during manual cancellation fade"),
+					Enemy->GetTestStanceBreakMarkerWidgetComponent()
+					&& Enemy->GetTestStanceBreakMarkerWidgetComponent()->GetVisibleFlag());
+				TestTrue(TEXT("Manual cancellation starts marker fade timer"), Enemy->HasPendingStanceBreakMarkerFade());
+				Enemy->TriggerTestCompleteStanceBreakMarkerFade();
+				TestFalse(TEXT("StanceBreak marker hidden after manual cancellation fade"),
+					Enemy->GetTestStanceBreakMarkerWidgetComponent()
+					&& Enemy->GetTestStanceBreakMarkerWidgetComponent()->GetVisibleFlag());
+				TestFalse(TEXT("Manual cancellation clears marker fade timer"), Enemy->HasPendingStanceBreakMarkerFade());
 				TestFalse(TEXT("FacingBlock tag cleanly removed upon cancellation"), EnemyASC->HasMatchingGameplayTag(TagBlockFacing));
 			}
 		}
@@ -866,6 +888,15 @@ bool FEnemyStanceBreakRateWindowAutomationTest::RunTest(const FString& Parameter
 						TestEqual(TEXT("StanceBreak Real Dual-Instance A: Movement mode restored to Walking"), CMC->MovementMode.GetValue(), MOVE_Walking);
 					}
 					TestFalse(TEXT("StanceBreak Real Dual-Instance A: Stunned tag removed"), EnemyASC->HasMatchingGameplayTag(TagStunned));
+					TestTrue(TEXT("StanceBreak Real Dual-Instance A: marker remains visible during normal cancellation fade"),
+						Enemy->GetTestStanceBreakMarkerWidgetComponent()
+						&& Enemy->GetTestStanceBreakMarkerWidgetComponent()->GetVisibleFlag());
+					TestTrue(TEXT("StanceBreak Real Dual-Instance A: normal cancellation starts marker fade"), Enemy->HasPendingStanceBreakMarkerFade());
+					Enemy->TriggerTestCompleteStanceBreakMarkerFade();
+					TestFalse(TEXT("StanceBreak Real Dual-Instance A: marker hidden after normal cancellation fade"),
+						Enemy->GetTestStanceBreakMarkerWidgetComponent()
+						&& Enemy->GetTestStanceBreakMarkerWidgetComponent()->GetVisibleFlag());
+					TestFalse(TEXT("StanceBreak Real Dual-Instance A: normal cancellation clears marker fade"), Enemy->HasPendingStanceBreakMarkerFade());
 				}
 
 				if (RealAnim->Montage_IsActive(PlayableStanceMontage))
@@ -924,10 +955,16 @@ bool FEnemyStanceBreakRateWindowAutomationTest::RunTest(const FString& Parameter
 					// Simulate execution handoff: add VictimLocked tag to EnemyASC
 					EnemyASC->AddLooseGameplayTag(TagVictimLocked);
 					TestTrue(TEXT("StanceBreak Real Dual-Instance B: VictimLocked tag added"), EnemyASC->HasMatchingGameplayTag(TagVictimLocked));
+					TestFalse(TEXT("StanceBreak Real Dual-Instance B: marker hidden during VictimLocked handoff"),
+						Enemy->GetTestStanceBreakMarkerWidgetComponent()
+						&& Enemy->GetTestStanceBreakMarkerWidgetComponent()->GetVisibleFlag());
 
 					// End StanceBreak ability while VictimLocked is active
 					EnemyASC->CancelAbilityHandle(Handle);
 					TestFalse(TEXT("StanceBreak Real Dual-Instance B: StanceBreak ability ended"), Ability->IsActive());
+					TestFalse(TEXT("StanceBreak Real Dual-Instance B: marker remains hidden after handoff"),
+						Enemy->GetTestStanceBreakMarkerWidgetComponent()
+						&& Enemy->GetTestStanceBreakMarkerWidgetComponent()->GetVisibleFlag());
 
 					// Contract: When VictimLocked is active, StanceBreak must NOT restore Poise and must NOT restore Walking movement
 					TestEqual(TEXT("StanceBreak Real Dual-Instance B: Poise remains 0 (handed off to VictimExecution)"),
