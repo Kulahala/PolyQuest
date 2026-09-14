@@ -1132,12 +1132,29 @@ falls back to a finite `ImpactNormal`; invalid or coincident input returns
 `InstancedPerActor`, `ServerOnly`, Gameplay-Event abilities triggered by their
 matching Small event. Both set `bRetriggerInstancedAbility = true`, own
 `State.Action.SmallHitReacting`, and block activation while Dead or Stunned.
-They do not change CharacterMovement, cancel an attack, or add movement/input
-locks. A validated four-way Montage is played through
+They do not cancel an attack or add movement/input locks. A validated four-way
+Montage is played through
 `UAbilityTask_PlayActionMontage` for both Player and Enemy Small; completion, interruption, cancellation,
 invalid startup, retrigger replacement, and teardown remove the old callbacks
 and converge on idempotent `EndAbility()`. The four Montage references and
 their overlay-slot wiring are [Authored asset] / [Not verified in this pass].
+
+Player Small does not change CharacterMovement. Enemy Small optionally creates
+one `UAbilityTask_ApplyRootMotionConstantForce` only after its Montage is
+confirmed active, CMC is grounded, no animation Root Motion is playing, no CMC
+RootMotionSource is active, and its private distance/duration/CurveFloat
+configuration plus the snapshotted impact direction are valid. The target-local
+`Target -> Attacker` direction is reversed and rotated into world space before
+Montage activation; a later yaw change cannot redirect the force. Default Native
+settings are `20.0 cm` over `0.10 s`; the accepted linear CurveFloat profile
+uses source strength `2 * Distance / Duration`. The task is non-additive,
+preserves gravity, and finishes with `SetVelocity(FVector::ZeroVector)`.
+Invalid geometry/configuration, airborne state, or competing Root Motion retain
+the selected Montage and skip only the extra displacement. Retrigger and the
+single `EndAbility()` cleanup end only the Ability-owned task, leaving external
+Root Motion untouched. The CurveFloat asset, GA assignment, and exact authored
+Montage Root Motion settings remain [Authored asset] / [Not verified in this
+pass].
 
 #### Big reaction and safe interrupt
 

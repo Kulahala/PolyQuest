@@ -1,5 +1,6 @@
 #include "AbilitySystem/Abilities/EnemySmallHitReactionAbility.h"
 
+#include "Abilities/Tasks/AbilityTask_ApplyRootMotionConstantForce.h"
 #include "AbilitySystem/Tasks/AbilityTask_PlayActionMontage.h"
 #include "AbilitySystemComponent.h"
 #include "Animation/AnimInstance.h"
@@ -8,6 +9,8 @@
 #include "Combat/Reaction/HitReactionFourWayMontageSelector.h"
 #include "Combat/Reaction/HitReactionImpactResolver.h"
 #include "Components/SkeletalMeshComponent.h"
+#include "Curves/CurveFloat.h"
+#include "GameFramework/CharacterMovementComponent.h"
 #include "PolyQuest.h"
 
 UEnemySmallHitReactionAbility::UEnemySmallHitReactionAbility()
@@ -52,6 +55,12 @@ void UEnemySmallHitReactionAbility::ActivateAbility(
 {
 	bEndAbilityRequested = false;
 
+	if (KnockbackTask)
+	{
+		KnockbackTask->EndTask();
+		KnockbackTask = nullptr;
+	}
+
 	if (MontageTask)
 	{
 		MontageTask->OnCompleted.RemoveDynamic(this, &UEnemySmallHitReactionAbility::OnMontageCompleted);
@@ -76,10 +85,23 @@ void UEnemySmallHitReactionAbility::ActivateAbility(
 		return;
 	}
 
-	FVector LocalImpactDirection = FVector::ZeroVector;
-	if (TriggerEventData)
+	const FVector LocalImpactDirection = TriggerEventData
+		? FHitReactionImpactResolver::ResolveImpactDirection(*TriggerEventData, EnemyCharacter)
+		: FVector::ZeroVector;
+	const float EnemyYaw = EnemyCharacter->GetActorRotation().Yaw;
+	FVector KnockbackWorldDirection = FVector::ZeroVector;
+	if (FMath::IsFinite(LocalImpactDirection.X) && FMath::IsFinite(LocalImpactDirection.Y)
+		&& FMath::IsFinite(EnemyYaw))
 	{
-		LocalImpactDirection = FHitReactionImpactResolver::ResolveImpactDirection(*TriggerEventData, EnemyCharacter);
+		const FVector LocalKnockbackDirection(-LocalImpactDirection.X, -LocalImpactDirection.Y, 0.0f);
+		if (!LocalKnockbackDirection.IsNearlyZero())
+		{
+			KnockbackWorldDirection = LocalKnockbackDirection.RotateAngleAxis(EnemyYaw, FVector::UpVector);
+			if (!FMath::IsFinite(KnockbackWorldDirection.X) || !FMath::IsFinite(KnockbackWorldDirection.Y))
+			{
+				KnockbackWorldDirection = FVector::ZeroVector;
+			}
+		}
 	}
 
 	FHitReactionFourWayMontageSet MontageSet;
@@ -93,9 +115,8 @@ void UEnemySmallHitReactionAbility::ActivateAbility(
 
 	if (!SelectedMontage)
 	{
-		UE_LOG(LogPolyQuest, Warning, TEXT("Enemy small hit reaction activation aborted for '%s': directional montage selection failed."), *GetNameSafe(EnemyCharacter));
-		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
-		return;
+		// Missing impact geometry suppresses movement, not the non-blocking hit presentation.
+		SelectedMontage = MontageSet.Front;
 	}
 
 	UAbilityTask_PlayActionMontage* CreatedMontageTask = UAbilityTask_PlayActionMontage::PlayActionMontage(
@@ -160,6 +181,56 @@ void UEnemySmallHitReactionAbility::ActivateAbility(
 		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
 		return;
 	}
+
+	UCharacterMovementComponent* MovementComponent = EnemyCharacter->GetCharacterMovement();
+	UCurveFloat* FalloffCurve = KnockbackFalloffCurve.Get();
+	const bool bKnockbackCurveValid = IsValid(FalloffCurve)
+		&& FalloffCurve->FloatCurve.GetNumKeys() > 0
+		&& FMath::IsFinite(FalloffCurve->GetFloatValue(0.0f))
+		&& FMath::IsFinite(FalloffCurve->GetFloatValue(1.0f));
+	const bool bKnockbackConfigValid = FMath::IsFinite(KnockbackDistance)
+		&& KnockbackDistance > KINDA_SMALL_NUMBER
+		&& FMath::IsFinite(KnockbackDuration) && KnockbackDuration > 0.0f
+		&& bKnockbackCurveValid
+		&& !KnockbackWorldDirection.IsNearlyZero()
+		&& FMath::IsFinite(KnockbackWorldDirection.X)
+		&& FMath::IsFinite(KnockbackWorldDirection.Y)
+		&& FMath::IsFinite(KnockbackWorldDirection.Z);
+	if (MovementComponent && MovementComponent->IsMovingOnGround()
+		&& !EnemyCharacter->IsPlayingRootMotion() && !EnemyCharacter->HasAnyRootMotion()
+		&& bKnockbackConfigValid)
+	{
+		const float KnockbackStrength = 2.0f * KnockbackDistance / KnockbackDuration;
+		if (!FMath::IsFinite(KnockbackStrength))
+		{
+			return;
+		}
+
+		UAbilityTask_ApplyRootMotionConstantForce* CreatedKnockbackTask = UAbilityTask_ApplyRootMotionConstantForce::ApplyRootMotionConstantForce(
+			this,
+			FName(TEXT("EnemySmallHitReactionKnockback")),
+			KnockbackWorldDirection,
+			KnockbackStrength,
+			KnockbackDuration,
+			false,
+			FalloffCurve,
+			ERootMotionFinishVelocityMode::SetVelocity,
+			FVector::ZeroVector,
+			0.0f,
+			true);
+		if (!CreatedKnockbackTask)
+		{
+			return;
+		}
+
+		KnockbackTask = CreatedKnockbackTask;
+		CreatedKnockbackTask->ReadyForActivation();
+
+		if (bEndAbilityRequested || KnockbackTask.Get() != CreatedKnockbackTask || !IsValid(CreatedKnockbackTask))
+		{
+			return;
+		}
+	}
 }
 
 void UEnemySmallHitReactionAbility::EndAbility(
@@ -175,6 +246,12 @@ void UEnemySmallHitReactionAbility::EndAbility(
 	}
 
 	bEndAbilityRequested = true;
+
+	if (KnockbackTask)
+	{
+		KnockbackTask->EndTask();
+		KnockbackTask = nullptr;
+	}
 
 	if (MontageTask)
 	{

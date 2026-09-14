@@ -8,9 +8,11 @@
 #include "EnemySmallHitReactionAbility.generated.h"
 
 class UAbilityTask_PlayActionMontage;
+class UAbilityTask_ApplyRootMotionConstantForce;
 class UAbilityTask_WaitGameplayEvent;
 class UAnimInstance;
 class UAnimMontage;
+class UCurveFloat;
 class UEnemySmallHitReactionAbility;
 
 /**
@@ -77,6 +79,13 @@ public:
 	{
 		SetCurrentActorInfo(InHandle, InActorInfo);
 	}
+	void SetTestKnockbackConfig(float Distance, float Duration, UCurveFloat* Curve)
+	{
+		KnockbackDistance = Distance;
+		KnockbackDuration = Duration;
+		KnockbackFalloffCurve = Curve;
+	}
+	UAbilityTask_ApplyRootMotionConstantForce* GetTestKnockbackTask() const { return KnockbackTask.Get(); }
 #endif
 
 private:
@@ -92,6 +101,15 @@ private:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Enemy|Reaction", meta = (AllowPrivateAccess = "true", ToolTip = "攻击者位于受击者本地右方时播放的叠加层受击动画 Montage 资产。此名称描述攻击者来源方向，非受击者位移方向。四个方向属性（Front、Back、Left、Right）必须完整同时配置。"))
 	TObjectPtr<UAnimMontage> RightSmallHitReactionMontage;
 
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Enemy|Reaction", meta = (AllowPrivateAccess = "true"))
+	float KnockbackDistance = 20.0f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Enemy|Reaction", meta = (AllowPrivateAccess = "true"))
+	float KnockbackDuration = 0.10f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Enemy|Reaction", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<UCurveFloat> KnockbackFalloffCurve;
+
 	UPROPERTY(Transient)
 	TObjectPtr<UAbilityTask_PlayActionMontage> MontageTask;
 
@@ -100,6 +118,9 @@ private:
 
 	UPROPERTY(Transient)
 	TObjectPtr<UAnimMontage> ActiveMontage;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UAbilityTask_ApplyRootMotionConstantForce> KnockbackTask;
 
 	FGameplayTag SmallHitReactionAbilityTag;
 	FGameplayTag SmallHitReactionEventTag;

@@ -7,6 +7,7 @@
 #include "AbilitySystemComponent.h"
 #include "Abilities/GameplayAbility.h"
 #include "Abilities/GameplayAbilityTypes.h"
+#include "Abilities/Tasks/AbilityTask_ApplyRootMotionConstantForce.h"
 #include "AbilitySystem/Tasks/AbilityTask_PlayActionMontage.h"
 #include "AbilitySystem/Abilities/EnemyHitReactionAbility.h"
 #include "AbilitySystem/Abilities/EnemyLaunchReactionAbility.h"
@@ -19,14 +20,23 @@
 #include "AbilitySystem/Abilities/PlayerLaunchReactionAbility.h"
 #include "AbilitySystem/Abilities/PlayerSmallHitReactionAbility.h"
 #include "AbilitySystem/CharacterAttributeSet.h"
+#include "Animation/AnimInstance.h"
+#include "Animation/AnimMontage.h"
 #include "Animation/Combat/AnimNotify_ReactionLaunchCommit.h"
 #include "Character/Enemy/EnemyCharacter.h"
 #include "Character/Player/PlayerCharacter.h"
 #include "Combat/Reaction/HitReactionClassifier.h"
 #include "Combat/Reaction/HitReactionFourWayMontageSelector.h"
 #include "Combat/Reaction/HitReactionImpactResolver.h"
+#include "Components/BoxComponent.h"
+#include "Components/CapsuleComponent.h"
+#include "Components/SkeletalMeshComponent.h"
+#include "Curves/CurveFloat.h"
+#include "Engine/CollisionProfile.h"
 #include "Engine/Engine.h"
 #include "Engine/World.h"
+#include "GameFramework/CharacterMovementComponent.h"
+#include "GameFramework/RootMotionSource.h"
 #include "GameplayEffect.h"
 #include "GameplayEffectTypes.h"
 #include "GameplayTagContainer.h"
@@ -34,7 +44,89 @@
 #include "Tests/CombatAutomationFixture.h"
 #include "Tests/TestProjectileDamageGE.h"
 
+#if WITH_EDITOR
+#include "Animation/AnimData/IAnimationDataController.h"
+#include "Animation/AnimSequence.h"
+#include "Animation/Skeleton.h"
+#include "ReferenceSkeleton.h"
+#endif
+
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FHitReactionAutomationTest, "PolyQuest.Combat.HitReaction", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+#if WITH_EDITOR
+namespace
+{
+	UAnimInstance* CreateEnemySmallKnockbackAnimInstance(AEnemyCharacter* Enemy)
+	{
+		USkeletalMeshComponent* Mesh = Enemy ? Enemy->GetMesh() : nullptr;
+		if (!Mesh)
+		{
+			return nullptr;
+		}
+
+		USkeleton* Skeleton = NewObject<USkeleton>(Enemy);
+		FReferenceSkeletonModifier Modifier(Skeleton);
+		Modifier.Add(FMeshBoneInfo(TEXT("root"), TEXT("root"), INDEX_NONE), FTransform::Identity);
+
+		Mesh->VisibilityBasedAnimTickOption = EVisibilityBasedAnimTickOption::OnlyTickMontagesWhenNotRendered;
+		UAnimInstance* AnimInstance = NewObject<UAnimInstance>(Mesh);
+		AnimInstance->InitializeMontageOnly();
+		AnimInstance->CurrentSkeleton = Skeleton;
+		Mesh->AnimScriptInstance = AnimInstance;
+
+		if (UAbilitySystemComponent* AbilitySystemComponent = Enemy->GetAbilitySystemComponent())
+		{
+			AbilitySystemComponent->RefreshAbilityActorInfo();
+		}
+
+		return AnimInstance;
+	}
+
+	UAnimMontage* CreateEnemySmallKnockbackMontage(
+		FAutomationTestBase& Test, AEnemyCharacter* Enemy, float Length, bool bEnableRootMotion = false)
+	{
+		UAnimInstance* AnimInstance = Enemy && Enemy->GetMesh() ? Enemy->GetMesh()->GetAnimInstance() : nullptr;
+		USkeleton* Skeleton = AnimInstance ? AnimInstance->CurrentSkeleton : nullptr;
+		if (!Skeleton)
+		{
+			return nullptr;
+		}
+
+		UAnimSequence* Sequence = NewObject<UAnimSequence>(Enemy);
+		if (!Sequence)
+		{
+			return nullptr;
+		}
+
+		Sequence->SetSkeleton(Skeleton);
+		Sequence->bEnableRootMotion = bEnableRootMotion;
+		IAnimationDataController& Controller = Sequence->GetController();
+		Controller.InitializeModel();
+		{
+			IAnimationDataController::FScopedBracket Populate(Controller,
+				FText::FromString(TEXT("Populate Enemy Small knockback test root track")), false);
+			Controller.SetFrameRate(FFrameRate(30, 1), false);
+			const int32 FrameCount = FMath::Max(1, FMath::RoundToInt(Length * 30.0f));
+			Controller.SetNumberOfFrames(FFrameNumber(FrameCount), false);
+			const FName RootBoneName(TEXT("root"));
+			const bool bTrackAdded = Controller.AddBoneCurve(RootBoneName, false);
+			TArray<FVector3f> Positions;
+			TArray<FQuat4f> Rotations;
+			TArray<FVector3f> Scales;
+			Positions.Init(FVector3f::ZeroVector, FrameCount + 1);
+			Rotations.Init(FQuat4f::Identity, FrameCount + 1);
+			Scales.Init(FVector3f::OneVector, FrameCount + 1);
+			Test.TestTrue(TEXT("7.5 Fixture: root track populated"), bTrackAdded
+				&& Controller.SetBoneTrackKeys(RootBoneName, Positions, Rotations, Scales, false));
+			Controller.NotifyPopulated();
+		}
+		Sequence->WaitOnExistingCompression();
+
+		return UAnimMontage::CreateSlotAnimationAsDynamicMontage(
+			Sequence, FName(TEXT("DefaultSlot")), 0.0f, 0.0f, 1.0f, 1, -1.0f);
+	}
+}
+#endif
 
 bool FHitReactionAutomationTest::RunTest(const FString& Parameters)
 {
@@ -590,6 +682,7 @@ bool FHitReactionAutomationTest::RunTest(const FString& Parameters)
 
 	FURL WorldURL;
 	World->InitializeActorsForPlay(WorldURL);
+	World->BeginPlay();
 
 	struct FTestScopeCleanup
 	{
@@ -2230,6 +2323,352 @@ bool FHitReactionAutomationTest::RunTest(const FString& Parameters)
 			UAnimMontage* Selected3 = FHitReactionFourWayMontageSelector::SelectFromLocalAttackerDirection(ImpactDir3, MontageSet);
 			TestEqual(TEXT("7.4: Round 3 Front attacker selects Front montage again based on latest payload"), Selected3, DummyFront);
 		}
+
+#if WITH_EDITOR
+		// 7.5 Enemy Small grounded knockback: transient curve injection, RMS ownership, and fail-closed gates.
+		{
+			const FName OwnedRootMotionName(TEXT("EnemySmallHitReactionKnockback"));
+			const FName ForeignRootMotionName(TEXT("EnemySmallHitReactionForeign"));
+			AEnemyCharacter* KnockbackEnemy = FCombatAutomationFixture::SpawnPassiveEnemy(
+				World,
+				FTransform(FRotator::ZeroRotator, FVector::ZeroVector));
+			TestNotNull(TEXT("7.5: Knockback enemy spawned"), KnockbackEnemy);
+			AActor* KnockbackFloor = World->SpawnActor<AActor>();
+			UBoxComponent* KnockbackFloorBox = KnockbackFloor ? NewObject<UBoxComponent>(KnockbackFloor) : nullptr;
+			TestNotNull(TEXT("7.5: Knockback floor spawned"), KnockbackFloor);
+			TestNotNull(TEXT("7.5: Knockback floor collision created"), KnockbackFloorBox);
+			if (KnockbackEnemy && KnockbackFloor && KnockbackFloorBox)
+			{
+				KnockbackFloorBox->InitBoxExtent(FVector(5000.0f, 5000.0f, 50.0f));
+				KnockbackFloorBox->SetCollisionProfileName(UCollisionProfile::BlockAll_ProfileName);
+				KnockbackFloor->SetRootComponent(KnockbackFloorBox);
+				KnockbackFloorBox->RegisterComponent();
+				const float CapsuleHalfHeight = KnockbackEnemy->GetCapsuleComponent()
+					? KnockbackEnemy->GetCapsuleComponent()->GetScaledCapsuleHalfHeight()
+					: 88.0f;
+				KnockbackFloor->SetActorLocation(FVector(0.0f, 0.0f, -CapsuleHalfHeight - 50.0f));
+				if (Player && Player->GetCapsuleComponent())
+				{
+					Player->GetCapsuleComponent()->IgnoreActorWhenMoving(KnockbackFloor, true);
+				}
+			}
+
+			UAbilitySystemComponent* KnockbackASC = KnockbackEnemy ? KnockbackEnemy->GetAbilitySystemComponent() : nullptr;
+			UCharacterMovementComponent* KnockbackMovement = KnockbackEnemy ? KnockbackEnemy->GetCharacterMovement() : nullptr;
+			TestNotNull(TEXT("7.5: Knockback enemy ASC valid"), KnockbackASC);
+			TestNotNull(TEXT("7.5: Knockback enemy movement valid"), KnockbackMovement);
+
+			if (KnockbackEnemy && KnockbackFloorBox && KnockbackASC && KnockbackMovement)
+			{
+				// Passive fixtures have no Controller, so opt in to CMC's cleanup tick for marked RMS.
+				KnockbackMovement->bRunPhysicsWithNoController = true;
+
+				UAnimInstance* KnockbackAnimInstance = CreateEnemySmallKnockbackAnimInstance(KnockbackEnemy);
+				UAnimMontage* KnockbackMontage = CreateEnemySmallKnockbackMontage(*this, KnockbackEnemy, 0.5f);
+				UAnimMontage* RootMotionMontage = CreateEnemySmallKnockbackMontage(*this, KnockbackEnemy, 0.5f, true);
+				UCurveFloat* LinearFalloff = NewObject<UCurveFloat>(GetTransientPackage());
+				TestNotNull(TEXT("7.5: Montage-only AnimInstance created"), KnockbackAnimInstance);
+				TestNotNull(TEXT("7.5: Non-root-motion Small montage created"), KnockbackMontage);
+				TestNotNull(TEXT("7.5: Root-motion Small montage created"), RootMotionMontage);
+				TestNotNull(TEXT("7.5: Transient linear falloff curve created"), LinearFalloff);
+
+				if (KnockbackAnimInstance && KnockbackMontage && RootMotionMontage && LinearFalloff)
+				{
+					const FKeyHandle StartKey = LinearFalloff->FloatCurve.AddKey(0.0f, 1.0f);
+					const FKeyHandle EndKey = LinearFalloff->FloatCurve.AddKey(1.0f, 0.0f);
+					LinearFalloff->FloatCurve.SetKeyInterpMode(StartKey, RCIM_Linear);
+					LinearFalloff->FloatCurve.SetKeyInterpMode(EndKey, RCIM_Linear);
+					TestEqual(TEXT("7.5: Transient falloff has two keys"), LinearFalloff->FloatCurve.GetNumKeys(), 2);
+					TestTrue(TEXT("7.5: Transient falloff is linear at midpoint"),
+						FMath::IsNearlyEqual(LinearFalloff->GetFloatValue(0.5f), 0.5f));
+
+					auto ConfigureAbility = [&](UEnemySmallHitReactionAbility* Ability, float Distance, float Duration, UCurveFloat* Curve)
+					{
+						if (Ability)
+						{
+							Ability->SetTestFrontSmallHitReactionMontage(KnockbackMontage);
+							Ability->SetTestBackSmallHitReactionMontage(KnockbackMontage);
+							Ability->SetTestLeftSmallHitReactionMontage(KnockbackMontage);
+							Ability->SetTestRightSmallHitReactionMontage(KnockbackMontage);
+							Ability->SetTestKnockbackConfig(Distance, Duration, Curve);
+							Ability->SetTestBypassMontageActiveCheck(true);
+						}
+					};
+
+					auto CreateAbility = [&](float Distance, float Duration, UCurveFloat* Curve)
+					{
+						FGameplayAbilitySpec Spec(UEnemySmallHitReactionAbility::StaticClass(), 1, INDEX_NONE, KnockbackEnemy);
+						const FGameplayAbilitySpecHandle Handle = KnockbackASC->GiveAbility(Spec);
+						UEnemySmallHitReactionAbility* Ability = nullptr;
+						if (FGameplayAbilitySpec* FoundSpec = KnockbackASC->FindAbilitySpecFromHandle(Handle))
+						{
+							Ability = Cast<UEnemySmallHitReactionAbility>(FoundSpec->GetPrimaryInstance());
+						}
+						ConfigureAbility(Ability, Distance, Duration, Curve);
+						return TPair<FGameplayAbilitySpecHandle, UEnemySmallHitReactionAbility*>(Handle, Ability);
+					};
+
+					auto ActivateAbility = [&](const TPair<FGameplayAbilitySpecHandle, UEnemySmallHitReactionAbility*>& AbilityScope,
+						const FGameplayEventData& Payload)
+					{
+						if (!AbilityScope.Value || !KnockbackASC->AbilityActorInfo.IsValid())
+						{
+							return false;
+						}
+
+						KnockbackASC->HandleGameplayEvent(Payload.EventTag, &Payload);
+						return AbilityScope.Value->IsActive();
+					};
+
+					auto EndAndClearAbility = [&](const TPair<FGameplayAbilitySpecHandle, UEnemySmallHitReactionAbility*>& AbilityScope, bool bWasCancelled)
+					{
+						if (AbilityScope.Value && AbilityScope.Value->IsActive() && KnockbackASC->AbilityActorInfo.IsValid())
+						{
+							AbilityScope.Value->EndAbility(
+								AbilityScope.Key,
+								KnockbackASC->AbilityActorInfo.Get(),
+								FGameplayAbilityActivationInfo(),
+								false,
+								bWasCancelled);
+						}
+						if (AbilityScope.Key.IsValid())
+						{
+							KnockbackASC->ClearAbility(AbilityScope.Key);
+						}
+					};
+
+					auto BuildPayload = [&](AActor* Instigator)
+					{
+						FGameplayEventData Payload;
+						Payload.EventTag = TagEventEnemySmall;
+						Payload.Instigator = Instigator;
+						Payload.Target = KnockbackEnemy;
+						return Payload;
+					};
+
+					auto ResetGroundedHitSetup = [&]()
+					{
+						KnockbackEnemy->SetActorLocationAndRotation(FVector::ZeroVector, FRotator(0.0f, 90.0f, 0.0f));
+						Player->SetActorLocation(FVector(0.0f, 100.0f, 0.0f));
+						KnockbackMovement->SetMovementMode(MOVE_Walking);
+						FCombatAutomationFixture::TickWorld(World, 0.016f);
+						KnockbackMovement->SetMovementMode(MOVE_Walking);
+					};
+
+					auto FlushMarkedRootMotion = [&]()
+					{
+						FCombatAutomationFixture::TickWorld(World, 0.016f);
+						KnockbackMovement->SetMovementMode(MOVE_Walking);
+					};
+
+					auto AdvanceOwnedRootMotionToCompletion = [&]()
+					{
+						for (const float TickSeconds : { 0.05f, 0.05f, 0.02f })
+						{
+							KnockbackMovement->SetMovementMode(MOVE_Walking);
+							FCombatAutomationFixture::TickWorld(World, TickSeconds);
+						}
+					};
+
+					auto AddForeignRootMotion = [&]()
+					{
+						TSharedPtr<FRootMotionSource_ConstantForce> ForeignSource = MakeShared<FRootMotionSource_ConstantForce>();
+						ForeignSource->InstanceName = ForeignRootMotionName;
+						ForeignSource->AccumulateMode = ERootMotionAccumulateMode::Override;
+						ForeignSource->Priority = 1;
+						ForeignSource->Force = FVector::ZeroVector;
+						ForeignSource->Duration = 10.0f;
+						return KnockbackMovement->ApplyRootMotionSource(ForeignSource);
+					};
+
+					// Valid grounded path: the y=90 snapshot turns a front attacker into world -Y knockback.
+					ResetGroundedHitSetup();
+					const auto ValidAbilityScope = CreateAbility(20.0f, 0.10f, LinearFalloff);
+					TestNotNull(TEXT("7.5a: Valid Small ability instance created"), ValidAbilityScope.Value);
+					if (ValidAbilityScope.Value)
+					{
+						const FGameplayEventData Payload = BuildPayload(Player);
+						TestTrue(TEXT("7.5a: Valid grounded Small activation remains active"), ActivateAbility(ValidAbilityScope, Payload));
+						TestNotNull(TEXT("7.5a: Valid grounded Small owns a root-force task"), ValidAbilityScope.Value->GetTestKnockbackTask());
+						if (UAbilityTask_ApplyRootMotionConstantForce* KnockbackTask = ValidAbilityScope.Value->GetTestKnockbackTask())
+						{
+							TestTrue(TEXT("7.5a: Root-force task is activated for timeout cleanup"), KnockbackTask->IsActive());
+						}
+
+						const TSharedPtr<FRootMotionSource> OwnedSource = KnockbackMovement->GetRootMotionSource(OwnedRootMotionName);
+						TestTrue(TEXT("7.5a: Valid grounded Small creates its named RMS"), OwnedSource.IsValid());
+						const FRootMotionSource_ConstantForce* ConstantForce = OwnedSource.IsValid()
+							&& OwnedSource->GetScriptStruct() == FRootMotionSource_ConstantForce::StaticStruct()
+							? static_cast<const FRootMotionSource_ConstantForce*>(OwnedSource.Get())
+							: nullptr;
+						TestNotNull(TEXT("7.5a: Owned RMS is ConstantForce"), ConstantForce);
+						if (ConstantForce)
+						{
+							KnockbackEnemy->SetActorRotation(FRotator::ZeroRotator);
+							TestTrue(TEXT("7.5a: Knockback direction is snapshotted before later yaw changes"),
+								ConstantForce->Force.Equals(FVector(0.0f, -400.0f, 0.0f), 0.01f));
+							TestEqual(TEXT("7.5a: Root force uses Override accumulation"),
+								ConstantForce->AccumulateMode, ERootMotionAccumulateMode::Override);
+							TestEqual(TEXT("7.5a: Root force preserves gravity"),
+								ConstantForce->Settings.HasFlag(ERootMotionSourceSettingsFlags::IgnoreZAccumulate), true);
+							TestEqual(TEXT("7.5a: Root force finishes by setting velocity"),
+								ConstantForce->FinishVelocityParams.Mode, ERootMotionFinishVelocityMode::SetVelocity);
+							TestTrue(TEXT("7.5a: Root force finish velocity is zero"),
+								ConstantForce->FinishVelocityParams.SetVelocity.IsNearlyZero());
+							TestEqual(TEXT("7.5a: Root force uses the injected transient curve"),
+								ConstantForce->StrengthOverTime.Get(), LinearFalloff);
+						}
+
+						const FVector InitialKnockbackLocation = KnockbackEnemy->GetActorLocation();
+						AdvanceOwnedRootMotionToCompletion();
+						const FVector RuntimeDisplacement = KnockbackEnemy->GetActorLocation() - InitialKnockbackLocation;
+						TestTrue(TEXT("7.5a: Root force moves along the snapshotted world direction at runtime"),
+							RuntimeDisplacement.Y < -KINDA_SMALL_NUMBER);
+						const float RuntimeKnockbackDistance = RuntimeDisplacement.Size2D();
+						TestTrue(FString::Printf(TEXT("7.5a: Controlled 0.05s CMC ticks retain bounded linear-falloff displacement [20, 35]cm (actual=%.6f)"),
+							RuntimeKnockbackDistance),
+							RuntimeKnockbackDistance >= 20.0f && RuntimeKnockbackDistance <= 35.0f);
+						TestFalse(TEXT("7.5a: Root force naturally removes its owned RMS"),
+							KnockbackMovement->GetRootMotionSource(OwnedRootMotionName).IsValid());
+						TestTrue(TEXT("7.5a: Natural root-force finish clears horizontal velocity"),
+							KnockbackMovement->Velocity.Size2D() <= KINDA_SMALL_NUMBER);
+
+						if (UAbilityTask_PlayActionMontage* MontageTask = ValidAbilityScope.Value->GetTestMontageTask())
+						{
+							MontageTask->OnCompleted.Broadcast();
+						}
+						TestTrue(TEXT("7.5a: Montage completion reaches the shared EndAbility cleanup"),
+							ValidAbilityScope.Value->GetTestEndAbilityRequested());
+						FlushMarkedRootMotion();
+						TestFalse(TEXT("7.5a: Montage completion removes only the owned RMS"),
+							KnockbackMovement->GetRootMotionSource(OwnedRootMotionName).IsValid());
+					}
+					EndAndClearAbility(ValidAbilityScope, false);
+
+					// Animation root motion can also register a CMC source during playback; Small must not add its own.
+					ResetGroundedHitSetup();
+					const auto AnimationRootMotionAbilityScope = CreateAbility(20.0f, 0.10f, LinearFalloff);
+					TestNotNull(TEXT("7.5b animation Root Motion: Small ability instance created"), AnimationRootMotionAbilityScope.Value);
+					if (AnimationRootMotionAbilityScope.Value)
+					{
+						AnimationRootMotionAbilityScope.Value->SetTestFrontSmallHitReactionMontage(RootMotionMontage);
+						AnimationRootMotionAbilityScope.Value->SetTestBackSmallHitReactionMontage(RootMotionMontage);
+						AnimationRootMotionAbilityScope.Value->SetTestLeftSmallHitReactionMontage(RootMotionMontage);
+						AnimationRootMotionAbilityScope.Value->SetTestRightSmallHitReactionMontage(RootMotionMontage);
+						TestTrue(TEXT("7.5b animation Root Motion: Montage authors root motion"), RootMotionMontage->HasRootMotion());
+						TestTrue(TEXT("7.5b animation Root Motion: Small montage remains active"),
+							ActivateAbility(AnimationRootMotionAbilityScope, BuildPayload(Player)));
+						TestEqual(TEXT("7.5b animation Root Motion: Selected root-motion montage is retained"),
+							AnimationRootMotionAbilityScope.Value->GetTestActiveMontage(), RootMotionMontage);
+						TestTrue(TEXT("7.5b animation Root Motion: Character reports active animation root motion"),
+							KnockbackEnemy->IsPlayingRootMotion());
+						TestNull(TEXT("7.5b animation Root Motion: No owned root-force task is created"),
+							AnimationRootMotionAbilityScope.Value->GetTestKnockbackTask());
+						TestFalse(TEXT("7.5b animation Root Motion: No owned RMS is added"),
+							KnockbackMovement->GetRootMotionSource(OwnedRootMotionName).IsValid());
+					}
+					EndAndClearAbility(AnimationRootMotionAbilityScope, true);
+					FlushMarkedRootMotion();
+
+					auto AssertSkippedKnockback = [&](const TCHAR* CaseName, float Distance, float Duration, UCurveFloat* Curve,
+						const FGameplayEventData& Payload)
+					{
+						const auto AbilityScope = CreateAbility(Distance, Duration, Curve);
+						TestNotNull(FString::Printf(TEXT("7.5b %s: Small ability instance created"), CaseName), AbilityScope.Value);
+						if (AbilityScope.Value)
+						{
+							TestTrue(FString::Printf(TEXT("7.5b %s: Small montage remains active"), CaseName),
+								ActivateAbility(AbilityScope, Payload));
+							TestEqual(FString::Printf(TEXT("7.5b %s: Selected montage is retained"), CaseName),
+								AbilityScope.Value->GetTestActiveMontage(), KnockbackMontage);
+							TestNull(FString::Printf(TEXT("7.5b %s: No owned root-force task is created"), CaseName),
+								AbilityScope.Value->GetTestKnockbackTask());
+							TestFalse(FString::Printf(TEXT("7.5b %s: No owned RMS is added"), CaseName),
+								KnockbackMovement->GetRootMotionSource(OwnedRootMotionName).IsValid());
+						}
+						EndAndClearAbility(AbilityScope, true);
+						FlushMarkedRootMotion();
+					};
+
+					ResetGroundedHitSetup();
+					AssertSkippedKnockback(TEXT("zero distance"), 0.0f, 0.10f, LinearFalloff, BuildPayload(Player));
+					ResetGroundedHitSetup();
+					AssertSkippedKnockback(TEXT("missing curve"), 20.0f, 0.10f, nullptr, BuildPayload(Player));
+					UCurveFloat* EmptyCurve = NewObject<UCurveFloat>(GetTransientPackage());
+					ResetGroundedHitSetup();
+					AssertSkippedKnockback(TEXT("empty curve"), 20.0f, 0.10f, EmptyCurve, BuildPayload(Player));
+					ResetGroundedHitSetup();
+					AssertSkippedKnockback(TEXT("zero direction"), 20.0f, 0.10f, LinearFalloff, BuildPayload(nullptr));
+					ResetGroundedHitSetup();
+					AssertSkippedKnockback(TEXT("invalid duration"), 20.0f, 0.0f, LinearFalloff, BuildPayload(Player));
+
+					ResetGroundedHitSetup();
+					KnockbackMovement->SetMovementMode(MOVE_Falling);
+					AssertSkippedKnockback(TEXT("airborne"), 20.0f, 0.10f, LinearFalloff, BuildPayload(Player));
+
+					ResetGroundedHitSetup();
+					const uint16 ForeignSourceID = AddForeignRootMotion();
+					TestTrue(TEXT("7.5b existing RMS: Foreign source added"),
+						KnockbackMovement->GetRootMotionSource(ForeignRootMotionName).IsValid());
+					AssertSkippedKnockback(TEXT("existing RMS"), 20.0f, 0.10f, LinearFalloff, BuildPayload(Player));
+					TestTrue(TEXT("7.5b existing RMS: Foreign source survives Small cleanup"),
+						KnockbackMovement->GetRootMotionSource(ForeignRootMotionName).IsValid());
+					KnockbackMovement->RemoveRootMotionSourceByID(ForeignSourceID);
+					FlushMarkedRootMotion();
+
+					// Retrigger cleanup is owner-scoped: an ended old task cannot remove the replacement or a foreign source.
+					ResetGroundedHitSetup();
+					const auto RetriggerAbilityScope = CreateAbility(20.0f, 0.10f, LinearFalloff);
+					TestNotNull(TEXT("7.5c: Retrigger Small ability instance created"), RetriggerAbilityScope.Value);
+					if (RetriggerAbilityScope.Value)
+					{
+						const FGameplayEventData Payload = BuildPayload(Player);
+						TestTrue(TEXT("7.5c: First Small activation creates owned RMS"), ActivateAbility(RetriggerAbilityScope, Payload));
+						UAbilityTask_ApplyRootMotionConstantForce* OldTask = RetriggerAbilityScope.Value->GetTestKnockbackTask();
+						TestNotNull(TEXT("7.5c: First root-force task exists"), OldTask);
+						if (OldTask)
+						{
+							OldTask->EndTask();
+							FlushMarkedRootMotion();
+							ResetGroundedHitSetup();
+							TestTrue(TEXT("7.5c: Retrigger creates a replacement RMS after old cleanup"),
+								ActivateAbility(RetriggerAbilityScope, Payload));
+							UAbilityTask_ApplyRootMotionConstantForce* NewTask = RetriggerAbilityScope.Value->GetTestKnockbackTask();
+							TestNotNull(TEXT("7.5c: Replacement root-force task exists"), NewTask);
+							TestNotEqual(TEXT("7.5c: Replacement task is distinct from the old task"), NewTask, OldTask);
+
+							OldTask->EndTask();
+							TestEqual(TEXT("7.5c: Late old task cleanup leaves the replacement task owned"),
+								RetriggerAbilityScope.Value->GetTestKnockbackTask(), NewTask);
+							TestTrue(TEXT("7.5c: Late old task cleanup leaves replacement RMS present"),
+								KnockbackMovement->GetRootMotionSource(OwnedRootMotionName).IsValid());
+
+							const uint16 LifecycleForeignSourceID = AddForeignRootMotion();
+							RetriggerAbilityScope.Value->EndAbility(
+								RetriggerAbilityScope.Key,
+								KnockbackASC->AbilityActorInfo.Get(),
+								FGameplayAbilityActivationInfo(),
+								false,
+								true);
+							FlushMarkedRootMotion();
+							TestFalse(TEXT("7.5c: Cancellation removes the owned replacement RMS"),
+								KnockbackMovement->GetRootMotionSource(OwnedRootMotionName).IsValid());
+							TestTrue(TEXT("7.5c: Cancellation retains the foreign RMS"),
+								KnockbackMovement->GetRootMotionSource(ForeignRootMotionName).IsValid());
+							KnockbackMovement->RemoveRootMotionSourceByID(LifecycleForeignSourceID);
+							FlushMarkedRootMotion();
+						}
+					}
+					EndAndClearAbility(RetriggerAbilityScope, true);
+				}
+			}
+
+			if (KnockbackEnemy)
+			{
+				KnockbackEnemy->Destroy();
+			}
+		}
+#endif
 	}
 
 	Player->Destroy();

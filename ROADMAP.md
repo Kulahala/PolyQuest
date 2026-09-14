@@ -4,9 +4,9 @@
 
 ## Current State
 
-- 最近交付：TODO-03H10 已于 2026-09-14 完成。敌人以独立 Screen Space WidgetComponent 显示 StanceBreak 胸口红点，随 Mesh `spine_03` 骨骼运动；自然恢复使用 `0.15s` 游戏时间淡出，处决接管、待死亡、死亡与 teardown 瞬间熄灭。用户确认当前代码编译、两组 Automation 和 Scene01 PIE/视觉门禁通过，Main Fresh Review 无 P0-P2。固定收据见 ROADMAP-archive 的“TODO-03H10：StanceBreak 胸口红点标识”条目。
-- 当前交接：[plan.md](plan.md) 保留 TODO-03H10 最近完成交接。下一规划入口为 TODO-03H11；03H9 总验收及 03H10 完成证据固定于归档。
-- 已确认排期：**03H11 Small 小幅击退 → 03H13 处决命中帧消费红点 → 03C → 03C-B**。正式实施前各自冻结最小计划、参数及路径。Big 倍率配置仅按 TODO-03H12 条件开启；其他条件阶段也不自动加入前置。
+- 最近交付：TODO-03H11 已完成 Enemy Small 的 Native 可选 CMC 小幅击退。用户确认 Development Editor 编译及四组指定 Automation 成功，Main Fresh Review 无 P0-P2；Curve/GA 的逐项 Editor readback 与完整 Scene01 PIE 矩阵仍是 `Debt-03H11-AuthoredValidation`，不宣称已完成资产或视觉验收。固定收据见 ROADMAP-archive 的“TODO-03H11：Enemy Small 小幅击退”条目。
+- 当前交接：[plan.md](plan.md) 保留 TODO-03H11 最近完成交接。下一规划入口为 TODO-03H13；03H9、03H10 与 03H11 的交付收据固定于归档。
+- 已确认排期：**03H13 处决命中帧消费红点 → 03C → 03C-B**。正式实施前各自冻结最小计划、参数及路径。Big 倍率配置仅按 TODO-03H12 条件开启；其他条件阶段也不自动加入前置。
 - 既有 Content/Config WIP 与各阶段资产收据债保持独立；当前状态不构成干净检出可复现或打包就绪证明。
 
 ## Contents
@@ -27,13 +27,6 @@
 
 
 ### Combat Experience Before Ranged Enemy
-
-- [ ] TODO-03H11: Small Hit Reaction Knockback
-  - 已确认目标：为 Enemy Small 增加短促、可关闭的小幅地面击退，增强轻受击反馈并保持近战连段可接续。范围仅为 Small；Big 保留现有 Montage Root Motion，Launch 保留现有接地 RootMotionKnockdown。不增加 Big 自动回退、Motion Warping 或强制根锁定改造。Player Small 不自动纳入，若需要须在正式计划明确批准。
-  - 位移由现有 GAS 受击生命周期和原生 CMC 能力管理，沿用真实来袭方向快照，胶囊碰撞/地面处理仍由 CMC 负责，不直接逐帧移动 Actor 或 Mesh，不新增通用位移框架。Small 现有不强制取消攻击、不加移动锁的契约保留；正式计划核对导航和攻击并行时序，不为反馈暗改打断等级。
-  - 每段反应只选一个水平位移主来源。优先限定接地且没有其他主导动画 Root Motion/高优先级位移动作时生效；存在冲突时保留 Small 动画并跳过额外击退，具体判定由正式计划基于实际动画/动作组合冻结。不能仅以 Small 自身动画未启用 RM 推定整个角色没有 RM；不默认使用 LaunchCharacter 将地面反馈转为 Falling。
-  - 距离、短时长和衰减可配置，提供零距离关闭；具体数值通过代表性场景试调，不在路线图硬定。连续 Small 默认替换旧击退，不无限累计；旧实例结束不得停止新位移，死亡、Big/Launch、处决、销毁/解绑及其他终止路径撤销自身贡献，不清除其他动作的速度或移动资源。
-  - 验收：真实受击方向、重复命中、零距离、导航/攻击并行、Root Motion 冲突、墙角/坡面/悬崖、升级受击/死亡/处决打断，以及 RateWindow/HitStop 时序。先做有/无击退对照，确认反馈更清楚、不把敌人持续推出下一刀有效范围、不出现足滑/无限推行；补对应 Automation 与用户 readback/PIE。正式实施另冻结调用点、批准路径及最小资产范围。
 
 - [ ] TODO-03H13: Execution Hit-Timed StanceBreak Marker Consumption v1
   - 排在 TODO-03H11 之后、TODO-03C 之前。仅当 Front 处决由真实 StanceBreak 交接而来时，红点在锁定、吸附和攻击前摇期间继续跟随胸口显示，并在既有处决伤害成功结算的命中帧瞬间熄灭；普通 Backstab 不得因 Victim Ability 临时持有 `State.Status.Stunned` 而生成红点。
@@ -178,6 +171,8 @@
 
 
 本节是开放风险和证据缺口的唯一维护位置。条目沿用各阶段记录及其证据时点；本次文档整理不重新审计源码、不核销收据，也不把“未报告”判定为测试失败。旧 fixture/资产描述在相关维护时按真实状态对账，不能据此推断新阶段尚未实现或自动新增修复。
+
+- **Debt-03H11-AuthoredValidation（非阻塞 Editor/PIE 收据债）**：03H11 的 Native C++、Development Editor 编译、`PolyQuest.Combat.HitReaction`、`PolyQuest.Enemy.RootMotionFacing`、`PolyQuest.Enemy.CombatTargetRetention` 与 `PolyQuest.Combat.EnemyLaunchReactionRootMotion` 已有用户成功证据，且 Fresh Review 无 P0-P2。仍缺本阶段逐项 Editor readback：Enemy Small GA 父类、四向 Montage 引用、距离 `20.0`、时长 `0.10`、CurveFloat 赋值与两枚线性 key；也缺 Scene01 四方向、连击、零距离、导航/攻击恢复、Root Motion 冲突、地形/边缘、升级受击/死亡/处决与 HitStop 的最终 PIE 收据。关闭触发：用户完成并记录上述 readback/PIE，或提供可追溯的 evidence-backed no-adoption；在此之前不得宣称 authored baseline、视觉验收、打包就绪或无残余滑行。
 
 
 
