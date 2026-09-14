@@ -63,6 +63,46 @@ namespace ManagedMontageCancelAutomation
 		}
 	};
 
+	// Shared only by section 9 and the configuration-only acceptance below.
+	struct FControlledMontageAdvance
+	{
+		APlayerCharacter* Player;
+		UAnimInstance* Anim;
+		bool bMeshTick, bMovementTick, bPose;
+		FControlledMontageAdvance(APlayerCharacter* InPlayer, UAnimInstance* InAnim)
+			: Player(InPlayer), Anim(InAnim),
+			bMeshTick(Player->GetMesh()->IsComponentTickEnabled()),
+			bMovementTick(Player->GetCharacterMovement()->IsComponentTickEnabled()),
+			bPose(Player->GetMesh()->bIsAutonomousTickPose)
+		{
+			Player->GetMesh()->SetComponentTickEnabled(false);
+			Player->GetCharacterMovement()->SetComponentTickEnabled(false);
+			FAnimInstanceProxyAccess::GetProxy(Anim).RegisterSlotNodeWithAnimInstance(TEXT("DefaultSlot"));
+		}
+		~FControlledMontageAdvance()
+		{
+			Player->GetMesh()->SetComponentTickEnabled(bMeshTick);
+			Player->GetCharacterMovement()->SetComponentTickEnabled(bMovementTick);
+			Player->GetMesh()->bIsAutonomousTickPose = bPose;
+		}
+		void Advance(float Seconds)
+		{
+			while (Seconds > KINDA_SMALL_NUMBER)
+			{
+				const float Step = FMath::Min(Seconds, 0.05f);
+				FCombatAutomationFixture::TickWorld(Player->GetWorld(), Step);
+				auto& Proxy = FAnimInstanceProxyAccess::GetProxy(Anim);
+				Proxy.UpdateSlotNodeWeight(TEXT("DefaultSlot"), 1.0f, 1.0f); Proxy.FlipBufferWriteIndex();
+				Proxy.UpdateSlotNodeWeight(TEXT("DefaultSlot"), 1.0f, 1.0f); Proxy.FlipBufferWriteIndex();
+				Player->GetMesh()->bIsAutonomousTickPose = true;
+				Anim->TickMontageOnly(Step);
+				Anim->DispatchQueuedAnimEvents();
+				Player->GetMesh()->bIsAutonomousTickPose = bPose;
+				Seconds -= Step;
+			}
+		}
+	};
+
 	struct FTestWorldScope
 	{
 		UWorld* World = nullptr;
@@ -940,6 +980,8 @@ bool FManagedMontageCancelWindowAutomationTest::RunTest(const FString& Parameter
 	// =========================================================================
 	{
 		auto* Source = NewObject<UChargedAttackAbility>(Player);
+		// UE only assigns an AbilityTask's owner when the ability has ActorInfo.
+		Source->SetTestCurrentActorInfo(ASC->AbilityActorInfo.Get());
 		auto* Target = NewObject<UDodgeAbility>(Player);
 		const TArray<const UGameplayAbility*> Targets = { Target,
 			GetDefault<UPlayerGuardAbility>(), GetDefault<UPlayerParryAbility>() };
@@ -976,7 +1018,7 @@ bool FManagedMontageCancelWindowAutomationTest::RunTest(const FString& Parameter
 		TestTrue(TEXT("6.5 Window on a direct animation segment passes"), Validate());
 		SegmentAnimation->Notifies = SavedSegmentNotifies;
 		TestMontage->Notifies = SavedNotifies;
-		TestTrue(TEXT("6.6 Explicit None allows no task"),
+		TestFalse(TEXT("6.6 Explicit None still requires the standard entry"),
 			FManagedMontageTestHelpers::ValidateCancelWindowConfiguration(Source, nullptr, nullptr,
 				EActionMontageCancelPolicy::None, {}, Reason));
 
@@ -1226,40 +1268,10 @@ bool FManagedMontageCancelWindowAutomationTest::RunTest(const FString& Parameter
 	if (!TestNotNull(TEXT("9. Source sequence exists"), SegmentAnimation)) return false;
 	const TArray<FAnimNotifyEvent> OriginalSegmentNotifies = SegmentAnimation->Notifies;
 	const float OriginalLength = TestMontage->GetPlayLength();
-	const bool bMeshTickEnabled = PlayerMesh->IsComponentTickEnabled();
-	const bool bMovementTickEnabled = Player->GetCharacterMovement()->IsComponentTickEnabled();
-	PlayerMesh->SetComponentTickEnabled(false);
-	Player->GetCharacterMovement()->SetComponentTickEnabled(false);
+	FControlledMontageAdvance ControlledAdvance(Player, MockAnimInstance);
 	FAnimInstanceProxy& MockAnimProxy = FAnimInstanceProxyAccess::GetProxy(MockAnimInstance);
 	const FName DefaultSlotName(TEXT("DefaultSlot"));
-	MockAnimProxy.RegisterSlotNodeWithAnimInstance(DefaultSlotName);
-	ON_SCOPE_EXIT
-	{
-		PlayerMesh->SetComponentTickEnabled(bMeshTickEnabled);
-		Player->GetCharacterMovement()->SetComponentTickEnabled(bMovementTickEnabled);
-	};
-	auto RefreshSlotRelevance = [&]()
-	{
-		MockAnimProxy.UpdateSlotNodeWeight(DefaultSlotName, 1.0f, 1.0f);
-		MockAnimProxy.FlipBufferWriteIndex();
-		MockAnimProxy.UpdateSlotNodeWeight(DefaultSlotName, 1.0f, 1.0f);
-		MockAnimProxy.FlipBufferWriteIndex();
-	};
-	auto AdvanceMontage = [&](float DeltaSeconds)
-	{
-		constexpr float MaxTickStepSeconds = 0.05f;
-		while (DeltaSeconds > KINDA_SMALL_NUMBER)
-		{
-			const float TickStep = FMath::Min(DeltaSeconds, MaxTickStepSeconds);
-			FCombatAutomationFixture::TickWorld(World, TickStep);
-			RefreshSlotRelevance();
-			PlayerMesh->bIsAutonomousTickPose = true;
-			MockAnimInstance->TickMontageOnly(TickStep);
-			MockAnimInstance->DispatchQueuedAnimEvents();
-			PlayerMesh->bIsAutonomousTickPose = false;
-			DeltaSeconds -= TickStep;
-		}
-	};
+	const auto AdvanceMontage = [&](float Seconds) { ControlledAdvance.Advance(Seconds); };
 	for (int32 SourceCase = 0; SourceCase < 5; ++SourceCase)
 	for (int32 Scenario = 0; Scenario < 3; ++Scenario)
 	{
@@ -1461,5 +1473,239 @@ bool FManagedMontageCancelWindowAutomationTest::RunTest(const FString& Parameter
 	return true;
 #endif // WITH_EDITOR
 }
+
+#if WITH_EDITOR
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FManagedMontageConfigurationOnlyTest,
+	"PolyQuest.Combat.ManagedMontageConfigurationOnly", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FManagedMontageConfigurationOnlyTest::RunTest(const FString& Parameters)
+{
+	using namespace ManagedMontageCancelAutomation;
+	UWorld* World = UWorld::CreateWorld(EWorldType::Game, false);
+	if (!TestNotNull(TEXT("Configuration world"), World)) return false;
+	GEngine->CreateNewWorldContext(EWorldType::Game).SetCurrentWorld(World);
+	FTestWorldScope WorldScope{World};
+	FURL URL; World->InitializeActorsForPlay(URL); World->BeginPlay();
+	APlayerCharacter* Player = FCombatAutomationFixture::SpawnPlayer(World);
+	if (!TestNotNull(TEXT("Configuration player"), Player)) return false;
+	auto* ASC = Player->GetAbilitySystemComponent();
+	auto* Mesh = Player->GetMesh();
+	auto Setup = CreatePlayableCancelTestMontage(*this, World);
+	UAnimMontage* First = Setup.Montage;
+	if (!TestNotNull(TEXT("First configured montage"), First)) return false;
+	// Author the second montage independently: duplicating an unsaved montage also
+	// copies notify links/caches and is not evidence of an independent configuration.
+	UAnimMontage* Second = CreatePlayableCancelTestMontage(*this, Player).Montage;
+	if (!TestNotNull(TEXT("Second independently configured montage"), Second)) return false;
+	UAnimInstance* Anim = NewObject<UAnimInstance>(Mesh);
+	Anim->InitializeMontageOnly(); Anim->CurrentSkeleton = First->GetSkeleton();
+	UAnimInstance* PreviousAnim = Mesh->AnimScriptInstance;
+	Mesh->AnimScriptInstance = Anim; ASC->RefreshAbilityActorInfo();
+	FControlledMontageAdvance Advance(Player, Anim);
+	ON_SCOPE_EXIT { ASC->CancelAllAbilities(); Mesh->AnimScriptInstance = PreviousAnim; ASC->RefreshAbilityActorInfo(); };
+	Player->GetCharacterMovement()->SetMovementMode(MOVE_Walking);
+	ASC->SetNumericAttributeBase(UCharacterAttributeSet::GetMaxStaminaAttribute(), 100.0f);
+	ASC->SetNumericAttributeBase(UCharacterAttributeSet::GetStaminaAttribute(), 100.0f);
+	const auto SourceHandle = ASC->GiveAbility(FGameplayAbilitySpec(UTestConfigurationOnlyActionAbility::StaticClass(), 1, INDEX_NONE, Player));
+	auto* Source = CastChecked<UTestConfigurationOnlyActionAbility>(ASC->FindAbilitySpecFromHandle(SourceHandle)->GetPrimaryInstance());
+	const auto DodgeHandle = ASC->GiveAbility(FGameplayAbilitySpec(UDodgeAbility::StaticClass(), 1, INDEX_NONE, Player));
+	const auto FailHandle = ASC->GiveAbility(FGameplayAbilitySpec(UTestCommitFailingDodgeAbility::StaticClass(), 1, INDEX_NONE, Player));
+	auto* Dodge = CastChecked<UDodgeAbility>(ASC->FindAbilitySpecFromHandle(DodgeHandle)->GetPrimaryInstance());
+	auto* FailingDodge = CastChecked<UTestCommitFailingDodgeAbility>(ASC->FindAbilitySpecFromHandle(FailHandle)->GetPrimaryInstance());
+	const auto DodgeTag = FGameplayTag::RequestGameplayTag(TEXT("State.Action.CanCancel.Dodge"));
+	const auto DefenseTag = FGameplayTag::RequestGameplayTag(TEXT("State.Action.CanCancel.Defense"));
+	const auto RateBegin = FGameplayTag::RequestGameplayTag(TEXT("Event.Action.RateWindow.Begin"));
+	const auto RateEnd = FGameplayTag::RequestGameplayTag(TEXT("Event.Action.RateWindow.End"));
+	const auto CancelBegin = FGameplayTag::RequestGameplayTag(TEXT("Event.Action.CancelWindow.Dodge.Begin"));
+	const auto CancelEnd = FGameplayTag::RequestGameplayTag(TEXT("Event.Action.CancelWindow.Dodge.End"));
+	FString Reason;
+	for (int32 Variant = 0; Variant < 2; ++Variant)
+	{
+		UAnimMontage* Montage = Variant == 0 ? First : Second;
+		Anim->CurrentSkeleton = Montage->GetSkeleton();
+		Source->Montage = Montage; // The same action instance changes only its configuration.
+		auto* RateNotify = NewObject<UAnimNotifyState_MontageRateWindow>(Montage);
+		RateNotify->RateMultiplier = Variant == 0 ? 0.5f : 0.75f;
+		FAnimNotifyEvent& RateEvent = Montage->Notifies.AddDefaulted_GetRef();
+		RateEvent.NotifyName = TEXT("ConfigurationRate"); RateEvent.NotifyStateClass = RateNotify;
+		RateEvent.MontageTickType = Variant == 0 ? EMontageNotifyTickType::Queued : EMontageNotifyTickType::BranchingPoint;
+		RateEvent.Link(Montage, 0.05f); RateEvent.SetTime(0.05f); RateEvent.SetDuration(0.30f);
+		RateEvent.EndLink.Link(Montage, 0.35f); RateEvent.EndLink.SetTime(0.35f); Montage->RefreshCacheData();
+		for (UDodgeAbility* Target : {Dodge, static_cast<UDodgeAbility*>(FailingDodge)})
+		{
+			if (!SetFixtureObject(Target, TEXT("DodgeMontage"), Montage)
+				|| !SetFixtureObject(Target, TEXT("CostGameplayEffectClass"), UGameplayEffect::StaticClass())
+				|| !SetFixtureObject(Target, TEXT("StaminaRegenDelayGameplayEffectClass"), UGameplayEffect::StaticClass())
+				|| !SetFixtureObject(Target, TEXT("InvulnerabilityGameplayEffectClass"), UGameplayEffect::StaticClass())) return false;
+		}
+		const auto Activate = [&]() -> UAbilityTask_PlayActionMontage*
+		{
+			ASC->CancelAbilityHandle(DodgeHandle); ASC->CancelAbilityHandle(FailHandle);
+			if (!TestTrue(TEXT("Configuration-only real source activation"), ASC->TryActivateAbility(SourceHandle) && Source->IsActive())) return nullptr;
+			auto* Task = Source->GetMontageTask();
+			if (!TestNotNull(TEXT("Configuration-only standard Task"), Task)) return nullptr;
+			TestTrue(TEXT("Actual Task/configuration passes offline check"),
+				FManagedMontageTestHelpers::ValidateCancelWindowConfiguration(Source, Montage, Task, Source->CancelPolicy,
+					{Dodge, GetDefault<UPlayerGuardAbility>(), GetDefault<UPlayerParryAbility>()}, Reason));
+			TestFalse(TEXT("Positive path does not bypass playback"), Task->GetTestBypassMontageActiveCheck());
+			TestEqual(TEXT("Configuration-only starts at zero"), Anim->Montage_GetPosition(Montage), 0.0f);
+			TestEqual(TEXT("Configuration-only root motion scale"), Player->GetAnimRootMotionTranslationScale(), 1.0f);
+			return Task;
+		};
+		const auto AdvanceTo = [&](float Position)
+		{
+			for (int32 Step = 0; Step < 60 && Source->IsActive() && Anim->Montage_GetPosition(Montage) < Position; ++Step) Advance.Advance(0.025f);
+			return Source->IsActive() && Anim->Montage_GetPosition(Montage) >= Position;
+		};
+		const auto CheckClean = [&](UAbilityTask_PlayActionMontage* Task)
+		{
+			TestTrue(TEXT("Source Task terminated"), Task->IsTerminated());
+			TestNull(TEXT("Source releases Task"), Source->GetMontageTask());
+			TestFalse(TEXT("Rate binding cleared"), Task->GetRateWindowLifecycle().IsBound());
+			TestEqual(TEXT("Cancel windows cleared"), Task->GetActiveCancelWindowCount(), 0);
+			TestFalse(TEXT("Dodge contribution cleared"), ASC->HasMatchingGameplayTag(DodgeTag));
+			TestFalse(TEXT("Defense contribution cleared"), ASC->HasMatchingGameplayTag(DefenseTag));
+		};
+		UAbilityTask_PlayActionMontage* Task = Activate();
+		if (!Task) return false;
+		const int32 InstanceID = Task->GetBoundMontageInstanceID();
+		int32 RateBegins = 0, RateEnds = 0, CancelBegins = 0, CancelEnds = 0;
+		TArray<TPair<FGameplayTag, FDelegateHandle>> Receipts;
+		for (const auto& Pair : {TPair<FGameplayTag, int32*>{RateBegin, &RateBegins}, {RateEnd, &RateEnds}, {CancelBegin, &CancelBegins}, {CancelEnd, &CancelEnds}})
+		{
+			int32* Count = Pair.Value;
+			Receipts.Add({Pair.Key, ASC->GenericGameplayEventCallbacks.FindOrAdd(Pair.Key).AddLambda(
+				[&, Count](const FGameplayEventData* Payload)
+				{
+					if (!Payload || Payload->OptionalObject != Montage || !Payload->OptionalObject2 || Payload->Target != Player
+						|| !Payload->TargetData.IsValid(0)) return;
+					const auto* Data = Payload->TargetData.Get(0);
+					if (Data->GetScriptStruct() != FGameplayAbilityTargetData_MontageRateWindowSource::StaticStruct()) return;
+					const auto* Receipt = static_cast<const FGameplayAbilityTargetData_MontageRateWindowSource*>(Data);
+					if (Receipt->AnimInstance == Anim && Receipt->MontageInstanceID == InstanceID) ++*Count;
+				})});
+		}
+		ON_SCOPE_EXIT { for (const auto& Receipt : Receipts) ASC->GenericGameplayEventCallbacks.FindOrAdd(Receipt.Key).Remove(Receipt.Value); };
+		TestFalse(TEXT("Dodge activation denied outside authored window"), ASC->TryActivateAbility(DodgeHandle));
+		TestTrue(TEXT("Outside rejection preserves source"), Source->IsActive() && Source->GetMontageTask() == Task);
+		if (!TestTrue(TEXT("Native advance reaches window interior"), AdvanceTo(0.17f))) return false;
+		TestEqual(TEXT("Native RateWindow applies configured rate"), Anim->Montage_GetPlayRate(Montage), RateNotify->RateMultiplier);
+		TestTrue(*FString::Printf(TEXT("Native CancelWindow grants Dodge and Defense [%s position=%.3f windows=%d policy=%d]"),
+			*Montage->GetPathName(), Anim->Montage_GetPosition(Montage), Task->GetActiveCancelWindowCount(), static_cast<int32>(Task->GetCancelPolicy())),
+			ASC->HasMatchingGameplayTag(DodgeTag) && ASC->HasMatchingGameplayTag(DefenseTag));
+		TestTrue(TEXT("Native Begin receipts include animation/notify/instance"), RateBegins > 0 && CancelBegins > 0);
+		FStructProperty* BlockProperty = FindFProperty<FStructProperty>(UGameplayAbility::StaticClass(), TEXT("ActivationBlockedTags"));
+		if (!TestNotNull(TEXT("Target block configuration property"), BlockProperty)) return false;
+		auto* Blocks = BlockProperty->ContainerPtrToValuePtr<FGameplayTagContainer>(Dodge);
+		const auto SavedBlocks = *Blocks;
+		Blocks->AddTag(FGameplayTag::RequestGameplayTag(TEXT("State.Action.Attacking")));
+		TestFalse(TEXT("CanActivate failure inside window"), ASC->TryActivateAbility(DodgeHandle));
+		*Blocks = SavedBlocks;
+		TestTrue(TEXT("CanActivate failure retains same source Task"), Source->IsActive() && Source->GetMontageTask() == Task);
+		const int32 FailedChecksBefore = FailingDodge->CommitCheckCallCount;
+		ASC->TryActivateAbility(FailHandle);
+		TestTrue(TEXT("Real target CommitCheck executed and failed"), FailingDodge->CommitCheckCallCount > FailedChecksBefore && !FailingDodge->IsActive());
+		TestTrue(TEXT("Commit failure retains source and window"), Source->IsActive() && Source->GetMontageTask() == Task && ASC->HasMatchingGameplayTag(DodgeTag));
+		if (!TestTrue(TEXT("Native advance passes all window ends while source active"), AdvanceTo(0.45f))) return false;
+		TestEqual(TEXT("Rate restores baseline on actual Notify End"), Anim->Montage_GetPlayRate(Montage), 1.0f);
+		TestFalse(TEXT("Actual Cancel End removes Dodge"), ASC->HasMatchingGameplayTag(DodgeTag));
+		TestFalse(TEXT("Actual Cancel End removes Defense"), ASC->HasMatchingGameplayTag(DefenseTag));
+		TestTrue(TEXT("Native End receipts include source and instance"), RateEnds > 0 && CancelEnds >= CancelBegins);
+		Advance.Advance(1.0f);
+		TestFalse(TEXT("Natural completion ends source"), Source->IsActive()); CheckClean(Task);
+		for (const auto& Receipt : Receipts) ASC->GenericGameplayEventCallbacks.FindOrAdd(Receipt.Key).Remove(Receipt.Value);
+		Receipts.Reset();
+		Task = Activate(); if (!Task || !AdvanceTo(0.17f)) return false;
+		TestTrue(TEXT("Real Dodge activation succeeds in window"), ASC->TryActivateAbility(DodgeHandle) && Dodge->IsActive());
+		TestFalse(TEXT("Real Dodge cancels configuration-only source"), Source->IsActive()); CheckClean(Task);
+		ASC->CancelAbilityHandle(DodgeHandle);
+		Task = Activate(); if (!Task || !AdvanceTo(0.17f)) return false;
+		ASC->CancelAbilityHandle(SourceHandle); CheckClean(Task);
+
+		// Negative diagnostics are configuration inspection, never a runtime class registry.
+		auto* ConfigTask = UAbilityTask_PlayActionMontage::PlayActionMontage(Source, NAME_None, Montage,
+			1.0f, NAME_None, 1.0f, 0.0f, false, Source->CancelPolicy);
+		ON_SCOPE_EXIT { ConfigTask->EndTask(); };
+		const auto Validate = [&](const UAbilityTask_PlayActionMontage* Actual, EActionMontageCancelPolicy Policy)
+		{
+			return FManagedMontageTestHelpers::ValidateCancelWindowConfiguration(Source, Montage, Actual, Policy, {Dodge}, Reason);
+		};
+		TestFalse(TEXT("None cannot bypass missing standard entry"), Validate(nullptr, EActionMontageCancelPolicy::None));
+		TestTrue(TEXT("Missing entry diagnostic identifies source and montage"), Reason.Contains(Source->GetName()) && Reason.Contains(Montage->GetName()) && Reason.Contains(TEXT("missing standard")));
+		TestFalse(TEXT("Mismatched policy rejected"), Validate(ConfigTask, EActionMontageCancelPolicy::DodgeOnly));
+		TestTrue(TEXT("Policy mismatch localized"), Reason.Contains(TEXT("policy mismatch")));
+		UAnimMontage* OtherMontage = Variant == 0 ? Second : First;
+		TestFalse(TEXT("Task must actually reference the declared montage"),
+			FManagedMontageTestHelpers::ValidateCancelWindowConfiguration(Source, OtherMontage, ConfigTask, Source->CancelPolicy, {Dodge}, Reason));
+		const auto SavedTags = Source->AbilityTags;
+		Source->AbilityTags.RemoveTag(FGameplayTag::RequestGameplayTag(TEXT("Ability.Action.CancelableBy.Dodge")));
+		TestFalse(TEXT("Missing source marker rejected"), Validate(ConfigTask, Source->CancelPolicy));
+		TestTrue(TEXT("Missing marker localized"), Reason.Contains(TEXT("CancelableBy.Dodge")));
+		Source->AbilityTags = SavedTags;
+		const auto SavedNotifies = Montage->Notifies;
+		Montage->Notifies.Reset();
+		TestFalse(TEXT("Missing cancellation window rejected"), Validate(ConfigTask, Source->CancelPolicy));
+		TestTrue(TEXT("Missing window localized"), Reason.Contains(TEXT("lack CancelWindow")));
+		auto* NoneTask = UAbilityTask_PlayActionMontage::PlayActionMontage(Source, NAME_None, Montage);
+		TestTrue(TEXT("Explicit None with no Cancel Notify is legal"), Validate(NoneTask, EActionMontageCancelPolicy::None));
+		NoneTask->EndTask(); Montage->Notifies = SavedNotifies;
+		for (const FName Field : {FName(TEXT("ActivationBlockedTags")), FName(TEXT("CancelAbilitiesWithTag"))})
+		{
+			auto* Property = FindFProperty<FStructProperty>(UGameplayAbility::StaticClass(), Field);
+			auto* Tags = Property->ContainerPtrToValuePtr<FGameplayTagContainer>(Dodge);
+			const auto Saved = *Tags;
+			Tags->AddTag(FGameplayTag::RequestGameplayTag(Field == TEXT("ActivationBlockedTags") ? TEXT("State.Action.Attacking") : TEXT("Ability.Action.CancelableBy.Dodge")));
+			TestFalse(TEXT("Target block or premature cancellation conflict rejected"), Validate(ConfigTask, Source->CancelPolicy));
+			TestTrue(TEXT("Conflict diagnostic identifies actual target and reason"), Reason.Contains(Dodge->GetName()) && Reason.Contains(Field.ToString()));
+			*Tags = Saved;
+		}
+		// A declared legacy source tag is permitted only with its own real GAS proof.
+		Source->AbilityTags.Reset();
+		const auto LegacyTag = FGameplayTag::RequestGameplayTag(TEXT("Ability.Attack.Light"));
+		Source->AbilityTags.AddTag(LegacyTag);
+		Source->CancelPolicy = EActionMontageCancelPolicy::DodgeOnly;
+		FGameplayTagContainer RequiredTags; RequiredTags.AddTag(LegacyTag);
+		if (!TestTrue(TEXT("Explicit-route source activates through standard entry"), ASC->TryActivateAbility(SourceHandle) && Source->IsActive())) return false;
+		Task = Source->GetMontageTask();
+		TestTrue(TEXT("Declared existing cancellation route passes diagnosis"), FManagedMontageTestHelpers::ValidateCancelWindowConfiguration(
+			Source, Montage, Task, Source->CancelPolicy, {Dodge}, Reason, RequiredTags));
+		Source->AbilityTags.RemoveTag(LegacyTag);
+		TestFalse(TEXT("Missing declared source tag fails diagnosis"), FManagedMontageTestHelpers::ValidateCancelWindowConfiguration(
+			Source, Montage, Task, Source->CancelPolicy, {Dodge}, Reason, RequiredTags));
+		Source->AbilityTags.AddTag(LegacyTag);
+		if (!TestTrue(TEXT("Explicit route reaches native cancel window"), AdvanceTo(0.17f))) return false;
+		TestTrue(TEXT("Existing Dodge route really cancels declared source"), ASC->TryActivateAbility(DodgeHandle) && Dodge->IsActive() && !Source->IsActive());
+		CheckClean(Task); ASC->CancelAbilityHandle(DodgeHandle);
+		Source->AbilityTags = SavedTags; Source->CancelPolicy = EActionMontageCancelPolicy::DodgeAndDefense;
+
+		// Destruction uses a separate actor because Destroy is terminal. The action class
+		// and both animation configurations are the same as the reusable source above.
+		APlayerCharacter* DestroyedPlayer = FCombatAutomationFixture::SpawnPlayer(World,
+			FTransform(FVector(1000.0f + Variant * 300.0f, 0.0f, 0.0f)));
+		if (!TestNotNull(TEXT("Destruction fixture"), DestroyedPlayer)) return false;
+		auto* DestroyASC = DestroyedPlayer->GetAbilitySystemComponent();
+		auto* DestroyAnim = NewObject<UAnimInstance>(DestroyedPlayer->GetMesh());
+		DestroyAnim->InitializeMontageOnly(); DestroyAnim->CurrentSkeleton = Montage->GetSkeleton();
+		DestroyedPlayer->GetMesh()->AnimScriptInstance = DestroyAnim; DestroyASC->RefreshAbilityActorInfo();
+		FControlledMontageAdvance DestroyAdvance(DestroyedPlayer, DestroyAnim);
+		const auto DestroyHandle = DestroyASC->GiveAbility(FGameplayAbilitySpec(UTestConfigurationOnlyActionAbility::StaticClass(), 1, INDEX_NONE, DestroyedPlayer));
+		auto* DestroyAbility = CastChecked<UTestConfigurationOnlyActionAbility>(DestroyASC->FindAbilitySpecFromHandle(DestroyHandle)->GetPrimaryInstance());
+		DestroyAbility->Montage = Montage;
+		if (!TestTrue(TEXT("Destruction source real activation"), DestroyASC->TryActivateAbility(DestroyHandle) && DestroyAbility->IsActive())) return false;
+		auto* DestroyTask = DestroyAbility->GetMontageTask();
+		DestroyAdvance.Advance(0.20f);
+		TestTrue(TEXT("Destruction starts with a native rate window"), DestroyTask->GetRateWindowLifecycle().GetActiveWindowCount() > 0);
+		TestTrue(TEXT("Destroy actor succeeds"), DestroyedPlayer->Destroy());
+		TestTrue(TEXT("Destruction terminates Task"), DestroyTask->IsTerminated());
+		TestFalse(TEXT("Destruction clears rate binding"), DestroyTask->GetRateWindowLifecycle().IsBound());
+		TestEqual(TEXT("Destruction clears cancel windows"), DestroyTask->GetActiveCancelWindowCount(), 0);
+		TestFalse(TEXT("Destruction clears contributed Dodge"), DestroyTask->HasContributedDodgeTag());
+		TestFalse(TEXT("Destruction clears contributed Defense"), DestroyTask->HasContributedDefenseTag());
+		AddInfo(FString::Printf(TEXT("Configuration montage %s: rate Begin/End=%d/%d, cancel Begin/End=%d/%d, instance=%d"),
+			*Montage->GetName(), RateBegins, RateEnds, CancelBegins, CancelEnds, InstanceID));
+	}
+	return true;
+}
+#endif
 
 #endif // WITH_DEV_AUTOMATION_TESTS

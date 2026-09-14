@@ -1,8 +1,7 @@
 #include "AbilitySystem/Abilities/DodgeAbility.h"
 
-#include "AbilitySystem/Abilities/MontageRateWindowBinding.h"
 #include "AbilitySystemComponent.h"
-#include "Abilities/Tasks/AbilityTask_PlayMontageAndWait.h"
+#include "AbilitySystem/Tasks/AbilityTask_PlayActionMontage.h"
 #include "Abilities/Tasks/AbilityTask_WaitGameplayEvent.h"
 #include "Animation/AnimInstance.h"
 #include "Animation/AnimMontage.h"
@@ -40,10 +39,6 @@ UDodgeAbility::UDodgeAbility()
 	DodgeCancelableStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Action.CanCancel.Dodge")), false);
 	InvulnerabilityBeginEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Dodge.Invulnerability.Begin")), false);
 	InvulnerabilityEndEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Dodge.Invulnerability.End")), false);
-	CancelWindowBeginEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Action.CancelWindow.Dodge.Begin")), false);
-	CancelWindowEndEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Action.CancelWindow.Dodge.End")), false);
-	RateWindowBeginEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Action.RateWindow.Begin")), false);
-	RateWindowEndEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Action.RateWindow.End")), false);
 }
 
 bool UDodgeAbility::CanActivateAbility(
@@ -85,12 +80,10 @@ void UDodgeAbility::ActivateAbility(
 	const FGameplayAbilityActivationInfo ActivationInfo,
 	const FGameplayEventData*)
 {
-	ClearRateWindow();
 	bEndAbilityRequested = false;
 	InvulnerabilityEffectHandle.Invalidate();
 	BoundAnimInstance = nullptr;
 	ActiveMontage = nullptr;
-	bDodgeCancelable = false;
 
 	UAbilitySystemComponent* AbilitySystemComponent = GetAbilitySystemComponentFromActorInfo();
 	APlayerCharacter* PlayerCharacter = Cast<APlayerCharacter>(GetAvatarActorFromActorInfo());
@@ -102,29 +95,32 @@ void UDodgeAbility::ActivateAbility(
 		|| !LightAttackAbilityTag.IsValid() || !ChargedAttackAbilityTag.IsValid() || !SprintAttackAbilityTag.IsValid() || !CancelableByDodgeAbilityTag.IsValid()
 		|| !PlayerLaunchReactionAbilityTag.IsValid()
 		|| !AttackingStateTag.IsValid() || !DodgingStateTag.IsValid() || !HitReactingStateTag.IsValid() || !DodgeCancelableStateTag.IsValid()
-		|| !InvulnerabilityBeginEventTag.IsValid() || !InvulnerabilityEndEventTag.IsValid()
-		|| !CancelWindowBeginEventTag.IsValid() || !CancelWindowEndEventTag.IsValid()
-		|| !RateWindowBeginEventTag.IsValid() || !RateWindowEndEventTag.IsValid())
+		|| !InvulnerabilityBeginEventTag.IsValid() || !InvulnerabilityEndEventTag.IsValid())
 	{
 		UE_LOG(LogPolyQuest, Warning, TEXT("Dodge activation aborted for '%s': ASC, player, AnimInstance, montage, cost, regeneration delay, invulnerability effect, and required tags are required."), *GetNameSafe(PlayerCharacter));
 		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
 		return;
 	}
 
-	MontageTask = UAbilityTask_PlayMontageAndWait::CreatePlayMontageAndWaitProxy(this, NAME_None, DodgeMontage);
+	UAbilityTask_PlayActionMontage* CreatedMontageTask = UAbilityTask_PlayActionMontage::PlayActionMontage(
+		this, NAME_None, DodgeMontage, 1.0f, NAME_None,
+		1.0f, // AnimRootMotionTranslationScale
+		0.0f, // StartTimeSeconds
+		false, // bAllowInterruptAfterBlendOut
+		EActionMontageCancelPolicy::DodgeOnly); // CancelPolicy
+	MontageTask = CreatedMontageTask;
 	InvulnerabilityBeginTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, InvulnerabilityBeginEventTag, nullptr, false, true);
 	InvulnerabilityEndTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, InvulnerabilityEndEventTag, nullptr, false, true);
-	CancelBeginTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, CancelWindowBeginEventTag, nullptr, false, true);
-	CancelEndTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, CancelWindowEndEventTag, nullptr, false, true);
-	if (!MontageTask || !InvulnerabilityBeginTask || !InvulnerabilityEndTask
-		|| !CancelBeginTask || !CancelEndTask)
+	if (!MontageTask || !InvulnerabilityBeginTask || !InvulnerabilityEndTask)
 	{
 		UE_LOG(LogPolyQuest, Warning, TEXT("Dodge activation aborted for '%s': failed to create an AbilityTask."), *GetNameSafe(PlayerCharacter));
 		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
 		return;
 	}
 
-	if (!CommitAbility(Handle, ActorInfo, ActivationInfo))
+	const bool bCommitSucceeded = CommitAbility(Handle, ActorInfo, ActivationInfo);
+	if (!IsActive() || bEndAbilityRequested || MontageTask.Get() != CreatedMontageTask) return;
+	if (!bCommitSucceeded)
 	{
 		UE_LOG(LogPolyQuest, Verbose, TEXT("Dodge activation rejected for '%s' because CommitAbility failed."), *GetNameSafe(PlayerCharacter));
 		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
@@ -152,26 +148,26 @@ void UDodgeAbility::ActivateAbility(
 		}
 	}
 	AbilitySystemComponent->CancelAbilities(&AbilityTagsToCancel, nullptr, this);
+	if (!IsActive() || bEndAbilityRequested || MontageTask.Get() != CreatedMontageTask) return;
 
 	PlayerCharacter->ApplyDodgeFacing();
 
 	MontageTask->OnCompleted.AddDynamic(this, &UDodgeAbility::OnMontageCompleted);
 	MontageTask->OnInterrupted.AddDynamic(this, &UDodgeAbility::OnMontageInterrupted);
 	MontageTask->OnCancelled.AddDynamic(this, &UDodgeAbility::OnMontageCancelled);
+	MontageTask->OnFailed.AddDynamic(this, &UDodgeAbility::OnMontageCancelled);
 
 	InvulnerabilityBeginTask->EventReceived.AddDynamic(this, &UDodgeAbility::OnInvulnerabilityBegin);
 	InvulnerabilityEndTask->EventReceived.AddDynamic(this, &UDodgeAbility::OnInvulnerabilityEnd);
-	CancelBeginTask->EventReceived.AddDynamic(this, &UDodgeAbility::OnCancelWindowBegin);
-	CancelEndTask->EventReceived.AddDynamic(this, &UDodgeAbility::OnCancelWindowEnd);
 
 	InvulnerabilityBeginTask->ReadyForActivation();
+	if (!IsActive() || bEndAbilityRequested || MontageTask.Get() != CreatedMontageTask) return;
 	InvulnerabilityEndTask->ReadyForActivation();
-	CancelBeginTask->ReadyForActivation();
-	CancelEndTask->ReadyForActivation();
+	if (!IsActive() || bEndAbilityRequested || MontageTask.Get() != CreatedMontageTask) return;
 	MontageTask->ReadyForActivation();
 
 	// Montage startup can synchronously invoke the bound end delegate and clear all transient state.
-	if (bEndAbilityRequested)
+	if (!IsActive() || bEndAbilityRequested || MontageTask.Get() != CreatedMontageTask)
 	{
 		return;
 	}
@@ -180,11 +176,6 @@ void UDodgeAbility::ActivateAbility(
 	{
 		UE_LOG(LogPolyQuest, Warning, TEXT("Dodge activation aborted for '%s': montage '%s' did not start."), *GetNameSafe(PlayerCharacter), *GetNameSafe(DodgeMontage));
 		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
-		return;
-	}
-
-	if (!BindRateWindow(BoundAnimInstance.Get(), ActiveMontage.Get()))
-	{
 		return;
 	}
 
@@ -205,20 +196,18 @@ void UDodgeAbility::EndAbility(
 
 	bEndAbilityRequested = true;
 	ClearInvulnerabilityEffect();
-	SetDodgeCancelable(false);
-	ClearRateWindow();
 
 	if (BoundAnimInstance)
 	{
-		if (ActiveMontage && BoundAnimInstance->Montage_IsActive(ActiveMontage.Get()))
-		{
-			BoundAnimInstance->Montage_Stop(0.0f, ActiveMontage.Get());
-		}
 		BoundAnimInstance = nullptr;
 	}
 
 	if (MontageTask)
 	{
+		MontageTask->OnFailed.RemoveAll(this);
+		MontageTask->OnCompleted.RemoveAll(this);
+		MontageTask->OnInterrupted.RemoveAll(this);
+		MontageTask->OnCancelled.RemoveAll(this);
 		MontageTask->EndTask();
 		MontageTask = nullptr;
 	}
@@ -233,18 +222,6 @@ void UDodgeAbility::EndAbility(
 	{
 		InvulnerabilityEndTask->EndTask();
 		InvulnerabilityEndTask = nullptr;
-	}
-
-	if (CancelBeginTask)
-	{
-		CancelBeginTask->EndTask();
-		CancelBeginTask = nullptr;
-	}
-
-	if (CancelEndTask)
-	{
-		CancelEndTask->EndTask();
-		CancelEndTask = nullptr;
 	}
 
 	ActiveMontage = nullptr;
@@ -325,56 +302,6 @@ void UDodgeAbility::ClearInvulnerabilityEffect()
 	InvulnerabilityEffectHandle.Invalidate();
 }
 
-void UDodgeAbility::OnCancelWindowBegin(FGameplayEventData Payload)
-{
-	if (!IsGameplayEventFromActiveMontage(Payload))
-	{
-		return;
-	}
-
-	SetDodgeCancelable(true);
-}
-
-void UDodgeAbility::OnCancelWindowEnd(FGameplayEventData Payload)
-{
-	if (!IsGameplayEventFromActiveMontage(Payload))
-	{
-		return;
-	}
-
-	SetDodgeCancelable(false);
-}
-
-void UDodgeAbility::SetDodgeCancelable(bool bShouldCancel)
-{
-	if (bDodgeCancelable == bShouldCancel)
-	{
-		return;
-	}
-
-	UAbilitySystemComponent* AbilitySystemComponent = GetAbilitySystemComponentFromActorInfo();
-	if (!AbilitySystemComponent)
-	{
-		return;
-	}
-
-	bDodgeCancelable = bShouldCancel;
-	if (bDodgeCancelable)
-	{
-		if (DodgeCancelableStateTag.IsValid())
-		{
-			AbilitySystemComponent->AddLooseGameplayTag(DodgeCancelableStateTag);
-		}
-	}
-	else
-	{
-		if (DodgeCancelableStateTag.IsValid())
-		{
-			AbilitySystemComponent->RemoveLooseGameplayTag(DodgeCancelableStateTag);
-		}
-	}
-}
-
 bool UDodgeAbility::IsGameplayEventFromActiveMontage(const FGameplayEventData& Payload) const
 {
 	const AActor* AvatarActor = GetAvatarActorFromActorInfo();
@@ -411,83 +338,31 @@ bool UDodgeAbility::IsGameplayEventFromActiveMontage(const FGameplayEventData& P
 	return false;
 }
 
-void UDodgeRateWindowContext::OnBegin(FGameplayEventData Payload)
+#if WITH_DEV_AUTOMATION_TESTS
+const FAbilityMontageRateWindowLifecycle& UDodgeAbility::GetTestRateWindowLifecycle() const
 {
-	if (UDodgeAbility* Ability = OwningAbility.Get())
-	{
-		if (Ability->RateWindowContext.Get() == this && Ability->RateWindowBindingToken == Token)
-		{
-			Ability->OnRateWindowBegin(Payload);
-		}
-	}
+	static const FAbilityMontageRateWindowLifecycle EmptyLifecycle;
+	return MontageTask ? MontageTask->GetRateWindowLifecycle() : EmptyLifecycle;
 }
 
-void UDodgeRateWindowContext::OnEnd(FGameplayEventData Payload)
+FAbilityMontageRateWindowLifecycle& UDodgeAbility::GetTestRateWindowLifecycle_Mutable()
 {
-	if (UDodgeAbility* Ability = OwningAbility.Get())
-	{
-		if (Ability->RateWindowContext.Get() == this && Ability->RateWindowBindingToken == Token)
-		{
-			Ability->OnRateWindowEnd(Payload);
-		}
-	}
+	check(MontageTask);
+	return MontageTask->GetRateWindowLifecycle_Mutable();
 }
 
-bool UDodgeAbility::HasOwnedRateWindowMontageInstance() const
+int32 UDodgeAbility::GetTestRateWindowMontageInstanceID() const
 {
-	return FAbilityMontageRateWindowLifecycle::IsCurrentMontageInstance(
-		RateWindowAnimInstance.Get(), RateWindowMontage.Get(), RateWindowMontageInstanceID);
+	return MontageTask ? MontageTask->GetBoundMontageInstanceID() : INDEX_NONE;
 }
 
-bool UDodgeAbility::BindRateWindow(UAnimInstance* AnimInstance, UAnimMontage* Montage)
+bool UDodgeAbility::HasTestRateWindowTasks() const
 {
-	return FMontageRateWindowBinding::Bind<UDodgeAbility, UDodgeRateWindowContext>(
-		this, AnimInstance, Montage, bEndAbilityRequested);
+	return MontageTask && MontageTask->IsActive() && !MontageTask->IsTerminated();
 }
 
-void UDodgeAbility::OnRateWindowBegin(const FGameplayEventData& Payload)
+bool UDodgeAbility::GetTestDodgeCancelable() const
 {
-	const AActor* Avatar = GetAvatarActorFromActorInfo();
-	if (!IsActive() || bEndAbilityRequested || !IsValid(Avatar) || Avatar->IsActorBeingDestroyed() || !HasOwnedRateWindowMontageInstance())
-	{
-		return;
-	}
-	RateWindowLifecycle.HandleBegin(Payload);
+	return MontageTask && MontageTask->HasContributedDodgeTag();
 }
-
-void UDodgeAbility::OnRateWindowEnd(const FGameplayEventData& Payload)
-{
-	const AActor* Avatar = GetAvatarActorFromActorInfo();
-	if (!IsActive() || bEndAbilityRequested || !IsValid(Avatar) || Avatar->IsActorBeingDestroyed() || !HasOwnedRateWindowMontageInstance())
-	{
-		return;
-	}
-	RateWindowLifecycle.HandleEnd(Payload);
-}
-
-void UDodgeAbility::ClearRateWindow()
-{
-	if (RateWindowContext)
-	{
-		RateWindowContext->OwningAbility.Reset();
-		RateWindowContext = nullptr;
-	}
-	if (RateWindowBeginTask)
-	{
-		RateWindowBeginTask->EndTask();
-		RateWindowBeginTask = nullptr;
-	}
-	if (RateWindowEndTask)
-	{
-		RateWindowEndTask->EndTask();
-		RateWindowEndTask = nullptr;
-	}
-	if (HasOwnedRateWindowMontageInstance())
-	{
-		RateWindowLifecycle.RestoreAndClear();
-	}
-	RateWindowLifecycle = FAbilityMontageRateWindowLifecycle();
-	RateWindowAnimInstance.Reset();
-	RateWindowMontage.Reset();
-	RateWindowMontageInstanceID = INDEX_NONE;
-}
+#endif

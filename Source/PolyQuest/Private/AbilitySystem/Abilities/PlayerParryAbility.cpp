@@ -2,7 +2,7 @@
 
 #include "AbilitySystemGlobals.h"
 #include "AbilitySystemComponent.h"
-#include "Abilities/Tasks/AbilityTask_PlayMontageAndWait.h"
+#include "AbilitySystem/Tasks/AbilityTask_PlayActionMontage.h"
 #include "Abilities/Tasks/AbilityTask_WaitGameplayEvent.h"
 #include "Animation/AnimInstance.h"
 #include "Animation/AnimMontage.h"
@@ -105,10 +105,20 @@ void UPlayerParryAbility::ActivateAbility(
 		return;
 	}
 
-	MontageTask = UAbilityTask_PlayMontageAndWait::CreatePlayMontageAndWaitProxy(this, NAME_None, ParryMontage);
+	UAbilityTask_PlayActionMontage* CreatedMontageTask = UAbilityTask_PlayActionMontage::PlayActionMontage(
+		this,
+		NAME_None,
+		ParryMontage,
+		1.0f,
+		NAME_None,
+		1.0f, // AnimRootMotionTranslationScale
+		0.0f, // StartTimeSeconds
+		true, // bAllowInterruptAfterBlendOut
+		EActionMontageCancelPolicy::None); // CancelPolicy
 	ParryWindowBeginTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, ParryWindowBeginEventTag, nullptr, false, true);
 	ParryWindowEndTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, ParryWindowEndEventTag, nullptr, false, true);
-	if (!MontageTask || !ParryWindowBeginTask || !ParryWindowEndTask)
+	MontageTask = CreatedMontageTask;
+	if (!CreatedMontageTask || !ParryWindowBeginTask || !ParryWindowEndTask)
 	{
 		UE_LOG(LogPolyQuest, Warning, TEXT("Player Parry activation aborted for '%s': failed to create an AbilityTask."), *GetNameSafe(PlayerCharacter));
 		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
@@ -124,6 +134,8 @@ void UPlayerParryAbility::ActivateAbility(
 
 	BoundAnimInstance = AnimInstance;
 	ActiveMontage = ParryMontage;
+	ActiveMontageInstanceID = INDEX_NONE;
+	// Business teardown waits for the full blend-out; Task interruption reports its start.
 	BoundAnimInstance->OnMontageEnded.RemoveDynamic(this, &UPlayerParryAbility::OnActiveMontageEnded);
 	BoundAnimInstance->OnMontageEnded.AddDynamic(this, &UPlayerParryAbility::OnActiveMontageEnded);
 	ParryWindowBeginTask->EventReceived.AddDynamic(this, &UPlayerParryAbility::OnParryWindowBegin);
@@ -133,17 +145,20 @@ void UPlayerParryAbility::ActivateAbility(
 	MontageTask->ReadyForActivation();
 
 	// A zero-length or otherwise immediately completed Montage can synchronously run teardown.
-	if (bEndAbilityRequested)
+	if (!IsActive() || bEndAbilityRequested || MontageTask.Get() != CreatedMontageTask)
 	{
 		return;
 	}
 
-	if (!BoundAnimInstance || !ActiveMontage || !BoundAnimInstance->Montage_IsActive(ActiveMontage.Get()))
+	if (!IsValid(CreatedMontageTask) || CreatedMontageTask->IsFinished() || !CreatedMontageTask->IsActive()
+		|| !BoundAnimInstance || !ActiveMontage || !BoundAnimInstance->Montage_IsActive(ActiveMontage.Get()))
 	{
 		UE_LOG(LogPolyQuest, Warning, TEXT("Player Parry activation aborted for '%s': montage '%s' did not start."), *GetNameSafe(PlayerCharacter), *GetNameSafe(ParryMontage));
 		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
 		return;
 	}
+
+	ActiveMontageInstanceID = CreatedMontageTask->GetBoundMontageInstanceID();
 
 	if (UCharacterMovementComponent* MovementComponent = PlayerCharacter->GetCharacterMovement())
 	{
@@ -190,10 +205,6 @@ void UPlayerParryAbility::EndAbility(
 	if (BoundAnimInstance)
 	{
 		BoundAnimInstance->OnMontageEnded.RemoveDynamic(this, &UPlayerParryAbility::OnActiveMontageEnded);
-		if (ActiveMontage && BoundAnimInstance->Montage_IsActive(ActiveMontage.Get()))
-		{
-			BoundAnimInstance->Montage_Stop(0.0f, ActiveMontage.Get());
-		}
 		BoundAnimInstance = nullptr;
 	}
 
@@ -216,6 +227,7 @@ void UPlayerParryAbility::EndAbility(
 	}
 
 	ActiveMontage = nullptr;
+	ActiveMontageInstanceID = INDEX_NONE;
 
 	// Restore walking only from this ability's own MOVE_None lock; an external
 	// transition to Falling must win. MOVE_None is the only locked state that is
@@ -348,7 +360,16 @@ void UPlayerParryAbility::TriggerParrySuccessFeedback(const FHitResult& HitResul
 
 void UPlayerParryAbility::OnActiveMontageEnded(UAnimMontage* Montage, bool bInterrupted)
 {
-	if (bEndAbilityRequested || Montage != ActiveMontage.Get())
+	if (!IsActive() || bEndAbilityRequested || !CurrentActorInfo || Montage != ActiveMontage.Get()
+		|| ActiveMontageInstanceID == INDEX_NONE)
+	{
+		return;
+	}
+
+	// Global Ended can deliver a queued receipt from an older play of the same asset.
+	const FAnimMontageInstance* CurrentInstance = BoundAnimInstance
+		? BoundAnimInstance->GetMontageInstanceForID(ActiveMontageInstanceID) : nullptr;
+	if (CurrentInstance && CurrentInstance->IsValid())
 	{
 		return;
 	}

@@ -1,8 +1,7 @@
 #include "AbilitySystem/Abilities/PlayerLaunchReactionAbility.h"
 
 #include "Abilities/GameplayAbilityTriggerType.h"
-#include "Abilities/Tasks/AbilityTask_PlayMontageAndWait.h"
-#include "Abilities/Tasks/AbilityTask_WaitGameplayEvent.h"
+#include "AbilitySystem/Tasks/AbilityTask_PlayActionMontage.h"
 #include "AbilitySystemComponent.h"
 #include "Animation/AnimInstance.h"
 #include "Animation/AnimMontage.h"
@@ -20,8 +19,6 @@ UPlayerLaunchReactionAbility::UPlayerLaunchReactionAbility()
 
 	PlayerLaunchReactionAbilityTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Reaction.Player.Launch")), false);
 	PlayerLaunchReactionEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Reaction.Player.Launch")), false);
-	CancelWindowBeginEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Action.CancelWindow.Dodge.Begin")), false);
-	CancelWindowEndEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Action.CancelWindow.Dodge.End")), false);
 	DodgeCancelableStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Action.CanCancel.Dodge")), false);
 	HitReactingStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Action.HitReacting")), false);
 	StunnedStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Status.Stunned")), false);
@@ -88,30 +85,16 @@ void UPlayerLaunchReactionAbility::ActivateAbility(
 	const FGameplayEventData* TriggerEventData)
 {
 	bEndAbilityRequested = false;
-	bDodgeCancelable = false;
 	bSavedCanWalkOffLedges = true;
 	bLedgeSettingModified = false;
 	bMovementModeDelegateBound = false;
 	CurrentPhase = ELaunchPhase::None;
 	BoundAnimInstance = nullptr;
 	ActiveMontage = nullptr;
+	ActiveMontageInstanceID = INDEX_NONE;
 	BoundPlayerCharacter.Reset();
 	ImpactDirectionSnapshot = FVector::ZeroVector;
 	ImpactReferenceYawSnapshot = 0.0f;
-
-#if WITH_DEV_AUTOMATION_TESTS
-	if (const UPlayerLaunchReactionAbility* CDO = Cast<UPlayerLaunchReactionAbility>(GetClass()->GetDefaultObject()))
-	{
-		if (CDO->RootMotionKnockdownMontage && !RootMotionKnockdownMontage)
-		{
-			RootMotionKnockdownMontage = CDO->RootMotionKnockdownMontage;
-		}
-		if (CDO->BoundAnimInstance && !BoundAnimInstance)
-		{
-			BoundAnimInstance = CDO->BoundAnimInstance;
-		}
-	}
-#endif
 
 	if (IsInstantiated())
 	{
@@ -126,22 +109,6 @@ void UPlayerLaunchReactionAbility::ActivateAbility(
 		: (CurrentActorInfo ? Cast<APlayerCharacter>(CurrentActorInfo->AvatarActor.Get()) : nullptr);
 	USkeletalMeshComponent* SkeletalMesh = PlayerCharacter ? PlayerCharacter->GetMesh() : nullptr;
 	UAnimInstance* AnimInstance = SkeletalMesh ? SkeletalMesh->GetAnimInstance() : nullptr;
-#if WITH_DEV_AUTOMATION_TESTS
-	if (!AnimInstance && BoundAnimInstance)
-	{
-		AnimInstance = BoundAnimInstance.Get();
-	}
-	if (!AnimInstance)
-	{
-		if (const UPlayerLaunchReactionAbility* CDO = Cast<UPlayerLaunchReactionAbility>(GetClass()->GetDefaultObject()))
-		{
-			if (CDO->BoundAnimInstance)
-			{
-				AnimInstance = CDO->BoundAnimInstance.Get();
-			}
-		}
-	}
-#endif
 	UCharacterMovementComponent* MovementComponent = PlayerCharacter ? PlayerCharacter->GetCharacterMovement() : nullptr;
 
 	if (!CharacterASC || !PlayerCharacter || !AnimInstance || !MovementComponent || !ValidateActivationSetup(ActorInfo))
@@ -151,33 +118,28 @@ void UPlayerLaunchReactionAbility::ActivateAbility(
 		return;
 	}
 
-	// 1. Create Root Motion Montage Task and persistent Cancel Window listeners
-	MontageTask = UAbilityTask_PlayMontageAndWait::CreatePlayMontageAndWaitProxy(this, NAME_None, RootMotionKnockdownMontage);
-	CancelBeginTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, CancelWindowBeginEventTag, nullptr, false, true);
-	CancelEndTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, CancelWindowEndEventTag, nullptr, false, true);
+	// 1. Create the standard Task owning RateWindow and DodgeOnly windows
+	UAbilityTask_PlayActionMontage* CreatedMontageTask = UAbilityTask_PlayActionMontage::PlayActionMontage(
+		this, NAME_None, RootMotionKnockdownMontage, 1.0f, NAME_None,
+		1.0f, // AnimRootMotionTranslationScale
+		0.0f, // StartTimeSeconds
+		true, // bAllowInterruptAfterBlendOut
+		EActionMontageCancelPolicy::DodgeOnly); // CancelPolicy
+	MontageTask = CreatedMontageTask;
 
-	if (!MontageTask || !CancelBeginTask || !CancelEndTask)
+	if (!MontageTask)
 	{
 		UE_LOG(LogPolyQuest, Warning, TEXT("Player launch reaction activation aborted for '%s': failed to create root motion tasks."), *GetNameSafe(PlayerCharacter));
 		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
 		return;
 	}
 
-	CancelBeginTask->EventReceived.AddDynamic(this, &UPlayerLaunchReactionAbility::OnCancelWindowBegin);
-	CancelEndTask->EventReceived.AddDynamic(this, &UPlayerLaunchReactionAbility::OnCancelWindowEnd);
-
-	CancelBeginTask->ReadyForActivation();
-	CancelEndTask->ReadyForActivation();
-
-	if (!CommitAbility(Handle, ActorInfo, ActivationInfo))
+	const bool bCommitSucceeded = CommitAbility(Handle, ActorInfo, ActivationInfo);
+	if (!IsActive() || bEndAbilityRequested || MontageTask.Get() != CreatedMontageTask) return;
+	if (!bCommitSucceeded)
 	{
 		UE_LOG(LogPolyQuest, Verbose, TEXT("Player launch reaction activation rejected for '%s' because CommitAbility failed."), *GetNameSafe(PlayerCharacter));
 		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
-		return;
-	}
-
-	if (bEndAbilityRequested)
-	{
 		return;
 	}
 
@@ -188,7 +150,7 @@ void UPlayerLaunchReactionAbility::ActivateAbility(
 
 	// 2. Cancel competing player abilities before starting Root Motion
 	CharacterASC->CancelAbilities(&AbilitiesToCancel, nullptr, this);
-	if (bEndAbilityRequested)
+	if (!IsActive() || bEndAbilityRequested || MontageTask.Get() != CreatedMontageTask)
 	{
 		return;
 	}
@@ -236,17 +198,15 @@ void UPlayerLaunchReactionAbility::ActivateAbility(
 	bMovementModeDelegateBound = true;
 
 	// 8. Start Montage Task
-	MontageTask->ReadyForActivation();
+	CreatedMontageTask->OnFailed.AddDynamic(this, &UPlayerLaunchReactionAbility::OnMontageFailed);
+	CreatedMontageTask->ReadyForActivation();
 
-	if (bEndAbilityRequested)
+	if (!IsActive() || bEndAbilityRequested || MontageTask.Get() != CreatedMontageTask)
 	{
 		return;
 	}
 
 	const bool bMontageActive =
-#if WITH_DEV_AUTOMATION_TESTS
-		bTestBypassMontageActiveCheck ||
-#endif
 		(BoundAnimInstance && ActiveMontage && BoundAnimInstance->Montage_IsActive(ActiveMontage.Get()));
 
 	if (!bMontageActive)
@@ -255,6 +215,8 @@ void UPlayerLaunchReactionAbility::ActivateAbility(
 		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
 		return;
 	}
+	const FAnimMontageInstance* StartedInstance = BoundAnimInstance->GetActiveInstanceForMontage(ActiveMontage);
+	ActiveMontageInstanceID = StartedInstance ? StartedInstance->GetInstanceID() : INDEX_NONE;
 }
 
 void UPlayerLaunchReactionAbility::EndAbility(
@@ -270,10 +232,6 @@ void UPlayerLaunchReactionAbility::EndAbility(
 	}
 
 	bEndAbilityRequested = true;
-
-#if WITH_DEV_AUTOMATION_TESTS
-	bTestBypassMontageActiveCheck = false;
-#endif
 
 	TWeakObjectPtr<APlayerCharacter> LocalPlayerCharacter = BoundPlayerCharacter.IsValid()
 		? BoundPlayerCharacter
@@ -292,41 +250,21 @@ void UPlayerLaunchReactionAbility::EndAbility(
 		bMovementModeDelegateBound = false;
 	}
 
-	SetDodgeCancelable(false);
-
 	if (BoundAnimInstance)
 	{
 		BoundAnimInstance->OnMontageEnded.RemoveDynamic(this, &UPlayerLaunchReactionAbility::OnActiveMontageEnded);
-		if (ActiveMontage && BoundAnimInstance->Montage_IsActive(ActiveMontage.Get()))
-		{
-			BoundAnimInstance->Montage_Stop(0.0f, ActiveMontage.Get());
-		}
-		if (RootMotionKnockdownMontage && BoundAnimInstance->Montage_IsActive(RootMotionKnockdownMontage.Get()))
-		{
-			BoundAnimInstance->Montage_Stop(0.0f, RootMotionKnockdownMontage.Get());
-		}
 		BoundAnimInstance = nullptr;
-	}
-
-	if (CancelBeginTask)
-	{
-		CancelBeginTask->EndTask();
-		CancelBeginTask = nullptr;
-	}
-
-	if (CancelEndTask)
-	{
-		CancelEndTask->EndTask();
-		CancelEndTask = nullptr;
 	}
 
 	if (MontageTask)
 	{
+		MontageTask->OnFailed.RemoveAll(this);
 		MontageTask->EndTask();
 		MontageTask = nullptr;
 	}
 
 	ActiveMontage = nullptr;
+	ActiveMontageInstanceID = INDEX_NONE;
 
 	if (bLedgeSettingModified)
 	{
@@ -373,19 +311,16 @@ void UPlayerLaunchReactionAbility::OnMovementModeChanged(ACharacter* Character, 
 
 void UPlayerLaunchReactionAbility::OnActiveMontageEnded(UAnimMontage* Montage, bool bInterrupted)
 {
-	if (bEndAbilityRequested)
-	{
-		return;
-	}
+	if (!IsActive() || bEndAbilityRequested || Montage != ActiveMontage.Get() || ActiveMontageInstanceID == INDEX_NONE) return;
+	const FAnimMontageInstance* Instance = IsValid(BoundAnimInstance)
+		? BoundAnimInstance->GetMontageInstanceForID(ActiveMontageInstanceID) : nullptr;
+	if (Instance && Instance->IsValid()) return;
+	EndFromMontage(bInterrupted);
+}
 
-	if (Montage == RootMotionKnockdownMontage.Get())
-	{
-		if (CurrentPhase == ELaunchPhase::RootMotionKnockdown)
-		{
-			EndFromMontage(bInterrupted);
-			return;
-		}
-	}
+void UPlayerLaunchReactionAbility::OnMontageFailed()
+{
+	if (IsActive() && !bEndAbilityRequested) EndFromMontage(true);
 }
 
 bool UPlayerLaunchReactionAbility::ValidateActivationSetup(const FGameplayAbilityActorInfo* ActorInfo) const
@@ -394,22 +329,6 @@ bool UPlayerLaunchReactionAbility::ValidateActivationSetup(const FGameplayAbilit
 	const APlayerCharacter* PlayerCharacter = ActorInfo ? Cast<APlayerCharacter>(ActorInfo->AvatarActor.Get()) : nullptr;
 	const USkeletalMeshComponent* SkeletalMesh = PlayerCharacter ? PlayerCharacter->GetMesh() : nullptr;
 	const UAnimInstance* AnimInstance = SkeletalMesh ? SkeletalMesh->GetAnimInstance() : nullptr;
-#if WITH_DEV_AUTOMATION_TESTS
-	if (!AnimInstance && BoundAnimInstance)
-	{
-		AnimInstance = BoundAnimInstance.Get();
-	}
-	if (!AnimInstance)
-	{
-		if (const UPlayerLaunchReactionAbility* CDO = Cast<UPlayerLaunchReactionAbility>(GetClass()->GetDefaultObject()))
-		{
-			if (CDO->BoundAnimInstance)
-			{
-				AnimInstance = CDO->BoundAnimInstance.Get();
-			}
-		}
-	}
-#endif
 	const UCharacterMovementComponent* MovementComponent = PlayerCharacter ? PlayerCharacter->GetCharacterMovement() : nullptr;
 
 	const bool bIsDead = CharacterASC && DeadStateTag.IsValid() && CharacterASC->HasMatchingGameplayTag(DeadStateTag);
@@ -417,7 +336,6 @@ bool UPlayerLaunchReactionAbility::ValidateActivationSetup(const FGameplayAbilit
 	const bool bCommonValid = CharacterASC && PlayerCharacter && !PlayerCharacter->IsActorBeingDestroyed() && !bIsDead && AnimInstance
 		&& MovementComponent && MovementComponent->IsMovingOnGround()
 		&& PlayerLaunchReactionAbilityTag.IsValid() && PlayerLaunchReactionEventTag.IsValid()
-		&& CancelWindowBeginEventTag.IsValid() && CancelWindowEndEventTag.IsValid() && DodgeCancelableStateTag.IsValid()
 		&& HitReactingStateTag.IsValid() && StunnedStateTag.IsValid() && DeadStateTag.IsValid() && HyperArmorStateTag.IsValid()
 		&& TeardownOnUnpossessTag.IsValid()
 		&& BlockAbilitiesWithTag.Num() == 10 && AbilitiesToCancel.Num() == 11;
@@ -498,125 +416,6 @@ bool UPlayerLaunchReactionAbility::TryResolveRootMotionFacingYaw(
 	return true;
 }
 
-bool UPlayerLaunchReactionAbility::IsEventFromMontage(const FGameplayEventData& Payload, const UAnimMontage* ExpectedMontage) const
-{
-	const AActor* AvatarActor = GetAvatarActorFromActorInfo();
-	if (bEndAbilityRequested || !ExpectedMontage || !AvatarActor || Payload.Instigator != AvatarActor || Payload.Target != AvatarActor)
-	{
-		return false;
-	}
-
-	const UObject* PayloadObject = Payload.OptionalObject.Get();
-	if (!PayloadObject)
-	{
-		return false;
-	}
-
-	if (PayloadObject == ExpectedMontage)
-	{
-		return true;
-	}
-
-	if (const UAnimSequenceBase* Sequence = Cast<UAnimSequenceBase>(PayloadObject))
-	{
-		for (const FSlotAnimationTrack& Track : ExpectedMontage->SlotAnimTracks)
-		{
-			for (const FAnimSegment& Segment : Track.AnimTrack.AnimSegments)
-			{
-				if (Segment.GetAnimReference() == Sequence)
-				{
-					return true;
-				}
-			}
-		}
-	}
-
-	return false;
-}
-
-bool UPlayerLaunchReactionAbility::IsEventFromRootMotionKnockdownMontage(const FGameplayEventData& Payload) const
-{
-#if WITH_DEV_AUTOMATION_TESTS
-	if (bTestBypassAnimInstanceActiveCheck)
-	{
-		// Bypass AnimInstance active check for isolated automation test cases
-	}
-	else
-#endif
-	{
-		if (!BoundAnimInstance || !BoundAnimInstance->Montage_IsActive(RootMotionKnockdownMontage.Get()))
-		{
-			return false;
-		}
-	}
-
-	return IsEventFromMontage(Payload, RootMotionKnockdownMontage.Get());
-}
-
-void UPlayerLaunchReactionAbility::OnCancelWindowBegin(FGameplayEventData Payload)
-{
-	if (bEndAbilityRequested)
-	{
-		return;
-	}
-
-	if (CurrentPhase == ELaunchPhase::RootMotionKnockdown)
-	{
-		if (!IsEventFromRootMotionKnockdownMontage(Payload))
-		{
-			return;
-		}
-		SetDodgeCancelable(true);
-	}
-}
-
-void UPlayerLaunchReactionAbility::OnCancelWindowEnd(FGameplayEventData Payload)
-{
-	if (bEndAbilityRequested)
-	{
-		return;
-	}
-
-	if (CurrentPhase == ELaunchPhase::RootMotionKnockdown)
-	{
-		if (!IsEventFromRootMotionKnockdownMontage(Payload))
-		{
-			return;
-		}
-		SetDodgeCancelable(false);
-	}
-}
-
-void UPlayerLaunchReactionAbility::SetDodgeCancelable(bool bShouldCancel)
-{
-	if (bDodgeCancelable == bShouldCancel)
-	{
-		return;
-	}
-
-	UAbilitySystemComponent* CharacterASC = GetAbilitySystemComponentFromActorInfo();
-	if (!CharacterASC)
-	{
-		return;
-	}
-
-	bDodgeCancelable = bShouldCancel;
-	if (bDodgeCancelable)
-	{
-		if (DodgeCancelableStateTag.IsValid())
-		{
-			CharacterASC->AddLooseGameplayTag(DodgeCancelableStateTag);
-		}
-	}
-	else
-	{
-		if (DodgeCancelableStateTag.IsValid())
-		{
-			CharacterASC->RemoveLooseGameplayTag(DodgeCancelableStateTag);
-		}
-	}
-}
-
 void UPlayerLaunchReactionAbility::EndFromMontage(bool bWasCancelled)
 {
 	if (CurrentActorInfo)
@@ -639,5 +438,32 @@ bool UPlayerLaunchReactionAbility::IsTestPhaseNone() const
 uint8 UPlayerLaunchReactionAbility::GetTestCurrentPhaseRaw() const
 {
 	return static_cast<uint8>(CurrentPhase);
+}
+
+const FAbilityMontageRateWindowLifecycle& UPlayerLaunchReactionAbility::GetTestRateWindowLifecycle() const
+{
+	static const FAbilityMontageRateWindowLifecycle EmptyLifecycle;
+	return MontageTask ? MontageTask->GetRateWindowLifecycle() : EmptyLifecycle;
+}
+
+FAbilityMontageRateWindowLifecycle& UPlayerLaunchReactionAbility::GetTestRateWindowLifecycle_Mutable()
+{
+	check(MontageTask);
+	return MontageTask->GetRateWindowLifecycle_Mutable();
+}
+
+int32 UPlayerLaunchReactionAbility::GetTestRateWindowMontageInstanceID() const
+{
+	return MontageTask ? MontageTask->GetBoundMontageInstanceID() : INDEX_NONE;
+}
+
+bool UPlayerLaunchReactionAbility::HasTestRateWindowTasks() const
+{
+	return MontageTask && MontageTask->IsActive() && !MontageTask->IsTerminated();
+}
+
+bool UPlayerLaunchReactionAbility::GetTestDodgeCancelable() const
+{
+	return MontageTask && MontageTask->HasContributedDodgeTag();
 }
 #endif

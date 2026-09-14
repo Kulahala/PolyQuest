@@ -8,36 +8,13 @@
 #include "AbilitySystem/Abilities/MontageRateWindowLifecycle.h"
 #include "LightAttackAbility.generated.h"
 
-class UAbilityTask_PlayMontageAndWait;
+class UAbilityTask_PlayActionMontage;
 class UAbilityTask_MeleeTraceWindow;
 class UAbilityTask_WaitGameplayEvent;
 class UAnimInstance;
 class UAnimMontage;
 class UComboChainDataAsset;
 class UGameplayEffect;
-class ULightAttackAbility;
-
-/**
- * Transient context for per-entry RateWindow event isolation.
- */
-UCLASS(Transient)
-class POLYQUEST_API ULightAttackRateWindowContext : public UObject
-{
-	GENERATED_BODY()
-
-public:
-	UPROPERTY(Transient)
-	TWeakObjectPtr<ULightAttackAbility> OwningAbility;
-
-	uint32 Token = 0;
-
-	UFUNCTION()
-	void OnRateWindowBegin(FGameplayEventData Payload);
-
-	UFUNCTION()
-	void OnRateWindowEnd(FGameplayEventData Payload);
-};
-
 UCLASS()
 class POLYQUEST_API ULightAttackAbility : public UStaminaActionAbility
 {
@@ -82,7 +59,7 @@ protected:
 
 private:
 	UPROPERTY(Transient)
-	TObjectPtr<UAbilityTask_PlayMontageAndWait> MontageTask;
+	TObjectPtr<UAbilityTask_PlayActionMontage> MontageTask;
 
 	UPROPERTY(Transient)
 	TObjectPtr<UAbilityTask_WaitGameplayEvent> TraceWindowBeginTask;
@@ -92,12 +69,6 @@ private:
 
 	UPROPERTY(Transient)
 	TObjectPtr<UAbilityTask_MeleeTraceWindow> TraceWindowTask;
-
-	UPROPERTY(Transient)
-	TObjectPtr<UAbilityTask_WaitGameplayEvent> DodgeCancelWindowBeginTask;
-
-	UPROPERTY(Transient)
-	TObjectPtr<UAbilityTask_WaitGameplayEvent> DodgeCancelWindowEndTask;
 
 	UPROPERTY(Transient)
 	TObjectPtr<UAbilityTask_WaitGameplayEvent> PrimaryAttackPressedTask;
@@ -115,28 +86,13 @@ private:
 	TObjectPtr<UAbilityTask_WaitGameplayEvent> ComboBranchWindowEndTask;
 
 	UPROPERTY(Transient)
-	TObjectPtr<UAbilityTask_WaitGameplayEvent> RateWindowBeginTask;
-
-	UPROPERTY(Transient)
-	TObjectPtr<UAbilityTask_WaitGameplayEvent> RateWindowEndTask;
-
-	UPROPERTY(Transient)
-	TObjectPtr<ULightAttackRateWindowContext> ActiveRateWindowContext;
-
-	UPROPERTY(Transient)
 	TObjectPtr<UAnimInstance> BoundAnimInstance;
 
 	UPROPERTY(Transient)
 	TObjectPtr<UAnimMontage> ActiveEntryMontage;
 
-	FAbilityMontageRateWindowLifecycle RateWindowLifecycle;
-	uint32 CurrentActivationToken = 0;
 	int32 ActiveMontageInstanceID = INDEX_NONE;
 
-	FGameplayTag DodgeCancelWindowBeginEventTag;
-	FGameplayTag DodgeCancelWindowEndEventTag;
-	FGameplayTag DodgeCancelableStateTag;
-	FGameplayTag DefenseCancelableStateTag;
 	FGameplayTag TraceWindowBeginEventTag;
 	FGameplayTag TraceWindowEndEventTag;
 	FGameplayTag PrimaryAttackPressedEventTag;
@@ -145,11 +101,8 @@ private:
 	FGameplayTag ComboInputWindowEndEventTag;
 	FGameplayTag ComboBranchWindowBeginEventTag;
 	FGameplayTag ComboBranchWindowEndEventTag;
-	FGameplayTag RateWindowBeginEventTag;
-	FGameplayTag RateWindowEndEventTag;
 
 	int32 ActiveEntryIndex = INDEX_NONE;
-	bool bDodgeCancelable = false;
 	bool bComboInputWindowOpen = false;
 	bool bComboBranchWindowOpen = false;
 	bool bContinuationBuffered = false;
@@ -166,12 +119,6 @@ private:
 	void OnTraceWindowEnd(FGameplayEventData Payload);
 
 	UFUNCTION()
-	void OnDodgeCancelWindowBegin(FGameplayEventData Payload);
-
-	UFUNCTION()
-	void OnDodgeCancelWindowEnd(FGameplayEventData Payload);
-
-	UFUNCTION()
 	void OnPrimaryAttackPressed(FGameplayEventData Payload);
 
 	UFUNCTION()
@@ -186,9 +133,8 @@ private:
 	UFUNCTION()
 	void OnComboBranchWindowEnd(FGameplayEventData Payload);
 
-	void OnRateWindowBegin(const FGameplayEventData& Payload);
-	void OnRateWindowEnd(const FGameplayEventData& Payload);
-	void ClearRateWindow(bool bRestoreRate);
+	UFUNCTION()
+	void OnMontageFailed();
 
 	void EndFromMontage(bool bWasCancelled);
 	bool ValidateComboDefinition() const;
@@ -198,7 +144,6 @@ private:
 	void TryConsumeBufferedComboContinuation();
 	void OpenTraceWindow(const TArray<FName>& InTraceSourceNames);
 	void CloseTraceWindow();
-	void SetDodgeCancelable(bool bShouldBeCancelable);
 	void TryApplyMeleeMotionWarpTarget(class APlayerCharacter* PlayerCharacter, const struct FComboChainEntry& EntryConfig);
 	void ResetMeleeMotionWarpState();
 
@@ -206,19 +151,13 @@ private:
 
 	TWeakObjectPtr<const class UAnimNotifyState_AttackTraceWindow> ActiveTraceNotifyState;
 
-	friend class ULightAttackRateWindowContext;
 
 #if WITH_DEV_AUTOMATION_TESTS
 public:
-	const FGameplayTag& GetTestRateWindowBeginEventTag() const { return RateWindowBeginEventTag; }
-	const FGameplayTag& GetTestRateWindowEndEventTag() const { return RateWindowEndEventTag; }
-	const FAbilityMontageRateWindowLifecycle& GetTestRateWindowLifecycle() const { return RateWindowLifecycle; }
-	FAbilityMontageRateWindowLifecycle& GetTestRateWindowLifecycle_Mutable() { return RateWindowLifecycle; }
+	UAbilityTask_PlayActionMontage* GetTestMontageTask() const { return MontageTask.Get(); }
+	const FAbilityMontageRateWindowLifecycle& GetTestRateWindowLifecycle() const;
+	FAbilityMontageRateWindowLifecycle& GetTestRateWindowLifecycle_Mutable();
 	int32 GetTestActiveMontageInstanceID() const { return ActiveMontageInstanceID; }
-	void SetTestActiveMontageInstanceID(int32 InID) { ActiveMontageInstanceID = InID; }
-	uint32 GetTestCurrentActivationToken() const { return CurrentActivationToken; }
-	ULightAttackRateWindowContext* GetTestActiveRateWindowContext() const { return ActiveRateWindowContext.Get(); }
-	void TestClearRateWindow() { ClearRateWindow(true); }
 
 	void SetTestComboDefinition(UComboChainDataAsset* InComboDefinition) { ComboDefinition = InComboDefinition; }
 	void SetTestBoundAnimInstance(UAnimInstance* InAnimInstance) { BoundAnimInstance = InAnimInstance; }
@@ -227,7 +166,6 @@ public:
 	void SetTestBypassMontageActiveCheck(bool bBypass)
 	{
 		bTestBypassMontageActiveCheck = bBypass;
-		RateWindowLifecycle.SetTestBypassMontageActiveCheck(bBypass);
 	}
 	void SetTestCostGameplayEffectClass(TSubclassOf<UGameplayEffect> InClass) { CostGameplayEffectClass = InClass; }
 	void SetTestDamageGameplayEffectClass(TSubclassOf<UGameplayEffect> InClass) { DamageGameplayEffectClass = InClass; }

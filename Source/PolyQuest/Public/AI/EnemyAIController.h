@@ -294,7 +294,7 @@ private:
 	FGameplayTag StunnedStateTag;
 	FGameplayTag TargetAcquiredEventTag;
 	FGameplayTag TargetLostEventTag;
-	float MeleeAttackCooldownEndTime = 0.0f;
+	double MeleeAttackCooldownEndTime = 0.0;
 	float CachedLeashRadius = 0.0f;
 	bool bHasValidAttackSet = false;
 	bool bHasValidAIProfile = false;

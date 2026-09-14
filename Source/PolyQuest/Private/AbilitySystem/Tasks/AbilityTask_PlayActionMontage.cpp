@@ -46,8 +46,46 @@ UAbilityTask_PlayActionMontage* UAbilityTask_PlayActionMontage::PlayActionMontag
 	return MyObj;
 }
 
+bool UAbilityTask_PlayActionMontage::SetOverrideBlendOutTime(float InOverrideBlendOutTime)
+{
+	if (bActivationStarted || bTerminated || IsFinished() || !FMath::IsFinite(InOverrideBlendOutTime))
+	{
+		UE_LOG(LogPolyQuest, Log, TEXT("PlayActionMontage [%s]: rejected blend-out configuration (activation started, task ended, or non-finite value)."), *GetName());
+		return false;
+	}
+	OverrideBlendOutTime = InOverrideBlendOutTime;
+	return true;
+}
+
+bool UAbilityTask_PlayActionMontage::SetTaskOwnsMontageStop(bool bOwnsStop)
+{
+	if (bActivationStarted || bTerminated || IsFinished())
+	{
+		UE_LOG(LogPolyQuest, Log, TEXT("PlayActionMontage [%s]: rejected stop ownership configuration (activation started or task ended)."), *GetName());
+		return false;
+	}
+	bTaskOwnsMontageStop = bOwnsStop;
+	return true;
+}
+
+void UAbilityTask_PlayActionMontage::PrepareForMontageTransition()
+{
+	if (bTerminated || bMontageTransitionPrepared || !IsActive()) return;
+	bMontageTransitionPrepared = true;
+	UnbindRateWindowEvents();
+	UnbindCancelWindowEvents();
+	ActiveCancelWindows.Reset();
+	PendingNaturalEndWindows.Reset();
+	bCancelWindowLatched = false;
+	RateWindowLifecycle.RestoreAndClear();
+	// Removing tags may synchronously end the Ability. Keep montage ownership and
+	// cancellation delegates intact so that normal cleanup still stops this instance.
+	RemoveContributedCancelTags();
+}
+
 void UAbilityTask_PlayActionMontage::Activate()
 {
+	bActivationStarted = true;
 	if (!Ability)
 	{
 		return;
@@ -212,7 +250,7 @@ FString UAbilityTask_PlayActionMontage::GetDebugString() const
 void UAbilityTask_PlayActionMontage::OnDestroy(bool AbilityEnded)
 {
 	// EndTask() passes false even when called from the owning Ability's EndAbility.
-	// This task still owns playback; cleanup must stop only its authorized instance.
+	// Cleanup stops only its authorized instance when this task owns stop requests.
 	CleanupTask(true);
 	Super::OnDestroy(AbilityEnded);
 }
@@ -328,9 +366,13 @@ void UAbilityTask_PlayActionMontage::OnGameplayAbilityCancelled()
 	}
 
 	const bool bAllowInterrupt = bAllowInterruptAfterBlendOutState;
+	const UAbilitySystemComponent* ASC = AbilitySystemComponent.Get();
+	const bool bPresentationOwnsLivePlayback = !bTaskOwnsMontageStop && ASC
+		&& ASC->GetAnimatingAbility() == Ability && ASC->GetCurrentMontage() == MontageToPlay
+		&& FAbilityMontageRateWindowLifecycle::IsCurrentMontageInstance(BoundAnimInstance.Get(), MontageToPlay, BoundMontageInstanceID);
 	const bool bStopped = CleanupTask(true);
 
-	if (bStopped || bAllowInterrupt)
+	if (bStopped || bPresentationOwnsLivePlayback || bAllowInterrupt)
 	{
 		if (ShouldBroadcastAbilityTaskDelegates())
 		{
@@ -383,6 +425,7 @@ void UAbilityTask_PlayActionMontage::UnbindRateWindowEvents()
 
 bool UAbilityTask_PlayActionMontage::ValidateRateWindowEventSource(const FGameplayEventData& Payload) const
 {
+	if (bMontageTransitionPrepared) return false;
 	if (Payload.TargetData.Num() == 0 || !Payload.TargetData.IsValid(0))
 	{
 		UE_LOG(LogPolyQuest, Verbose, TEXT("PlayActionMontage [%s]: RateWindow event rejected due to missing TargetData on Ability %s, Montage %s."),
@@ -495,7 +538,7 @@ bool UAbilityTask_PlayActionMontage::ValidateCancelWindowEventSource(
 	bool& OutReachedEnd) const
 {
 	OutReachedEnd = false;
-	if (bTerminated || !IsActive() || !Ability)
+	if (bTerminated || bMontageTransitionPrepared || !IsActive() || !Ability)
 	{
 		return false;
 	}
@@ -983,7 +1026,7 @@ bool UAbilityTask_PlayActionMontage::CleanupTask(bool bStopMontage)
 
 bool UAbilityTask_PlayActionMontage::StopPlayingMontage()
 {
-	if (!Ability)
+	if (!bTaskOwnsMontageStop || !Ability)
 	{
 		return false;
 	}
@@ -1006,11 +1049,11 @@ bool UAbilityTask_PlayActionMontage::StopPlayingMontage()
 		UAbilitySystemComponent* ASC = AbilitySystemComponent.Get();
 		if (ASC && ASC->GetAnimatingAbility() == Ability && ASC->GetCurrentMontage() == MontageToPlay)
 		{
-			ASC->CurrentMontageStop(0.0f);
+			ASC->CurrentMontageStop(OverrideBlendOutTime);
 		}
 		else
 		{
-			AnimInst->Montage_Stop(0.0f, MontageToPlay);
+			AnimInst->Montage_Stop(OverrideBlendOutTime >= 0.0f ? OverrideBlendOutTime : MontageToPlay->GetDefaultBlendOutTime(), MontageToPlay);
 		}
 		return true;
 	}
@@ -1024,7 +1067,7 @@ bool UAbilityTask_PlayActionMontage::StopPlayingMontage()
 	UAbilitySystemComponent* ASC = AbilitySystemComponent.Get();
 	if (ASC && ASC->GetAnimatingAbility() == Ability && ASC->GetCurrentMontage() == MontageToPlay)
 	{
-		ASC->CurrentMontageStop(0.0f);
+		ASC->CurrentMontageStop(OverrideBlendOutTime);
 		return true;
 	}
 

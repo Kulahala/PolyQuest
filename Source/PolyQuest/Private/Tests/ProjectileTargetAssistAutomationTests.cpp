@@ -2,6 +2,8 @@
 
 #if WITH_DEV_AUTOMATION_TESTS
 
+#include <limits>
+
 #include "AbilitySystemComponent.h"
 #include "AbilitySystem/CharacterAttributeSet.h"
 #include "Character/Player/PlayerCharacter.h"
@@ -410,7 +412,7 @@ bool FProjectileTargetAssistAutomationTest::RunTest(const FString& Parameters)
 		TestFalse(TEXT("NaN direction fails intersection"),
 			APlayerCharacter::CalculateRayPlaneIntersection(RayOrigin, FVector(NAN, 0.0f, 0.0f), PlaneZ, Intersection));
 		TestFalse(TEXT("Infinite plane Z fails intersection"),
-			APlayerCharacter::CalculateRayPlaneIntersection(RayOrigin, RayDir, INFINITY, Intersection));
+			APlayerCharacter::CalculateRayPlaneIntersection(RayOrigin, RayDir, std::numeric_limits<float>::infinity(), Intersection));
 	}
 
 	// -------------------------------------------------------------------------

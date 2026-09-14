@@ -24,6 +24,9 @@
 #include "GameplayEffect.h"
 #include "GameplayTagContainer.h"
 #include "Tests/TestProjectileDamageGE.h"
+#include "Tests/TestManagedMontageAbility.h"
+#include "Components/SkeletalMeshComponent.h"
+#include "Misc/ScopeExit.h"
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FPlayerActionWindowAutomationTest, "PolyQuest.Player.ActionWindows", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 
@@ -270,6 +273,41 @@ bool FPlayerActionWindowAutomationTest::RunTest(const FString& Parameters)
 
 		BowAbility->SetTestBowMontage(ValidBowMontage);
 
+		// Isolated source-validation fixture, not runtime adoption proof. The Task's
+		// existing bypass replaces the original inactive Ability window receiver.
+		UAnimInstance* WindowAnim = NewObject<UAnimInstance>(Player->GetMesh());
+		UAbilityTask_PlayActionMontage* WindowTask = UAbilityTask_PlayActionMontage::PlayActionMontage(
+			BowAbility, NAME_None, ValidBowMontage, 1.0f, NAME_None,
+			1.0f, // AnimRootMotionTranslationScale
+			0.0f, // StartTimeSeconds
+			false, // bAllowInterruptAfterBlendOut
+			EActionMontageCancelPolicy::DodgeAndDefense); // CancelPolicy
+		if (!TestNotNull(TEXT("Bow window receiver is a standard Task"), WindowTask)) return false;
+		WindowTask->SetTestBypassMontageActiveCheck(true);
+		WindowTask->SetTestTaskActive(true);
+		WindowTask->SetTestBoundAnimInstance(WindowAnim);
+		WindowTask->SetTestBoundMontageInstanceID(1);
+		ON_SCOPE_EXIT { WindowTask->EndTask(); };
+		const auto AddDeclaredNotify = [](UAnimSequenceBase* Animation)
+		{
+			auto* Notify = NewObject<UAnimNotifyState_ActionDodgeCancelWindow>(Animation);
+			FAnimNotifyEvent Event;
+			Event.NotifyStateClass = Notify;
+			Animation->Notifies.Add(Event);
+			return Notify;
+		};
+		auto* MontageNotify = AddDeclaredNotify(ValidBowMontage);
+		auto* SequenceNotify = AddDeclaredNotify(InnerSequence);
+		auto* ForeignNotify = AddDeclaredNotify(ForeignSequence);
+		auto* WrongNotify = AddDeclaredNotify(WrongMontage);
+		const auto AddSourceReceipt = [&](FGameplayEventData& Event)
+		{
+			Event.TargetData = FManagedMontageTestHelpers::MakeCancelWindowTargetData(WindowAnim, 1, Event.EventTag == TagCancelWindowEnd);
+			Event.OptionalObject2 = Event.OptionalObject == InnerSequence ? SequenceNotify
+				: Event.OptionalObject == ForeignSequence ? ForeignNotify
+				: Event.OptionalObject == WrongMontage ? WrongNotify : MontageNotify;
+		};
+
 		// 5.1 Invalid Avatar Payload -> Rejected, no tags added
 		{
 			FGameplayEventData BadAvatarPayload;
@@ -278,8 +316,9 @@ bool FPlayerActionWindowAutomationTest::RunTest(const FString& Parameters)
 			BadAvatarPayload.Target = nullptr;
 			BadAvatarPayload.OptionalObject = ValidBowMontage;
 
-			BowAbility->TestOnDodgeCancelWindowBegin(BadAvatarPayload);
-			TestFalse(TEXT("Bad Avatar payload does not activate DodgeCancelable"), BowAbility->GetTestDodgeCancelable());
+			AddSourceReceipt(BadAvatarPayload);
+			WindowTask->TestInvokeCancelBegin(BadAvatarPayload);
+			TestFalse(TEXT("Bad Avatar payload does not activate DodgeCancelable"), WindowTask->HasContributedDodgeTag());
 			TestFalse(TEXT("Bad Avatar payload does not add CanCancel.Dodge tag to ASC"), ASC->HasMatchingGameplayTag(TagCanCancelDodge));
 			TestFalse(TEXT("Bad Avatar payload does not add CanCancel.Defense tag to ASC"), ASC->HasMatchingGameplayTag(TagCanCancelDefense));
 		}
@@ -292,8 +331,9 @@ bool FPlayerActionWindowAutomationTest::RunTest(const FString& Parameters)
 			WrongMontagePayload.Target = Player;
 			WrongMontagePayload.OptionalObject = WrongMontage;
 
-			BowAbility->TestOnDodgeCancelWindowBegin(WrongMontagePayload);
-			TestFalse(TEXT("Wrong Montage payload does not activate DodgeCancelable"), BowAbility->GetTestDodgeCancelable());
+			AddSourceReceipt(WrongMontagePayload);
+			WindowTask->TestInvokeCancelBegin(WrongMontagePayload);
+			TestFalse(TEXT("Wrong Montage payload does not activate DodgeCancelable"), WindowTask->HasContributedDodgeTag());
 			TestFalse(TEXT("Wrong Montage payload does not add CanCancel.Dodge tag to ASC"), ASC->HasMatchingGameplayTag(TagCanCancelDodge));
 		}
 
@@ -305,8 +345,9 @@ bool FPlayerActionWindowAutomationTest::RunTest(const FString& Parameters)
 			ForeignSeqPayload.Target = Player;
 			ForeignSeqPayload.OptionalObject = ForeignSequence;
 
-			BowAbility->TestOnDodgeCancelWindowBegin(ForeignSeqPayload);
-			TestFalse(TEXT("Foreign Sequence payload does not activate DodgeCancelable"), BowAbility->GetTestDodgeCancelable());
+			AddSourceReceipt(ForeignSeqPayload);
+			WindowTask->TestInvokeCancelBegin(ForeignSeqPayload);
+			TestFalse(TEXT("Foreign Sequence payload does not activate DodgeCancelable"), WindowTask->HasContributedDodgeTag());
 			TestFalse(TEXT("Foreign Sequence payload does not add CanCancel.Dodge tag to ASC"), ASC->HasMatchingGameplayTag(TagCanCancelDodge));
 		}
 
@@ -318,14 +359,16 @@ bool FPlayerActionWindowAutomationTest::RunTest(const FString& Parameters)
 			InnerSeqBeginPayload.Target = Player;
 			InnerSeqBeginPayload.OptionalObject = InnerSequence;
 
-			BowAbility->TestOnDodgeCancelWindowBegin(InnerSeqBeginPayload);
-			TestTrue(TEXT("Inner Sequence payload activates DodgeCancelable"), BowAbility->GetTestDodgeCancelable());
+			AddSourceReceipt(InnerSeqBeginPayload);
+			WindowTask->TestInvokeCancelBegin(InnerSeqBeginPayload);
+			TestTrue(TEXT("Inner Sequence payload activates DodgeCancelable"), WindowTask->HasContributedDodgeTag());
 			TestTrue(TEXT("Inner Sequence payload adds CanCancel.Dodge tag to ASC"), ASC->HasMatchingGameplayTag(TagCanCancelDodge));
 			TestTrue(TEXT("Inner Sequence payload adds CanCancel.Defense tag to ASC"), ASC->HasMatchingGameplayTag(TagCanCancelDefense));
 
 			// Duplicate Begin -> No duplicate tag accumulation / idempotency
-			BowAbility->TestOnDodgeCancelWindowBegin(InnerSeqBeginPayload);
-			TestTrue(TEXT("Duplicate Begin maintains DodgeCancelable"), BowAbility->GetTestDodgeCancelable());
+			AddSourceReceipt(InnerSeqBeginPayload);
+			WindowTask->TestInvokeCancelBegin(InnerSeqBeginPayload);
+			TestTrue(TEXT("Duplicate Begin maintains DodgeCancelable"), WindowTask->HasContributedDodgeTag());
 		}
 
 		// 5.4 Foreign Sequence End Payload -> Does not close valid window
@@ -336,8 +379,9 @@ bool FPlayerActionWindowAutomationTest::RunTest(const FString& Parameters)
 			ForeignSeqEndPayload.Target = Player;
 			ForeignSeqEndPayload.OptionalObject = ForeignSequence;
 
-			BowAbility->TestOnDodgeCancelWindowEnd(ForeignSeqEndPayload);
-			TestTrue(TEXT("Foreign Sequence End payload does not close active cancel window"), BowAbility->GetTestDodgeCancelable());
+			AddSourceReceipt(ForeignSeqEndPayload);
+			WindowTask->TestInvokeCancelEnd(ForeignSeqEndPayload);
+			TestTrue(TEXT("Foreign Sequence End payload does not close active cancel window"), WindowTask->HasContributedDodgeTag());
 			TestTrue(TEXT("CanCancel.Dodge remains active on ASC"), ASC->HasMatchingGameplayTag(TagCanCancelDodge));
 		}
 
@@ -349,8 +393,9 @@ bool FPlayerActionWindowAutomationTest::RunTest(const FString& Parameters)
 			InnerSeqEndPayload.Target = Player;
 			InnerSeqEndPayload.OptionalObject = InnerSequence;
 
-			BowAbility->TestOnDodgeCancelWindowEnd(InnerSeqEndPayload);
-			TestFalse(TEXT("Inner Sequence End payload deactivates DodgeCancelable"), BowAbility->GetTestDodgeCancelable());
+			AddSourceReceipt(InnerSeqEndPayload);
+			WindowTask->TestInvokeCancelEnd(InnerSeqEndPayload);
+			TestFalse(TEXT("Inner Sequence End payload deactivates DodgeCancelable"), WindowTask->HasContributedDodgeTag());
 			TestFalse(TEXT("Inner Sequence End payload removes CanCancel.Dodge tag from ASC"), ASC->HasMatchingGameplayTag(TagCanCancelDodge));
 			TestFalse(TEXT("Inner Sequence End payload removes CanCancel.Defense tag from ASC"), ASC->HasMatchingGameplayTag(TagCanCancelDefense));
 		}
@@ -363,8 +408,9 @@ bool FPlayerActionWindowAutomationTest::RunTest(const FString& Parameters)
 			ValidBeginPayload.Target = Player;
 			ValidBeginPayload.OptionalObject = ValidBowMontage;
 
-			BowAbility->TestOnDodgeCancelWindowBegin(ValidBeginPayload);
-			TestTrue(TEXT("Valid Direct Montage Begin payload activates DodgeCancelable"), BowAbility->GetTestDodgeCancelable());
+			AddSourceReceipt(ValidBeginPayload);
+			WindowTask->TestInvokeCancelBegin(ValidBeginPayload);
+			TestTrue(TEXT("Valid Direct Montage Begin payload activates DodgeCancelable"), WindowTask->HasContributedDodgeTag());
 
 			FGameplayEventData ValidEndPayload;
 			ValidEndPayload.EventTag = TagCancelWindowEnd;
@@ -372,8 +418,9 @@ bool FPlayerActionWindowAutomationTest::RunTest(const FString& Parameters)
 			ValidEndPayload.Target = Player;
 			ValidEndPayload.OptionalObject = ValidBowMontage;
 
-			BowAbility->TestOnDodgeCancelWindowEnd(ValidEndPayload);
-			TestFalse(TEXT("Valid Direct Montage End payload deactivates DodgeCancelable"), BowAbility->GetTestDodgeCancelable());
+			AddSourceReceipt(ValidEndPayload);
+			WindowTask->TestInvokeCancelEnd(ValidEndPayload);
+			TestFalse(TEXT("Valid Direct Montage End payload deactivates DodgeCancelable"), WindowTask->HasContributedDodgeTag());
 		}
 	}
 
@@ -534,6 +581,39 @@ bool FPlayerActionWindowAutomationTest::RunTest(const FString& Parameters)
 		}
 	}
 
+	// Reuse the section 5 isolated standard-Task fixture for DodgeOnly consumers.
+	const auto MakeDodgeOnlyTask = [&](auto* Ability, UAnimMontage* Montage)
+	{
+		auto* Task = UAbilityTask_PlayActionMontage::PlayActionMontage(
+			Ability, NAME_None, Montage, 1.0f, NAME_None,
+			1.0f, // AnimRootMotionTranslationScale
+			0.0f, // StartTimeSeconds
+			false, // bAllowInterruptAfterBlendOut
+			EActionMontageCancelPolicy::DodgeOnly); // CancelPolicy
+		if (Task)
+		{
+			Task->SetTestTaskActive(true);
+			Task->SetTestBypassMontageActiveCheck(true);
+			Task->SetTestBoundAnimInstance(NewObject<UAnimInstance>(Player->GetMesh()));
+			Task->SetTestBoundMontageInstanceID(1);
+			Ability->SetTestMontageTask(Task);
+		}
+		return Task;
+	};
+	const auto DeclareWindow = [](UAnimSequenceBase* Animation)
+	{
+		FAnimNotifyEvent Event;
+		Event.NotifyStateClass = NewObject<UAnimNotifyState_ActionDodgeCancelWindow>(Animation);
+		Animation->Notifies.Add(Event);
+	};
+	const auto AddWindowSource = [&](UAbilityTask_PlayActionMontage* Task, FGameplayEventData& Event)
+	{
+		const auto* Animation = Cast<UAnimSequenceBase>(Event.OptionalObject);
+		Event.OptionalObject2 = Animation && !Animation->Notifies.IsEmpty() ? Animation->Notifies[0].NotifyStateClass.Get() : nullptr;
+		Event.TargetData = FManagedMontageTestHelpers::MakeCancelWindowTargetData(
+			Task->GetBoundAnimInstance(), Task->GetBoundMontageInstanceID(), Event.EventTag == TagCancelWindowEnd);
+	};
+
 	// -------------------------------------------------------------------------
 	// SECTION 9: Dodge Cancel Window & Rate Window Lifecycle (Slice B)
 	// -------------------------------------------------------------------------
@@ -560,6 +640,11 @@ bool FPlayerActionWindowAutomationTest::RunTest(const FString& Parameters)
 		ValidDodgeMontage->SlotAnimTracks.Add(SlotTrack);
 
 		DodgeAbility->SetTestActiveMontage(ValidDodgeMontage);
+		for (UAnimSequenceBase* Animation : TArray<UAnimSequenceBase*>{ static_cast<UAnimSequenceBase*>(ValidDodgeMontage), WrongDodgeMontage, InnerDodgeSequence, ForeignDodgeSequence })
+			DeclareWindow(Animation);
+		auto* DodgeTask = MakeDodgeOnlyTask(DodgeAbility, ValidDodgeMontage);
+		if (!TestNotNull(TEXT("Dodge uses a standard Task receiver"), DodgeTask)) return false;
+		ON_SCOPE_EXIT { DodgeTask->EndTask(); };
 
 		// 9.1 Invalid Avatar Payload -> Rejected
 		{
@@ -569,7 +654,8 @@ bool FPlayerActionWindowAutomationTest::RunTest(const FString& Parameters)
 			BadAvatarPayload.Target = nullptr;
 			BadAvatarPayload.OptionalObject = ValidDodgeMontage;
 
-			DodgeAbility->TestOnCancelWindowBegin(BadAvatarPayload);
+			AddWindowSource(DodgeTask, BadAvatarPayload);
+			DodgeTask->TestInvokeCancelBegin(BadAvatarPayload);
 			TestFalse(TEXT("Bad Avatar payload does not activate DodgeCancelable on Dodge"), DodgeAbility->GetTestDodgeCancelable());
 			TestFalse(TEXT("Bad Avatar payload does not add CanCancel.Dodge tag to ASC"), ASC->HasMatchingGameplayTag(TagCanCancelDodge));
 		}
@@ -582,7 +668,8 @@ bool FPlayerActionWindowAutomationTest::RunTest(const FString& Parameters)
 			WrongMontagePayload.Target = Player;
 			WrongMontagePayload.OptionalObject = WrongDodgeMontage;
 
-			DodgeAbility->TestOnCancelWindowBegin(WrongMontagePayload);
+			AddWindowSource(DodgeTask, WrongMontagePayload);
+			DodgeTask->TestInvokeCancelBegin(WrongMontagePayload);
 			TestFalse(TEXT("Wrong Montage payload does not activate DodgeCancelable on Dodge"), DodgeAbility->GetTestDodgeCancelable());
 			TestFalse(TEXT("Wrong Montage payload does not add CanCancel.Dodge tag to ASC"), ASC->HasMatchingGameplayTag(TagCanCancelDodge));
 		}
@@ -595,7 +682,8 @@ bool FPlayerActionWindowAutomationTest::RunTest(const FString& Parameters)
 			ForeignSeqPayload.Target = Player;
 			ForeignSeqPayload.OptionalObject = ForeignDodgeSequence;
 
-			DodgeAbility->TestOnCancelWindowBegin(ForeignSeqPayload);
+			AddWindowSource(DodgeTask, ForeignSeqPayload);
+			DodgeTask->TestInvokeCancelBegin(ForeignSeqPayload);
 			TestFalse(TEXT("Foreign Sequence payload does not activate DodgeCancelable on Dodge"), DodgeAbility->GetTestDodgeCancelable());
 			TestFalse(TEXT("Foreign Sequence payload does not add CanCancel.Dodge tag to ASC"), ASC->HasMatchingGameplayTag(TagCanCancelDodge));
 		}
@@ -608,13 +696,15 @@ bool FPlayerActionWindowAutomationTest::RunTest(const FString& Parameters)
 			InnerSeqBeginPayload.Target = Player;
 			InnerSeqBeginPayload.OptionalObject = InnerDodgeSequence;
 
-			DodgeAbility->TestOnCancelWindowBegin(InnerSeqBeginPayload);
+			AddWindowSource(DodgeTask, InnerSeqBeginPayload);
+			DodgeTask->TestInvokeCancelBegin(InnerSeqBeginPayload);
 			TestTrue(TEXT("Inner Sequence payload activates DodgeCancelable on Dodge"), DodgeAbility->GetTestDodgeCancelable());
 			TestTrue(TEXT("Inner Sequence payload adds CanCancel.Dodge tag to ASC"), ASC->HasMatchingGameplayTag(TagCanCancelDodge));
 			TestFalse(TEXT("Dodge CancelWindow does NOT add CanCancel.Defense to ASC"), ASC->HasMatchingGameplayTag(TagCanCancelDefense));
 
 			// Idempotent duplicate Begin
-			DodgeAbility->TestOnCancelWindowBegin(InnerSeqBeginPayload);
+			AddWindowSource(DodgeTask, InnerSeqBeginPayload);
+			DodgeTask->TestInvokeCancelBegin(InnerSeqBeginPayload);
 			TestTrue(TEXT("Duplicate Begin maintains DodgeCancelable on Dodge"), DodgeAbility->GetTestDodgeCancelable());
 		}
 
@@ -626,7 +716,8 @@ bool FPlayerActionWindowAutomationTest::RunTest(const FString& Parameters)
 			ForeignSeqEndPayload.Target = Player;
 			ForeignSeqEndPayload.OptionalObject = ForeignDodgeSequence;
 
-			DodgeAbility->TestOnCancelWindowEnd(ForeignSeqEndPayload);
+			AddWindowSource(DodgeTask, ForeignSeqEndPayload);
+			DodgeTask->TestInvokeCancelEnd(ForeignSeqEndPayload);
 			TestTrue(TEXT("Foreign Sequence End does not close active cancel window on Dodge"), DodgeAbility->GetTestDodgeCancelable());
 			TestTrue(TEXT("CanCancel.Dodge remains active on ASC"), ASC->HasMatchingGameplayTag(TagCanCancelDodge));
 		}
@@ -639,7 +730,8 @@ bool FPlayerActionWindowAutomationTest::RunTest(const FString& Parameters)
 			InnerSeqEndPayload.Target = Player;
 			InnerSeqEndPayload.OptionalObject = InnerDodgeSequence;
 
-			DodgeAbility->TestOnCancelWindowEnd(InnerSeqEndPayload);
+			AddWindowSource(DodgeTask, InnerSeqEndPayload);
+			DodgeTask->TestInvokeCancelEnd(InnerSeqEndPayload);
 			TestFalse(TEXT("Valid Inner Sequence End deactivates DodgeCancelable on Dodge"), DodgeAbility->GetTestDodgeCancelable());
 			TestFalse(TEXT("Valid Inner Sequence End removes CanCancel.Dodge from ASC"), ASC->HasMatchingGameplayTag(TagCanCancelDodge));
 		}
@@ -655,7 +747,8 @@ bool FPlayerActionWindowAutomationTest::RunTest(const FString& Parameters)
 			InnerSeqBeginPayload.Target = Player;
 			InnerSeqBeginPayload.OptionalObject = InnerDodgeSequence;
 
-			DodgeAbility->TestOnCancelWindowBegin(InnerSeqBeginPayload);
+			AddWindowSource(DodgeTask, InnerSeqBeginPayload);
+			DodgeTask->TestInvokeCancelBegin(InnerSeqBeginPayload);
 			TestTrue(TEXT("CanCancel.Dodge granted before EndAbility"), ASC->HasMatchingGameplayTag(TagCanCancelDodge));
 
 			DodgeAbility->EndAbility(DodgeAbility->GetCurrentAbilitySpecHandle(), ASC->AbilityActorInfo.Get(), DodgeAbility->GetCurrentActivationInfo(), true, true);
@@ -673,6 +766,9 @@ bool FPlayerActionWindowAutomationTest::RunTest(const FString& Parameters)
 		{
 			RetriggerDodgeAbility->SetTestCurrentActorInfo(ASC->AbilityActorInfo.Get());
 			RetriggerDodgeAbility->SetTestActiveMontage(ValidDodgeMontage);
+			auto* RetriggerTask = MakeDodgeOnlyTask(RetriggerDodgeAbility, ValidDodgeMontage);
+			if (!TestNotNull(TEXT("Retrigger fixture has a new Task"), RetriggerTask)) return false;
+			ON_SCOPE_EXIT { RetriggerTask->EndTask(); };
 
 			FGameplayEventData InnerSeqBeginPayload;
 			InnerSeqBeginPayload.EventTag = TagCancelWindowBegin;
@@ -681,7 +777,8 @@ bool FPlayerActionWindowAutomationTest::RunTest(const FString& Parameters)
 			InnerSeqBeginPayload.OptionalObject = InnerDodgeSequence;
 
 			// Step A: Old instance enters recovery CancelWindow
-			RetriggerDodgeAbility->TestOnCancelWindowBegin(InnerSeqBeginPayload);
+			AddWindowSource(RetriggerTask, InnerSeqBeginPayload);
+			RetriggerTask->TestInvokeCancelBegin(InnerSeqBeginPayload);
 			TestTrue(TEXT("Old dodge has DodgeCancelable active"), RetriggerDodgeAbility->GetTestDodgeCancelable());
 			TestTrue(TEXT("ASC has CanCancel.Dodge tag during old dodge recovery"), ASC->HasMatchingGameplayTag(TagCanCancelDodge));
 
@@ -731,6 +828,12 @@ bool FPlayerActionWindowAutomationTest::RunTest(const FString& Parameters)
 
 		LaunchAbility->SetTestRootMotionKnockdownMontage(ValidRootMotionKnockdownMontage);
 		LaunchAbility->SetTestActiveMontage(ValidRootMotionKnockdownMontage);
+		for (UAnimSequenceBase* Animation : TArray<UAnimSequenceBase*>{ static_cast<UAnimSequenceBase*>(ValidRootMotionKnockdownMontage), WrongRootMotionKnockdownMontage, InnerKnockdownSequence, ForeignKnockdownSequence })
+			DeclareWindow(Animation);
+		auto* LaunchTask = MakeDodgeOnlyTask(LaunchAbility, ValidRootMotionKnockdownMontage);
+		if (!TestNotNull(TEXT("Launch uses a standard Task receiver"), LaunchTask)) return false;
+		ON_SCOPE_EXIT { LaunchTask->EndTask(); };
+		LaunchTask->SetTestTaskActive(false); // No active playback owner in phase None.
 
 		// 10.1 Non-RootMotionKnockdown Phase -> Events ignored
 		{
@@ -740,19 +843,21 @@ bool FPlayerActionWindowAutomationTest::RunTest(const FString& Parameters)
 			BeginPayload.Target = Player;
 			BeginPayload.OptionalObject = ValidRootMotionKnockdownMontage;
 
-			LaunchAbility->SetTestBypassAnimInstanceActiveCheck(true);
-			LaunchAbility->TestOnCancelWindowBegin(BeginPayload);
+			LaunchTask->SetTestBypassMontageActiveCheck(true);
+			AddWindowSource(LaunchTask, BeginPayload);
+			LaunchTask->TestInvokeCancelBegin(BeginPayload);
 			TestFalse(TEXT("CancelWindowBegin during non-RootMotionKnockdown phase is rejected"), LaunchAbility->GetTestDodgeCancelable());
 			TestFalse(TEXT("Non-RootMotionKnockdown phase does not add CanCancel.Dodge tag to ASC"), ASC->HasMatchingGameplayTag(TagCanCancelDodge));
 		}
 
 		// Switch to RootMotionKnockdown phase
 		LaunchAbility->SetTestCurrentPhaseToRootMotionKnockdown();
+		LaunchTask->SetTestTaskActive(true);
 
 		// 10.2 Inactive / Null AnimInstance Check -> Rejected when active check is enforced
 		{
-			LaunchAbility->SetTestBypassAnimInstanceActiveCheck(false);
-			LaunchAbility->SetTestBoundAnimInstance(nullptr);
+			LaunchTask->SetTestBypassMontageActiveCheck(false);
+			LaunchTask->SetTestBoundAnimInstance(nullptr);
 
 			FGameplayEventData BeginPayload;
 			BeginPayload.EventTag = TagCancelWindowBegin;
@@ -760,13 +865,15 @@ bool FPlayerActionWindowAutomationTest::RunTest(const FString& Parameters)
 			BeginPayload.Target = Player;
 			BeginPayload.OptionalObject = ValidRootMotionKnockdownMontage;
 
-			LaunchAbility->TestOnCancelWindowBegin(BeginPayload);
+			AddWindowSource(LaunchTask, BeginPayload);
+			LaunchTask->TestInvokeCancelBegin(BeginPayload);
 			TestFalse(TEXT("Inactive / null AnimInstance fails closed and rejects Begin"), LaunchAbility->GetTestDodgeCancelable());
 			TestFalse(TEXT("Inactive AnimInstance does not add CanCancel.Dodge tag to ASC"), ASC->HasMatchingGameplayTag(TagCanCancelDodge));
 		}
 
 		// Enable bypass for isolated synthetic identity & payload tests
-		LaunchAbility->SetTestBypassAnimInstanceActiveCheck(true);
+		LaunchTask->SetTestBoundAnimInstance(NewObject<UAnimInstance>(Player->GetMesh()));
+		LaunchTask->SetTestBypassMontageActiveCheck(true);
 
 		// 10.3 Invalid Avatar Payload -> Rejected
 		{
@@ -776,7 +883,8 @@ bool FPlayerActionWindowAutomationTest::RunTest(const FString& Parameters)
 			BadAvatarPayload.Target = nullptr;
 			BadAvatarPayload.OptionalObject = ValidRootMotionKnockdownMontage;
 
-			LaunchAbility->TestOnCancelWindowBegin(BadAvatarPayload);
+			AddWindowSource(LaunchTask, BadAvatarPayload);
+			LaunchTask->TestInvokeCancelBegin(BadAvatarPayload);
 			TestFalse(TEXT("Bad Avatar payload does not activate DodgeCancelable on Launch"), LaunchAbility->GetTestDodgeCancelable());
 			TestFalse(TEXT("Bad Avatar payload does not add CanCancel.Dodge tag to ASC"), ASC->HasMatchingGameplayTag(TagCanCancelDodge));
 		}
@@ -789,7 +897,8 @@ bool FPlayerActionWindowAutomationTest::RunTest(const FString& Parameters)
 			WrongMontagePayload.Target = Player;
 			WrongMontagePayload.OptionalObject = WrongRootMotionKnockdownMontage;
 
-			LaunchAbility->TestOnCancelWindowBegin(WrongMontagePayload);
+			AddWindowSource(LaunchTask, WrongMontagePayload);
+			LaunchTask->TestInvokeCancelBegin(WrongMontagePayload);
 			TestFalse(TEXT("Wrong Montage payload does not activate DodgeCancelable on Launch"), LaunchAbility->GetTestDodgeCancelable());
 			TestFalse(TEXT("Wrong Montage payload does not add CanCancel.Dodge tag to ASC"), ASC->HasMatchingGameplayTag(TagCanCancelDodge));
 		}
@@ -802,7 +911,8 @@ bool FPlayerActionWindowAutomationTest::RunTest(const FString& Parameters)
 			ForeignSeqPayload.Target = Player;
 			ForeignSeqPayload.OptionalObject = ForeignKnockdownSequence;
 
-			LaunchAbility->TestOnCancelWindowBegin(ForeignSeqPayload);
+			AddWindowSource(LaunchTask, ForeignSeqPayload);
+			LaunchTask->TestInvokeCancelBegin(ForeignSeqPayload);
 			TestFalse(TEXT("Foreign Sequence payload does not activate DodgeCancelable on Launch"), LaunchAbility->GetTestDodgeCancelable());
 			TestFalse(TEXT("Foreign Sequence payload does not add CanCancel.Dodge tag to ASC"), ASC->HasMatchingGameplayTag(TagCanCancelDodge));
 		}
@@ -815,13 +925,15 @@ bool FPlayerActionWindowAutomationTest::RunTest(const FString& Parameters)
 			InnerSeqBeginPayload.Target = Player;
 			InnerSeqBeginPayload.OptionalObject = InnerKnockdownSequence;
 
-			LaunchAbility->TestOnCancelWindowBegin(InnerSeqBeginPayload);
+			AddWindowSource(LaunchTask, InnerSeqBeginPayload);
+			LaunchTask->TestInvokeCancelBegin(InnerSeqBeginPayload);
 			TestTrue(TEXT("Inner Sequence payload activates DodgeCancelable on Launch"), LaunchAbility->GetTestDodgeCancelable());
 			TestTrue(TEXT("Inner Sequence payload adds CanCancel.Dodge tag to ASC"), ASC->HasMatchingGameplayTag(TagCanCancelDodge));
 			TestFalse(TEXT("Launch CancelWindow does NOT add CanCancel.Defense to ASC"), ASC->HasMatchingGameplayTag(TagCanCancelDefense));
 
 			// Idempotent duplicate Begin
-			LaunchAbility->TestOnCancelWindowBegin(InnerSeqBeginPayload);
+			AddWindowSource(LaunchTask, InnerSeqBeginPayload);
+			LaunchTask->TestInvokeCancelBegin(InnerSeqBeginPayload);
 			TestTrue(TEXT("Duplicate Begin maintains DodgeCancelable on Launch"), LaunchAbility->GetTestDodgeCancelable());
 		}
 
@@ -833,12 +945,14 @@ bool FPlayerActionWindowAutomationTest::RunTest(const FString& Parameters)
 			InnerSeqEndPayload.Target = Player;
 			InnerSeqEndPayload.OptionalObject = InnerKnockdownSequence;
 
-			LaunchAbility->TestOnCancelWindowEnd(InnerSeqEndPayload);
+			AddWindowSource(LaunchTask, InnerSeqEndPayload);
+			LaunchTask->TestInvokeCancelEnd(InnerSeqEndPayload);
 			TestFalse(TEXT("Inner Sequence End payload clears DodgeCancelable on Launch"), LaunchAbility->GetTestDodgeCancelable());
 			TestFalse(TEXT("Inner Sequence End payload removes CanCancel.Dodge tag from ASC"), ASC->HasMatchingGameplayTag(TagCanCancelDodge));
 
 			// End before Begin is idempotent fail-closed
-			LaunchAbility->TestOnCancelWindowEnd(InnerSeqEndPayload);
+			AddWindowSource(LaunchTask, InnerSeqEndPayload);
+			LaunchTask->TestInvokeCancelEnd(InnerSeqEndPayload);
 			TestFalse(TEXT("End before Begin remains false"), LaunchAbility->GetTestDodgeCancelable());
 			TestFalse(TEXT("End before Begin tag remains absent"), ASC->HasMatchingGameplayTag(TagCanCancelDodge));
 		}
@@ -851,7 +965,8 @@ bool FPlayerActionWindowAutomationTest::RunTest(const FString& Parameters)
 			InnerSeqBeginPayload.Target = Player;
 			InnerSeqBeginPayload.OptionalObject = InnerKnockdownSequence;
 
-			LaunchAbility->TestOnCancelWindowBegin(InnerSeqBeginPayload);
+			AddWindowSource(LaunchTask, InnerSeqBeginPayload);
+			LaunchTask->TestInvokeCancelBegin(InnerSeqBeginPayload);
 			TestTrue(TEXT("CanCancel.Dodge granted before Launch EndAbility"), ASC->HasMatchingGameplayTag(TagCanCancelDodge));
 
 			LaunchAbility->EndAbility(LaunchAbility->GetCurrentAbilitySpecHandle(), ASC->AbilityActorInfo.Get(), LaunchAbility->GetCurrentActivationInfo(), true, true);

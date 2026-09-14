@@ -1768,4 +1768,20 @@ TODO-03A3E World Pickup Interaction Prompt v1
 - **关键修复**：修正播放参数顺序与同步重入；Queued End 以事件采样时间核验自身边界，直接动画段换算局部时间，Branching 使用独立 Payload。专项第 9 节隔离自动动画推进，显式推进真实 Montage/Notify 并补来源收据，原暂停、释放、重叠和重入断言保留。
 - **验证**：最终 ManagedMontageCancelWindow 自动化与 PIE 均由用户确认通过；此前八项成功记录保留原时点。Main 增量 Fresh Review 无 P0–P2，最终专项文件 Rider errors: []、空白检查通过；未代用户执行编译、Editor、Automation 或 PIE。
 - **剩余边界**：完整计划中未单独报告的构建/回归/readback 唯一维护于 ROADMAP 的 Debt-03H9-B-RepairValidation。此记录归档实现和修复交付，不宣称 B 全矩阵、父阶段完成或干净资产基线；A/H7/H6 债独立保留。
-- **授权与凭据**：用户明确授权文档收尾然后提交。提交包含 12 个源码/测试文件和 plan、ROADMAP、ARCHITECTURE、ROADMAP-archive 四份文档；排除全部 Content/Config/tmp WIP，不推送。完整契约及修复收据保存在本条所属提交的 plan.md；当前 plan 未来替换不改变此历史凭据。
+- **授权与凭据**：用户明确授权文档收尾然后提交。提交包含 12 个源码/测试文件和 plan、ROADMAP、ARCHITECTURE、ROADMAP-archive 四份文档；排除全部 Content/Config/tmp WIP，不推送。完整契约及修复收据固定为 `git show 931f5de:plan.md`；C 替换当前 plan 不改变此历史凭据。
+
+## TODO-03H9-C：全量标准 Task 接入与仅配置验收（2026-09-14）
+
+- **基线与范围**：基于 931f5de89adf87a432307740ad248259a8718223，17 个待迁移 Ability 按 Batch 1A/1B/2/3 接入，连同三个既有试点共 20 个原生入口。主代理按用户后续授权亲自实现并命令行验证。原 54 文件白名单另获批 EnemyAIController 冷却截止值 double 单字段修复，以及五份直接测试的限定适配；保留全部 Content/Config/tmp WIP。
+- **结果**：九参数 PlayActionMontage 工厂保持；标准 Task 托管 Rate/Cancel Window、来源实例、权限贡献和清理。两种激活前 Setter 保留 Bow 0.1s、玩家处决 0.2s 以及 Victim 独立表现停播权属。每动作的 Commit/伤害/业务上下文/移动和 GAS 取消权属保留。新增最小仅配置动作，在两份独立内存 Montage 上以真实 ASC/Notify 推进验收；离线诊断要求真实标准入口，None 不豁免。
+- **审查修复**：独立只读 Fresh Reviewer 发现 Light 换段提前 EndTask 导致零混出、丢失原生交叉混合的 P2。Main 先用真实混合权重断言复现 RED，再窄修为旧窗口先退出、旧 Task 保留异常停播责任至新 Montage 接管；复验 GREEN，同步取消及失败清理保持，Main 增量复核无未关闭 P0–P2。未再次派 Reviewer，不声称独立审查者复审了修复版本。
+- **验证**：最终 Editor 和非 Editor Win64 Development 构建均成功；Saved/Automation/TODO-03H9-C-LightBlend-R1/index.json 单次 34 项全部 Success、0 errors，25 项带 fixture 警告。用户随后确认最终测试通过并批准文档收尾，作为最终用户测试/PIE 收据。Rider 与精确 diff --check 已完成；这些证据不等于 Shipping/Test 宏组合、打包或干净资产基线。
+- **文档与剩余边界**：ARCHITECTURE 更新已验证原生设施，ROADMAP 保留 C/A/B 的独立逐资产 readback 收据，H6/H7 债务仍依原关闭条件；未从用户笼统测试通过补造资产值。当前 plan 保留最近交接。用户另提出在 03C 前排入处决机会红标、受击位移反馈两个体验阶段，当前路线以 ROADMAP 为准。
+- **提交状态**：本条归档时尚未暂存/提交或推送 C 改动；用户本轮仅授权文档收尾和讨论后续排期。未来替换 plan 前使用本条归档及届时真实提交固定引用，不将基线 931f5de 冒充 C 实现提交。
+
+## TODO-03H9：A/B/C 合并资产 readback 与总验收关闭（2026-09-14）
+
+- **证据来源与范围**：用户授权总验收；Main 通过 live Unreal MCP 只读核对 PolyQuest / Scene01 的角色、武器授予链和实际动画引用，覆盖 32 份 GA、15 份相关数据资产、39 份 Montage、48 份源动画。范围为当前 Player/Enemy 与 Unarmed、LightSword、HeavySword、Bow、Shield 玩法入口，不包含整个外部素材库。
+- **读回结果**：GA/Combo/武器到 Montage、双方四向受击与处决配对、Skeleton/Slot/Section、Rate/Cancel/HoldReady 类型/数值/区间/派发模式，以及真实 Parry/Guard 效果配置均已核对，未发现阻塞问题；所查相关蓝图未发现额外 Montage 播放入口。未配置窗口不等于未接入 Task，None 策略也不因共用动画上的 Cancel Notify 获得取消权限。
+- **总验收**：结合此前最终 Editor/非 Editor Development 构建、单次 34 项 Automation、用户最终测试/PIE 和独立审查后的 P2 修复闭环，关闭 Debt-03H9-A-ValidationReceipts、Debt-03H9-B-RepairValidation、Debt-03H9-C-Validation，A/B/C 及父阶段 03H9 总验收完成。
+- **边界与提交**：本轮读回未修改或保存资产，也未重复运行已通过测试；H6/H7、Shipping/Test、打包和干净资产基线仍按原条件处理。用户随后批准精简归档并提交 C 源码/测试及阶段文档，排除 Content/Config/tmp WIP，不推送。归档保留范围、结论和证据边界，不保存易过期的全量资产数值快照；以后调参时读取实际资产。

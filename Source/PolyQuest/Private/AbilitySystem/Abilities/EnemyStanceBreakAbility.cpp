@@ -2,8 +2,7 @@
 
 #include "AbilitySystemComponent.h"
 #include "Abilities/GameplayAbilityTriggerType.h"
-#include "Abilities/Tasks/AbilityTask_PlayMontageAndWait.h"
-#include "Abilities/Tasks/AbilityTask_WaitGameplayEvent.h"
+#include "AbilitySystem/Tasks/AbilityTask_PlayActionMontage.h"
 #include "Animation/AnimInstance.h"
 #include "Animation/AnimMontage.h"
 #include "Character/Enemy/EnemyCharacter.h"
@@ -16,22 +15,6 @@ void UEnemyStanceBreakExecutionContext::OnMontageEnded(UAnimMontage* Montage, bo
 	if (UEnemyStanceBreakAbility* Ability = OwningAbility.Get())
 	{
 		Ability->HandleMontageEnded(Montage, bInterrupted, Token);
-	}
-}
-
-void UEnemyStanceBreakExecutionContext::OnRateWindowBegin(FGameplayEventData Payload)
-{
-	if (UEnemyStanceBreakAbility* Ability = OwningAbility.Get())
-	{
-		Ability->HandleRateWindowBegin(Payload, Token);
-	}
-}
-
-void UEnemyStanceBreakExecutionContext::OnRateWindowEnd(FGameplayEventData Payload)
-{
-	if (UEnemyStanceBreakAbility* Ability = OwningAbility.Get())
-	{
-		Ability->HandleRateWindowEnd(Payload, Token);
 	}
 }
 
@@ -49,8 +32,6 @@ UEnemyStanceBreakAbility::UEnemyStanceBreakAbility()
 	EnemyHitReactionAbilityTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Reaction.Enemy.Big")), false);
 	EnemySmallHitReactionAbilityTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Reaction.Enemy.Small")), false);
 	EnemyLaunchReactionAbilityTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Reaction.Enemy.Launch")), false);
-	RateWindowBeginEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Action.RateWindow.Begin")), false);
-	RateWindowEndEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Action.RateWindow.End")), false);
 	TeardownOnUnpossessTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Action.Teardown.OnUnpossess")), false);
 	FacingBlockedStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Block.Facing")), false);
 
@@ -102,14 +83,11 @@ void UEnemyStanceBreakAbility::ActivateAbility(
 {
 	bEndAbilityRequested = false;
 	++CurrentActivationToken;
-	RateWindowLifecycle.RestoreAndClear();
-#if WITH_DEV_AUTOMATION_TESTS
-	RateWindowLifecycle.SetTestBypassMontageActiveCheck(false);
-#endif
 	InvalidateCallbackContext();
 	bMovementLockedByStanceBreak = false;
 	BoundAnimInstance = nullptr;
 	ActiveMontage = nullptr;
+	ActiveMontageInstanceID = INDEX_NONE;
 
 #if WITH_DEV_AUTOMATION_TESTS
 	if (const UEnemyStanceBreakAbility* CDO = Cast<UEnemyStanceBreakAbility>(GetClass()->GetDefaultObject()))
@@ -155,18 +133,29 @@ void UEnemyStanceBreakAbility::ActivateAbility(
 	}
 	ActiveContext->OwningAbility = this;
 	ActiveContext->Token = CurrentActivationToken;
-
-	MontageTask = UAbilityTask_PlayMontageAndWait::CreatePlayMontageAndWaitProxy(this, NAME_None, StanceBreakMontage);
-	RateWindowBeginTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, RateWindowBeginEventTag, nullptr, false, true);
-	RateWindowEndTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, RateWindowEndEventTag, nullptr, false, true);
-	if (!MontageTask || !RateWindowBeginTask || !RateWindowEndTask)
+	MontageTask = UAbilityTask_PlayActionMontage::PlayActionMontage(
+		this, NAME_None, StanceBreakMontage, 1.0f, NAME_None,
+		1.0f, // AnimRootMotionTranslationScale
+		0.0f, // StartTimeSeconds
+		true, // bAllowInterruptAfterBlendOut; business teardown waits for global OnMontageEnded
+		EActionMontageCancelPolicy::None); // CancelPolicy
+	if (!MontageTask)
 	{
 		UE_LOG(LogPolyQuest, Warning, TEXT("Enemy stance break activation aborted for '%s': failed to create required AbilityTasks."), *GetNameSafe(EnemyCharacter));
 		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
 		return;
 	}
+	UAbilityTask_PlayActionMontage* CreatedMontageTask = MontageTask.Get();
+#if WITH_DEV_AUTOMATION_TESTS
+	MontageTask->SetTestBypassMontageActiveCheck(bTestBypassMontageActiveCheck);
+#endif
 
-	if (!CommitAbility(Handle, ActorInfo, ActivationInfo))
+	const bool bCommitted = CommitAbility(Handle, ActorInfo, ActivationInfo);
+	if (bEndAbilityRequested || !IsActive() || MontageTask.Get() != CreatedMontageTask)
+	{
+		return;
+	}
+	if (!bCommitted)
 	{
 		UE_LOG(LogPolyQuest, Verbose, TEXT("Enemy stance break activation rejected for '%s' because CommitAbility failed."), *GetNameSafe(EnemyCharacter));
 		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
@@ -177,37 +166,18 @@ void UEnemyStanceBreakAbility::ActivateAbility(
 	ActiveMontage = StanceBreakMontage;
 	BoundAnimInstance->OnMontageEnded.AddUniqueDynamic(ActiveContext, &UEnemyStanceBreakExecutionContext::OnMontageEnded);
 
-	RateWindowBeginTask->EventReceived.AddDynamic(ActiveContext, &UEnemyStanceBreakExecutionContext::OnRateWindowBegin);
-	RateWindowEndTask->EventReceived.AddDynamic(ActiveContext, &UEnemyStanceBreakExecutionContext::OnRateWindowEnd);
-
-	RateWindowBeginTask->ReadyForActivation();
-	if (bEndAbilityRequested || !IsActive() || !RateWindowBeginTask || !RateWindowBeginTask->IsActive())
-	{
-		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
-		return;
-	}
-
-	RateWindowEndTask->ReadyForActivation();
-	if (bEndAbilityRequested || !IsActive() || !RateWindowEndTask || !RateWindowEndTask->IsActive())
-	{
-		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
-		return;
-	}
-
 	MontageTask->ReadyForActivation();
-
-#if WITH_DEV_AUTOMATION_TESTS
-	const bool bMontageTaskActive = bTestBypassMontageActiveCheck || (MontageTask && MontageTask->IsActive());
-#else
-	const bool bMontageTaskActive = MontageTask && MontageTask->IsActive();
-#endif
-
-	// A zero-length or invalid authored Montage can synchronously reach teardown.
-	if (bEndAbilityRequested || !IsActive() || !MontageTask || !bMontageTaskActive)
+	if (bEndAbilityRequested || !IsActive() || MontageTask.Get() != CreatedMontageTask)
+	{
+		return;
+	}
+	if (!IsValid(CreatedMontageTask) || CreatedMontageTask->IsFinished() || !CreatedMontageTask->IsActive())
 	{
 		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
 		return;
 	}
+	const FAnimMontageInstance* StartedInstance = BoundAnimInstance->GetActiveInstanceForMontage(ActiveMontage.Get());
+	ActiveMontageInstanceID = StartedInstance ? StartedInstance->GetInstanceID() : INDEX_NONE;
 
 #if WITH_DEV_AUTOMATION_TESTS
 	const bool bMontageActive = bTestBypassMontageActiveCheck || (BoundAnimInstance && BoundAnimInstance->Montage_IsActive(ActiveMontage.Get()));
@@ -218,14 +188,6 @@ void UEnemyStanceBreakAbility::ActivateAbility(
 	if (!BoundAnimInstance || !ActiveMontage || !bMontageActive)
 	{
 		UE_LOG(LogPolyQuest, Warning, TEXT("Enemy stance break activation aborted for '%s': montage '%s' did not start."), *GetNameSafe(EnemyCharacter), *GetNameSafe(StanceBreakMontage));
-		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
-		return;
-	}
-
-	RateWindowLifecycle.BindAndCapture(this, BoundAnimInstance.Get(), ActiveMontage.Get(), RateWindowBeginEventTag, RateWindowEndEventTag);
-	if (!RateWindowLifecycle.IsBound())
-	{
-		UE_LOG(LogPolyQuest, Warning, TEXT("Enemy stance break activation aborted for '%s': failed to capture active Montage rate baseline."), *GetNameSafe(EnemyCharacter));
 		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
 		return;
 	}
@@ -255,23 +217,15 @@ void UEnemyStanceBreakAbility::EndAbility(
 	}
 
 	bEndAbilityRequested = true;
-
-	RateWindowLifecycle.RestoreAndClear();
 #if WITH_DEV_AUTOMATION_TESTS
-	RateWindowLifecycle.SetTestBypassMontageActiveCheck(false);
+	bTestBypassMontageActiveCheck = false;
 #endif
-	InvalidateCallbackContext();
 
 	AEnemyCharacter* EnemyCharacter = Cast<AEnemyCharacter>(GetAvatarActorFromActorInfo());
-	if (BoundAnimInstance)
-	{
-		if (ActiveMontage && BoundAnimInstance->Montage_IsActive(ActiveMontage.Get()))
-		{
-			BoundAnimInstance->Montage_Stop(0.0f, ActiveMontage.Get());
-		}
-		BoundAnimInstance = nullptr;
-	}
+	InvalidateCallbackContext();
+	BoundAnimInstance = nullptr;
 	ActiveMontage = nullptr;
+	ActiveMontageInstanceID = INDEX_NONE;
 
 	const bool bCanRestoreEnemy = EnemyCharacter && !EnemyCharacter->IsDead() && !EnemyCharacter->IsActorBeingDestroyed();
 	if (bCanRestoreEnemy)
@@ -304,47 +258,20 @@ void UEnemyStanceBreakAbility::EndAbility(
 		}
 	}
 	bMovementLockedByStanceBreak = false;
-#if WITH_DEV_AUTOMATION_TESTS
-	bTestBypassMontageActiveCheck = false;
-#endif
 	Super::EndAbility(Handle, ActorInfo, ActivationInfo, bReplicateEndAbility, bWasCancelled);
 }
 
 void UEnemyStanceBreakAbility::InvalidateCallbackContext()
 {
-	UEnemyStanceBreakExecutionContext* CallbackContext = ActiveContext.Get();
-
 	if (BoundAnimInstance && ActiveContext)
 	{
-		BoundAnimInstance->OnMontageEnded.RemoveDynamic(CallbackContext, &UEnemyStanceBreakExecutionContext::OnMontageEnded);
+		BoundAnimInstance->OnMontageEnded.RemoveDynamic(ActiveContext, &UEnemyStanceBreakExecutionContext::OnMontageEnded);
 	}
-
-	if (CallbackContext)
+	if (ActiveContext)
 	{
-		CallbackContext->OwningAbility.Reset();
+		ActiveContext->OwningAbility.Reset();
 	}
 	ActiveContext = nullptr;
-
-	if (RateWindowBeginTask)
-	{
-		if (CallbackContext)
-		{
-			RateWindowBeginTask->EventReceived.RemoveAll(CallbackContext);
-		}
-		RateWindowBeginTask->EndTask();
-		RateWindowBeginTask = nullptr;
-	}
-
-	if (RateWindowEndTask)
-	{
-		if (CallbackContext)
-		{
-			RateWindowEndTask->EventReceived.RemoveAll(CallbackContext);
-		}
-		RateWindowEndTask->EndTask();
-		RateWindowEndTask = nullptr;
-	}
-
 	if (MontageTask)
 	{
 		MontageTask->EndTask();
@@ -354,32 +281,19 @@ void UEnemyStanceBreakAbility::InvalidateCallbackContext()
 
 void UEnemyStanceBreakAbility::HandleMontageEnded(UAnimMontage* Montage, bool bInterrupted, uint32 InToken)
 {
-	if (InToken != CurrentActivationToken || bEndAbilityRequested || !IsActive() || Montage != ActiveMontage.Get())
+	if (InToken != CurrentActivationToken || bEndAbilityRequested || !IsActive() || Montage != ActiveMontage.Get() || ActiveMontageInstanceID == INDEX_NONE)
+	{
+		return;
+	}
+
+	const FAnimMontageInstance* CurrentInstance = BoundAnimInstance
+		? BoundAnimInstance->GetMontageInstanceForID(ActiveMontageInstanceID) : nullptr;
+	if (CurrentInstance && CurrentInstance->IsValid())
 	{
 		return;
 	}
 
 	EndFromMontage(bInterrupted);
-}
-
-void UEnemyStanceBreakAbility::HandleRateWindowBegin(FGameplayEventData Payload, uint32 InToken)
-{
-	if (InToken != CurrentActivationToken || bEndAbilityRequested || !IsActive())
-	{
-		return;
-	}
-
-	RateWindowLifecycle.HandleBegin(Payload);
-}
-
-void UEnemyStanceBreakAbility::HandleRateWindowEnd(FGameplayEventData Payload, uint32 InToken)
-{
-	if (InToken != CurrentActivationToken || bEndAbilityRequested || !IsActive())
-	{
-		return;
-	}
-
-	RateWindowLifecycle.HandleEnd(Payload);
 }
 
 bool UEnemyStanceBreakAbility::ValidateActivationSetup(const FGameplayAbilityActorInfo* ActorInfo) const
@@ -419,7 +333,7 @@ bool UEnemyStanceBreakAbility::ValidateActivationSetup(const FGameplayAbilityAct
 		&& EnemyCharacter->HasValidPoiseRecoveryConfiguration() && AnimInstance && EffectiveMontage
 		&& StanceBreakAbilityTag.IsValid() && StanceBreakEventTag.IsValid() && StunnedStateTag.IsValid() && HitReactingStateTag.IsValid()
 		&& EnemyMeleeAbilityTag.IsValid() && EnemyHitReactionAbilityTag.IsValid() && EnemySmallHitReactionAbilityTag.IsValid()
-		&& EnemyLaunchReactionAbilityTag.IsValid() && RateWindowBeginEventTag.IsValid() && RateWindowEndEventTag.IsValid()
+		&& EnemyLaunchReactionAbilityTag.IsValid()
 		&& TeardownOnUnpossessTag.IsValid() && FacingBlockedStateTag.IsValid() && AbilitiesToCancel.Num() == 4;
 }
 

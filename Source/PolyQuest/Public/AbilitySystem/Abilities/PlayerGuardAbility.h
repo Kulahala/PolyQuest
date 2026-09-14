@@ -8,7 +8,7 @@
 #include "PlayerGuardAbility.generated.h"
 
 class AActor;
-class UAbilityTask_PlayMontageAndWait;
+class UAbilityTask_PlayActionMontage;
 class UAbilityTask_WaitGameplayEvent;
 class UAnimInstance;
 class UAnimMontage;
@@ -93,7 +93,7 @@ private:
 	TSubclassOf<UGameplayEffect> StaminaRegenDelayGameplayEffectClass;
 
 	UPROPERTY(Transient)
-	TObjectPtr<UAbilityTask_PlayMontageAndWait> MontageTask;
+	TObjectPtr<UAbilityTask_PlayActionMontage> MontageTask;
 
 	UPROPERTY(Transient)
 	TObjectPtr<UAbilityTask_WaitGameplayEvent> InputReleasedTask;
@@ -106,6 +106,8 @@ private:
 
 	UPROPERTY(Transient)
 	TObjectPtr<UAnimMontage> ActiveMontage;
+
+	int32 ActiveMontageInstanceID = INDEX_NONE;
 
 	FActiveGameplayEffectHandle GuardMoveSpeedEffectHandle;
 	FActiveGameplayEffectHandle GuardStaminaRegenMultiplierEffectHandle;

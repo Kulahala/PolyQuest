@@ -3,9 +3,8 @@
 #if WITH_DEV_AUTOMATION_TESTS
 
 #include "AbilitySystemComponent.h"
-#include "Abilities/Tasks/AbilityTask_PlayMontageAndWait.h"
-#include "Abilities/Tasks/AbilityTask_WaitGameplayEvent.h"
 #include "AbilitySystem/Abilities/EnemyStanceBreakAbility.h"
+#include "AbilitySystem/Tasks/AbilityTask_PlayActionMontage.h"
 #include "AbilitySystem/Abilities/MontageRateWindowLifecycle.h"
 #include "AbilitySystem/Abilities/PlayerFrontExecutionAbility.h"
 #include "AbilitySystem/CharacterAttributeSet.h"
@@ -24,6 +23,8 @@
 #include "GameplayTagContainer.h"
 #include "Kismet/GameplayStatics.h"
 #include "Tests/CombatAutomationFixture.h"
+#include "Tests/TestManagedMontageAbility.h"
+#include "Misc/ScopeExit.h"
 #include "Tests/TestLaunchFacingSmoothingAbility.h"
 #include "Tests/TestProjectileDamageGE.h"
 #include "Animation/AnimSequence.h"
@@ -44,6 +45,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 
 namespace
 {
+#if WITH_EDITOR // These playable fixtures require the animation data controller.
 	struct FTestMontageLengthAccess : public UAnimMontage
 	{
 		static void SetLength(UAnimMontage* Montage, float Length)
@@ -129,6 +131,7 @@ namespace
 		});
 	}
 
+#endif
 	struct FEnemyStanceBreakRateWindowTestWorldScope
 	{
 		UWorld* World = nullptr;
@@ -337,6 +340,7 @@ bool FEnemyStanceBreakRateWindowAutomationTest::RunTest(const FString& Parameter
 		EnemyASC->ClearAbility(Handle);
 	}
 
+#if WITH_EDITOR
 	// 3.2 Real GAS Production Lifecycle & RateWindow Event Integration
 	{
 		// 1. Prepare StanceBreak conditions on Enemy:
@@ -345,19 +349,14 @@ bool FEnemyStanceBreakRateWindowAutomationTest::RunTest(const FString& Parameter
 		TestTrue(TEXT("Enemy Poise is broken"), Enemy->IsPoiseBroken());
 		TestTrue(TEXT("Enemy has valid PoiseRecovery configuration"), Enemy->HasValidPoiseRecoveryConfiguration());
 
-		// 2. Prepare mock AnimInstance & StanceBreak Montage
-		UAnimMontage* ActiveStanceMontage = NewObject<UAnimMontage>(GetTransientPackage(), TEXT("Test_ActiveStanceMontage"));
-		UAnimComposite* ActiveInnerSequence = NewObject<UAnimComposite>(GetTransientPackage(), TEXT("Test_ActiveInnerSequence"));
-		FSlotAnimationTrack StanceSlotTrack;
-		StanceSlotTrack.SlotName = FName(TEXT("DefaultSlot"));
-		FAnimSegment StanceSegment;
-		StanceSegment.SetAnimReference(ActiveInnerSequence);
-		StanceSegment.StartPos = 0.0f;
-		StanceSegment.AnimStartTime = 0.0f;
-		StanceSegment.AnimEndTime = 2.0f;
-		StanceSegment.AnimPlayRate = 1.0f;
-		StanceSlotTrack.AnimTrack.AnimSegments.Add(StanceSegment);
-		ActiveStanceMontage->SlotAnimTracks.Add(StanceSlotTrack);
+		// Play the same in-memory fixture as the dual-instance cases, with an inner sequence window.
+		UAnimMontage* ActiveStanceMontage = CreatePlayableStanceMontage(*this, World);
+		if (!TestNotNull(TEXT("Stance payload matrix montage is playable"), ActiveStanceMontage))
+		{
+			return false;
+		}
+		UAnimSequenceBase* ActiveInnerSequence = ActiveStanceMontage->SlotAnimTracks[0].AnimTrack.AnimSegments[0].GetAnimReference();
+		ActiveStanceMontage->Notifies.Reset();
 
 		UAnimNotifyState_MontageRateWindow* StanceNotify1 = NewObject<UAnimNotifyState_MontageRateWindow>(World, TEXT("Test_StanceRateNotify1"));
 		StanceNotify1->RateMultiplier = 0.33f;
@@ -372,45 +371,26 @@ bool FEnemyStanceBreakRateWindowAutomationTest::RunTest(const FString& Parameter
 		ActiveInnerSequence->Notifies.Add(StanceEvent2);
 
 		UAnimInstance* MockAnimInstance = NewObject<UAnimInstance>(Enemy->GetMesh());
+		UAnimInstance* PreviousAnim = Enemy->GetMesh()->GetAnimInstance();
+		ON_SCOPE_EXIT { Enemy->GetMesh()->AnimScriptInstance = PreviousAnim; EnemyASC->RefreshAbilityActorInfo(); };
+		MockAnimInstance->InitializeMontageOnly();
+		MockAnimInstance->CurrentSkeleton = ActiveStanceMontage->GetSkeleton();
+		Enemy->GetMesh()->AnimScriptInstance = MockAnimInstance;
+		EnemyASC->RefreshAbilityActorInfo();
 
-		// 3. Give Ability and configure test seams on CDO/Instance
+		// Configure the granted instance; leave the process-global CDO untouched.
 		FGameplayAbilitySpec StanceBreakSpec(UEnemyStanceBreakAbility::StaticClass(), 1, INDEX_NONE, Enemy);
 		const FGameplayAbilitySpecHandle StanceBreakHandle = EnemyASC->GiveAbility(StanceBreakSpec);
 		FGameplayAbilitySpec* FoundSpec = EnemyASC->FindAbilitySpecFromHandle(StanceBreakHandle);
-		TestNotNull(TEXT("StanceBreak spec exists on Enemy ASC"), FoundSpec);
-
-		UEnemyStanceBreakAbility* StanceBreakAbility = nullptr;
-		UEnemyStanceBreakAbility* StanceCDO = nullptr;
-		UAnimMontage* OriginalStanceBreakMontage = nullptr;
-		UAnimInstance* OriginalBoundAnimInstance = nullptr;
-		bool bOriginalBypassMontageActiveCheck = false;
-		if (FoundSpec)
-		{
-			StanceCDO = Cast<UEnemyStanceBreakAbility>(FoundSpec->Ability);
-			OriginalStanceBreakMontage = StanceCDO ? StanceCDO->GetTestStanceBreakMontage() : nullptr;
-			OriginalBoundAnimInstance = StanceCDO ? StanceCDO->GetTestBoundAnimInstance() : nullptr;
-			bOriginalBypassMontageActiveCheck = StanceCDO && StanceCDO->GetTestBypassMontageActiveCheck();
-			if (StanceCDO)
-			{
-				StanceCDO->SetTestStanceBreakMontage(ActiveStanceMontage);
-				StanceCDO->SetTestBoundAnimInstance(MockAnimInstance);
-				StanceCDO->SetTestBypassMontageActiveCheck(true);
-			}
-
-			const bool bActivated = EnemyASC->TryActivateAbility(StanceBreakHandle);
-			// Restore the process-global CDO immediately after activation has copied
-			// the fixture values into the per-activation Ability instance.
-			if (StanceCDO)
-			{
-				StanceCDO->SetTestStanceBreakMontage(OriginalStanceBreakMontage);
-				StanceCDO->SetTestBoundAnimInstance(OriginalBoundAnimInstance);
-				StanceCDO->SetTestBypassMontageActiveCheck(bOriginalBypassMontageActiveCheck);
-			}
-
-			TestTrue(TEXT("UEnemyStanceBreakAbility successfully activated via GAS TryActivateAbility"), bActivated);
-
-			StanceBreakAbility = Cast<UEnemyStanceBreakAbility>(FoundSpec->GetPrimaryInstance());
-		}
+		if (!TestNotNull(TEXT("StanceBreak spec exists on Enemy ASC"), FoundSpec)) { return false; }
+		const UEnemyStanceBreakAbility* StanceCDO = CastChecked<UEnemyStanceBreakAbility>(FoundSpec->Ability);
+		UAnimMontage* OriginalStanceBreakMontage = StanceCDO->GetTestStanceBreakMontage();
+		UAnimInstance* OriginalBoundAnimInstance = StanceCDO->GetTestBoundAnimInstance();
+		const bool bOriginalBypassMontageActiveCheck = StanceCDO->GetTestBypassMontageActiveCheck();
+		UEnemyStanceBreakAbility* StanceBreakAbility = Cast<UEnemyStanceBreakAbility>(FoundSpec->GetPrimaryInstance());
+		if (!TestNotNull(TEXT("StanceBreak granted instance exists"), StanceBreakAbility)) { return false; }
+		StanceBreakAbility->SetTestStanceBreakMontage(ActiveStanceMontage);
+		TestTrue(TEXT("UEnemyStanceBreakAbility successfully activated via GAS TryActivateAbility"), EnemyASC->TryActivateAbility(StanceBreakHandle));
 
 		if (TestNotNull(TEXT("Active UEnemyStanceBreakAbility instance exists"), StanceBreakAbility))
 		{
@@ -421,14 +401,16 @@ bool FEnemyStanceBreakRateWindowAutomationTest::RunTest(const FString& Parameter
 			TestTrue(TEXT("Movement is locked by StanceBreak"), StanceBreakAbility->IsMovementLockedByStanceBreak());
 			TestNotNull(TEXT("ActiveContext exists"), StanceBreakAbility->GetTestActiveContext());
 			TestNotNull(TEXT("MontageTask exists"), StanceBreakAbility->GetMontageTask());
-			UAbilityTask_WaitGameplayEvent* BeginTask = StanceBreakAbility->GetRateWindowBeginTask();
-			UAbilityTask_WaitGameplayEvent* EndTask = StanceBreakAbility->GetRateWindowEndTask();
-			TestNotNull(TEXT("RateWindowBeginTask exists"), BeginTask);
-			TestNotNull(TEXT("RateWindowEndTask exists"), EndTask);
-			TestTrue(TEXT("RateWindowBeginTask is active"), BeginTask && BeginTask->IsActive());
-			TestTrue(TEXT("RateWindowEndTask is active"), EndTask && EndTask->IsActive());
-			TestTrue(TEXT("RateWindowLifecycle is bound"), StanceBreakAbility->GetRateWindowLifecycle().IsBound());
-			TestEqual(TEXT("Initial RateStack depth is 0"), StanceBreakAbility->GetRateWindowLifecycle().GetStackDepth(), 0);
+			UAbilityTask_PlayActionMontage* WindowTask = StanceBreakAbility->GetMontageTask();
+			if (!TestNotNull(TEXT("RateWindow owner Task exists"), WindowTask)) { return false; }
+			TestTrue(TEXT("RateWindow owner Task is active"), WindowTask->IsActive());
+			TestEqual(TEXT("StanceBreak cancellation policy remains None"), WindowTask->GetCancelPolicy(), EActionMontageCancelPolicy::None);
+			// WaitTask existence/activity maps to the Task's actual Begin/End subscriptions.
+			TestTrue(TEXT("RateWindow Begin subscribed"), EnemyASC->GenericGameplayEventCallbacks.FindChecked(TagRateWindowBegin).IsBoundToObject(WindowTask));
+			TestTrue(TEXT("RateWindow End subscribed"), EnemyASC->GenericGameplayEventCallbacks.FindChecked(TagRateWindowEnd).IsBoundToObject(WindowTask));
+			const FGameplayAbilityTargetDataHandle SourceReceipt = FManagedMontageTestHelpers::MakeRateWindowTargetData(MockAnimInstance, WindowTask->GetBoundMontageInstanceID());
+			TestTrue(TEXT("RateWindowLifecycle is bound"), WindowTask->GetRateWindowLifecycle().IsBound());
+			TestEqual(TEXT("Initial RateStack depth is 0"), WindowTask->GetRateWindowLifecycle().GetStackDepth(), 0);
 
 			// 5. Fail-Closed Payload Rejection Tests:
 			// 5.1 Wrong Instigator / Target
@@ -440,11 +422,12 @@ bool FEnemyStanceBreakRateWindowAutomationTest::RunTest(const FString& Parameter
 				BadActorPayload.OptionalObject = ActiveStanceMontage;
 				BadActorPayload.OptionalObject2 = StanceNotify1;
 				BadActorPayload.EventMagnitude = 0.5f;
+				BadActorPayload.TargetData = SourceReceipt;
 				EnemyASC->HandleGameplayEvent(TagRateWindowBegin, &BadActorPayload);
-				TestEqual(TEXT("Bad Instigator rejected (stack depth unchanged)"), StanceBreakAbility->GetRateWindowLifecycle().GetActiveWindowCount(), 0);
+				TestEqual(TEXT("Bad Instigator rejected (stack depth unchanged)"), WindowTask->GetRateWindowLifecycle().GetActiveWindowCount(), 0);
 			}
 
-			// 5.2 Wrong Event Tag -> WaitGameplayEvent does not trigger
+			// 5.2 Wrong Event Tag -> standard Task subscription does not trigger
 			{
 				const FGameplayTag TagUnrelated = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Reaction.Enemy.Big")), false);
 				FGameplayEventData BadTagPayload;
@@ -454,8 +437,9 @@ bool FEnemyStanceBreakRateWindowAutomationTest::RunTest(const FString& Parameter
 				BadTagPayload.OptionalObject = ActiveStanceMontage;
 				BadTagPayload.OptionalObject2 = StanceNotify1;
 				BadTagPayload.EventMagnitude = 0.5f;
+				BadTagPayload.TargetData = SourceReceipt;
 				EnemyASC->HandleGameplayEvent(TagUnrelated, &BadTagPayload);
-				TestEqual(TEXT("Unrelated EventTag ignored by Task (stack depth unchanged)"), StanceBreakAbility->GetRateWindowLifecycle().GetActiveWindowCount(), 0);
+				TestEqual(TEXT("Unrelated EventTag ignored by Task (stack depth unchanged)"), WindowTask->GetRateWindowLifecycle().GetActiveWindowCount(), 0);
 			}
 
 			// 5.3 Unrelated Montage / Sequence
@@ -468,8 +452,9 @@ bool FEnemyStanceBreakRateWindowAutomationTest::RunTest(const FString& Parameter
 				BadMontagePayload.OptionalObject = ForeignMontage;
 				BadMontagePayload.OptionalObject2 = StanceNotify1;
 				BadMontagePayload.EventMagnitude = 0.5f;
+				BadMontagePayload.TargetData = SourceReceipt;
 				EnemyASC->HandleGameplayEvent(TagRateWindowBegin, &BadMontagePayload);
-				TestEqual(TEXT("Foreign Montage rejected (stack depth unchanged)"), StanceBreakAbility->GetRateWindowLifecycle().GetActiveWindowCount(), 0);
+				TestEqual(TEXT("Foreign Montage rejected (stack depth unchanged)"), WindowTask->GetRateWindowLifecycle().GetActiveWindowCount(), 0);
 			}
 
 			// 5.4 Non-positive / non-finite magnitude
@@ -481,12 +466,14 @@ bool FEnemyStanceBreakRateWindowAutomationTest::RunTest(const FString& Parameter
 				BadMagPayload.OptionalObject = ActiveStanceMontage;
 				BadMagPayload.OptionalObject2 = StanceNotify1;
 				BadMagPayload.EventMagnitude = 0.0f;
+				BadMagPayload.TargetData = SourceReceipt;
 				EnemyASC->HandleGameplayEvent(TagRateWindowBegin, &BadMagPayload);
-				TestEqual(TEXT("Zero magnitude rejected (stack depth unchanged)"), StanceBreakAbility->GetRateWindowLifecycle().GetActiveWindowCount(), 0);
+				TestEqual(TEXT("Zero magnitude rejected (stack depth unchanged)"), WindowTask->GetRateWindowLifecycle().GetActiveWindowCount(), 0);
 
 				BadMagPayload.EventMagnitude = -0.5f;
+				BadMagPayload.TargetData = SourceReceipt;
 				EnemyASC->HandleGameplayEvent(TagRateWindowBegin, &BadMagPayload);
-				TestEqual(TEXT("Negative magnitude rejected (stack depth unchanged)"), StanceBreakAbility->GetRateWindowLifecycle().GetActiveWindowCount(), 0);
+				TestEqual(TEXT("Negative magnitude rejected (stack depth unchanged)"), WindowTask->GetRateWindowLifecycle().GetActiveWindowCount(), 0);
 			}
 
 			// 5.5 Missing or Unregistered Notify Identity
@@ -498,14 +485,16 @@ bool FEnemyStanceBreakRateWindowAutomationTest::RunTest(const FString& Parameter
 				MissingIdentityPayload.OptionalObject = ActiveStanceMontage;
 				MissingIdentityPayload.OptionalObject2 = nullptr;
 				MissingIdentityPayload.EventMagnitude = 0.5f;
+				MissingIdentityPayload.TargetData = SourceReceipt;
 				EnemyASC->HandleGameplayEvent(TagRateWindowBegin, &MissingIdentityPayload);
-				TestEqual(TEXT("Missing OptionalObject2 identity rejected (stack depth unchanged)"), StanceBreakAbility->GetRateWindowLifecycle().GetActiveWindowCount(), 0);
+				TestEqual(TEXT("Missing OptionalObject2 identity rejected (stack depth unchanged)"), WindowTask->GetRateWindowLifecycle().GetActiveWindowCount(), 0);
 
 				UAnimNotifyState_MontageRateWindow* UnregisteredNotify = NewObject<UAnimNotifyState_MontageRateWindow>(World, TEXT("Test_UnregisteredStanceNotify"));
 				FGameplayEventData UnregisteredIdentityPayload = MissingIdentityPayload;
 				UnregisteredIdentityPayload.OptionalObject2 = UnregisteredNotify;
+				UnregisteredIdentityPayload.TargetData = SourceReceipt;
 				EnemyASC->HandleGameplayEvent(TagRateWindowBegin, &UnregisteredIdentityPayload);
-				TestEqual(TEXT("Unregistered OptionalObject2 identity rejected (stack depth unchanged)"), StanceBreakAbility->GetRateWindowLifecycle().GetActiveWindowCount(), 0);
+				TestEqual(TEXT("Unregistered OptionalObject2 identity rejected (stack depth unchanged)"), WindowTask->GetRateWindowLifecycle().GetActiveWindowCount(), 0);
 			}
 
 			// 6. Valid Begin & Nested Rate Window Integration:
@@ -518,8 +507,9 @@ bool FEnemyStanceBreakRateWindowAutomationTest::RunTest(const FString& Parameter
 				ValidBeginPayload.OptionalObject = ActiveStanceMontage;
 				ValidBeginPayload.OptionalObject2 = StanceNotify1;
 				ValidBeginPayload.EventMagnitude = 0.33f;
+				ValidBeginPayload.TargetData = SourceReceipt;
 				EnemyASC->HandleGameplayEvent(TagRateWindowBegin, &ValidBeginPayload);
-				TestEqual(TEXT("Valid Begin pushes rate (stack depth 1)"), StanceBreakAbility->GetRateWindowLifecycle().GetActiveWindowCount(), 1);
+				TestEqual(TEXT("Valid Begin pushes rate (stack depth 1)"), WindowTask->GetRateWindowLifecycle().GetActiveWindowCount(), 1);
 			}
 
 			// 6.2 Nested Valid Begin using Inner Sequence reference (0.1f Rate)
@@ -531,8 +521,9 @@ bool FEnemyStanceBreakRateWindowAutomationTest::RunTest(const FString& Parameter
 				NestedBeginPayload.OptionalObject = ActiveInnerSequence;
 				NestedBeginPayload.OptionalObject2 = StanceNotify2;
 				NestedBeginPayload.EventMagnitude = 0.1f;
+				NestedBeginPayload.TargetData = SourceReceipt;
 				EnemyASC->HandleGameplayEvent(TagRateWindowBegin, &NestedBeginPayload);
-				TestEqual(TEXT("Nested Begin on inner sequence pushes rate (stack depth 2)"), StanceBreakAbility->GetRateWindowLifecycle().GetActiveWindowCount(), 2);
+				TestEqual(TEXT("Nested Begin on inner sequence pushes rate (stack depth 2)"), WindowTask->GetRateWindowLifecycle().GetActiveWindowCount(), 2);
 			}
 
 			// 6.3 First End Event (Pops nested rate, restores 0.33f)
@@ -543,8 +534,9 @@ bool FEnemyStanceBreakRateWindowAutomationTest::RunTest(const FString& Parameter
 				EndPayload.Target = Enemy;
 				EndPayload.OptionalObject = ActiveInnerSequence;
 				EndPayload.OptionalObject2 = StanceNotify2;
+				EndPayload.TargetData = SourceReceipt;
 				EnemyASC->HandleGameplayEvent(TagRateWindowEnd, &EndPayload);
-				TestEqual(TEXT("First End pops rate (stack depth 1)"), StanceBreakAbility->GetRateWindowLifecycle().GetActiveWindowCount(), 1);
+				TestEqual(TEXT("First End pops rate (stack depth 1)"), WindowTask->GetRateWindowLifecycle().GetActiveWindowCount(), 1);
 			}
 
 			// 6.4 Second End Event (Pops to baseline)
@@ -555,8 +547,9 @@ bool FEnemyStanceBreakRateWindowAutomationTest::RunTest(const FString& Parameter
 				EndPayload.Target = Enemy;
 				EndPayload.OptionalObject = ActiveStanceMontage;
 				EndPayload.OptionalObject2 = StanceNotify1;
+				EndPayload.TargetData = SourceReceipt;
 				EnemyASC->HandleGameplayEvent(TagRateWindowEnd, &EndPayload);
-				TestEqual(TEXT("Second End restores baseline (stack depth 0)"), StanceBreakAbility->GetRateWindowLifecycle().GetActiveWindowCount(), 0);
+				TestEqual(TEXT("Second End restores baseline (stack depth 0)"), WindowTask->GetRateWindowLifecycle().GetActiveWindowCount(), 0);
 			}
 
 			// 7. UnPossess Teardown & Complete EndAbility Cleanup Verification
@@ -566,13 +559,13 @@ bool FEnemyStanceBreakRateWindowAutomationTest::RunTest(const FString& Parameter
 
 				// Verify ability was cancelled by UnPossessed via Teardown.OnUnpossess
 				TestFalse(TEXT("StanceBreak ability cancelled on UnPossessed"), StanceBreakAbility->IsActive());
-				TestFalse(TEXT("RateWindowLifecycle unbound on EndAbility"), StanceBreakAbility->GetRateWindowLifecycle().IsBound());
+				TestFalse(TEXT("RateWindowLifecycle unbound on EndAbility"), WindowTask->GetRateWindowLifecycle().IsBound());
 				TestNull(TEXT("ActiveContext invalidated"), StanceBreakAbility->GetTestActiveContext());
-				TestNull(TEXT("RateWindowBeginTask cleaned up"), StanceBreakAbility->GetRateWindowBeginTask());
-				TestNull(TEXT("RateWindowEndTask cleaned up"), StanceBreakAbility->GetRateWindowEndTask());
+				TestFalse(TEXT("RateWindow Begin subscription removed"), EnemyASC->GenericGameplayEventCallbacks.FindChecked(TagRateWindowBegin).IsBoundToObject(WindowTask));
+				TestFalse(TEXT("RateWindow End subscription removed"), EnemyASC->GenericGameplayEventCallbacks.FindChecked(TagRateWindowEnd).IsBoundToObject(WindowTask));
 				TestNull(TEXT("MontageTask cleaned up"), StanceBreakAbility->GetMontageTask());
 				TestFalse(TEXT("Movement lock released"), StanceBreakAbility->IsMovementLockedByStanceBreak());
-				TestFalse(TEXT("RateWindow test bypass reset after EndAbility"), StanceBreakAbility->GetRateWindowLifecycle().GetTestBypassMontageActiveCheck());
+				TestFalse(TEXT("RateWindow test bypass reset after EndAbility"), WindowTask->GetRateWindowLifecycle().GetTestBypassMontageActiveCheck());
 				TestFalse(TEXT("Stunned tag removed from Enemy ASC"), EnemyASC->HasMatchingGameplayTag(TagStunned));
 				TestFalse(TEXT("State.Block.Facing tag removed from Enemy ASC after UnPossessed"), EnemyASC->HasMatchingGameplayTag(TagBlockFacing));
 				TestTrue(TEXT("Poise restored to MaxPoise"), EnemyASC->GetNumericAttribute(UCharacterAttributeSet::GetPoiseAttribute()) >= EnemyASC->GetNumericAttribute(UCharacterAttributeSet::GetMaxPoiseAttribute()));
@@ -581,20 +574,7 @@ bool FEnemyStanceBreakRateWindowAutomationTest::RunTest(const FString& Parameter
 			// 8. InstancedPerActor Re-entry Verification
 			{
 				EnemyASC->SetNumericAttributeBase(UCharacterAttributeSet::GetPoiseAttribute(), 0.0f);
-				if (StanceCDO)
-				{
-					StanceCDO->SetTestStanceBreakMontage(ActiveStanceMontage);
-					StanceCDO->SetTestBoundAnimInstance(MockAnimInstance);
-					StanceCDO->SetTestBypassMontageActiveCheck(true);
-				}
-
 				const bool bReactivated = EnemyASC->TryActivateAbility(StanceBreakHandle);
-				if (StanceCDO)
-				{
-					StanceCDO->SetTestStanceBreakMontage(OriginalStanceBreakMontage);
-					StanceCDO->SetTestBoundAnimInstance(OriginalBoundAnimInstance);
-					StanceCDO->SetTestBypassMontageActiveCheck(bOriginalBypassMontageActiveCheck);
-				}
 
 				TestTrue(TEXT("StanceBreak ability successfully re-activated on same instance"), bReactivated);
 				TestTrue(TEXT("FacingBlock tag present on re-activation"), EnemyASC->HasMatchingGameplayTag(TagBlockFacing));
@@ -614,6 +594,7 @@ bool FEnemyStanceBreakRateWindowAutomationTest::RunTest(const FString& Parameter
 		EnemyASC->ClearAbility(StanceBreakHandle);
 	}
 
+#endif
 	// 3.3 Front Execution Availability Verification during Stunned
 	{
 		// Manually add Stunned tag to Enemy
@@ -637,6 +618,7 @@ bool FEnemyStanceBreakRateWindowAutomationTest::RunTest(const FString& Parameter
 	// =========================================================================
 	// 3.4 StanceBreak Synthetic Recovery Logic Verification (Movement & Poise Recovery)
 	// =========================================================================
+#if WITH_EDITOR
 	{
 		const FGameplayTag TagVictimLocked = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Action.Execution.VictimLocked")), false);
 		TestTrue(TEXT("Tag State.Action.Execution.VictimLocked is valid"), TagVictimLocked.IsValid());
@@ -646,8 +628,15 @@ bool FEnemyStanceBreakRateWindowAutomationTest::RunTest(const FString& Parameter
 			EnemyASC->SetNumericAttributeBase(UCharacterAttributeSet::GetPoiseAttribute(), 0.0f);
 			TestTrue(TEXT("Synthetic A: Enemy Poise is broken"), Enemy->IsPoiseBroken());
 
-			UAnimMontage* MockMontage = NewObject<UAnimMontage>(GetTransientPackage(), TEXT("Test_NonBypassStanceMontage"));
+			UAnimMontage* MockMontage = CreatePlayableStanceMontage(*this, World);
+			if (!TestNotNull(TEXT("Recovery montage is playable"), MockMontage)) { return false; }
 			UAnimInstance* MockAnim = NewObject<UAnimInstance>(Enemy->GetMesh());
+			UAnimInstance* PreviousAnim = Enemy->GetMesh()->GetAnimInstance();
+			ON_SCOPE_EXIT { Enemy->GetMesh()->AnimScriptInstance = PreviousAnim; EnemyASC->RefreshAbilityActorInfo(); };
+			MockAnim->InitializeMontageOnly();
+			MockAnim->CurrentSkeleton = MockMontage->GetSkeleton();
+			Enemy->GetMesh()->AnimScriptInstance = MockAnim;
+			EnemyASC->RefreshAbilityActorInfo();
 
 			FGameplayAbilitySpec Spec(UEnemyStanceBreakAbility::StaticClass(), 1, INDEX_NONE, Enemy);
 			const FGameplayAbilitySpecHandle Handle = EnemyASC->GiveAbility(Spec);
@@ -656,26 +645,10 @@ bool FEnemyStanceBreakRateWindowAutomationTest::RunTest(const FString& Parameter
 			UEnemyStanceBreakAbility* Ability = nullptr;
 			if (Found)
 			{
-				UEnemyStanceBreakAbility* CDO = Cast<UEnemyStanceBreakAbility>(Found->Ability);
-				const auto OriginalMontage = CDO ? CDO->GetTestStanceBreakMontage() : nullptr;
-				const auto OriginalAnim = CDO ? CDO->GetTestBoundAnimInstance() : nullptr;
-				const bool bOrigBypass = CDO && CDO->GetTestBypassMontageActiveCheck();
-
-				if (CDO)
-				{
-					CDO->SetTestStanceBreakMontage(MockMontage);
-					CDO->SetTestBoundAnimInstance(MockAnim);
-					CDO->SetTestBypassMontageActiveCheck(true);
-				}
-
+				Ability = Cast<UEnemyStanceBreakAbility>(Found->GetPrimaryInstance());
+				if (!TestNotNull(TEXT("Granted stance instance exists"), Ability)) { return false; }
+				Ability->SetTestStanceBreakMontage(MockMontage);
 				const bool bActivated = EnemyASC->TryActivateAbility(Handle);
-
-				if (CDO)
-				{
-					CDO->SetTestStanceBreakMontage(OriginalMontage);
-					CDO->SetTestBoundAnimInstance(OriginalAnim);
-					CDO->SetTestBypassMontageActiveCheck(bOrigBypass);
-				}
 
 				TestTrue(TEXT("Synthetic A: Ability activated via TryActivateAbility"), bActivated);
 				Ability = Cast<UEnemyStanceBreakAbility>(Found->GetPrimaryInstance());
@@ -707,8 +680,15 @@ bool FEnemyStanceBreakRateWindowAutomationTest::RunTest(const FString& Parameter
 			EnemyASC->SetNumericAttributeBase(UCharacterAttributeSet::GetPoiseAttribute(), 0.0f);
 			TestTrue(TEXT("Synthetic B: Enemy Poise is broken"), Enemy->IsPoiseBroken());
 
-			UAnimMontage* MockMontage = NewObject<UAnimMontage>(GetTransientPackage(), TEXT("Test_NonBypassStanceMontage2"));
+			UAnimMontage* MockMontage = CreatePlayableStanceMontage(*this, World);
+			if (!TestNotNull(TEXT("Recovery montage is playable"), MockMontage)) { return false; }
 			UAnimInstance* MockAnim = NewObject<UAnimInstance>(Enemy->GetMesh());
+			UAnimInstance* PreviousAnim = Enemy->GetMesh()->GetAnimInstance();
+			ON_SCOPE_EXIT { Enemy->GetMesh()->AnimScriptInstance = PreviousAnim; EnemyASC->RefreshAbilityActorInfo(); };
+			MockAnim->InitializeMontageOnly();
+			MockAnim->CurrentSkeleton = MockMontage->GetSkeleton();
+			Enemy->GetMesh()->AnimScriptInstance = MockAnim;
+			EnemyASC->RefreshAbilityActorInfo();
 
 			FGameplayAbilitySpec Spec(UEnemyStanceBreakAbility::StaticClass(), 1, INDEX_NONE, Enemy);
 			const FGameplayAbilitySpecHandle Handle = EnemyASC->GiveAbility(Spec);
@@ -717,26 +697,10 @@ bool FEnemyStanceBreakRateWindowAutomationTest::RunTest(const FString& Parameter
 			UEnemyStanceBreakAbility* Ability = nullptr;
 			if (Found)
 			{
-				UEnemyStanceBreakAbility* CDO = Cast<UEnemyStanceBreakAbility>(Found->Ability);
-				const auto OriginalMontage = CDO ? CDO->GetTestStanceBreakMontage() : nullptr;
-				const auto OriginalAnim = CDO ? CDO->GetTestBoundAnimInstance() : nullptr;
-				const bool bOrigBypass = CDO && CDO->GetTestBypassMontageActiveCheck();
-
-				if (CDO)
-				{
-					CDO->SetTestStanceBreakMontage(MockMontage);
-					CDO->SetTestBoundAnimInstance(MockAnim);
-					CDO->SetTestBypassMontageActiveCheck(true);
-				}
-
+				Ability = Cast<UEnemyStanceBreakAbility>(Found->GetPrimaryInstance());
+				if (!TestNotNull(TEXT("Granted stance instance exists"), Ability)) { return false; }
+				Ability->SetTestStanceBreakMontage(MockMontage);
 				const bool bActivated = EnemyASC->TryActivateAbility(Handle);
-
-				if (CDO)
-				{
-					CDO->SetTestStanceBreakMontage(OriginalMontage);
-					CDO->SetTestBoundAnimInstance(OriginalAnim);
-					CDO->SetTestBypassMontageActiveCheck(bOrigBypass);
-				}
 
 				TestTrue(TEXT("Synthetic B: Ability activated via TryActivateAbility"), bActivated);
 				Ability = Cast<UEnemyStanceBreakAbility>(Found->GetPrimaryInstance());
@@ -798,6 +762,7 @@ bool FEnemyStanceBreakRateWindowAutomationTest::RunTest(const FString& Parameter
 				RealAnim->InitializeMontageOnly();
 				RealAnim->CurrentSkeleton = PlayableStanceMontage->GetSkeleton();
 				Mesh->AnimScriptInstance = RealAnim;
+				EnemyASC->RefreshAbilityActorInfo();
 
 				FGameplayAbilitySpec Spec(UEnemyStanceBreakAbility::StaticClass(), 1, INDEX_NONE, Enemy);
 				const FGameplayAbilitySpecHandle Handle = EnemyASC->GiveAbility(Spec);
@@ -806,26 +771,10 @@ bool FEnemyStanceBreakRateWindowAutomationTest::RunTest(const FString& Parameter
 				UEnemyStanceBreakAbility* Ability = nullptr;
 				if (Found)
 				{
-					UEnemyStanceBreakAbility* CDO = Cast<UEnemyStanceBreakAbility>(Found->Ability);
-					const auto OriginalMontage = CDO ? CDO->GetTestStanceBreakMontage() : nullptr;
-					const auto OriginalAnim = CDO ? CDO->GetTestBoundAnimInstance() : nullptr;
-					const bool bOrigBypass = CDO && CDO->GetTestBypassMontageActiveCheck();
-
-					if (CDO)
-					{
-						CDO->SetTestStanceBreakMontage(PlayableStanceMontage);
-						CDO->SetTestBoundAnimInstance(RealAnim);
-						CDO->SetTestBypassMontageActiveCheck(false); // NO BYPASS! Real playable montage
-					}
-
+					Ability = Cast<UEnemyStanceBreakAbility>(Found->GetPrimaryInstance());
+					if (!TestNotNull(TEXT("Granted stance instance exists"), Ability)) { return false; }
+					Ability->SetTestStanceBreakMontage(PlayableStanceMontage);
 					const bool bActivated = EnemyASC->TryActivateAbility(Handle);
-
-					if (CDO)
-					{
-						CDO->SetTestStanceBreakMontage(OriginalMontage);
-						CDO->SetTestBoundAnimInstance(OriginalAnim);
-						CDO->SetTestBypassMontageActiveCheck(bOrigBypass);
-					}
 
 					TestTrue(TEXT("StanceBreak Real Dual-Instance A: Ability activated without bypass"), bActivated);
 					Ability = Cast<UEnemyStanceBreakAbility>(Found->GetPrimaryInstance());
@@ -834,12 +783,14 @@ bool FEnemyStanceBreakRateWindowAutomationTest::RunTest(const FString& Parameter
 				if (TestNotNull(TEXT("StanceBreak Real Dual-Instance A: Active instance exists"), Ability))
 				{
 					TestTrue(TEXT("StanceBreak Real Dual-Instance A: Ability is active"), Ability->IsActive());
+					UAbilityTask_PlayActionMontage* WindowTask = Ability->GetMontageTask();
+					if (!TestNotNull(TEXT("StanceBreak Real Dual-Instance A: standard Task exists"), WindowTask)) { return false; }
 					TestTrue(TEXT("StanceBreak Real Dual-Instance A: Movement locked"), Ability->IsMovementLockedByStanceBreak());
 					TestFalse(TEXT("StanceBreak Real Dual-Instance A: Ability bypass is false"), Ability->GetTestBypassMontageActiveCheck());
-					TestFalse(TEXT("StanceBreak Real Dual-Instance A: Helper bypass is false"), Ability->GetRateWindowLifecycle().GetTestBypassMontageActiveCheck());
-					TestTrue(TEXT("StanceBreak Real Dual-Instance A: Helper is bound to real instance"), Ability->GetRateWindowLifecycle().IsBound());
+					TestFalse(TEXT("StanceBreak Real Dual-Instance A: Helper bypass is false"), WindowTask->GetRateWindowLifecycle().GetTestBypassMontageActiveCheck());
+					TestTrue(TEXT("StanceBreak Real Dual-Instance A: Helper is bound to real instance"), WindowTask->GetRateWindowLifecycle().IsBound());
 
-					const int32 OldInstanceID = Ability->GetRateWindowLifecycle().GetBoundMontageInstanceID();
+					const int32 OldInstanceID = WindowTask->GetRateWindowLifecycle().GetBoundMontageInstanceID();
 					TestNotEqual(TEXT("StanceBreak Real Dual-Instance A: Captured InstanceID is valid"), OldInstanceID, static_cast<int32>(INDEX_NONE));
 
 					// Enter Window A on old instance
@@ -856,8 +807,10 @@ bool FEnemyStanceBreakRateWindowAutomationTest::RunTest(const FString& Parameter
 					WindowAPayload.OptionalObject2 = EventA ? EventA->NotifyStateClass : nullptr;
 					WindowAPayload.EventMagnitude = 0.5f;
 
+					WindowAPayload.TargetData = FManagedMontageTestHelpers::MakeRateWindowTargetData(RealAnim, OldInstanceID);
+
 					EnemyASC->HandleGameplayEvent(TagRateWindowBegin, &WindowAPayload);
-					TestEqual(TEXT("StanceBreak Real Dual-Instance A: Window A sets window count to 1"), Ability->GetRateWindowLifecycle().GetActiveWindowCount(), 1);
+					TestEqual(TEXT("StanceBreak Real Dual-Instance A: Window A sets window count to 1"), WindowTask->GetRateWindowLifecycle().GetActiveWindowCount(), 1);
 					TestEqual(TEXT("StanceBreak Real Dual-Instance A: Instance 1 rate updated to 0.5f"), RealAnim->Montage_GetPlayRate(PlayableStanceMontage), 0.5f);
 
 					// Replay same Montage at rate 2.0f without stopping existing instance (bStopAllMontages = false)
@@ -882,9 +835,11 @@ bool FEnemyStanceBreakRateWindowAutomationTest::RunTest(const FString& Parameter
 					OldBeginPayload.OptionalObject2 = EventB ? EventB->NotifyStateClass : nullptr;
 					OldBeginPayload.EventMagnitude = 0.2f;
 
+					OldBeginPayload.TargetData = FManagedMontageTestHelpers::MakeRateWindowTargetData(RealAnim, OldInstanceID);
+
 					EnemyASC->HandleGameplayEvent(TagRateWindowBegin, &OldBeginPayload);
 					TestEqual(TEXT("StanceBreak Real Dual-Instance A: Old Begin rejected - new instance rate remains 2.0"), RealAnim->Montage_GetPlayRate(PlayableStanceMontage), 2.0f);
-					TestEqual(TEXT("StanceBreak Real Dual-Instance A: Old Begin rejected - window count remains 1"), Ability->GetRateWindowLifecycle().GetActiveWindowCount(), 1);
+					TestEqual(TEXT("StanceBreak Real Dual-Instance A: Old Begin rejected - window count remains 1"), WindowTask->GetRateWindowLifecycle().GetActiveWindowCount(), 1);
 
 					// Negative 2: Old End (Window A) with complete notify identity dispatched to ASC
 					FGameplayEventData OldEndPayload;
@@ -894,9 +849,11 @@ bool FEnemyStanceBreakRateWindowAutomationTest::RunTest(const FString& Parameter
 					OldEndPayload.OptionalObject = PlayableStanceMontage;
 					OldEndPayload.OptionalObject2 = EventA ? EventA->NotifyStateClass : nullptr;
 
+					OldEndPayload.TargetData = FManagedMontageTestHelpers::MakeRateWindowTargetData(RealAnim, OldInstanceID);
+
 					EnemyASC->HandleGameplayEvent(TagRateWindowEnd, &OldEndPayload);
 					TestEqual(TEXT("StanceBreak Real Dual-Instance A: Old End rejected - new instance rate remains 2.0"), RealAnim->Montage_GetPlayRate(PlayableStanceMontage), 2.0f);
-					TestEqual(TEXT("StanceBreak Real Dual-Instance A: Old End rejected - window count remains 1"), Ability->GetRateWindowLifecycle().GetActiveWindowCount(), 1);
+					TestEqual(TEXT("StanceBreak Real Dual-Instance A: Old End rejected - window count remains 1"), WindowTask->GetRateWindowLifecycle().GetActiveWindowCount(), 1);
 
 					// Cancel ability normally (no VictimLocked)
 					EnemyASC->CancelAbilityHandle(Handle);
@@ -933,6 +890,7 @@ bool FEnemyStanceBreakRateWindowAutomationTest::RunTest(const FString& Parameter
 				RealAnim->InitializeMontageOnly();
 				RealAnim->CurrentSkeleton = PlayableStanceMontage->GetSkeleton();
 				Mesh->AnimScriptInstance = RealAnim;
+				EnemyASC->RefreshAbilityActorInfo();
 
 				FGameplayAbilitySpec Spec(UEnemyStanceBreakAbility::StaticClass(), 1, INDEX_NONE, Enemy);
 				const FGameplayAbilitySpecHandle Handle = EnemyASC->GiveAbility(Spec);
@@ -941,26 +899,10 @@ bool FEnemyStanceBreakRateWindowAutomationTest::RunTest(const FString& Parameter
 				UEnemyStanceBreakAbility* Ability = nullptr;
 				if (Found)
 				{
-					UEnemyStanceBreakAbility* CDO = Cast<UEnemyStanceBreakAbility>(Found->Ability);
-					const auto OriginalMontage = CDO ? CDO->GetTestStanceBreakMontage() : nullptr;
-					const auto OriginalAnim = CDO ? CDO->GetTestBoundAnimInstance() : nullptr;
-					const bool bOrigBypass = CDO && CDO->GetTestBypassMontageActiveCheck();
-
-					if (CDO)
-					{
-						CDO->SetTestStanceBreakMontage(PlayableStanceMontage);
-						CDO->SetTestBoundAnimInstance(RealAnim);
-						CDO->SetTestBypassMontageActiveCheck(false); // NO BYPASS!
-					}
-
+					Ability = Cast<UEnemyStanceBreakAbility>(Found->GetPrimaryInstance());
+					if (!TestNotNull(TEXT("Granted stance instance exists"), Ability)) { return false; }
+					Ability->SetTestStanceBreakMontage(PlayableStanceMontage);
 					const bool bActivated = EnemyASC->TryActivateAbility(Handle);
-
-					if (CDO)
-					{
-						CDO->SetTestStanceBreakMontage(OriginalMontage);
-						CDO->SetTestBoundAnimInstance(OriginalAnim);
-						CDO->SetTestBypassMontageActiveCheck(bOrigBypass);
-					}
 
 					TestTrue(TEXT("StanceBreak Real Dual-Instance B: Ability activated without bypass"), bActivated);
 					Ability = Cast<UEnemyStanceBreakAbility>(Found->GetPrimaryInstance());
@@ -969,9 +911,11 @@ bool FEnemyStanceBreakRateWindowAutomationTest::RunTest(const FString& Parameter
 				if (TestNotNull(TEXT("StanceBreak Real Dual-Instance B: Active instance exists"), Ability))
 				{
 					TestTrue(TEXT("StanceBreak Real Dual-Instance B: Ability is active"), Ability->IsActive());
+					UAbilityTask_PlayActionMontage* WindowTask = Ability->GetMontageTask();
+					if (!TestNotNull(TEXT("StanceBreak Real Dual-Instance B: standard Task exists"), WindowTask)) { return false; }
 					TestTrue(TEXT("StanceBreak Real Dual-Instance B: Movement locked by StanceBreak"), Ability->IsMovementLockedByStanceBreak());
 
-					const int32 OldInstanceID = Ability->GetRateWindowLifecycle().GetBoundMontageInstanceID();
+					const int32 OldInstanceID = WindowTask->GetRateWindowLifecycle().GetBoundMontageInstanceID();
 
 					// Replay same Montage at rate 2.0f without stopping existing instance
 					const float ReplayLen = RealAnim->Montage_Play(PlayableStanceMontage, 2.0f, EMontagePlayReturnType::MontageLength, 0.0f, false);
@@ -1012,6 +956,7 @@ bool FEnemyStanceBreakRateWindowAutomationTest::RunTest(const FString& Parameter
 		}
 	}
 
+#endif
 	return true;
 }
 

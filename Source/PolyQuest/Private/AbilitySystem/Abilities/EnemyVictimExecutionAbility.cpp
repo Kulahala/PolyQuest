@@ -2,7 +2,7 @@
 
 #include "AbilitySystemComponent.h"
 #include "Abilities/GameplayAbilityTriggerType.h"
-#include "Abilities/Tasks/AbilityTask_PlayMontageAndWait.h"
+#include "AbilitySystem/Tasks/AbilityTask_PlayActionMontage.h"
 #include "Abilities/Tasks/AbilityTask_WaitGameplayEvent.h"
 #include "AbilitySystem/Abilities/EnemyStanceBreakAbility.h"
 #include "AI/EnemyAIController.h"
@@ -45,27 +45,6 @@ namespace
 	}
 }
 
-void UEnemyVictimExecutionRateWindowContext::OnRateWindowBegin(FGameplayEventData Payload)
-{
-	if (UEnemyVictimExecutionAbility* Ability = OwningAbility.Get())
-	{
-		if (Token != 0 && Ability->GetCurrentActivationToken() == Token)
-		{
-			Ability->OnRateWindowBegin(Payload);
-		}
-	}
-}
-
-void UEnemyVictimExecutionRateWindowContext::OnRateWindowEnd(FGameplayEventData Payload)
-{
-	if (UEnemyVictimExecutionAbility* Ability = OwningAbility.Get())
-	{
-		if (Token != 0 && Ability->GetCurrentActivationToken() == Token)
-		{
-			Ability->OnRateWindowEnd(Payload);
-		}
-	}
-}
 
 UEnemyVictimExecutionAbility::UEnemyVictimExecutionAbility()
 {
@@ -93,8 +72,6 @@ UEnemyVictimExecutionAbility::UEnemyVictimExecutionAbility()
 	DeadStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Status.Dead")), false);
 	TeardownOnUnpossessTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Action.Teardown.OnUnpossess")), false);
 	StanceBreakAbilityTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Reaction.Enemy.StanceBreak")), false);
-	RateWindowBeginEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Action.RateWindow.Begin")), false);
-	RateWindowEndEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Action.RateWindow.End")), false);
 
 	AbilityTags.AddTag(VictimAbilityTag);
 	AbilityTags.AddTag(TeardownOnUnpossessTag);
@@ -325,7 +302,6 @@ void UEnemyVictimExecutionAbility::ActivateAbility(
 	StartupVictimMontageInstanceID = INDEX_NONE;
 	NonLethalRecoverySourceActor = nullptr;
 	++CurrentActivationToken;
-	ClearRateWindow(false);
 
 #if WITH_DEV_AUTOMATION_TESTS
 	if (const UEnemyVictimExecutionAbility* CDO = Cast<UEnemyVictimExecutionAbility>(GetClass()->GetDefaultObject()))
@@ -333,7 +309,6 @@ void UEnemyVictimExecutionAbility::ActivateAbility(
 		if (CDO->bTestBypassMontageActiveCheck)
 		{
 			bTestBypassMontageActiveCheck = true;
-			RateWindowLifecycle.SetTestBypassMontageActiveCheck(true);
 		}
 		if (!BoundAnimInstance.IsValid() && CDO->BoundAnimInstance.IsValid())
 		{
@@ -683,23 +658,31 @@ void UEnemyVictimExecutionAbility::OnVictimStartReceived(FGameplayEventData Payl
 		return;
 	}
 
-	VictimMontageTask = UAbilityTask_PlayMontageAndWait::CreatePlayMontageAndWaitProxy(
+	VictimMontageTask = UAbilityTask_PlayActionMontage::PlayActionMontage(
 		this,
 		NAME_None,
 		MontageToPlay,
 		1.0f,
 		NAME_None,
-		false /* bStopWhenAbilityEnds = false */,
 		1.0f  /* AnimRootMotionTranslationScale */,
 		0.0f  /* StartTimeSeconds = 0.0f */,
-		true  /* bAllowInterruptAfterBlendOut = true */);
+		true  /* bAllowInterruptAfterBlendOut = true */,
+		/*CancelPolicy=*/EActionMontageCancelPolicy::None);
 
 	if (VictimMontageTask)
 	{
+		if (!VictimMontageTask->SetTaskOwnsMontageStop(false))
+		{
+			EndAbility(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, true, true);
+			return;
+		}
+		UAbilityTask_PlayActionMontage* const ActivatingTask = VictimMontageTask;
+		const uint32 ActivationToken = CurrentActivationToken;
 		VictimMontageTask->OnCompleted.AddDynamic(this, &UEnemyVictimExecutionAbility::OnVictimMontageCompleted);
 		VictimMontageTask->OnBlendOut.AddDynamic(this, &UEnemyVictimExecutionAbility::OnVictimMontageBlendOut);
 		VictimMontageTask->OnInterrupted.AddDynamic(this, &UEnemyVictimExecutionAbility::OnVictimMontageInterrupted);
 		VictimMontageTask->OnCancelled.AddDynamic(this, &UEnemyVictimExecutionAbility::OnVictimMontageCancelled);
+		VictimMontageTask->OnFailed.AddDynamic(this, &UEnemyVictimExecutionAbility::OnVictimMontageFailed);
 
 		// Establish presentation ownership and startup tracking prior to activation so synchronous cancel can cleanly stop the montage
 		PendingStartupVictimMontage = MontageToPlay;
@@ -738,7 +721,13 @@ void UEnemyVictimExecutionAbility::OnVictimStartReceived(FGameplayEventData Payl
 		if (!bTestBypassMontageActiveCheck)
 #endif
 		{
-			VictimMontageTask->ReadyForActivation();
+			ActivatingTask->ReadyForActivation();
+		}
+
+		// A reentrant activation owns new startup fields and delegates; the old stack cannot clear them.
+		if (CurrentActivationToken != ActivationToken || (IsActive() && VictimMontageTask != ActivatingTask))
+		{
+			return;
 		}
 
 		if (AnimInstance)
@@ -807,42 +796,6 @@ void UEnemyVictimExecutionAbility::OnVictimStartReceived(FGameplayEventData Payl
 			}
 			StartupVictimMontageInstanceID = INDEX_NONE;
 
-			UAbilitySystemComponent* ASC = GetAbilitySystemComponentFromActorInfo();
-			if (RateWindowBeginEventTag.IsValid() && RateWindowEndEventTag.IsValid() && ASC && AnimInstance)
-			{
-				ActiveRateWindowContext = NewObject<UEnemyVictimExecutionRateWindowContext>(this);
-				ActiveRateWindowContext->OwningAbility = this;
-				ActiveRateWindowContext->Token = CurrentActivationToken;
-
-				RateWindowBeginTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, RateWindowBeginEventTag, nullptr, false, true);
-				RateWindowEndTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, RateWindowEndEventTag, nullptr, false, true);
-
-				if (RateWindowBeginTask && RateWindowEndTask)
-				{
-					RateWindowBeginTask->EventReceived.AddDynamic(ActiveRateWindowContext, &UEnemyVictimExecutionRateWindowContext::OnRateWindowBegin);
-					RateWindowEndTask->EventReceived.AddDynamic(ActiveRateWindowContext, &UEnemyVictimExecutionRateWindowContext::OnRateWindowEnd);
-
-					RateWindowBeginTask->ReadyForActivation();
-					if (!IsActive() || bEndAbilityInProgress || !RateWindowBeginTask || !RateWindowBeginTask->IsActive())
-					{
-						ClearRateWindow(true);
-						return;
-					}
-
-					RateWindowEndTask->ReadyForActivation();
-					if (!IsActive() || bEndAbilityInProgress || !RateWindowEndTask || !RateWindowEndTask->IsActive())
-					{
-						ClearRateWindow(true);
-						return;
-					}
-
-					RateWindowLifecycle.BindAndCapture(this, AnimInstance, ActiveVictimMontage, RateWindowBeginEventTag, RateWindowEndEventTag);
-				}
-				else
-				{
-					ClearRateWindow(false);
-				}
-			}
 		}
 		else
 		{
@@ -911,6 +864,14 @@ void UEnemyVictimExecutionAbility::OnVictimMontageCancelled()
 		return;
 	}
 	StopVictimMontagePresentation(false);
+}
+
+void UEnemyVictimExecutionAbility::OnVictimMontageFailed()
+{
+	if (IsActive() && !bEndAbilityInProgress)
+	{
+		EndAbility(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, true, true);
+	}
 }
 
 void UEnemyVictimExecutionAbility::HandleOnMontageStarted(UAnimMontage* Montage)
@@ -997,14 +958,13 @@ void UEnemyVictimExecutionAbility::HandleOnMontageStarted(UAnimMontage* Montage)
 
 void UEnemyVictimExecutionAbility::StopVictimMontagePresentation(bool bIsNaturalCompletion)
 {
-	ClearRateWindow(true);
-
 	if (VictimMontageTask)
 	{
 		VictimMontageTask->OnCompleted.RemoveDynamic(this, &UEnemyVictimExecutionAbility::OnVictimMontageCompleted);
 		VictimMontageTask->OnBlendOut.RemoveDynamic(this, &UEnemyVictimExecutionAbility::OnVictimMontageBlendOut);
 		VictimMontageTask->OnInterrupted.RemoveDynamic(this, &UEnemyVictimExecutionAbility::OnVictimMontageInterrupted);
 		VictimMontageTask->OnCancelled.RemoveDynamic(this, &UEnemyVictimExecutionAbility::OnVictimMontageCancelled);
+		VictimMontageTask->OnFailed.RemoveDynamic(this, &UEnemyVictimExecutionAbility::OnVictimMontageFailed);
 		VictimMontageTask->EndTask();
 		VictimMontageTask = nullptr;
 	}
@@ -1369,175 +1329,6 @@ bool UEnemyVictimExecutionAbility::IsNonLethalRecoveryFrom(const AActor* SourceA
 	return NonLethalRecoverySourceActor.Get() == SourceActor;
 }
 
-void UEnemyVictimExecutionAbility::OnRateWindowBegin(FGameplayEventData Payload)
-{
-	if (bEndAbilityInProgress || !IsActive() || !bNonLethalRecoveryActive)
-	{
-		return;
-	}
-
-	UAnimInstance* AnimInstance = nullptr;
-	if (AEnemyCharacter* EnemyChar = Cast<AEnemyCharacter>(GetAvatarActorFromActorInfo()))
-	{
-		if (USkeletalMeshComponent* Mesh = EnemyChar->GetMesh())
-		{
-			AnimInstance = Mesh->GetAnimInstance();
-		}
-	}
-#if WITH_DEV_AUTOMATION_TESTS
-	if (!AnimInstance && BoundAnimInstance.IsValid())
-	{
-		AnimInstance = BoundAnimInstance.Get();
-	}
-	if (!AnimInstance)
-	{
-		if (const UEnemyVictimExecutionAbility* CDO = Cast<UEnemyVictimExecutionAbility>(GetClass()->GetDefaultObject()))
-		{
-			if (CDO->BoundAnimInstance.IsValid())
-			{
-				AnimInstance = CDO->BoundAnimInstance.Get();
-			}
-		}
-	}
-#endif
-
-#if WITH_DEV_AUTOMATION_TESTS
-	const bool bInstanceValid = bTestBypassMontageActiveCheck || FAbilityMontageRateWindowLifecycle::IsCurrentMontageInstance(
-		AnimInstance, ActiveVictimMontage, ActiveVictimMontageInstanceID);
-#else
-	const bool bInstanceValid = FAbilityMontageRateWindowLifecycle::IsCurrentMontageInstance(
-		AnimInstance, ActiveVictimMontage, ActiveVictimMontageInstanceID);
-#endif
-	if (!bInstanceValid)
-	{
-		RateWindowLifecycle = FAbilityMontageRateWindowLifecycle();
-		return;
-	}
-
-	RateWindowLifecycle.HandleBegin(Payload);
-}
-
-void UEnemyVictimExecutionAbility::OnRateWindowEnd(FGameplayEventData Payload)
-{
-	if (bEndAbilityInProgress || !IsActive() || !bNonLethalRecoveryActive)
-	{
-		return;
-	}
-
-	UAnimInstance* AnimInstance = nullptr;
-	if (AEnemyCharacter* EnemyChar = Cast<AEnemyCharacter>(GetAvatarActorFromActorInfo()))
-	{
-		if (USkeletalMeshComponent* Mesh = EnemyChar->GetMesh())
-		{
-			AnimInstance = Mesh->GetAnimInstance();
-		}
-	}
-#if WITH_DEV_AUTOMATION_TESTS
-	if (!AnimInstance && BoundAnimInstance.IsValid())
-	{
-		AnimInstance = BoundAnimInstance.Get();
-	}
-	if (!AnimInstance)
-	{
-		if (const UEnemyVictimExecutionAbility* CDO = Cast<UEnemyVictimExecutionAbility>(GetClass()->GetDefaultObject()))
-		{
-			if (CDO->BoundAnimInstance.IsValid())
-			{
-				AnimInstance = CDO->BoundAnimInstance.Get();
-			}
-		}
-	}
-#endif
-
-#if WITH_DEV_AUTOMATION_TESTS
-	const bool bInstanceValid = bTestBypassMontageActiveCheck || FAbilityMontageRateWindowLifecycle::IsCurrentMontageInstance(
-		AnimInstance, ActiveVictimMontage, ActiveVictimMontageInstanceID);
-#else
-	const bool bInstanceValid = FAbilityMontageRateWindowLifecycle::IsCurrentMontageInstance(
-		AnimInstance, ActiveVictimMontage, ActiveVictimMontageInstanceID);
-#endif
-	if (!bInstanceValid)
-	{
-		RateWindowLifecycle = FAbilityMontageRateWindowLifecycle();
-		return;
-	}
-
-	RateWindowLifecycle.HandleEnd(Payload);
-}
-
-void UEnemyVictimExecutionAbility::ClearRateWindow(bool bRestoreRate)
-{
-	if (ActiveRateWindowContext)
-	{
-		ActiveRateWindowContext->OwningAbility.Reset();
-		ActiveRateWindowContext->Token = 0;
-		ActiveRateWindowContext = nullptr;
-	}
-
-	if (RateWindowBeginTask)
-	{
-		RateWindowBeginTask->EndTask();
-		RateWindowBeginTask = nullptr;
-	}
-	if (RateWindowEndTask)
-	{
-		RateWindowEndTask->EndTask();
-		RateWindowEndTask = nullptr;
-	}
-
-	if (bRestoreRate && RateWindowLifecycle.IsBound())
-	{
-		UAnimInstance* AnimInstance = nullptr;
-		if (AEnemyCharacter* EnemyChar = Cast<AEnemyCharacter>(GetAvatarActorFromActorInfo()))
-		{
-			if (USkeletalMeshComponent* Mesh = EnemyChar->GetMesh())
-			{
-				AnimInstance = Mesh->GetAnimInstance();
-			}
-		}
-#if WITH_DEV_AUTOMATION_TESTS
-		if (!AnimInstance && BoundAnimInstance.IsValid())
-		{
-			AnimInstance = BoundAnimInstance.Get();
-		}
-		if (!AnimInstance)
-		{
-			if (const UEnemyVictimExecutionAbility* CDO = Cast<UEnemyVictimExecutionAbility>(GetClass()->GetDefaultObject()))
-			{
-				if (CDO->BoundAnimInstance.IsValid())
-				{
-					AnimInstance = CDO->BoundAnimInstance.Get();
-				}
-			}
-		}
-#endif
-
-#if WITH_DEV_AUTOMATION_TESTS
-		const bool bInstanceValid = bTestBypassMontageActiveCheck || FAbilityMontageRateWindowLifecycle::IsCurrentMontageInstance(
-			AnimInstance, ActiveVictimMontage, ActiveVictimMontageInstanceID);
-#else
-		const bool bInstanceValid = FAbilityMontageRateWindowLifecycle::IsCurrentMontageInstance(
-			AnimInstance, ActiveVictimMontage, ActiveVictimMontageInstanceID);
-#endif
-
-		if (bInstanceValid)
-		{
-			RateWindowLifecycle.RestoreAndClear();
-		}
-		else
-		{
-			RateWindowLifecycle = FAbilityMontageRateWindowLifecycle();
-		}
-	}
-	else
-	{
-		RateWindowLifecycle = FAbilityMontageRateWindowLifecycle();
-	}
-
-#if WITH_DEV_AUTOMATION_TESTS
-	bTestBypassMontageActiveCheck = false;
-#endif
-}
 
 #if WITH_DEV_AUTOMATION_TESTS
 void UEnemyVictimExecutionAbility::SetTestInvalidateWaitVictimStartTaskAfterReady(bool bInvalidate)

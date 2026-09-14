@@ -7,8 +7,14 @@
 #include "AbilitySystem/Abilities/DodgeAbility.h"
 #include "TestManagedMontageAbility.generated.h"
 
+class AEnemyCharacter;
+
 struct FManagedMontageTestHelpers
 {
+#if WITH_DEV_AUTOMATION_TESTS
+	/** Execution callback fixtures need an actually active StanceBreak before the paired handshake. */
+	static FGameplayAbilitySpecHandle ActivateExecutionStanceBreak(AEnemyCharacter* Enemy);
+#endif
 	static FGameplayAbilityTargetDataHandle MakeRateWindowTargetData(UAnimInstance* AnimInstance, int32 MontageInstanceID);
 	static FGameplayEventData MakeRateWindowEventData(
 		const FGameplayTag& EventTag,
@@ -39,7 +45,32 @@ struct FManagedMontageTestHelpers
 		const UAbilityTask_PlayActionMontage* ActualTask,
 		EActionMontageCancelPolicy ExpectedPolicy,
 		const TArray<const UGameplayAbility*>& TargetAbilities,
-		FString& OutDiagnosticReason);
+		FString& OutDiagnosticReason,
+		const FGameplayTagContainer& RequiredSourceTags = FGameplayTagContainer());
+};
+
+/** Minimal action example: configuration, standard playback, and one end path. */
+UCLASS()
+class UTestConfigurationOnlyActionAbility : public UGameplayAbility
+{
+	GENERATED_BODY()
+public:
+	UTestConfigurationOnlyActionAbility();
+	UPROPERTY()
+	TObjectPtr<UAnimMontage> Montage;
+	EActionMontageCancelPolicy CancelPolicy = EActionMontageCancelPolicy::DodgeAndDefense;
+	UAbilityTask_PlayActionMontage* GetMontageTask() const { return MontageTask; }
+	virtual void ActivateAbility(const FGameplayAbilitySpecHandle Handle, const FGameplayAbilityActorInfo* ActorInfo,
+		const FGameplayAbilityActivationInfo ActivationInfo, const FGameplayEventData* TriggerEventData) override;
+	virtual void EndAbility(const FGameplayAbilitySpecHandle Handle, const FGameplayAbilityActorInfo* ActorInfo,
+		const FGameplayAbilityActivationInfo ActivationInfo, bool bReplicateEndAbility, bool bWasCancelled) override;
+private:
+	UFUNCTION()
+	void OnCompleted();
+	UFUNCTION()
+	void OnCancelled();
+	UPROPERTY()
+	TObjectPtr<UAbilityTask_PlayActionMontage> MontageTask;
 };
 
 UCLASS()

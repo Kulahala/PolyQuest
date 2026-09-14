@@ -2,7 +2,7 @@
 
 #include "AbilitySystem/Abilities/MeleeTraceWindowLifecycle.h"
 #include "AbilitySystemComponent.h"
-#include "Abilities/Tasks/AbilityTask_PlayMontageAndWait.h"
+#include "AbilitySystem/Tasks/AbilityTask_PlayActionMontage.h"
 #include "Abilities/Tasks/AbilityTask_WaitGameplayEvent.h"
 #include "Animation/AnimInstance.h"
 #include "Animation/AnimMontage.h"
@@ -16,38 +16,6 @@
 #include "GameFramework/CharacterMovementComponent.h"
 #include "GameplayEffect.h"
 #include "PolyQuest.h"
-
-void ULightAttackRateWindowContext::OnRateWindowBegin(FGameplayEventData Payload)
-{
-	if (!this)
-	{
-		return;
-	}
-
-	if (ULightAttackAbility* Ability = OwningAbility.Get())
-	{
-		if (Ability->CurrentActivationToken == Token)
-		{
-			Ability->OnRateWindowBegin(Payload);
-		}
-	}
-}
-
-void ULightAttackRateWindowContext::OnRateWindowEnd(FGameplayEventData Payload)
-{
-	if (!this)
-	{
-		return;
-	}
-
-	if (ULightAttackAbility* Ability = OwningAbility.Get())
-	{
-		if (Ability->CurrentActivationToken == Token)
-		{
-			Ability->OnRateWindowEnd(Payload);
-		}
-	}
-}
 
 namespace
 {
@@ -70,10 +38,6 @@ ULightAttackAbility::ULightAttackAbility()
 	ActivationBlockedTags.AddTag(FGameplayTag::RequestGameplayTag(FName(TEXT("State.Status.Exhausted")), false));
 	ActivationBlockedTags.AddTag(FGameplayTag::RequestGameplayTag(FName(TEXT("State.Status.Stunned")), false));
 
-	DodgeCancelWindowBeginEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Action.CancelWindow.Dodge.Begin")), false);
-	DodgeCancelWindowEndEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Action.CancelWindow.Dodge.End")), false);
-	DodgeCancelableStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Action.CanCancel.Dodge")), false);
-	DefenseCancelableStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Action.CanCancel.Defense")), false);
 	TraceWindowBeginEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Attack.TraceWindow.Begin")), false);
 	TraceWindowEndEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Attack.TraceWindow.End")), false);
 	PrimaryAttackPressedEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Input.Pressed")), false);
@@ -82,8 +46,6 @@ ULightAttackAbility::ULightAttackAbility()
 	ComboInputWindowEndEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Attack.Light.Combo.InputWindow.End")), false);
 	ComboBranchWindowBeginEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Attack.Light.Combo.BranchWindow.Begin")), false);
 	ComboBranchWindowEndEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Attack.Light.Combo.BranchWindow.End")), false);
-	RateWindowBeginEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Action.RateWindow.Begin")), false);
-	RateWindowEndEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Action.RateWindow.End")), false);
 }
 
 void ULightAttackAbility::ActivateAbility(
@@ -97,7 +59,6 @@ void ULightAttackAbility::ActivateAbility(
 #if WITH_DEV_AUTOMATION_TESTS
 	bTestBypassMontageActiveCheck = false;
 #endif
-	bDodgeCancelable = false;
 	bComboInputWindowOpen = false;
 	bComboBranchWindowOpen = false;
 	bContinuationBuffered = false;
@@ -113,11 +74,9 @@ void ULightAttackAbility::ActivateAbility(
 	UAnimInstance* AnimInstance = SkeletalMesh ? SkeletalMesh->GetAnimInstance() : nullptr;
 
 	if (!AbilitySystemComponent || !PlayerCharacter || !AnimInstance || !CostGameplayEffectClass || !DamageGameplayEffectClass || !StaminaRegenDelayGameplayEffectClass
-		|| !DodgeCancelWindowBeginEventTag.IsValid() || !DodgeCancelWindowEndEventTag.IsValid() || !DodgeCancelableStateTag.IsValid() || !DefenseCancelableStateTag.IsValid()
 		|| !TraceWindowBeginEventTag.IsValid() || !TraceWindowEndEventTag.IsValid()
 		|| !PrimaryAttackPressedEventTag.IsValid() || !PrimaryAttackInputTag.IsValid() || !ComboInputWindowBeginEventTag.IsValid()
 		|| !ComboInputWindowEndEventTag.IsValid() || !ComboBranchWindowBeginEventTag.IsValid() || !ComboBranchWindowEndEventTag.IsValid()
-		|| !RateWindowBeginEventTag.IsValid() || !RateWindowEndEventTag.IsValid()
 		|| !ValidateComboDefinition())
 	{
 		UE_LOG(LogPolyQuest, Warning, TEXT("Light attack activation aborted for '%s': ASC, player, AnimInstance, valid ComboDefinition, cost effect, damage effect, Stamina regeneration delay effect, and required gameplay tags are required."), *GetNameSafe(AvatarActor));
@@ -127,15 +86,13 @@ void ULightAttackAbility::ActivateAbility(
 
 	TraceWindowBeginTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, TraceWindowBeginEventTag, nullptr, false, true);
 	TraceWindowEndTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, TraceWindowEndEventTag, nullptr, false, true);
-	DodgeCancelWindowBeginTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, DodgeCancelWindowBeginEventTag, nullptr, false, true);
-	DodgeCancelWindowEndTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, DodgeCancelWindowEndEventTag, nullptr, false, true);
 	PrimaryAttackPressedTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, PrimaryAttackPressedEventTag, nullptr, false, true);
 	ComboInputWindowBeginTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, ComboInputWindowBeginEventTag, nullptr, false, true);
 	ComboInputWindowEndTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, ComboInputWindowEndEventTag, nullptr, false, true);
 	ComboBranchWindowBeginTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, ComboBranchWindowBeginEventTag, nullptr, false, true);
 	ComboBranchWindowEndTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, ComboBranchWindowEndEventTag, nullptr, false, true);
 
-	if (!TraceWindowBeginTask || !TraceWindowEndTask || !DodgeCancelWindowBeginTask || !DodgeCancelWindowEndTask || !PrimaryAttackPressedTask || !ComboInputWindowBeginTask
+	if (!TraceWindowBeginTask || !TraceWindowEndTask || !PrimaryAttackPressedTask || !ComboInputWindowBeginTask
 		|| !ComboInputWindowEndTask || !ComboBranchWindowBeginTask || !ComboBranchWindowEndTask)
 	{
 		UE_LOG(LogPolyQuest, Warning, TEXT("Light attack activation aborted for '%s': failed to create a GameplayEvent AbilityTask."), *GetNameSafe(AvatarActor));
@@ -145,8 +102,6 @@ void ULightAttackAbility::ActivateAbility(
 
 	TraceWindowBeginTask->EventReceived.AddDynamic(this, &ULightAttackAbility::OnTraceWindowBegin);
 	TraceWindowEndTask->EventReceived.AddDynamic(this, &ULightAttackAbility::OnTraceWindowEnd);
-	DodgeCancelWindowBeginTask->EventReceived.AddDynamic(this, &ULightAttackAbility::OnDodgeCancelWindowBegin);
-	DodgeCancelWindowEndTask->EventReceived.AddDynamic(this, &ULightAttackAbility::OnDodgeCancelWindowEnd);
 	PrimaryAttackPressedTask->EventReceived.AddDynamic(this, &ULightAttackAbility::OnPrimaryAttackPressed);
 	ComboInputWindowBeginTask->EventReceived.AddDynamic(this, &ULightAttackAbility::OnComboInputWindowBegin);
 	ComboInputWindowEndTask->EventReceived.AddDynamic(this, &ULightAttackAbility::OnComboInputWindowEnd);
@@ -157,7 +112,10 @@ void ULightAttackAbility::ActivateAbility(
 	BoundAnimInstance->OnMontageEnded.RemoveDynamic(this, &ULightAttackAbility::OnActiveMontageEnded);
 	BoundAnimInstance->OnMontageEnded.AddDynamic(this, &ULightAttackAbility::OnActiveMontageEnded);
 
-	if (!CommitAbility(Handle, ActorInfo, ActivationInfo))
+	UAbilityTask_WaitGameplayEvent* ActivationTraceTask = TraceWindowBeginTask.Get();
+	const bool bCommitted = CommitAbility(Handle, ActorInfo, ActivationInfo);
+	if (!IsActive() || bEndAbilityRequested || TraceWindowBeginTask.Get() != ActivationTraceTask) return;
+	if (!bCommitted)
 	{
 		UE_LOG(LogPolyQuest, Verbose, TEXT("Light attack activation rejected for '%s' because CommitAbility failed."), *GetNameSafe(AvatarActor));
 		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
@@ -166,18 +124,17 @@ void ULightAttackAbility::ActivateAbility(
 
 	PlayerCharacter->ApplyLockAwareActionFacing();
 
-	TraceWindowBeginTask->ReadyForActivation();
-	TraceWindowEndTask->ReadyForActivation();
-	DodgeCancelWindowBeginTask->ReadyForActivation();
-	DodgeCancelWindowEndTask->ReadyForActivation();
-	PrimaryAttackPressedTask->ReadyForActivation();
-	ComboInputWindowBeginTask->ReadyForActivation();
-	ComboInputWindowEndTask->ReadyForActivation();
-	ComboBranchWindowBeginTask->ReadyForActivation();
-	ComboBranchWindowEndTask->ReadyForActivation();
+	for (UAbilityTask_WaitGameplayEvent* EventTask : {TraceWindowBeginTask.Get(), TraceWindowEndTask.Get(),
+		PrimaryAttackPressedTask.Get(), ComboInputWindowBeginTask.Get(), ComboInputWindowEndTask.Get(),
+		ComboBranchWindowBeginTask.Get(), ComboBranchWindowEndTask.Get()})
+	{
+		EventTask->ReadyForActivation();
+		if (!IsActive() || bEndAbilityRequested || TraceWindowBeginTask.Get() != ActivationTraceTask) return;
+	}
 
 	if (!StartComboEntry(0))
 	{
+		if (!IsActive() || bEndAbilityRequested || TraceWindowBeginTask.Get() != ActivationTraceTask) return;
 		UE_LOG(LogPolyQuest, Warning, TEXT("Light attack activation aborted for '%s': failed to start ComboDefinition entry 0."), *GetNameSafe(AvatarActor));
 		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
 	}
@@ -197,12 +154,9 @@ void ULightAttackAbility::EndAbility(
 
 	bEndAbilityRequested = true;
 	ResetMeleeMotionWarpState();
-	SetDodgeCancelable(false);
 	CloseTraceWindow();
-	ClearRateWindow(true);
 #if WITH_DEV_AUTOMATION_TESTS
 	bTestBypassMontageActiveCheck = false;
-	RateWindowLifecycle.SetTestBypassMontageActiveCheck(false);
 #endif
 
 	if (APlayerCharacter* PlayerCharacter = Cast<APlayerCharacter>(GetAvatarActorFromActorInfo()))
@@ -213,15 +167,12 @@ void ULightAttackAbility::EndAbility(
 	if (BoundAnimInstance)
 	{
 		BoundAnimInstance->OnMontageEnded.RemoveDynamic(this, &ULightAttackAbility::OnActiveMontageEnded);
-		if (ActiveEntryMontage && BoundAnimInstance->Montage_IsActive(ActiveEntryMontage))
-		{
-			BoundAnimInstance->Montage_Stop(0.0f, ActiveEntryMontage);
-		}
 		BoundAnimInstance = nullptr;
 	}
 
 	if (MontageTask)
 	{
+		MontageTask->OnFailed.RemoveAll(this);
 		MontageTask->EndTask();
 		MontageTask = nullptr;
 	}
@@ -238,17 +189,9 @@ void ULightAttackAbility::EndAbility(
 		TraceWindowEndTask = nullptr;
 	}
 
-	if (DodgeCancelWindowBeginTask)
-	{
-		DodgeCancelWindowBeginTask->EndTask();
-		DodgeCancelWindowBeginTask = nullptr;
-	}
 
-	if (DodgeCancelWindowEndTask)
-	{
-		DodgeCancelWindowEndTask->EndTask();
-		DodgeCancelWindowEndTask = nullptr;
-	}
+
+
 
 	if (PrimaryAttackPressedTask)
 	{
@@ -286,17 +229,21 @@ void ULightAttackAbility::EndAbility(
 	bComboTransitionInProgress = false;
 	ActiveEntryIndex = INDEX_NONE;
 	ActiveEntryMontage = nullptr;
+	ActiveMontageInstanceID = INDEX_NONE;
 
 	Super::EndAbility(Handle, ActorInfo, ActivationInfo, bReplicateEndAbility, bWasCancelled);
 }
 
 void ULightAttackAbility::OnActiveMontageEnded(UAnimMontage* Montage, bool bInterrupted)
 {
-	if (bEndAbilityRequested || Montage != ActiveEntryMontage.Get())
+	if (bEndAbilityRequested || !IsActive() || Montage != ActiveEntryMontage.Get() || ActiveMontageInstanceID == INDEX_NONE)
 	{
 		return;
 	}
 
+	const FAnimMontageInstance* Instance = IsValid(BoundAnimInstance)
+		? BoundAnimInstance->GetMontageInstanceForID(ActiveMontageInstanceID) : nullptr;
+	if (Instance && Instance->IsValid()) return;
 	EndFromMontage(bInterrupted);
 }
 
@@ -336,22 +283,6 @@ void ULightAttackAbility::OnTraceWindowEnd(FGameplayEventData Payload)
 	}
 
 	CloseTraceWindow();
-}
-
-void ULightAttackAbility::OnDodgeCancelWindowBegin(FGameplayEventData Payload)
-{
-	if (IsGameplayEventFromActiveMontage(Payload))
-	{
-		SetDodgeCancelable(true);
-	}
-}
-
-void ULightAttackAbility::OnDodgeCancelWindowEnd(FGameplayEventData Payload)
-{
-	if (IsGameplayEventFromActiveMontage(Payload))
-	{
-		SetDodgeCancelable(false);
-	}
 }
 
 void ULightAttackAbility::OnPrimaryAttackPressed(FGameplayEventData Payload)
@@ -457,7 +388,7 @@ bool ULightAttackAbility::StartComboEntry(int32 EntryIndex)
 	}
 
 	UWorld* World = PlayerCharacter->GetWorld();
-	if (bEndAbilityRequested || !CurrentActorInfo || !World)
+	if (bEndAbilityRequested || !IsActive() || !CurrentActorInfo || !World)
 	{
 		PlayerCharacter->ClearMeleeMotionWarpTargets();
 		return false;
@@ -471,20 +402,27 @@ bool ULightAttackAbility::StartComboEntry(int32 EntryIndex)
 		return false;
 	}
 
-	UAbilityTask_PlayMontageAndWait* NewMontageTask = UAbilityTask_PlayMontageAndWait::CreatePlayMontageAndWaitProxy(this, NAME_None, EntryMontage);
-	if (!NewMontageTask)
+	UAbilityTask_PlayActionMontage* NewMontageTask = UAbilityTask_PlayActionMontage::PlayActionMontage(
+		this, NAME_None, EntryMontage, 1.0f, NAME_None,
+		1.0f, // AnimRootMotionTranslationScale
+		0.0f, // StartTimeSeconds
+		true, // bAllowInterruptAfterBlendOut; business ends after full blend
+		EActionMontageCancelPolicy::DodgeAndDefense); // CancelPolicy
+	if (!NewMontageTask) return false;
+
+	// Preflight failures above preserve the old entry. Once transition starts, never revive its Task.
+	UAbilityTask_PlayActionMontage* PreviousMontageTask = MontageTask.Get();
+	ActiveMontageInstanceID = INDEX_NONE;
+	if (PreviousMontageTask)
 	{
-		PlayerCharacter->ClearMeleeMotionWarpTargets();
+		PreviousMontageTask->OnFailed.RemoveAll(this);
+		PreviousMontageTask->PrepareForMontageTransition();
+	}
+	if (!IsActive() || bEndAbilityRequested || MontageTask.Get() != PreviousMontageTask)
+	{
+		NewMontageTask->EndTask();
 		return false;
 	}
-
-	const int32 PreviousEntryIndex = ActiveEntryIndex;
-	UAnimMontage* PreviousEntryMontage = ActiveEntryMontage.Get();
-	UAbilityTask_PlayMontageAndWait* PreviousMontageTask = MontageTask.Get();
-
-	// Set the new identity before playback interrupts the prior montage.
-	ClearRateWindow(true);
-	SetDodgeCancelable(false);
 	CloseTraceWindow();
 	bComboInputWindowOpen = false;
 	bComboBranchWindowOpen = false;
@@ -492,155 +430,51 @@ bool ULightAttackAbility::StartComboEntry(int32 EntryIndex)
 	ActiveEntryIndex = EntryIndex;
 	ActiveEntryMontage = EntryMontage;
 	MontageTask = NewMontageTask;
+	NewMontageTask->OnFailed.AddDynamic(this, &ULightAttackAbility::OnMontageFailed);
 
 	PlayerCharacter->ClearMeleeMotionWarpTargets();
-	if (Entry && Entry->bUseMotionWarping && EntryIndex >= 0 && EntryIndex <= MaxMotionWarpAllowedEntryIndex)
+	if (Entry->bUseMotionWarping && EntryIndex >= 0 && EntryIndex <= MaxMotionWarpAllowedEntryIndex)
 	{
 		TryApplyMeleeMotionWarpTarget(PlayerCharacter, *Entry);
 	}
-	else if (Entry && Entry->bUseMotionWarping && EntryIndex > MaxMotionWarpAllowedEntryIndex)
+	else if (Entry->bUseMotionWarping && EntryIndex > MaxMotionWarpAllowedEntryIndex)
 	{
 		UE_LOG(LogPolyQuest, Verbose, TEXT("Light attack entry %d requested Motion Warping but exceeds maximum allowed entry index (%d); fail-closed."), EntryIndex, MaxMotionWarpAllowedEntryIndex);
 	}
 
-	NewMontageTask->ReadyForActivation();
-
-	// 1. Synchronously ended ability or destroyed context check
-	if (bEndAbilityRequested || !IsValid(PlayerCharacter) || PlayerCharacter->IsActorBeingDestroyed()
-		|| !IsValid(BoundAnimInstance) || !IsValid(EntryMontage) || !IsValid(NewMontageTask)
-		|| MontageTask.Get() != NewMontageTask)
-	{
-		// Ability has already ended or context was invalidated; EndAbility() has performed canonical teardown.
-		// We must NOT resurrect previous montage task or entry identity.
-		if (IsValid(NewMontageTask) && !NewMontageTask->IsFinished())
-		{
-			NewMontageTask->EndTask();
-		}
-		if (IsValid(PlayerCharacter) && !PlayerCharacter->IsActorBeingDestroyed())
-		{
-			PlayerCharacter->ClearMeleeMotionWarpTargets();
-		}
-		return false;
-	}
-
-	// 2. Task activation state validation on valid active ability
-	const bool bTaskActive = NewMontageTask->IsActive() && !NewMontageTask->IsFinished();
-	if (!bTaskActive)
-	{
-		if (IsValid(NewMontageTask) && !NewMontageTask->IsFinished())
-		{
-			NewMontageTask->EndTask();
-		}
-		MontageTask = PreviousMontageTask;
-		ActiveEntryIndex = PreviousEntryIndex;
-		ActiveEntryMontage = PreviousEntryMontage;
-		if (IsValid(PlayerCharacter) && !PlayerCharacter->IsActorBeingDestroyed())
-		{
-			PlayerCharacter->ClearMeleeMotionWarpTargets();
-		}
-		return false;
-	}
-
-	// 3. Montage playback active check (bypassable strictly for headless test environments)
 #if WITH_DEV_AUTOMATION_TESTS
-	const bool bMontageActive = bTestBypassMontageActiveCheck || BoundAnimInstance->Montage_IsActive(EntryMontage);
-#else
-	const bool bMontageActive = BoundAnimInstance->Montage_IsActive(EntryMontage);
-#endif
-
-	if (!bMontageActive)
+	if (bTestBypassMontageActiveCheck)
 	{
-		if (IsValid(NewMontageTask) && !NewMontageTask->IsFinished())
-		{
-			NewMontageTask->EndTask();
-		}
-		MontageTask = PreviousMontageTask;
-		ActiveEntryIndex = PreviousEntryIndex;
-		ActiveEntryMontage = PreviousEntryMontage;
-		if (IsValid(PlayerCharacter) && !PlayerCharacter->IsActorBeingDestroyed())
-		{
-			PlayerCharacter->ClearMeleeMotionWarpTargets();
-		}
-		return false;
-	}
-
-	// 4. RateWindow lifecycle binding for this confirmed combo entry
-	ActiveRateWindowContext = NewObject<ULightAttackRateWindowContext>(this);
-	CurrentActivationToken++;
-	ActiveRateWindowContext->OwningAbility = this;
-	ActiveRateWindowContext->Token = CurrentActivationToken;
-
-	RateWindowBeginTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, RateWindowBeginEventTag, nullptr, false, true);
-	RateWindowEndTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, RateWindowEndEventTag, nullptr, false, true);
-
-	if (!RateWindowBeginTask || !RateWindowEndTask)
-	{
-		UE_LOG(LogPolyQuest, Warning, TEXT("Light attack combo entry %d failed to create RateWindow task."), EntryIndex + 1);
-		ClearRateWindow(false);
-		EndFromMontage(true);
-		return false;
-	}
-
-	RateWindowBeginTask->EventReceived.AddDynamic(ActiveRateWindowContext.Get(), &ULightAttackRateWindowContext::OnRateWindowBegin);
-	RateWindowEndTask->EventReceived.AddDynamic(ActiveRateWindowContext.Get(), &ULightAttackRateWindowContext::OnRateWindowEnd);
-
-	const uint32 CapturedToken = CurrentActivationToken;
-	RateWindowBeginTask->ReadyForActivation();
-	if (bEndAbilityRequested)
-	{
-		return false;
-	}
-	if (bEndAbilityRequested || !IsActive() || CurrentActivationToken != CapturedToken || !RateWindowBeginTask || !RateWindowBeginTask->IsActive())
-	{
-		ClearRateWindow(false);
-		EndFromMontage(true);
-		return false;
-	}
-
-	RateWindowEndTask->ReadyForActivation();
-	if (bEndAbilityRequested)
-	{
-		return false;
-	}
-	if (!IsActive() || CurrentActivationToken != CapturedToken || !RateWindowEndTask || !RateWindowEndTask->IsActive())
-	{
-		ClearRateWindow(false);
-		EndFromMontage(true);
-		return false;
-	}
-
-#if WITH_DEV_AUTOMATION_TESTS
-	const bool bInstanceActive = bTestBypassMontageActiveCheck || BoundAnimInstance->Montage_IsActive(ActiveEntryMontage.Get());
-#else
-	const bool bInstanceActive = BoundAnimInstance->Montage_IsActive(ActiveEntryMontage.Get());
-#endif
-	if (!bInstanceActive)
-	{
-		ClearRateWindow(false);
-		EndFromMontage(true);
-		return false;
-	}
-
-	if (FAnimMontageInstance* Instance = BoundAnimInstance->GetActiveInstanceForMontage(ActiveEntryMontage.Get()))
-	{
-		ActiveMontageInstanceID = Instance->GetInstanceID();
+		// Preserve the existing isolated motion-warp/rate fixture; real activation always disables bypass.
+		NewMontageTask->SetTestTaskActive(true);
+		NewMontageTask->SetTestBypassMontageActiveCheck(true);
+		NewMontageTask->SetTestBoundAnimInstance(BoundAnimInstance);
+		NewMontageTask->SetTestBoundMontageInstanceID(EntryIndex + 1);
+		NewMontageTask->GetRateWindowLifecycle_Mutable().BindAndCapture(this, BoundAnimInstance, EntryMontage,
+			FGameplayTag::RequestGameplayTag(TEXT("Event.Action.RateWindow.Begin")),
+			FGameplayTag::RequestGameplayTag(TEXT("Event.Action.RateWindow.End")));
+		NewMontageTask->TestBindRateWindowEvents(GetAbilitySystemComponentFromActorInfo());
 	}
 	else
-	{
-		ActiveMontageInstanceID = INDEX_NONE;
-	}
-#if WITH_DEV_AUTOMATION_TESTS
-	RateWindowLifecycle.SetTestBypassMontageActiveCheck(bTestBypassMontageActiveCheck);
 #endif
-
-	RateWindowLifecycle.BindAndCapture(this, BoundAnimInstance.Get(), ActiveEntryMontage.Get(), RateWindowBeginEventTag, RateWindowEndEventTag);
-	if (!RateWindowLifecycle.IsBound())
 	{
-		UE_LOG(LogPolyQuest, Warning, TEXT("Light attack combo entry %d failed to bind RateWindowLifecycle."), EntryIndex + 1);
-		ClearRateWindow(false);
+		NewMontageTask->ReadyForActivation();
+	}
+	// Native PlayMontage transfers playback using the new montage's full BlendIn settings.
+	// The old Task retains abnormal-stop responsibility until that handoff has returned.
+	if (PreviousMontageTask) PreviousMontageTask->EndTask();
+	if (!IsActive() || bEndAbilityRequested || MontageTask.Get() != NewMontageTask)
+	{
+		return false;
+	}
+	if (!IsValid(PlayerCharacter) || PlayerCharacter->IsActorBeingDestroyed() || !IsValid(BoundAnimInstance)
+		|| !IsValid(NewMontageTask) || NewMontageTask->IsFinished() || !NewMontageTask->IsActive())
+	{
 		EndFromMontage(true);
 		return false;
 	}
+	const FAnimMontageInstance* Instance = BoundAnimInstance->GetActiveInstanceForMontage(EntryMontage);
+	ActiveMontageInstanceID = Instance ? Instance->GetInstanceID() : INDEX_NONE;
 
 	if (EntryIndex == 0)
 	{
@@ -649,6 +483,7 @@ bool ULightAttackAbility::StartComboEntry(int32 EntryIndex)
 			PlayerCharacter->CancelActiveGuardAfterConfirmedAction(true);
 		}
 	}
+	if (!IsActive() || bEndAbilityRequested || MontageTask.Get() != NewMontageTask) return false;
 
 	UE_LOG(LogPolyQuest, Verbose, TEXT("LightAttack.Combo: started entry %d with montage '%s'."), EntryIndex + 1, *GetNameSafe(EntryMontage));
 	return true;
@@ -657,14 +492,14 @@ bool ULightAttackAbility::StartComboEntry(int32 EntryIndex)
 bool ULightAttackAbility::IsGameplayEventFromActiveMontage(const FGameplayEventData& Payload) const
 {
 	const AActor* AvatarActor = GetAvatarActorFromActorInfo();
-	return !bEndAbilityRequested && ActiveEntryMontage && AvatarActor && Payload.Instigator == AvatarActor && Payload.Target == AvatarActor
+	return IsActive() && !bEndAbilityRequested && ActiveEntryMontage && AvatarActor && Payload.Instigator == AvatarActor && Payload.Target == AvatarActor
 		&& Payload.OptionalObject.Get() == ActiveEntryMontage.Get();
 }
 
 bool ULightAttackAbility::IsPrimaryAttackInputEvent(const FGameplayEventData& Payload) const
 {
 	const AActor* AvatarActor = GetAvatarActorFromActorInfo();
-	return !bEndAbilityRequested && AvatarActor && Payload.Instigator == AvatarActor && Payload.Target == AvatarActor
+	return IsActive() && !bEndAbilityRequested && AvatarActor && Payload.Instigator == AvatarActor && Payload.Target == AvatarActor
 		&& Payload.InstigatorTags.HasTagExact(PrimaryAttackInputTag);
 }
 
@@ -691,7 +526,10 @@ void ULightAttackAbility::TryConsumeBufferedComboContinuation()
 	}
 
 	bComboTransitionInProgress = true;
-	if (!CommitAbilityCost(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, nullptr))
+	UAbilityTask_PlayActionMontage* SourceTask = MontageTask.Get();
+	const bool bEntryCostCommitted = CommitAbilityCost(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, nullptr);
+	if (!IsActive() || bEndAbilityRequested || MontageTask.Get() != SourceTask) return;
+	if (!bEntryCostCommitted)
 	{
 		bComboTransitionInProgress = false;
 		UE_LOG(LogPolyQuest, Warning, TEXT("LightAttack.Combo: failed to commit the Stamina cost for entry %d."), NextEntryIndex + 1);
@@ -700,6 +538,7 @@ void ULightAttackAbility::TryConsumeBufferedComboContinuation()
 
 	if (!StartComboEntry(NextEntryIndex))
 	{
+		if (!IsActive() || bEndAbilityRequested || MontageTask.Get() != SourceTask) return;
 		bComboTransitionInProgress = false;
 		UE_LOG(LogPolyQuest, Warning, TEXT("LightAttack.Combo: failed to start entry %d after committing its cost."), NextEntryIndex + 1);
 		EndFromMontage(true);
@@ -709,142 +548,24 @@ void ULightAttackAbility::TryConsumeBufferedComboContinuation()
 	bComboTransitionInProgress = false;
 }
 
-void ULightAttackAbility::OnRateWindowBegin(const FGameplayEventData& Payload)
+void ULightAttackAbility::OnMontageFailed()
 {
-	if (bEndAbilityRequested || !IsActive())
-	{
-		return;
-	}
-
-#if WITH_DEV_AUTOMATION_TESTS
-	const bool bInstanceValid = bTestBypassMontageActiveCheck || FAbilityMontageRateWindowLifecycle::IsCurrentMontageInstance(
-		BoundAnimInstance.Get(), ActiveEntryMontage.Get(), ActiveMontageInstanceID);
-#else
-	const bool bInstanceValid = FAbilityMontageRateWindowLifecycle::IsCurrentMontageInstance(
-		BoundAnimInstance.Get(), ActiveEntryMontage.Get(), ActiveMontageInstanceID);
-#endif
-	if (!bInstanceValid)
-	{
-		return;
-	}
-
-	RateWindowLifecycle.HandleBegin(Payload);
+	if (IsActive() && !bEndAbilityRequested) EndFromMontage(true);
 }
 
-void ULightAttackAbility::OnRateWindowEnd(const FGameplayEventData& Payload)
-{
-	if (bEndAbilityRequested || !IsActive())
-	{
-		return;
-	}
-
 #if WITH_DEV_AUTOMATION_TESTS
-	const bool bInstanceValid = bTestBypassMontageActiveCheck || FAbilityMontageRateWindowLifecycle::IsCurrentMontageInstance(
-		BoundAnimInstance.Get(), ActiveEntryMontage.Get(), ActiveMontageInstanceID);
-#else
-	const bool bInstanceValid = FAbilityMontageRateWindowLifecycle::IsCurrentMontageInstance(
-		BoundAnimInstance.Get(), ActiveEntryMontage.Get(), ActiveMontageInstanceID);
-#endif
-	if (!bInstanceValid)
-	{
-		return;
-	}
-
-	RateWindowLifecycle.HandleEnd(Payload);
+const FAbilityMontageRateWindowLifecycle& ULightAttackAbility::GetTestRateWindowLifecycle() const
+{
+	static const FAbilityMontageRateWindowLifecycle EmptyLifecycle;
+	return MontageTask ? MontageTask->GetRateWindowLifecycle() : EmptyLifecycle;
 }
 
-void ULightAttackAbility::ClearRateWindow(bool bRestoreRate)
+FAbilityMontageRateWindowLifecycle& ULightAttackAbility::GetTestRateWindowLifecycle_Mutable()
 {
-	if (ActiveRateWindowContext)
-	{
-		ActiveRateWindowContext->OwningAbility.Reset();
-		ActiveRateWindowContext->Token = 0;
-		ActiveRateWindowContext = nullptr;
-	}
-
-	if (RateWindowBeginTask)
-	{
-		RateWindowBeginTask->EndTask();
-		RateWindowBeginTask = nullptr;
-	}
-
-	if (RateWindowEndTask)
-	{
-		RateWindowEndTask->EndTask();
-		RateWindowEndTask = nullptr;
-	}
-
-	if (bRestoreRate && RateWindowLifecycle.IsBound())
-	{
-#if WITH_DEV_AUTOMATION_TESTS
-		const bool bInstanceValid = bTestBypassMontageActiveCheck || FAbilityMontageRateWindowLifecycle::IsCurrentMontageInstance(
-			BoundAnimInstance.Get(), ActiveEntryMontage.Get(), ActiveMontageInstanceID);
-#else
-		const bool bInstanceValid = FAbilityMontageRateWindowLifecycle::IsCurrentMontageInstance(
-			BoundAnimInstance.Get(), ActiveEntryMontage.Get(), ActiveMontageInstanceID);
-#endif
-
-		if (bInstanceValid)
-		{
-			RateWindowLifecycle.RestoreAndClear();
-		}
-		else
-		{
-			RateWindowLifecycle = FAbilityMontageRateWindowLifecycle();
-		}
-	}
-	else
-	{
-		RateWindowLifecycle = FAbilityMontageRateWindowLifecycle();
-	}
-
-#if WITH_DEV_AUTOMATION_TESTS
-	RateWindowLifecycle.SetTestBypassMontageActiveCheck(bTestBypassMontageActiveCheck);
-#endif
-
-	ActiveMontageInstanceID = INDEX_NONE;
+	check(MontageTask);
+	return MontageTask->GetRateWindowLifecycle_Mutable();
 }
-
-void ULightAttackAbility::SetDodgeCancelable(bool bShouldBeCancelable)
-{
-	if (bShouldBeCancelable)
-	{
-		if (bEndAbilityRequested || bDodgeCancelable)
-		{
-			return;
-		}
-
-		UAbilitySystemComponent* AbilitySystemComponent = GetAbilitySystemComponentFromActorInfo();
-		if (!AbilitySystemComponent || !DodgeCancelableStateTag.IsValid() || !DefenseCancelableStateTag.IsValid())
-		{
-			return;
-		}
-
-		AbilitySystemComponent->AddLooseGameplayTag(DodgeCancelableStateTag);
-		AbilitySystemComponent->AddLooseGameplayTag(DefenseCancelableStateTag);
-		bDodgeCancelable = true;
-		return;
-	}
-
-	if (!bDodgeCancelable)
-	{
-		return;
-	}
-
-	if (UAbilitySystemComponent* AbilitySystemComponent = GetAbilitySystemComponentFromActorInfo())
-	{
-		if (DodgeCancelableStateTag.IsValid())
-		{
-			AbilitySystemComponent->RemoveLooseGameplayTag(DodgeCancelableStateTag);
-		}
-		if (DefenseCancelableStateTag.IsValid())
-		{
-			AbilitySystemComponent->RemoveLooseGameplayTag(DefenseCancelableStateTag);
-		}
-	}
-
-	bDodgeCancelable = false;
-}
+#endif
 
 void ULightAttackAbility::OpenTraceWindow(const TArray<FName>& InTraceSourceNames)
 {

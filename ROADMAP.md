@@ -4,11 +4,9 @@
 
 ## Current State
 
-- 最近交付：TODO-03H9-B CancelWindow 托管、两试点迁移与修复已完成代码交付及 Main 复核；最终专项 Automation 和 PIE 获用户确认，核心记录见 ROADMAP-archive 的 TODO-03H9-B 条目。
-- 当前交接：[plan.md](plan.md) 保留 B 的批准契约、修复与收尾记录；本轮提交包含该凭据，下一切片替换前须固定到本次提交版本。B 剩余验收仅维护于 `Debt-03H9-B-RepairValidation`，不重复开启已修复问题。
-- A 的历史交接固定为 `git show 08f4214:plan.md` 第 6 节；Development Editor 编译、专项 Automation 和 PIE 已有用户确认，各自验证时点及剩余项以原记录为准。
-- **03H9-A 总验收仍开放**，仅待 `Debt-03H9-A-ValidationReceipts` 对账；提交不等于全部门禁通过，不重复安排已修复缺陷，也不自动启动后续实现。
-- 已接受顺序：**03H9-A 验收对账 → 03H9-B → 03H9-C → 03C → 03C-B**。03C-A、03A7E、03A4B、03I3、07B14 和 REC 候选仍按各自条件启动，不自动加入前置。
+- 最近交付：TODO-03H9 的 A/B/C 实现、构建/Automation、源码审查修复、用户最终测试及合并资产 readback 已完成，2026-09-14 总验收关闭。Unreal MCP 读回 32 份 GA、15 份相关数据资产、39 份 Montage 和 48 份源动画，闭环 A/B/C 三条资产收据债。固定收据见 ROADMAP-archive 的“TODO-03H9：A/B/C 合并资产 readback 与总验收关闭”条目。
+- 当前交接：[plan.md](plan.md) 保留 C 的最近完成交接，尚未替换，本次与 C 实现一并提交。下一规划入口为 TODO-03H10。A/B 历史契约分别固定为 `git show 08f4214:plan.md`、`git show 931f5de:plan.md`，本次合并验收不改写历史执行时点。
+- 已确认排期：**03H10 StanceBreak 处决机会标识 → 03H11 Small 小幅击退 → 03C → 03C-B**。正式实施前各自冻结最小计划、参数及路径。Big 倍率配置仅按 TODO-03H12 条件开启；其他条件阶段也不自动加入前置。
 - 既有 Content/Config WIP 与各阶段资产收据债保持独立；当前状态不构成干净检出可复现或打包就绪证明。
 
 ## Contents
@@ -27,31 +25,26 @@
 
 ## Active Milestones
 
-### Montage Windows
 
-- [ ] TODO-03H9: Reusable Montage RateWindow And CancelWindow
-  - 目标：项目 GAS 动作采用标准 Montage 播放入口后，配置既有 RateWindow/CancelWindow Notify 即可消费窗口；新动作只声明取消策略，不再复制 Context、Begin/End 监听、实例状态和退出清理。Notify 不绕过 ASC 激活、消耗和阻止规则。
-  - A/B/C 各自冻结 Source/Test 符号、直接依赖、资产 readback 和验证矩阵；A/B 试点通过不代表父阶段完成，C 必须完成适用面迁移与新动作配置验收。
-  - 公共层不按具体 Ability 类名登记或分支；普通新动作不修改公共窗口代码。裸 Montage_Play、Sequencer、无 ASC 动画不自动接管。漏接标准入口或策略冲突须报出可定位错误，不得配置了 Notify 却静默无效。
-  - 复用既有窗口算法和 Notify 类身份，不扩展跨项目插件、网络复制、全局时间膨胀、角色级第二状态机或无关动作。类迁移、Tag/Config/Build.cs 或资产变更须由后续计划明确批准路径和兼容步骤，禁止手改二进制。
+### Combat Experience Before Ranged Enemy
 
-- [ ] TODO-03H9-A: RateWindow Ownership And Standard Playback Entry
-  - 实现/最终 Main 增量审查已完成；PlayActionMontage 托管 RateWindow，SprintAttack/EnemySmallHitReaction 两试点已迁移。冻结合同、真实 ASC/Montage 时间推进验证和完整矩阵见固定交接 `git show 08f4214:plan.md`；核心结果见 ROADMAP-archive.md 的 TODO-03H9-A 归档。
-  - 总验收只引用 `Debt-03H9-A-ValidationReceipts` 的剩余清单与关闭条件，不在此重复维护收据。
+- [ ] TODO-03H10: StanceBreak Execution Opportunity Marker
+  - 已确认目标：敌人进入允许处决的 StanceBreak 状态时显示单一红色标记，退出时消失，表达敌人的破韧处决机会。沿用 GAS 的实际状态/事件，复用现有敌人表现承载；不以 Poise 数值归零、动画计时或 UI 自有布尔副本充当玩法权威。
+  - 提示须在退出 StanceBreak、死亡/待死亡、VictimLocked、销毁/解绑时隐藏；订阅时读取初始状态，避免出生/重新显示时遗漏，多个敌人独立。正式计划核对 Stunned 的真实来源和已确认播放边界，防止无效启动或其他 Stunned 来源误亮。
+  - 当前 FrontExecution 还检查玩家状态、武器、锁定目标、正面角度、距离和目标可用性。默认红标只表示敌人的破韧机会，不等同完整 CanActivate 成功；若要表达“现在可以按键处决”，须在本阶段明确接入现有目标/几何判定，不能另写一套近似规则。先做单一红色图标，不增加闪烁、通用指示器框架或玩法 Tag。
+  - 验收：实际 GAS 进入/退出、启动失败、自然恢复、死亡、处决锁定、连续破韧和多目标清理；用户 readback/PIE 确认图标可读且不残留。新 Widget/材质/蓝图资产路径在正式计划单独批准。
 
-- [ ] TODO-03H9-B: CancelWindow Ownership And Explicit Cancellation Policy
-  - 实现、修复、Main 复核及最终专项 Automation/PIE 已完成；核心结果已归档。总验收只待 `Debt-03H9-B-RepairValidation` 中尚未单独报告的收据，不重复安排代码修复。
-
-- [ ] TODO-03H9-C: Complete Adoption And Configuration-Only Acceptance
-  - 对当前Player/Enemy玩法Montage播放入口及两类窗口消费者做有界采用清单，包含尚未监听RateWindow的动作，避免只迁移已支持者而留下同类缺口。逐项记录播放入口、Rate能力、取消策略及迁移/明确不适用理由；不得以缺少旧实现为不适用理由。收口前所有适用入口使用公共设施，普通新动作遵循同一模板；分批实施可行，未完成项不能隐入后续逐动作TODO。
-  - 保留现有Notify名称/属性与Montage引用兼容，提供一份实际可用的新动作配置范例和检查入口。开发者选标准播放入口、声明取消策略；作者配置Montage窗口与数值即可。验证应定位Ability、Montage和缺失入口/策略冲突，区分故意禁用取消与配置错误；不增加每个具体Ability专属注册表或全项目Editor框架。
-  - 核心验收：用未被公共层识别名称的新最小GAS动作（测试或示例），仅按标准入口和数据配置两类窗口，在真实ASC/动画推进下验证改速恢复、窗口外拒绝、窗口内成功取消、消耗失败保留动作与全退出清理；更换另一Montage后仍通过，不修改公共窗口代码、不增加专属监听。再验证漏接/冲突配置明确失败，并完成现有Player/Enemy受影响回归。
-  - 用户Development Editor编译、Automation、实际Montage readback及代表性PIE，Main Fresh Review通过后才关闭03H9并更新ARCHITECTURE稳定事实；必要发布宏组合检查随新公共类型验证。既有03H7/03H8与H6债务按原关闭条件独立对账，不以迁移成功替代收据。本片结束后进入03C，新远程动作直接采用标准入口。
+- [ ] TODO-03H11: Small Hit Reaction Knockback
+  - 已确认目标：为 Enemy Small 增加短促、可关闭的小幅地面击退，增强轻受击反馈并保持近战连段可接续。范围仅为 Small；Big 保留现有 Montage Root Motion，Launch 保留现有接地 RootMotionKnockdown。不增加 Big 自动回退、Motion Warping 或强制根锁定改造。Player Small 不自动纳入，若需要须在正式计划明确批准。
+  - 位移由现有 GAS 受击生命周期和原生 CMC 能力管理，沿用真实来袭方向快照，胶囊碰撞/地面处理仍由 CMC 负责，不直接逐帧移动 Actor 或 Mesh，不新增通用位移框架。Small 现有不强制取消攻击、不加移动锁的契约保留；正式计划核对导航和攻击并行时序，不为反馈暗改打断等级。
+  - 每段反应只选一个水平位移主来源。优先限定接地且没有其他主导动画 Root Motion/高优先级位移动作时生效；存在冲突时保留 Small 动画并跳过额外击退，具体判定由正式计划基于实际动画/动作组合冻结。不能仅以 Small 自身动画未启用 RM 推定整个角色没有 RM；不默认使用 LaunchCharacter 将地面反馈转为 Falling。
+  - 距离、短时长和衰减可配置，提供零距离关闭；具体数值通过代表性场景试调，不在路线图硬定。连续 Small 默认替换旧击退，不无限累计；旧实例结束不得停止新位移，死亡、Big/Launch、处决、销毁/解绑及其他终止路径撤销自身贡献，不清除其他动作的速度或移动资源。
+  - 验收：真实受击方向、重复命中、零距离、导航/攻击并行、Root Motion 冲突、墙角/坡面/悬崖、升级受击/死亡/处决打断，以及 RateWindow/HitStop 时序。先做有/无击退对照，确认反馈更清楚、不把敌人持续推出下一刀有效范围、不出现足滑/无限推行；补对应 Automation 与用户 readback/PIE。正式实施另冻结调用点、批准路径及最小资产范围。
 
 ### Ranged Enemy
 
 - [ ] TODO-03C: Ranged Enemy v1
-  - 按已接受排期，在 03H9-A/B/C 窗口封装与采用验收后独立规划。已完成前置的历史不再展开；仍开放的 adoption、编译、Automation、Editor/PIE 债务按下方各自阻塞性和关闭条件处理，不自动豁免或扩大前置。FIX2 PIE 债务在远程敌人首次可玩时实测；未接受建议与 fixture 候选不自动延迟本片。
+  - 按用户新增体验排期，在 03H10/03H11 后独立规划；03H9 总验收已关闭。已完成前置的历史不再展开；开放债务按下方各自阻塞性和关闭条件处理，不自动豁免或扩大前置。FIX2 PIE 债务在远程敌人首次可玩时实测；其余未接受建议与 fixture 候选不自动延迟本片。
   - 规划建议：复用现有 Controller 的请求/pending/冷却所有权，保留远程局部距离/LOS 策略；有界扩展 EnemyAttackProfile 并兼容近战默认值，远程 DamageGE 仅取 ProjectileDefinition。接口、校验和资产路径由本片计划冻结，不构成当前实现授权。
   - Reuse the existing immutable 03B projectile runtime and GAS delivery path. Add only enemy ranged Profile/Ability/StateTree timing and an AI-owned target snapshot; enemy projectiles are explicitly authored straight/non-homing by default.
   - Do not create Player Lock-On, global Target Assist, a second projectile hierarchy, or a second damage path.
@@ -117,6 +110,12 @@
 
 ### Optional Gameplay And AI
 
+- [ ] TODO-03H12: Big Hit Reaction Root Motion Scale Configuration (conditional)
+  - 启动条件：用户明确需要在编辑器调节 Big 整体后退位移时开启；其他会话可凭本条定位并制定最小计划。本阶段不自动启动，不作为 03H10/03H11/03C 的前置，也不并入 Small 击退。
+  - 最小方案：在需要调节的 Big Ability 上暴露默认值为 `1.0f` 的根位移平移倍率，供 GA 蓝图默认值编辑，传给现有九参数 `PlayActionMontage` 的 `AnimRootMotionTranslationScale`。倍率不是 Montage 面板属性；仅缩放已有动画根位移，不改变原本节奏/方向，不承诺精确落点或绕过碰撞。没有可提取根位移时不自动回退为代码击退。
+  - 开启时核对 `UEnemyHitReactionAbility`（Enemy Big）、`UPlayerBigHitReactionAbility` 与标准 Task 的真实调用和倍率恢复路径，明确本次需要 Enemy、Player 或双方；只纳入实际需要的消费者及直接测试，冻结精确路径后实施。保留 GAS/Task/CMC 权属及现有取消、RateWindow 和停播契约；不增加工厂参数、通用配置框架、Motion Warping、动画关键帧或强制根锁定改造。
+  - 验收：默认 `1.0f` 保持原行为，非默认倍率真实传入并产生对应根位移；明确有限非负值校验及零倍率语义，验证结束/取消/重激活恢复与新旧实例隔离。完成适用构建和 Automation，用户读回 GA/动画 Root Motion 配置并以 PIE 对照距离、脚步和碰撞表现；资产写入单独批准。尚未触发时保持现有常量即可。
+
 - [ ] TODO-03I3: Player Ranged Targeting And Delivery Contract v1 (conditional)
   - Start only when a concrete Staff/Mage player ability, authored asset route, and player-facing targeting question are accepted. This is a contract/design gate, not permission to invent a Mage implementation or to turn the current Bow path into a universal template.
   - Keep four dimensions explicit and orthogonal: weapon/equipment family (Melee, Bow, Staff, OffHand), attack delivery (contact trace, actor projectile, ground/area effect, beam/line effect), target-selection mode (locked actor, fire-time snapshot with finite tracking, ground point plus authored area shape/extent, route/line, or free direction), and physical input intent (`Primary`, `Aim`, `Guard`, `Parry`, prepared slots).
@@ -177,11 +176,10 @@
 
 ## Known Risks And Validation Debt
 
+
 本节是开放风险和证据缺口的唯一维护位置。条目沿用各阶段记录及其证据时点；本次文档整理不重新审计源码、不核销收据，也不把“未报告”判定为测试失败。旧 fixture/资产描述在相关维护时按真实状态对账，不能据此推断新阶段尚未实现或自动新增修复。
 
-- **Debt-03H9-B-RepairValidation（剩余验收收据）**：最终 ManagedMontageCancelWindow Automation 与 PIE 已由用户分别确认通过，Main 本轮增量 Fresh Review 无 P0–P2；Queued End 和 Segment fixture 失败修复回路已闭环。此前 PlayerMontageRateWindow 六组、ManagedMontageRateWindow、Player.ActionWindows 共 8 项 Success 保留原时点。尚未单独报告的非 Editor Win64 Development 构建、其余计划回归及精确资产 readback 按 plan 验证矩阵保留，不默认为失败、不重复运行已确认项。关闭触发：补齐这些适用收据，或用户明确接受有边界的验收调整。用户已授权文档收尾及源码提交；提交不追认为全矩阵通过，不关闭父阶段，不自动启动 C。
 
-- **Debt-03H9-A-ValidationReceipts（A阶段剩余验证收据）**：Development Editor编译已由用户明确确认，不再列缺失。尚未单独报告：①非Editor Win64 Development构建；②本片相关的PolyQuest.Combat.EnemyStanceBreakRateWindow、PolyQuest.Combat.HitReaction、PolyQuest.Combat.PlayerBigHitReactionWindows、PolyQuest.Player.ActionWindows、PolyQuest.Combat.PlayerMeleeMotionWarping五项回归；③Sprint/EnemySmall实际GA→Montage引用、Small四向选择、Skeleton/Slot、Notify类型/数值/区间及派发模式readback。已报告通过的Player六组、Enemy及Managed保留各自时点，最终授权修复后再次确认的是Managed；不将较早报告写成最终版本全量重跑。关闭触发：用户补充上述适用结果，或明确接受有边界的验收调整并记录其理由。此项维持03H9-A总验收标记开放，不否认已完成的实现/代码复核，也不自动生成修复、重跑或资产修改任务；未确认项不默认为失败。不得据此宣称全门禁、干净资产基线或打包就绪；03H7/H6旧债务独立保留。
 
 - **Debt-03H7-PostRepairValidation（非阻塞PIE收据债）**：03H8验收时用户已确认最终代码Development Editor编译、BigHitReactionWindows、PlayerMontageRateWindow六组、HitReaction及PlayerLaunchReactionRootMotion通过，当前编译/Automation收据已补齐。仅余最终生产回调修复后的Scene01四向取消、连续受击/立即重激活、自然结束/死亡/Falling实测收据；更早PIE不追认为最终版重跑。关闭触发：用户提供上述修复后PIE确认；在此之前不得宣称最终版全门禁或干净可发布基线。资产未改，既有readback仍有效；不阻塞03H8测试修复收尾或03C独立规划，既有H6债务不随本项关闭。
 

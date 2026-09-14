@@ -2,10 +2,11 @@
 
 #if WITH_DEV_AUTOMATION_TESTS
 
+#include <limits>
+
 #include "AbilitySystemComponent.h"
 #include "Abilities/GameplayAbility.h"
 #include "Abilities/GameplayAbilityTypes.h"
-#include "Abilities/Tasks/AbilityTask_PlayMontageAndWait.h"
 #include "AbilitySystem/Tasks/AbilityTask_PlayActionMontage.h"
 #include "AbilitySystem/Abilities/EnemyHitReactionAbility.h"
 #include "AbilitySystem/Abilities/EnemyLaunchReactionAbility.h"
@@ -856,7 +857,7 @@ bool FHitReactionAutomationTest::RunTest(const FString& Parameters)
 
 			// e) Inf Yaw
 			TestFalse(TEXT("Inf Yaw returns false"),
-				FHitReactionImpactResolver::TryBuildLaunchFacingAndVelocity(FVector(1.0f, 0.0f, 0.0f), INFINITY, 450.0f, 550.0f, OutFacingYaw, OutVel));
+				FHitReactionImpactResolver::TryBuildLaunchFacingAndVelocity(FVector(1.0f, 0.0f, 0.0f), std::numeric_limits<float>::infinity(), 450.0f, 550.0f, OutFacingYaw, OutVel));
 			TestEqual(TEXT("Inf Yaw resets OutFacingYaw to 0.0f"), OutFacingYaw, 0.0f);
 			TestTrue(TEXT("Inf Yaw resets OutVelocity to ZeroVector"), OutVel.IsZero());
 
@@ -877,7 +878,7 @@ bool FHitReactionAutomationTest::RunTest(const FString& Parameters)
 			TestTrue(TEXT("NaN HorizontalSpeed resets OutVelocity to ZeroVector"), OutVel.IsZero());
 
 			TestFalse(TEXT("Inf HorizontalSpeed returns false"),
-				FHitReactionImpactResolver::TryBuildLaunchFacingAndVelocity(FVector(1.0f, 0.0f, 0.0f), 0.0f, INFINITY, 550.0f, OutFacingYaw, OutVel));
+				FHitReactionImpactResolver::TryBuildLaunchFacingAndVelocity(FVector(1.0f, 0.0f, 0.0f), 0.0f, std::numeric_limits<float>::infinity(), 550.0f, OutFacingYaw, OutVel));
 			TestEqual(TEXT("Inf HorizontalSpeed resets OutFacingYaw to 0.0f"), OutFacingYaw, 0.0f);
 			TestTrue(TEXT("Inf HorizontalSpeed resets OutVelocity to ZeroVector"), OutVel.IsZero());
 
@@ -898,7 +899,7 @@ bool FHitReactionAutomationTest::RunTest(const FString& Parameters)
 			TestTrue(TEXT("NaN VerticalSpeed resets OutVelocity to ZeroVector"), OutVel.IsZero());
 
 			TestFalse(TEXT("Inf VerticalSpeed returns false"),
-				FHitReactionImpactResolver::TryBuildLaunchFacingAndVelocity(FVector(1.0f, 0.0f, 0.0f), 0.0f, 450.0f, INFINITY, OutFacingYaw, OutVel));
+				FHitReactionImpactResolver::TryBuildLaunchFacingAndVelocity(FVector(1.0f, 0.0f, 0.0f), 0.0f, 450.0f, std::numeric_limits<float>::infinity(), OutFacingYaw, OutVel));
 			TestEqual(TEXT("Inf VerticalSpeed resets OutFacingYaw to 0.0f"), OutFacingYaw, 0.0f);
 			TestTrue(TEXT("Inf VerticalSpeed resets OutVelocity to ZeroVector"), OutVel.IsZero());
 
@@ -1986,7 +1987,7 @@ bool FHitReactionAutomationTest::RunTest(const FString& Parameters)
 				PlayerAbility->SetTestRightSmallHitReactionMontage(DummyRight);
 
 				// 7.1a: Round 1 setup with Task1 (Front montage)
-				UAbilityTask_PlayMontageAndWait* Task1 = UAbilityTask_PlayMontageAndWait::CreatePlayMontageAndWaitProxy(PlayerAbility, NAME_None, DummyFront);
+				UAbilityTask_PlayActionMontage* Task1 = UAbilityTask_PlayActionMontage::PlayActionMontage(PlayerAbility, NAME_None, DummyFront);
 				TestNotNull(TEXT("7.1a: Task1 created"), Task1);
 				if (Task1)
 				{
@@ -2003,7 +2004,7 @@ bool FHitReactionAutomationTest::RunTest(const FString& Parameters)
 					PlayerAbility->TestUnbindTaskCallbacks(Task1);
 					Task1->EndTask();
 
-					UAbilityTask_PlayMontageAndWait* Task2 = UAbilityTask_PlayMontageAndWait::CreatePlayMontageAndWaitProxy(PlayerAbility, NAME_None, DummyFront);
+					UAbilityTask_PlayActionMontage* Task2 = UAbilityTask_PlayActionMontage::PlayActionMontage(PlayerAbility, NAME_None, DummyFront);
 					TestNotNull(TEXT("7.1b: Task2 created"), Task2);
 					if (Task2)
 					{

@@ -4,6 +4,72 @@
 #include "Animation/AnimMontage.h"
 #include "UObject/UnrealType.h"
 
+#if WITH_DEV_AUTOMATION_TESTS
+#include "AbilitySystemComponent.h"
+#include "AbilitySystem/Abilities/EnemyStanceBreakAbility.h"
+#include "AbilitySystem/CharacterAttributeSet.h"
+#include "Character/Enemy/EnemyCharacter.h"
+#include "Components/SkeletalMeshComponent.h"
+#include "Animation/Skeleton.h"
+#include "Animation/AnimSequence.h"
+#if WITH_EDITOR
+#include "Animation/AnimData/IAnimationDataController.h"
+#endif
+
+FGameplayAbilitySpecHandle FManagedMontageTestHelpers::ActivateExecutionStanceBreak(AEnemyCharacter* Enemy)
+{
+#if WITH_EDITOR
+	UAbilitySystemComponent* ASC = Enemy ? Enemy->GetAbilitySystemComponent() : nullptr;
+	USkeletalMeshComponent* Mesh = Enemy ? Enemy->GetMesh() : nullptr;
+	if (!ASC || !Mesh) return {};
+	UAnimInstance* Anim = Mesh->GetAnimInstance();
+	if (!Anim)
+	{
+		Anim = NewObject<UAnimInstance>(Mesh);
+		Anim->InitializeMontageOnly();
+		Mesh->AnimScriptInstance = Anim;
+	}
+	// These execution fixtures own their in-memory skeletons. Preserve an existing
+	// AnimInstance so subsequent victim presentation keeps the same animation owner.
+	USkeleton* Skeleton = Anim->CurrentSkeleton;
+	if (!Skeleton) Skeleton = NewObject<USkeleton>(Enemy);
+	if (Skeleton->GetReferenceSkeleton().GetNum() == 0)
+	{
+		FReferenceSkeletonModifier Modifier(Skeleton);
+		Modifier.Add(FMeshBoneInfo(TEXT("root"), TEXT("root"), INDEX_NONE), FTransform::Identity);
+	}
+	Anim->CurrentSkeleton = Skeleton;
+	UAnimSequence* Sequence = NewObject<UAnimSequence>(Enemy);
+	Sequence->SetSkeleton(Skeleton);
+	IAnimationDataController& Controller = Sequence->GetController();
+	Controller.InitializeModel();
+	{
+		IAnimationDataController::FScopedBracket Bracket(Controller, FText::FromString(TEXT("Execution stance prerequisite")), false);
+		Controller.SetFrameRate(FFrameRate(30, 1), false);
+		Controller.SetNumberOfFrames(FFrameNumber(30), false);
+		const FName Root = Skeleton->GetReferenceSkeleton().GetBoneName(0);
+		Controller.AddBoneCurve(Root, false);
+		TArray<FVector3f> Positions; Positions.Init(FVector3f::ZeroVector, 31);
+		TArray<FQuat4f> Rotations; Rotations.Init(FQuat4f::Identity, 31);
+		TArray<FVector3f> Scales; Scales.Init(FVector3f::OneVector, 31);
+		Controller.SetBoneTrackKeys(Root, Positions, Rotations, Scales, false);
+		Controller.NotifyPopulated();
+	}
+	Sequence->WaitOnExistingCompression();
+	UAnimMontage* Montage = UAnimMontage::CreateSlotAnimationAsDynamicMontage(Sequence, TEXT("DefaultSlot"), 0.0f, 0.0f);
+	if (!Montage) return {};
+	ASC->RefreshAbilityActorInfo();
+	const FGameplayAbilitySpecHandle Handle = ASC->GiveAbility(FGameplayAbilitySpec(UEnemyStanceBreakAbility::StaticClass(), 1, INDEX_NONE, Enemy));
+	UEnemyStanceBreakAbility* Ability = Cast<UEnemyStanceBreakAbility>(ASC->FindAbilitySpecFromHandle(Handle)->GetPrimaryInstance());
+	if (Ability) Ability->SetTestStanceBreakMontage(Montage);
+	ASC->SetNumericAttributeBase(UCharacterAttributeSet::GetPoiseAttribute(), 0.0f);
+	if (Ability && ASC->TryActivateAbility(Handle) && Ability->IsActive()) return Handle;
+	ASC->ClearAbility(Handle);
+#endif
+	return {};
+}
+#endif
+
 FGameplayAbilityTargetDataHandle FManagedMontageTestHelpers::MakeRateWindowTargetData(UAnimInstance* AnimInstance, int32 MontageInstanceID)
 {
 	FGameplayAbilityTargetData_MontageRateWindowSource* Data = new FGameplayAbilityTargetData_MontageRateWindowSource();
@@ -81,8 +147,10 @@ bool FManagedMontageTestHelpers::ValidateCancelWindowConfiguration(
 	const UAbilityTask_PlayActionMontage* ActualTask,
 	EActionMontageCancelPolicy ExpectedPolicy,
 	const TArray<const UGameplayAbility*>& TargetAbilities,
-	FString& OutDiagnosticReason)
+	FString& OutDiagnosticReason,
+	const FGameplayTagContainer& RequiredSourceTags)
 {
+	#if WITH_DEV_AUTOMATION_TESTS
 	OutDiagnosticReason.Reset();
 	const FString Context = FString::Printf(TEXT("Ability '%s', Montage '%s'"),
 		*GetNameSafe(SourceAbility), *GetNameSafe(Montage));
@@ -92,20 +160,22 @@ bool FManagedMontageTestHelpers::ValidateCancelWindowConfiguration(
 		return false;
 	};
 	if (!IsValid(SourceAbility)) return Fail(TEXT("source ability is missing"));
-	if (ExpectedPolicy == EActionMontageCancelPolicy::None)
-	{
-		return !ActualTask || ActualTask->GetCancelPolicy() == ExpectedPolicy
-			? true : Fail(TEXT("cancel policy mismatch: expected None"));
-	}
-	if (!ActualTask) return Fail(TEXT("missing standard montage Task"));
+	if (!IsValid(ActualTask)) return Fail(TEXT("missing standard montage Task"));
+	if (!IsValid(Montage)) return Fail(TEXT("missing montage"));
+	if (ActualTask->GetMontageToPlay() != Montage || ActualTask->GetTestOwningAbility() != SourceAbility)
+		return Fail(TEXT("standard Task source/montage mismatch"));
 	if (ActualTask->GetCancelPolicy() != ExpectedPolicy) return Fail(TEXT("cancel policy mismatch"));
-	if (!Montage) return Fail(TEXT("missing montage"));
+	if (ExpectedPolicy == EActionMontageCancelPolicy::None) return true;
 
 	const FGameplayTag DodgeMarker = FGameplayTag::RequestGameplayTag(TEXT("Ability.Action.CancelableBy.Dodge"));
 	const FGameplayTag DefenseMarker = FGameplayTag::RequestGameplayTag(TEXT("Ability.Action.CancelableBy.Defense"));
-	if (!SourceAbility->AbilityTags.HasTagExact(DodgeMarker))
+	// Explicit legacy cancellation routes declare their required source tags at the call site;
+	// the corresponding real GAS test proves the target's post-Commit cancellation behavior.
+	if (!RequiredSourceTags.IsEmpty() && !SourceAbility->AbilityTags.HasAllExact(RequiredSourceTags))
+		return Fail(TEXT("missing declared cancellation source tags: ") + RequiredSourceTags.ToStringSimple());
+	if (RequiredSourceTags.IsEmpty() && !SourceAbility->AbilityTags.HasTagExact(DodgeMarker))
 		return Fail(TEXT("missing Ability.Action.CancelableBy.Dodge"));
-	if (ExpectedPolicy == EActionMontageCancelPolicy::DodgeAndDefense && !SourceAbility->AbilityTags.HasTagExact(DefenseMarker))
+	if (RequiredSourceTags.IsEmpty() && ExpectedPolicy == EActionMontageCancelPolicy::DodgeAndDefense && !SourceAbility->AbilityTags.HasTagExact(DefenseMarker))
 		return Fail(TEXT("missing Ability.Action.CancelableBy.Defense"));
 
 	const auto HasCancelNotify = [](const UAnimSequenceBase* Animation)
@@ -153,6 +223,68 @@ bool FManagedMontageTestHelpers::ValidateCancelWindowConfiguration(
 			return Fail(TargetName + TEXT("CancelAbilitiesWithTag cancels source before Commit"));
 	}
 	return true;
+	#else
+	OutDiagnosticReason = TEXT("Configuration inspection requires automation test support.");
+	return false;
+	#endif
+}
+
+UTestConfigurationOnlyActionAbility::UTestConfigurationOnlyActionAbility()
+{
+	InstancingPolicy = EGameplayAbilityInstancingPolicy::InstancedPerActor;
+	AbilityTags.AddTag(FGameplayTag::RequestGameplayTag(TEXT("Ability.Action.CancelableBy.Dodge")));
+	AbilityTags.AddTag(FGameplayTag::RequestGameplayTag(TEXT("Ability.Action.CancelableBy.Defense")));
+	ActivationOwnedTags.AddTag(FGameplayTag::RequestGameplayTag(TEXT("State.Action.Attacking")));
+}
+
+void UTestConfigurationOnlyActionAbility::ActivateAbility(const FGameplayAbilitySpecHandle Handle,
+	const FGameplayAbilityActorInfo* ActorInfo, const FGameplayAbilityActivationInfo ActivationInfo,
+	const FGameplayEventData* TriggerEventData)
+{
+	if (!CommitAbility(Handle, ActorInfo, ActivationInfo))
+	{
+		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
+		return;
+	}
+	MontageTask = UAbilityTask_PlayActionMontage::PlayActionMontage(this, NAME_None, Montage, 1.0f, NAME_None,
+		/*AnimRootMotionTranslationScale=*/1.0f, /*StartTimeSeconds=*/0.0f, false, /*CancelPolicy=*/CancelPolicy);
+	if (!MontageTask) { OnCancelled(); return; }
+	UAbilityTask_PlayActionMontage* const CreatedTask = MontageTask;
+	CreatedTask->OnCompleted.AddDynamic(this, &UTestConfigurationOnlyActionAbility::OnCompleted);
+	CreatedTask->OnInterrupted.AddDynamic(this, &UTestConfigurationOnlyActionAbility::OnCancelled);
+	CreatedTask->OnCancelled.AddDynamic(this, &UTestConfigurationOnlyActionAbility::OnCancelled);
+	CreatedTask->OnFailed.AddDynamic(this, &UTestConfigurationOnlyActionAbility::OnCancelled);
+	CreatedTask->ReadyForActivation();
+	if (!IsActive() || MontageTask != CreatedTask) return;
+	if (!CreatedTask->IsActive()) OnCancelled();
+}
+
+void UTestConfigurationOnlyActionAbility::EndAbility(const FGameplayAbilitySpecHandle Handle,
+	const FGameplayAbilityActorInfo* ActorInfo, const FGameplayAbilityActivationInfo ActivationInfo,
+	bool bReplicateEndAbility, bool bWasCancelled)
+{
+	if (!IsActive()) return;
+	if (MontageTask)
+	{
+		UAbilityTask_PlayActionMontage* EndingTask = MontageTask;
+		MontageTask = nullptr;
+		EndingTask->OnCompleted.RemoveAll(this);
+		EndingTask->OnInterrupted.RemoveAll(this);
+		EndingTask->OnCancelled.RemoveAll(this);
+		EndingTask->OnFailed.RemoveAll(this);
+		EndingTask->EndTask();
+	}
+	Super::EndAbility(Handle, ActorInfo, ActivationInfo, bReplicateEndAbility, bWasCancelled);
+}
+
+void UTestConfigurationOnlyActionAbility::OnCompleted()
+{
+	EndAbility(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, true, false);
+}
+
+void UTestConfigurationOnlyActionAbility::OnCancelled()
+{
+	EndAbility(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, true, true);
 }
 
 UTestManagedMontageAbility::UTestManagedMontageAbility()

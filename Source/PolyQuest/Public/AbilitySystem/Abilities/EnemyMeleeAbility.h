@@ -3,40 +3,16 @@
 #include "CoreMinimal.h"
 #include "Abilities/GameplayAbility.h"
 #include "Abilities/GameplayAbilityTypes.h"
-#include "AbilitySystem/Abilities/MontageRateWindowLifecycle.h"
 #include "GameplayTagContainer.h"
 #include "EnemyMeleeAbility.generated.h"
 
 class UAbilityTask_MeleeTraceWindow;
-class UAbilityTask_PlayMontageAndWait;
+class UAbilityTask_PlayActionMontage;
 class UAbilityTask_WaitGameplayEvent;
 class UAnimInstance;
 class UAnimMontage;
 class UEnemyAttackProfile;
 class UGameplayEffect;
-class UEnemyMeleeAbility;
-
-/**
- * Transient context for per-activation RateWindow event isolation.
- */
-UCLASS(Transient)
-class POLYQUEST_API UEnemyMeleeRateWindowContext : public UObject
-{
-	GENERATED_BODY()
-
-public:
-	UPROPERTY(Transient)
-	TWeakObjectPtr<UEnemyMeleeAbility> OwningAbility;
-
-	uint32 Token = 0;
-
-	UFUNCTION()
-	void OnRateWindowBegin(FGameplayEventData Payload);
-
-	UFUNCTION()
-	void OnRateWindowEnd(FGameplayEventData Payload);
-};
-
 /**
  * One server-authoritative enemy melee action. It owns only montage timing,
  * trace-window delivery, and teardown; targeting remains on the controller.
@@ -71,18 +47,11 @@ public:
 
 #if WITH_DEV_AUTOMATION_TESTS
 	const FGameplayTagContainer& GetTestActivationOwnedTags() const { return ActivationOwnedTags; }
-	const FGameplayTag& GetTestRateWindowBeginEventTag() const { return RateWindowBeginEventTag; }
-	const FGameplayTag& GetTestRateWindowEndEventTag() const { return RateWindowEndEventTag; }
-	const FAbilityMontageRateWindowLifecycle& GetTestRateWindowLifecycle() const { return RateWindowLifecycle; }
-	FAbilityMontageRateWindowLifecycle& GetTestRateWindowLifecycle_Mutable() { return RateWindowLifecycle; }
+	UAbilityTask_PlayActionMontage* GetTestMontageTask() const { return MontageTask.Get(); }
 	int32 GetTestActiveMontageInstanceID() const { return ActiveMontageInstanceID; }
-	void SetTestActiveMontageInstanceID(int32 InID) { ActiveMontageInstanceID = InID; }
-	uint32 GetTestCurrentActivationToken() const { return CurrentActivationToken; }
-	UEnemyMeleeRateWindowContext* GetTestActiveRateWindowContext() const { return ActiveRateWindowContext.Get(); }
 	void SetTestBypassMontageActiveCheck(bool bBypass)
 	{
 		bTestBypassMontageActiveCheck = bBypass;
-		RateWindowLifecycle.SetTestBypassMontageActiveCheck(bBypass);
 	}
 	bool GetTestBypassMontageActiveCheck() const { return bTestBypassMontageActiveCheck; }
 	void SetTestAbilityActive(bool bInActive) { bIsActive = bInActive; }
@@ -90,7 +59,6 @@ public:
 	{
 		SetCurrentActorInfo(InHandle, InActorInfo);
 	}
-	void TestClearRateWindow() { ClearRateWindow(true); }
 #endif
 
 private:
@@ -98,7 +66,7 @@ private:
 	TObjectPtr<const UEnemyAttackProfile> ActiveAttackProfile;
 
 	UPROPERTY(Transient)
-	TObjectPtr<UAbilityTask_PlayMontageAndWait> MontageTask;
+	TObjectPtr<UAbilityTask_PlayActionMontage> MontageTask;
 
 	UPROPERTY(Transient)
 	TObjectPtr<UAbilityTask_WaitGameplayEvent> TraceWindowBeginTask;
@@ -113,15 +81,6 @@ private:
 	TObjectPtr<UAbilityTask_WaitGameplayEvent> HyperArmorEndTask;
 
 	UPROPERTY(Transient)
-	TObjectPtr<UAbilityTask_WaitGameplayEvent> RateWindowBeginTask;
-
-	UPROPERTY(Transient)
-	TObjectPtr<UAbilityTask_WaitGameplayEvent> RateWindowEndTask;
-
-	UPROPERTY(Transient)
-	TObjectPtr<UEnemyMeleeRateWindowContext> ActiveRateWindowContext;
-
-	UPROPERTY(Transient)
 	TObjectPtr<UAbilityTask_MeleeTraceWindow> TraceWindowTask;
 
 	UPROPERTY(Transient)
@@ -133,8 +92,6 @@ private:
 	UPROPERTY(Transient)
 	TSubclassOf<UGameplayEffect> ActiveDamageGameplayEffectClass;
 
-	FAbilityMontageRateWindowLifecycle RateWindowLifecycle;
-
 	FGameplayTag EnemyMeleeAbilityTag;
 	FGameplayTag AttackingStateTag;
 	FGameplayTag HitReactingStateTag;
@@ -143,13 +100,10 @@ private:
 	FGameplayTag HyperArmorStateTag;
 	FGameplayTag HyperArmorBeginEventTag;
 	FGameplayTag HyperArmorEndEventTag;
-	FGameplayTag RateWindowBeginEventTag;
-	FGameplayTag RateWindowEndEventTag;
 	FGameplayTag TeardownOnUnpossessTag;
 	FGameplayTag FacingBlockedStateTag;
 	float ActiveCooldownAfterAttack = 0.0f;
 	float ActiveGuardStaminaDamage = 0.0f;
-	uint32 CurrentActivationToken = 0;
 	int32 ActiveMontageInstanceID = INDEX_NONE;
 	bool bAttackStarted = false;
 	bool bHyperArmorActive = false;
@@ -174,10 +128,6 @@ private:
 	UFUNCTION()
 	void OnHyperArmorEnd(FGameplayEventData Payload);
 
-	void OnRateWindowBegin(const FGameplayEventData& Payload);
-	void OnRateWindowEnd(const FGameplayEventData& Payload);
-	void ClearRateWindow(bool bRestoreRate);
-
 	bool ValidateActivationSetup(const FGameplayAbilityActorInfo* ActorInfo) const;
 	bool IsGameplayEventFromActiveMontage(const FGameplayEventData& Payload) const;
 	void EndFromMontage(bool bWasCancelled);
@@ -186,5 +136,4 @@ private:
 
 	TWeakObjectPtr<const class UAnimNotifyState_AttackTraceWindow> ActiveTraceNotifyState;
 
-	friend class UEnemyMeleeRateWindowContext;
 };

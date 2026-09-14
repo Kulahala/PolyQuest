@@ -6,7 +6,7 @@
 #include "GameplayTagContainer.h"
 #include "PlayerGuardBreakAbility.generated.h"
 
-class UAbilityTask_PlayMontageAndWait;
+class UAbilityTask_PlayActionMontage;
 class UAnimInstance;
 class UAnimMontage;
 
@@ -51,13 +51,15 @@ private:
 	TObjectPtr<UAnimMontage> GuardBreakMontage;
 
 	UPROPERTY(Transient)
-	TObjectPtr<UAbilityTask_PlayMontageAndWait> MontageTask;
+	TObjectPtr<UAbilityTask_PlayActionMontage> MontageTask;
 
 	UPROPERTY(Transient)
 	TObjectPtr<UAnimInstance> BoundAnimInstance;
 
 	UPROPERTY(Transient)
 	TObjectPtr<UAnimMontage> ActiveMontage;
+
+	int32 ActiveMontageInstanceID = INDEX_NONE;
 
 	FGameplayTag GuardBreakAbilityTag;
 	FGameplayTag GuardBreakEventTag;

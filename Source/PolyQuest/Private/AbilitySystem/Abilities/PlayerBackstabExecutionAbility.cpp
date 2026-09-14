@@ -1,6 +1,6 @@
 #include "AbilitySystem/Abilities/PlayerBackstabExecutionAbility.h"
 
-#include "Abilities/Tasks/AbilityTask_PlayMontageAndWait.h"
+#include "AbilitySystem/Tasks/AbilityTask_PlayActionMontage.h"
 #include "Abilities/Tasks/AbilityTask_WaitGameplayEvent.h"
 #include "AbilitySystem/Abilities/EnemyStanceBreakAbility.h"
 #include "AbilitySystem/Abilities/EnemyVictimExecutionAbility.h"
@@ -708,9 +708,11 @@ void UPlayerBackstabExecutionAbility::ActivateAbility(
 	// 3. Create Montage, Hit Event, VictimStart tasks
 	WaitVictimStartEventTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, VictimStartTag, nullptr, false, false);
 	WaitHitEventTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, HitEventTag, nullptr, false, true);
-	MontageTask = UAbilityTask_PlayMontageAndWait::CreatePlayMontageAndWaitProxy(this, NAME_None, ActiveExecutionMontage, 1.0f);
+	MontageTask = UAbilityTask_PlayActionMontage::PlayActionMontage(this, NAME_None, ActiveExecutionMontage,
+		1.0f, NAME_None, /*AnimRootMotionTranslationScale=*/1.0f, /*StartTimeSeconds=*/0.0f,
+		/*bAllowInterruptAfterBlendOut=*/false, /*CancelPolicy=*/EActionMontageCancelPolicy::None);
 
-	if (!WaitVictimStartEventTask || !WaitHitEventTask || !MontageTask)
+	if (!WaitVictimStartEventTask || !WaitHitEventTask || !MontageTask || !MontageTask->SetOverrideBlendOutTime(0.2f))
 	{
 		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
 		return;
@@ -722,6 +724,7 @@ void UPlayerBackstabExecutionAbility::ActivateAbility(
 	MontageTask->OnBlendOut.AddDynamic(ActiveContext.Get(), &UPlayerBackstabExecutionContext::OnMontageBlendOut);
 	MontageTask->OnInterrupted.AddDynamic(ActiveContext.Get(), &UPlayerBackstabExecutionContext::OnMontageInterrupted);
 	MontageTask->OnCancelled.AddDynamic(ActiveContext.Get(), &UPlayerBackstabExecutionContext::OnMontageCancelled);
+	MontageTask->OnFailed.AddDynamic(ActiveContext.Get(), &UPlayerBackstabExecutionContext::OnMontageCancelled);
 
 	// 4. Activate VictimStart & canonical Hit listener tasks first
 	WaitVictimStartEventTask->ReadyForActivation();
@@ -774,14 +777,23 @@ void UPlayerBackstabExecutionAbility::ActivateAbility(
 	}
 #endif
 
-	MontageTask->ReadyForActivation();
+	UAbilityTask_PlayActionMontage* const ActivatingTask = MontageTask;
+	ActivatingTask->ReadyForActivation();
+	if (!IsActive() || bEndAbilityInProgress || CurrentActivationToken != ActivationToken || MontageTask != ActivatingTask)
+	{
+		return;
+	}
 #if WITH_DEV_AUTOMATION_TESTS
 	if (bTestEndAbilityDuringTaskReady && IsActive())
 	{
 		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
 	}
 #endif
-	if (!IsActive() || !ActiveExecutionContext || !ActiveExecutionContext->IsCurrent(this, ActivationToken) || !MontageTask)
+	if (!IsActive() || bEndAbilityInProgress || CurrentActivationToken != ActivationToken || MontageTask != ActivatingTask)
+	{
+		return;
+	}
+	if (!ActiveExecutionContext || !ActiveExecutionContext->IsCurrent(this, ActivationToken) || !ActivatingTask->IsActive())
 	{
 		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
 		return;
@@ -1192,8 +1204,6 @@ void UPlayerBackstabExecutionAbility::EndAbility(
 
 	bEndAbilityInProgress = true;
 
-	APlayerCharacter* PlayerCharacter = Cast<APlayerCharacter>(ActorInfo ? ActorInfo->AvatarActor.Get() : nullptr);
-
 	// 1. Fallback release to victim if not already sent
 	if (ActiveExecutionContext && !ActiveExecutionContext->IsReleaseSent())
 	{
@@ -1236,17 +1246,6 @@ void UPlayerBackstabExecutionAbility::EndAbility(
 	{
 		MontageTask->EndTask();
 		MontageTask = nullptr;
-	}
-
-	if (PlayerCharacter)
-	{
-		if (UAnimInstance* AnimInstance = PlayerCharacter->GetMesh() ? PlayerCharacter->GetMesh()->GetAnimInstance() : nullptr)
-		{
-			if (ActiveExecutionMontage && AnimInstance->Montage_IsActive(ActiveExecutionMontage))
-			{
-				AnimInstance->Montage_Stop(0.2f, ActiveExecutionMontage);
-			}
-		}
 	}
 
 	ReservedTarget = nullptr;

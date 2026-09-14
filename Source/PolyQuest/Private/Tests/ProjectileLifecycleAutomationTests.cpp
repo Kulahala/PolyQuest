@@ -2,6 +2,8 @@
 
 #if WITH_DEV_AUTOMATION_TESTS
 
+#include <limits>
+
 #include "AbilitySystemComponent.h"
 #include "GameplayAbilitySpec.h"
 #include "Abilities/GameplayAbility.h"
@@ -111,7 +113,7 @@ bool FProjectileLifecycleAutomationTest::RunTest(const FString& Parameters)
 		ValidProjDef->InitialSpeed = NAN;
 		TestFalse(TEXT("ProjectileDefinition rejects NaN InitialSpeed"), ValidProjDef->IsValidProjectileDefinition(Reason));
 
-		ValidProjDef->InitialSpeed = INFINITY;
+		ValidProjDef->InitialSpeed = std::numeric_limits<float>::infinity();
 		TestFalse(TEXT("ProjectileDefinition rejects +INF InitialSpeed"), ValidProjDef->IsValidProjectileDefinition(Reason));
 
 		ValidProjDef->InitialSpeed = 3000.0f;

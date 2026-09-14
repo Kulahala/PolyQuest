@@ -3,37 +3,15 @@
 #include "CoreMinimal.h"
 #include "Abilities/GameplayAbility.h"
 #include "GameplayTagContainer.h"
-#include "AbilitySystem/Abilities/MontageRateWindowLifecycle.h"
 #include "EnemyVictimExecutionAbility.generated.h"
 
 class AEnemyCharacter;
-class UAbilityTask_PlayMontageAndWait;
+class UAbilityTask_PlayActionMontage;
 class UAbilityTask_WaitGameplayEvent;
 class UAnimInstance;
 class UAnimMontage;
 class UExecutionLockContext;
 class UEnemyVictimExecutionAbility;
-
-/**
- * Context object bridging RateWindow event delegates to UEnemyVictimExecutionAbility with token validation.
- */
-UCLASS(Transient)
-class POLYQUEST_API UEnemyVictimExecutionRateWindowContext : public UObject
-{
-	GENERATED_BODY()
-
-public:
-	UPROPERTY(Transient)
-	TWeakObjectPtr<UEnemyVictimExecutionAbility> OwningAbility;
-
-	uint32 Token = 0;
-
-	UFUNCTION()
-	void OnRateWindowBegin(FGameplayEventData Payload);
-
-	UFUNCTION()
-	void OnRateWindowEnd(FGameplayEventData Payload);
-};
 
 /**
  * Server-authoritative victim execution ability for enemies.
@@ -44,8 +22,6 @@ UCLASS()
 class POLYQUEST_API UEnemyVictimExecutionAbility : public UGameplayAbility
 {
 	GENERATED_BODY()
-
-	friend class UEnemyVictimExecutionRateWindowContext;
 
 public:
 	UEnemyVictimExecutionAbility();
@@ -99,7 +75,7 @@ public:
 	}
 	UAnimMontage* GetTestActiveVictimMontage() const { return ActiveVictimMontage.Get(); }
 	UAnimMontage* GetTestPendingVictimMontage() const { return PendingVictimMontage.Get(); }
-	UAbilityTask_PlayMontageAndWait* GetTestVictimMontageTask() const { return VictimMontageTask.Get(); }
+	UAbilityTask_PlayActionMontage* GetTestVictimMontageTask() const { return VictimMontageTask.Get(); }
 	bool IsTestVictimPresentationStarted() const { return bVictimPresentationStarted; }
 	void TestTriggerVictimStartEvent(const FGameplayEventData& Payload) { OnVictimStartReceived(Payload); }
 	void SetTestInvalidateWaitVictimStartTaskAfterReady(bool bInvalidate);
@@ -116,15 +92,9 @@ public:
 	void SetTestBypassMontageActiveCheck(bool bBypass)
 	{
 		bTestBypassMontageActiveCheck = bBypass;
-		RateWindowLifecycle.SetTestBypassMontageActiveCheck(bBypass);
 	}
 	bool GetTestBypassMontageActiveCheck() const { return bTestBypassMontageActiveCheck; }
-	const FGameplayTag& GetTestRateWindowBeginEventTag() const { return RateWindowBeginEventTag; }
-	const FGameplayTag& GetTestRateWindowEndEventTag() const { return RateWindowEndEventTag; }
-	const FAbilityMontageRateWindowLifecycle& GetTestRateWindowLifecycle() const { return RateWindowLifecycle; }
-	FAbilityMontageRateWindowLifecycle& GetTestRateWindowLifecycle_Mutable() { return RateWindowLifecycle; }
 	uint32 GetTestCurrentActivationToken() const { return CurrentActivationToken; }
-	UEnemyVictimExecutionRateWindowContext* GetTestActiveRateWindowContext() const { return ActiveRateWindowContext.Get(); }
 	void SetTestBoundAnimInstance(UAnimInstance* InAnimInstance) { BoundAnimInstance = InAnimInstance; }
 	UAnimInstance* GetTestBoundAnimInstance() const { return BoundAnimInstance.Get(); }
 	void SetTestCancelDuringStartupMovementMode(bool bCancel) { bTestCancelDuringStartupMovementMode = bCancel; }
@@ -197,6 +167,9 @@ private:
 	void OnVictimMontageCancelled();
 
 	UFUNCTION()
+	void OnVictimMontageFailed();
+
+	UFUNCTION()
 	void HandleOnMontageStarted(UAnimMontage* Montage);
 
 	UFUNCTION()
@@ -206,14 +179,6 @@ private:
 		uint8 PreviousCustomMode);
 
 	void StopVictimMontagePresentation(bool bIsNaturalCompletion);
-
-	UFUNCTION()
-	void OnRateWindowBegin(FGameplayEventData Payload);
-
-	UFUNCTION()
-	void OnRateWindowEnd(FGameplayEventData Payload);
-
-	void ClearRateWindow(bool bRestoreRate);
 
 	bool ValidateExecutionRequest(
 		const FGameplayEventData* TriggerEventData,
@@ -230,18 +195,7 @@ private:
 	TObjectPtr<UAbilityTask_WaitGameplayEvent> WaitVictimStartTask;
 
 	UPROPERTY(Transient)
-	TObjectPtr<UAbilityTask_PlayMontageAndWait> VictimMontageTask;
-
-	UPROPERTY(Transient)
-	TObjectPtr<UAbilityTask_WaitGameplayEvent> RateWindowBeginTask;
-
-	UPROPERTY(Transient)
-	TObjectPtr<UAbilityTask_WaitGameplayEvent> RateWindowEndTask;
-
-	UPROPERTY(Transient)
-	TObjectPtr<UEnemyVictimExecutionRateWindowContext> ActiveRateWindowContext;
-
-	FAbilityMontageRateWindowLifecycle RateWindowLifecycle;
+	TObjectPtr<UAbilityTask_PlayActionMontage> VictimMontageTask;
 
 	UPROPERTY(Transient)
 	TObjectPtr<UAnimMontage> PendingVictimMontage;
@@ -266,8 +220,6 @@ private:
 	FGameplayTag BlockMovementTag;
 	FGameplayTag BlockJumpTag;
 	FGameplayTag TeardownOnUnpossessTag;
-	FGameplayTag RateWindowBeginEventTag;
-	FGameplayTag RateWindowEndEventTag;
 
 	uint32 CurrentActivationToken = 0;
 

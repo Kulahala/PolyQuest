@@ -4,6 +4,8 @@
 
 #if WITH_DEV_AUTOMATION_TESTS
 
+#include <limits>
+
 #include "Combat/Execution/ExecutionSnapAlignment.h"
 #include "Combat/Equipment/MeleeWeaponDefinition.h"
 #include "AbilitySystem/Abilities/PrimaryAttackAbility.h"
@@ -26,7 +28,7 @@ bool FExecutionSnapAlignmentAutomationTest::RunTest(const FString& Parameters)
 		TestFalse(TEXT("0.0f is invalid snap distance"), FExecutionSnapAlignment::IsSnapDistanceValid(0.0f));
 		TestFalse(TEXT("-10.0f is invalid snap distance"), FExecutionSnapAlignment::IsSnapDistanceValid(-10.0f));
 		TestFalse(TEXT("NaN is invalid snap distance"), FExecutionSnapAlignment::IsSnapDistanceValid(NAN));
-		TestFalse(TEXT("Infinity is invalid snap distance"), FExecutionSnapAlignment::IsSnapDistanceValid(INFINITY));
+		TestFalse(TEXT("Infinity is invalid snap distance"), FExecutionSnapAlignment::IsSnapDistanceValid(std::numeric_limits<float>::infinity()));
 	}
 
 	// =========================================================================
@@ -201,7 +203,7 @@ bool FExecutionSnapAlignmentAutomationTest::RunTest(const FString& Parameters)
 		TestEqual(TEXT("NaN Min failure reason"), Reason, FString(TEXT("Execution distance values must be finite numbers.")));
 
 		TestFalse(TEXT("Inf Max is rejected"),
-			FExecutionSnapAlignment::IsExecutionDistanceRangeValid(0.0f, INFINITY, 190.0f, &Reason));
+			FExecutionSnapAlignment::IsExecutionDistanceRangeValid(0.0f, std::numeric_limits<float>::infinity(), 190.0f, &Reason));
 		TestEqual(TEXT("Inf Max failure reason"), Reason, FString(TEXT("Execution distance values must be finite numbers.")));
 
 		TestFalse(TEXT("NaN Snap is rejected"),

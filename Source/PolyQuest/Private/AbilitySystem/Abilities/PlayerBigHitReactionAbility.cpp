@@ -1,8 +1,6 @@
 #include "AbilitySystem/Abilities/PlayerBigHitReactionAbility.h"
 
-#include "Abilities/Tasks/AbilityTask_PlayMontageAndWait.h"
-#include "Abilities/Tasks/AbilityTask_WaitGameplayEvent.h"
-#include "AbilitySystem/Abilities/MontageRateWindowBinding.h"
+#include "AbilitySystem/Tasks/AbilityTask_PlayActionMontage.h"
 #include "AbilitySystemComponent.h"
 #include "Animation/AnimInstance.h"
 #include "Animation/AnimMontage.h"
@@ -13,28 +11,6 @@
 #include "Components/SkeletalMeshComponent.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "PolyQuest.h"
-
-void UPlayerBigHitReactionRateWindowContext::OnBegin(FGameplayEventData Payload)
-{
-	if (UPlayerBigHitReactionAbility* Ability = OwningAbility.Get())
-	{
-		if (Ability->RateWindowContext.Get() == this && Ability->RateWindowBindingToken == Token)
-		{
-			Ability->OnRateWindowBegin(Payload);
-		}
-	}
-}
-
-void UPlayerBigHitReactionRateWindowContext::OnEnd(FGameplayEventData Payload)
-{
-	if (UPlayerBigHitReactionAbility* Ability = OwningAbility.Get())
-	{
-		if (Ability->RateWindowContext.Get() == this && Ability->RateWindowBindingToken == Token)
-		{
-			Ability->OnRateWindowEnd(Payload);
-		}
-	}
-}
 
 UPlayerBigHitReactionAbility::UPlayerBigHitReactionAbility()
 {
@@ -47,12 +23,7 @@ UPlayerBigHitReactionAbility::UPlayerBigHitReactionAbility()
 	StunnedStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Status.Stunned")), false);
 	DeadStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Status.Dead")), false);
 	HyperArmorStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Status.HyperArmor")), false);
-	CancelWindowBeginEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Action.CancelWindow.Dodge.Begin")), false);
-	CancelWindowEndEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Action.CancelWindow.Dodge.End")), false);
-	DodgeCancelableStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Action.CanCancel.Dodge")), false);
 	CancelableByDodgeAbilityTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Action.CancelableBy.Dodge")), false);
-	RateWindowBeginEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Action.RateWindow.Begin")), false);
-	RateWindowEndEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Action.RateWindow.End")), false);
 
 	AbilityTags.AddTag(BigHitReactionAbilityTag);
 	if (CancelableByDodgeAbilityTag.IsValid())
@@ -116,13 +87,12 @@ void UPlayerBigHitReactionAbility::ActivateAbility(
 	const FGameplayAbilityActivationInfo ActivationInfo,
 	const FGameplayEventData* TriggerEventData)
 {
-	ClearRateWindow();
 	bEndAbilityRequested = false;
-	bDodgeCancelable = false;
 	bLedgeSettingModified = false;
 	bMovementModeDelegateBound = false;
 	BoundAnimInstance = nullptr;
 	ActiveMontage = nullptr;
+	ActiveMontageInstanceID = INDEX_NONE;
 	BoundPlayerCharacter.Reset();
 	ImpactDirectionSnapshot = FVector::ZeroVector;
 
@@ -160,43 +130,24 @@ void UPlayerBigHitReactionAbility::ActivateAbility(
 		return;
 	}
 
-	MontageTask = UAbilityTask_PlayMontageAndWait::CreatePlayMontageAndWaitProxy(this, NAME_None, SelectedMontage);
-	CancelBeginTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, CancelWindowBeginEventTag, nullptr, false, true);
-	CancelEndTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, CancelWindowEndEventTag, nullptr, false, true);
+	UAbilityTask_PlayActionMontage* CreatedMontageTask = UAbilityTask_PlayActionMontage::PlayActionMontage(
+		this, NAME_None, SelectedMontage, 1.0f, NAME_None,
+		1.0f, // AnimRootMotionTranslationScale
+		0.0f, // StartTimeSeconds
+		true, // bAllowInterruptAfterBlendOut
+		EActionMontageCancelPolicy::DodgeOnly); // CancelPolicy
+	MontageTask = CreatedMontageTask;
 
-	if (!MontageTask || !CancelBeginTask || !CancelEndTask)
+	if (!MontageTask)
 	{
 		UE_LOG(LogPolyQuest, Warning, TEXT("Player big hit reaction activation aborted for '%s': failed to create tasks."), *GetNameSafe(PlayerCharacter));
 		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
 		return;
 	}
 
-	CancelBeginTask->EventReceived.AddDynamic(this, &UPlayerBigHitReactionAbility::OnCancelWindowBegin);
-	CancelEndTask->EventReceived.AddDynamic(this, &UPlayerBigHitReactionAbility::OnCancelWindowEnd);
-
-	CancelBeginTask->ReadyForActivation();
-	if (bEndAbilityRequested)
-	{
-		return;
-	}
-	if (!CancelBeginTask || !CancelBeginTask->IsActive())
-	{
-		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
-		return;
-	}
-
-	CancelEndTask->ReadyForActivation();
-	if (bEndAbilityRequested)
-	{
-		return;
-	}
-	if (!CancelEndTask || !CancelEndTask->IsActive())
-	{
-		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
-		return;
-	}
-
-	if (!CommitAbility(Handle, ActorInfo, ActivationInfo))
+	const bool bCommitSucceeded = CommitAbility(Handle, ActorInfo, ActivationInfo);
+	if (!IsActive() || bEndAbilityRequested || MontageTask.Get() != CreatedMontageTask) return;
+	if (!bCommitSucceeded)
 	{
 		UE_LOG(LogPolyQuest, Verbose, TEXT("Player big hit reaction activation rejected for '%s' because CommitAbility failed."), *GetNameSafe(PlayerCharacter));
 		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
@@ -209,9 +160,10 @@ void UPlayerBigHitReactionAbility::ActivateAbility(
 
 	BoundAnimInstance->OnMontageEnded.RemoveDynamic(this, &UPlayerBigHitReactionAbility::OnActiveMontageEnded);
 	BoundAnimInstance->OnMontageEnded.AddDynamic(this, &UPlayerBigHitReactionAbility::OnActiveMontageEnded);
-	MontageTask->ReadyForActivation();
+	CreatedMontageTask->OnFailed.AddDynamic(this, &UPlayerBigHitReactionAbility::OnMontageFailed);
+	CreatedMontageTask->ReadyForActivation();
 
-	if (bEndAbilityRequested)
+	if (!IsActive() || bEndAbilityRequested || MontageTask.Get() != CreatedMontageTask)
 	{
 		return;
 	}
@@ -223,10 +175,8 @@ void UPlayerBigHitReactionAbility::ActivateAbility(
 		return;
 	}
 
-	if (!BindRateWindow(BoundAnimInstance.Get(), ActiveMontage.Get()))
-	{
-		return;
-	}
+	const FAnimMontageInstance* StartedInstance = BoundAnimInstance->GetActiveInstanceForMontage(ActiveMontage);
+	ActiveMontageInstanceID = StartedInstance ? StartedInstance->GetInstanceID() : INDEX_NONE;
 
 	// 1. Stop current velocity
 	MovementComponent->StopMovementImmediately();
@@ -259,21 +209,6 @@ void UPlayerBigHitReactionAbility::EndAbility(
 
 	bEndAbilityRequested = true;
 
-	SetDodgeCancelable(false);
-	ClearRateWindow();
-
-	if (CancelBeginTask)
-	{
-		CancelBeginTask->EndTask();
-		CancelBeginTask = nullptr;
-	}
-
-	if (CancelEndTask)
-	{
-		CancelEndTask->EndTask();
-		CancelEndTask = nullptr;
-	}
-
 	APlayerCharacter* PlayerCharacter = BoundPlayerCharacter.IsValid() ? BoundPlayerCharacter.Get() : Cast<APlayerCharacter>(GetAvatarActorFromActorInfo());
 
 	if (bMovementModeDelegateBound && PlayerCharacter)
@@ -285,20 +220,18 @@ void UPlayerBigHitReactionAbility::EndAbility(
 	if (BoundAnimInstance)
 	{
 		BoundAnimInstance->OnMontageEnded.RemoveDynamic(this, &UPlayerBigHitReactionAbility::OnActiveMontageEnded);
-		if (ActiveMontage && BoundAnimInstance->Montage_IsActive(ActiveMontage.Get()))
-		{
-			BoundAnimInstance->Montage_Stop(0.0f, ActiveMontage.Get());
-		}
 		BoundAnimInstance = nullptr;
 	}
 
 	if (MontageTask)
 	{
+		MontageTask->OnFailed.RemoveAll(this);
 		MontageTask->EndTask();
 		MontageTask = nullptr;
 	}
 
 	ActiveMontage = nullptr;
+	ActiveMontageInstanceID = INDEX_NONE;
 
 	if (bLedgeSettingModified && PlayerCharacter && !PlayerCharacter->IsActorBeingDestroyed())
 	{
@@ -315,22 +248,16 @@ void UPlayerBigHitReactionAbility::EndAbility(
 
 void UPlayerBigHitReactionAbility::OnActiveMontageEnded(UAnimMontage* Montage, bool bInterrupted)
 {
-	if (bEndAbilityRequested || Montage != ActiveMontage.Get())
-	{
-		return;
-	}
-
-	// End broadcasts identify the asset, not the playback instance. A stopped
-	// instance is removed from the active map before broadcasting; a still-running
-	// instance of the same asset belongs to a newer activation.
-	const FAnimMontageInstance* CurrentInstance = IsValid(BoundAnimInstance)
-		? BoundAnimInstance->GetActiveInstanceForMontage(Montage) : nullptr;
-	if (CurrentInstance && !CurrentInstance->IsStopped())
-	{
-		return;
-	}
-
+	if (!IsActive() || bEndAbilityRequested || Montage != ActiveMontage.Get() || ActiveMontageInstanceID == INDEX_NONE) return;
+	const FAnimMontageInstance* Instance = IsValid(BoundAnimInstance)
+		? BoundAnimInstance->GetMontageInstanceForID(ActiveMontageInstanceID) : nullptr;
+	if (Instance && Instance->IsValid()) return;
 	EndFromMontage(bInterrupted);
+}
+
+void UPlayerBigHitReactionAbility::OnMontageFailed()
+{
+	if (IsActive() && !bEndAbilityRequested) EndFromMontage(true);
 }
 
 void UPlayerBigHitReactionAbility::OnMovementModeChanged(ACharacter* Character, EMovementMode PrevMovementMode, uint8 PreviousCustomMode)
@@ -343,173 +270,6 @@ void UPlayerBigHitReactionAbility::OnMovementModeChanged(ACharacter* Character, 
 	if (Character && Character->GetCharacterMovement() && Character->GetCharacterMovement()->IsFalling())
 	{
 		EndFromMontage(true);
-	}
-}
-
-bool UPlayerBigHitReactionAbility::HasOwnedRateWindowMontageInstance() const
-{
-	return FAbilityMontageRateWindowLifecycle::IsCurrentMontageInstance(
-		RateWindowAnimInstance.Get(), RateWindowMontage.Get(), RateWindowMontageInstanceID);
-}
-
-bool UPlayerBigHitReactionAbility::BindRateWindow(UAnimInstance* AnimInstance, UAnimMontage* Montage)
-{
-	return FMontageRateWindowBinding::Bind<UPlayerBigHitReactionAbility, UPlayerBigHitReactionRateWindowContext>(
-		this, AnimInstance, Montage, bEndAbilityRequested);
-}
-
-void UPlayerBigHitReactionAbility::OnRateWindowBegin(const FGameplayEventData& Payload)
-{
-	const AActor* Avatar = GetAvatarActorFromActorInfo();
-	if (!IsActive() || bEndAbilityRequested || !IsValid(Avatar) || Avatar->IsActorBeingDestroyed() || !HasOwnedRateWindowMontageInstance())
-	{
-		return;
-	}
-	RateWindowLifecycle.HandleBegin(Payload);
-}
-
-void UPlayerBigHitReactionAbility::OnRateWindowEnd(const FGameplayEventData& Payload)
-{
-	const AActor* Avatar = GetAvatarActorFromActorInfo();
-	if (!IsActive() || bEndAbilityRequested || !IsValid(Avatar) || Avatar->IsActorBeingDestroyed() || !HasOwnedRateWindowMontageInstance())
-	{
-		return;
-	}
-	RateWindowLifecycle.HandleEnd(Payload);
-}
-
-void UPlayerBigHitReactionAbility::ClearRateWindow()
-{
-	if (RateWindowContext)
-	{
-		RateWindowContext->OwningAbility.Reset();
-		RateWindowContext = nullptr;
-	}
-	if (RateWindowBeginTask)
-	{
-		RateWindowBeginTask->EndTask();
-		RateWindowBeginTask = nullptr;
-	}
-	if (RateWindowEndTask)
-	{
-		RateWindowEndTask->EndTask();
-		RateWindowEndTask = nullptr;
-	}
-	if (HasOwnedRateWindowMontageInstance())
-	{
-		RateWindowLifecycle.RestoreAndClear();
-	}
-	RateWindowLifecycle = FAbilityMontageRateWindowLifecycle();
-	RateWindowAnimInstance.Reset();
-	RateWindowMontage.Reset();
-	RateWindowMontageInstanceID = INDEX_NONE;
-}
-
-bool UPlayerBigHitReactionAbility::IsEventFromMontage(const FGameplayEventData& Payload, const UAnimMontage* ExpectedMontage) const
-{
-	const AActor* AvatarActor = GetAvatarActorFromActorInfo();
-	if (bEndAbilityRequested || !ExpectedMontage || !AvatarActor || Payload.Instigator != AvatarActor || Payload.Target != AvatarActor)
-	{
-		return false;
-	}
-
-	const UObject* PayloadObject = Payload.OptionalObject.Get();
-	if (!PayloadObject)
-	{
-		return false;
-	}
-
-	if (PayloadObject == ExpectedMontage)
-	{
-		return true;
-	}
-
-	if (const UAnimSequenceBase* Sequence = Cast<UAnimSequenceBase>(PayloadObject))
-	{
-		for (const FSlotAnimationTrack& Track : ExpectedMontage->SlotAnimTracks)
-		{
-			for (const FAnimSegment& Segment : Track.AnimTrack.AnimSegments)
-			{
-				if (Segment.GetAnimReference() == Sequence)
-				{
-					return true;
-				}
-			}
-		}
-	}
-
-	return false;
-}
-
-void UPlayerBigHitReactionAbility::OnCancelWindowBegin(FGameplayEventData Payload)
-{
-	const AActor* Avatar = GetAvatarActorFromActorInfo();
-	if (bEndAbilityRequested || !IsActive() || !IsValid(Avatar) || Avatar->IsActorBeingDestroyed())
-	{
-		return;
-	}
-
-	if (!BoundAnimInstance || !ActiveMontage || !BoundAnimInstance->Montage_IsActive(ActiveMontage.Get()))
-	{
-		return;
-	}
-
-	if (!IsEventFromMontage(Payload, ActiveMontage.Get()))
-	{
-		return;
-	}
-
-	SetDodgeCancelable(true);
-}
-
-void UPlayerBigHitReactionAbility::OnCancelWindowEnd(FGameplayEventData Payload)
-{
-	const AActor* Avatar = GetAvatarActorFromActorInfo();
-	if (bEndAbilityRequested || !IsActive() || !IsValid(Avatar) || Avatar->IsActorBeingDestroyed())
-	{
-		return;
-	}
-
-	if (!BoundAnimInstance || !ActiveMontage || !BoundAnimInstance->Montage_IsActive(ActiveMontage.Get()))
-	{
-		return;
-	}
-
-	if (!IsEventFromMontage(Payload, ActiveMontage.Get()))
-	{
-		return;
-	}
-
-	SetDodgeCancelable(false);
-}
-
-void UPlayerBigHitReactionAbility::SetDodgeCancelable(bool bShouldCancel)
-{
-	if (bDodgeCancelable == bShouldCancel)
-	{
-		return;
-	}
-
-	UAbilitySystemComponent* CharacterASC = GetAbilitySystemComponentFromActorInfo();
-	if (!CharacterASC)
-	{
-		return;
-	}
-
-	bDodgeCancelable = bShouldCancel;
-	if (bDodgeCancelable)
-	{
-		if (DodgeCancelableStateTag.IsValid())
-		{
-			CharacterASC->AddLooseGameplayTag(DodgeCancelableStateTag);
-		}
-	}
-	else
-	{
-		if (DodgeCancelableStateTag.IsValid())
-		{
-			CharacterASC->RemoveLooseGameplayTag(DodgeCancelableStateTag);
-		}
 	}
 }
 
@@ -533,8 +293,7 @@ bool UPlayerBigHitReactionAbility::ValidateActivationSetup(const FGameplayAbilit
 		&& MovementComponent && MovementComponent->IsMovingOnGround()
 		&& BigHitReactionAbilityTag.IsValid() && BigHitReactionEventTag.IsValid() && HitReactingStateTag.IsValid()
 		&& StunnedStateTag.IsValid() && DeadStateTag.IsValid() && HyperArmorStateTag.IsValid()
-		&& CancelWindowBeginEventTag.IsValid() && CancelWindowEndEventTag.IsValid() && DodgeCancelableStateTag.IsValid()
-		&& CancelableByDodgeAbilityTag.IsValid() && RateWindowBeginEventTag.IsValid() && RateWindowEndEventTag.IsValid()
+		&& CancelableByDodgeAbilityTag.IsValid()
 		&& BlockAbilitiesWithTag.Num() == 10 && AbilitiesToCancel.Num() == 11;
 }
 
@@ -545,3 +304,32 @@ void UPlayerBigHitReactionAbility::EndFromMontage(bool bWasCancelled)
 		EndAbility(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, true, bWasCancelled);
 	}
 }
+
+#if WITH_DEV_AUTOMATION_TESTS
+const FAbilityMontageRateWindowLifecycle& UPlayerBigHitReactionAbility::GetTestRateWindowLifecycle() const
+{
+	static const FAbilityMontageRateWindowLifecycle EmptyLifecycle;
+	return MontageTask ? MontageTask->GetRateWindowLifecycle() : EmptyLifecycle;
+}
+
+FAbilityMontageRateWindowLifecycle& UPlayerBigHitReactionAbility::GetTestRateWindowLifecycle_Mutable()
+{
+	check(MontageTask);
+	return MontageTask->GetRateWindowLifecycle_Mutable();
+}
+
+int32 UPlayerBigHitReactionAbility::GetTestRateWindowMontageInstanceID() const
+{
+	return MontageTask ? MontageTask->GetBoundMontageInstanceID() : INDEX_NONE;
+}
+
+bool UPlayerBigHitReactionAbility::HasTestRateWindowTasks() const
+{
+	return MontageTask && MontageTask->IsActive() && !MontageTask->IsTerminated();
+}
+
+bool UPlayerBigHitReactionAbility::GetTestDodgeCancelable() const
+{
+	return MontageTask && MontageTask->HasContributedDodgeTag();
+}
+#endif

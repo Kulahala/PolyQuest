@@ -2,6 +2,8 @@
 
 #if WITH_DEV_AUTOMATION_TESTS
 
+#include <limits>
+
 #include "AbilitySystemComponent.h"
 #include "AbilitySystem/CharacterAttributeSet.h"
 #include "Character/Player/PlayerCharacter.h"
@@ -511,7 +513,7 @@ bool FProjectileFlightTrailAutomationTest::RunTest(const FString& Parameters)
 			BadTimeoutDef->DamageGameplayEffectClass = UTestProjectileDamageGE::StaticClass();
 			BadTimeoutDef->FlightTrailSystem = MockSystem;
 			BadTimeoutDef->FlightTrailSocketName = NAME_None;
-			BadTimeoutDef->FlightTrailFinishTimeoutSeconds = INFINITY;
+			BadTimeoutDef->FlightTrailFinishTimeoutSeconds = std::numeric_limits<float>::infinity();
 
 			AddExpectedError(TEXT("has non-positive or non-finite FlightTrailFinishTimeoutSeconds"), EAutomationExpectedErrorFlags::Contains, 1);
 

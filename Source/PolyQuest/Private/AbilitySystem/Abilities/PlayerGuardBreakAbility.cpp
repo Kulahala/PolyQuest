@@ -3,7 +3,7 @@
 #include "AbilitySystem/CharacterAttributeSet.h"
 #include "AbilitySystemComponent.h"
 #include "Abilities/GameplayAbilityTriggerType.h"
-#include "Abilities/Tasks/AbilityTask_PlayMontageAndWait.h"
+#include "AbilitySystem/Tasks/AbilityTask_PlayActionMontage.h"
 #include "Animation/AnimInstance.h"
 #include "Animation/AnimMontage.h"
 #include "Character/Player/PlayerCharacter.h"
@@ -81,8 +81,18 @@ void UPlayerGuardBreakAbility::ActivateAbility(
 		return;
 	}
 
-	MontageTask = UAbilityTask_PlayMontageAndWait::CreatePlayMontageAndWaitProxy(this, NAME_None, GuardBreakMontage);
-	if (!MontageTask)
+	UAbilityTask_PlayActionMontage* CreatedMontageTask = UAbilityTask_PlayActionMontage::PlayActionMontage(
+		this,
+		NAME_None,
+		GuardBreakMontage,
+		1.0f,
+		NAME_None,
+		1.0f, // AnimRootMotionTranslationScale
+		0.0f, // StartTimeSeconds
+		true, // bAllowInterruptAfterBlendOut
+		EActionMontageCancelPolicy::None); // CancelPolicy
+	MontageTask = CreatedMontageTask;
+	if (!CreatedMontageTask)
 	{
 		UE_LOG(LogPolyQuest, Warning, TEXT("Player Guard Break activation aborted for '%s': failed to create a montage AbilityTask."), *GetNameSafe(PlayerCharacter));
 		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
@@ -98,21 +108,26 @@ void UPlayerGuardBreakAbility::ActivateAbility(
 
 	BoundAnimInstance = AnimInstance;
 	ActiveMontage = GuardBreakMontage;
+	ActiveMontageInstanceID = INDEX_NONE;
+	// Business teardown waits for the full blend-out; Task interruption reports its start.
 	BoundAnimInstance->OnMontageEnded.RemoveDynamic(this, &UPlayerGuardBreakAbility::OnActiveMontageEnded);
 	BoundAnimInstance->OnMontageEnded.AddDynamic(this, &UPlayerGuardBreakAbility::OnActiveMontageEnded);
-	MontageTask->ReadyForActivation();
+	CreatedMontageTask->ReadyForActivation();
 
-	if (bEndAbilityRequested)
+	if (!IsActive() || bEndAbilityRequested || MontageTask.Get() != CreatedMontageTask)
 	{
 		return;
 	}
 
-	if (!BoundAnimInstance || !ActiveMontage || !BoundAnimInstance->Montage_IsActive(ActiveMontage.Get()))
+	if (!IsValid(CreatedMontageTask) || CreatedMontageTask->IsFinished() || !CreatedMontageTask->IsActive()
+		|| !BoundAnimInstance || !ActiveMontage || !BoundAnimInstance->Montage_IsActive(ActiveMontage.Get()))
 	{
 		UE_LOG(LogPolyQuest, Warning, TEXT("Player Guard Break activation aborted for '%s': montage '%s' did not start."), *GetNameSafe(PlayerCharacter), *GetNameSafe(GuardBreakMontage));
 		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
 		return;
 	}
+
+	ActiveMontageInstanceID = CreatedMontageTask->GetBoundMontageInstanceID();
 
 	if (UCharacterMovementComponent* MovementComponent = PlayerCharacter->GetCharacterMovement())
 	{
@@ -142,10 +157,6 @@ void UPlayerGuardBreakAbility::EndAbility(
 	if (BoundAnimInstance)
 	{
 		BoundAnimInstance->OnMontageEnded.RemoveDynamic(this, &UPlayerGuardBreakAbility::OnActiveMontageEnded);
-		if (ActiveMontage && BoundAnimInstance->Montage_IsActive(ActiveMontage.Get()))
-		{
-			BoundAnimInstance->Montage_Stop(0.0f, ActiveMontage.Get());
-		}
 		BoundAnimInstance = nullptr;
 	}
 
@@ -156,6 +167,7 @@ void UPlayerGuardBreakAbility::EndAbility(
 	}
 
 	ActiveMontage = nullptr;
+	ActiveMontageInstanceID = INDEX_NONE;
 	const UAbilitySystemComponent* CharacterASC = GetAbilitySystemComponentFromActorInfo();
 	const bool bCanRestoreMovement = PlayerCharacter && !PlayerCharacter->IsActorBeingDestroyed()
 		&& !(CharacterASC && DeadStateTag.IsValid() && CharacterASC->HasMatchingGameplayTag(DeadStateTag));
@@ -173,7 +185,16 @@ void UPlayerGuardBreakAbility::EndAbility(
 
 void UPlayerGuardBreakAbility::OnActiveMontageEnded(UAnimMontage* Montage, bool bInterrupted)
 {
-	if (bEndAbilityRequested || Montage != ActiveMontage.Get())
+	if (!IsActive() || bEndAbilityRequested || !CurrentActorInfo || Montage != ActiveMontage.Get()
+		|| ActiveMontageInstanceID == INDEX_NONE)
+	{
+		return;
+	}
+
+	// Global Ended can deliver a queued receipt from an older play of the same asset.
+	const FAnimMontageInstance* CurrentInstance = BoundAnimInstance
+		? BoundAnimInstance->GetMontageInstanceForID(ActiveMontageInstanceID) : nullptr;
+	if (CurrentInstance && CurrentInstance->IsValid())
 	{
 		return;
 	}

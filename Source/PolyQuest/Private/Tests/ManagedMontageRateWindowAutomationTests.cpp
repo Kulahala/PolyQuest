@@ -9,25 +9,51 @@
 #endif
 
 #include "AbilitySystemComponent.h"
+#include "AbilitySystem/Abilities/EnemyHitReactionAbility.h"
+#include "AbilitySystem/Abilities/EnemyLaunchReactionAbility.h"
+#include "AbilitySystem/Abilities/EnemyMeleeAbility.h"
+#include "AbilitySystem/Abilities/EnemyStanceBreakAbility.h"
+#include "AbilitySystem/Abilities/EnemyVictimExecutionAbility.h"
+#include "AbilitySystem/Abilities/PlayerFrontExecutionAbility.h"
+#include "AbilitySystem/Abilities/PlayerBackstabExecutionAbility.h"
+#include "Character/Enemy/EnemyCharacter.h"
+#include "AI/EnemyAIController.h"
+#include "AI/EnemyAIProfile.h"
+#include "Combat/Enemy/EnemyAttackProfile.h"
+#include "Combat/Enemy/EnemyAttackSet.h"
+#include "Tests/TestProjectileDamageGE.h"
+#include "AbilitySystem/Abilities/PlayerGuardAbility.h"
+#include "AbilitySystem/Abilities/PlayerGuardBreakAbility.h"
+#include "AbilitySystem/Abilities/PlayerParryAbility.h"
+#include "AbilitySystem/Abilities/PlayerSmallHitReactionAbility.h"
+#include "AbilitySystem/CharacterAttributeSet.h"
 #include "AbilitySystem/Tasks/AbilityTask_PlayActionMontage.h"
 #include "Animation/Combat/AnimNotifyState_ActionWindows.h"
 #include "Animation/ActiveMontageInstanceScope.h"
 #include "Animation/AnimComposite.h"
 #include "Animation/AnimInstance.h"
+#include "Animation/AnimInstanceProxy.h"
 #include "Animation/AnimMontage.h"
 #include "Animation/AnimNotifies/AnimNotify.h"
 #include "Animation/AnimSequence.h"
 #include "Animation/Skeleton.h"
 #include "Character/Player/PlayerCharacter.h"
+#include "Combat/CombatImpactEffectContext.h"
 #include "Components/SkeletalMeshComponent.h"
+#include "Components/BoxComponent.h"
+#include "Components/CapsuleComponent.h"
+#include "Framework/PolyQuestPlayerController.h"
 #include "Engine/Engine.h"
 #include "Engine/World.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "GameplayTagContainer.h"
 #include "Misc/ScopeExit.h"
+#include <limits>
 #include "Tests/CombatAutomationFixture.h"
 #include "Tests/TestManagedMontageAbility.h"
+#include "Tests/TestMobileBowMoveSpeedGE.h"
 #include "UObject/Package.h"
+#include "UObject/UnrealType.h"
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 	FManagedMontageRateWindowAutomationTest,
@@ -913,8 +939,754 @@ bool FManagedMontageRateWindowAutomationTest::RunTest(const FString& Parameters)
 		}
 	}
 
+	// Explicit pre-activation stop configuration: observe the actual instance blend,
+	// separately from cancellation/failed-result delegates. Factory stays at nine parameters.
+	{
+		const FGameplayAbilitySpecHandle Handle = ASC->GiveAbility(FGameplayAbilitySpec(UTestManagedMontageAbility::StaticClass(), 1, INDEX_NONE, Player));
+		ON_SCOPE_EXIT { ASC->CancelAbilityHandle(Handle); ASC->ClearAbility(Handle); };
+		auto* Ability = Cast<UTestManagedMontageAbility>(ASC->FindAbilitySpecFromHandle(Handle)->GetPrimaryInstance());
+		if (!TestNotNull(TEXT("Blend configuration ability"), Ability)) return false;
+		TestMontage->BlendIn.SetBlendTime(0.0f);
+		TestMontage->BlendOut.SetBlendTime(0.35f);
+		for (int32 Mode = 0; Mode < 4; ++Mode)
+		{
+			for (bool bCancel : {false, true})
+			{
+				if (!TestTrue(TEXT("Blend test real ASC activation"), ASC->TryActivateAbility(Handle) && Ability->IsActive())) return false;
+				auto* Task = UAbilityTask_PlayActionMontage::PlayActionMontage(Ability, NAME_None, TestMontage);
+				if (!TestNotNull(TEXT("Blend test standard Task"), Task)) return false;
+				const float Configured = Mode == 1 ? 0.1f : Mode == 2 ? 0.2f : -1.0f;
+				const float Expected = Mode == 0 ? 0.0f : Mode == 3 ? 0.35f : Configured;
+				if (Mode != 0) TestTrue(TEXT("Finite pre-activation blend accepted"), Task->SetOverrideBlendOutTime(Configured));
+				TestFalse(TEXT("NaN rejected without replacing configured value"), Task->SetOverrideBlendOutTime(std::numeric_limits<float>::quiet_NaN()));
+				TestFalse(TEXT("Infinity rejected without replacing configured value"), Task->SetOverrideBlendOutTime(std::numeric_limits<float>::infinity()));
+				const int32 CancelledBefore = Ability->CancelledCallCount;
+				const int32 InterruptedBefore = Ability->InterruptedCallCount;
+				const int32 FailedBefore = Ability->FailedCallCount;
+				Task->OnCancelled.AddDynamic(Ability, &UTestManagedMontageAbility::OnMontageCancelled);
+				Task->OnInterrupted.AddDynamic(Ability, &UTestManagedMontageAbility::OnMontageInterrupted);
+				Task->OnFailed.AddDynamic(Ability, &UTestManagedMontageAbility::OnMontageFailed);
+				Task->ReadyForActivation();
+				if (!TestTrue(TEXT("Configured Task actually playing"), Task->IsActive() && !Task->IsTerminated())) return false;
+				TestFalse(TEXT("Setter rejects changes after activation"), Task->SetOverrideBlendOutTime(0.8f));
+				const int32 InstanceID = Task->GetBoundMontageInstanceID();
+				MockAnimInstance->TickMontageOnly(0.01f);
+				MockAnimInstance->DispatchQueuedAnimEvents();
+				const FGameplayEventData Begin = FManagedMontageTestHelpers::MakeRateWindowEventData(
+					TagRateWindowBegin, MockAnimInstance, InstanceID, 0.5f, Player, TestMontage, NotifyA);
+				ASC->HandleGameplayEvent(TagRateWindowBegin, &Begin);
+				TestEqual(TEXT("Blend test starts with a live rate window"), Task->GetRateWindowLifecycle().GetActiveWindowCount(), 1);
+				if (bCancel) ASC->CancelAbilityHandle(Handle);
+				else Task->EndTask();
+				FAnimMontageInstance* Stopped = MockAnimInstance->GetMontageInstanceForID(InstanceID);
+				if (!TestNotNull(TEXT("Stopped instance remains available for blend inspection"), Stopped)) return false;
+				TestTrue(TEXT("Task emitted a stop"), Stopped->IsStopped());
+				TestEqual(TEXT("Stop uses configured blend duration"), Stopped->GetBlendTime(), Expected);
+				TestTrue(TEXT("Stop terminates Task"), Task->IsTerminated());
+				TestFalse(TEXT("Stop clears rate lifecycle"), Task->GetRateWindowLifecycle().IsBound());
+				TestEqual(TEXT("GAS cancellation retains Interrupted result regardless of blend"), Ability->InterruptedCallCount - InterruptedBefore, bCancel ? 1 : 0);
+				TestEqual(TEXT("GAS cancellation does not become ExternalCancel result"), Ability->CancelledCallCount, CancelledBefore);
+				TestEqual(TEXT("Rejected setter does not report playback failure"), Ability->FailedCallCount, FailedBefore);
+				TestFalse(TEXT("Finished Task cannot change blend"), Task->SetOverrideBlendOutTime(0.4f));
+				ASC->CancelAbilityHandle(Handle);
+				MockAnimInstance->TickMontageOnly(0.5f);
+				MockAnimInstance->DispatchQueuedAnimEvents();
+			}
+		}
+		auto* Unactivated = UAbilityTask_PlayActionMontage::PlayActionMontage(Ability, NAME_None, TestMontage);
+		Unactivated->EndTask();
+		TestFalse(TEXT("Task ended before activation also rejects setter"), Unactivated->SetOverrideBlendOutTime(0.2f));
+		TestFalse(TEXT("Unactivated ended Task rejects stop ownership"), Unactivated->SetTaskOwnsMontageStop(false));
+
+		// Stop ownership is independent of result delivery. Exercise the shared failure
+		// cleanup entry as well as explicit end, external cancel and GAS cancel.
+		for (int32 Exit = 0; Exit < 4; ++Exit)
+		{
+			if (!TestTrue(TEXT("Presentation owner real ASC activation"), ASC->TryActivateAbility(Handle) && Ability->IsActive())) return false;
+			auto* Task = UAbilityTask_PlayActionMontage::PlayActionMontage(Ability, NAME_None, TestMontage,
+				1.0f, NAME_None, /*AnimRootMotionTranslationScale=*/0.5f, /*StartTimeSeconds=*/0.0f,
+				/*bAllowInterruptAfterBlendOut=*/false, /*CancelPolicy=*/EActionMontageCancelPolicy::None);
+			TestTrue(TEXT("Stop ownership can be configured before activation"), Task->SetTaskOwnsMontageStop(false));
+			const int32 InterruptedBefore = Ability->InterruptedCallCount;
+			const int32 CancelledBefore = Ability->CancelledCallCount;
+			const int32 FailedBefore = Ability->FailedCallCount;
+			Task->OnInterrupted.AddDynamic(Ability, &UTestManagedMontageAbility::OnMontageInterrupted);
+			Task->OnCancelled.AddDynamic(Ability, &UTestManagedMontageAbility::OnMontageCancelled);
+			Task->OnFailed.AddDynamic(Ability, &UTestManagedMontageAbility::OnMontageFailed);
+			Task->ReadyForActivation();
+			if (!TestTrue(TEXT("Non-stopping Task actually playing"), Task->IsActive() && !Task->IsTerminated())) return false;
+			TestFalse(TEXT("Activation freezes stop ownership"), Task->SetTaskOwnsMontageStop(true));
+			const int32 InstanceID = Task->GetBoundMontageInstanceID();
+			MockAnimInstance->TickMontageOnly(0.01f);
+			MockAnimInstance->DispatchQueuedAnimEvents();
+			const FGameplayEventData Begin = FManagedMontageTestHelpers::MakeRateWindowEventData(
+				TagRateWindowBegin, MockAnimInstance, InstanceID, 0.5f, Player, TestMontage, NotifyA);
+			ASC->HandleGameplayEvent(TagRateWindowBegin, &Begin);
+			TestEqual(TEXT("Non-stopping Task owns its rate window"), Task->GetRateWindowLifecycle().GetActiveWindowCount(), 1);
+			if (Exit == 0) Task->EndTask();
+			else if (Exit == 1) ASC->CancelAbilityHandle(Handle);
+			else if (Exit == 2) Task->ExternalCancel();
+			else { Task->TestCleanupTask(true); Task->EndTask(); }
+			FAnimMontageInstance* Instance = MockAnimInstance->GetMontageInstanceForID(InstanceID);
+			if (!TestNotNull(TEXT("Presentation instance survives task cleanup"), Instance)) return false;
+			TestFalse(TEXT("No Task exit sends a stop to presentation-owned playback"), Instance->IsStopped());
+			TestEqual(TEXT("Rate restored despite retaining presentation"), Instance->GetPlayRate(), 1.0f);
+			TestEqual(TEXT("Root Motion restored despite retaining presentation"), Player->GetAnimRootMotionTranslationScale(), 1.0f);
+			TestTrue(TEXT("Non-stopping Task terminates"), Task->IsTerminated());
+			TestFalse(TEXT("Rate binding cleared"), Task->GetRateWindowLifecycle().IsBound());
+			TestFalse(TEXT("Rate subscription cleared"), ASC->GenericGameplayEventCallbacks.FindOrAdd(TagRateWindowBegin).IsBoundToObject(Task));
+			TestFalse(TEXT("Instance result callback detached"), Instance->OnMontageEnded.IsBound());
+			TestEqual(TEXT("GAS cancel still reports Interrupted with stop disabled"), Ability->InterruptedCallCount - InterruptedBefore, Exit == 1 ? 1 : 0);
+			TestEqual(TEXT("External cancel still reports Cancelled with stop disabled"), Ability->CancelledCallCount - CancelledBefore, Exit == 2 ? 1 : 0);
+			TestEqual(TEXT("Stop configuration does not fabricate failure"), Ability->FailedCallCount, FailedBefore);
+			TestFalse(TEXT("Ended Task cannot regain stop ownership"), Task->SetTaskOwnsMontageStop(true));
+			TestFalse(TEXT("Direct stop helper also respects ownership"), Task->TestStopPlayingMontage());
+			ASC->CancelAbilityHandle(Handle);
+			Instance->Stop(FAlphaBlend(0.0f), true);
+			MockAnimInstance->TickMontageOnly(0.01f);
+			MockAnimInstance->DispatchQueuedAnimEvents();
+		}
+	}
+
 	return true;
 #endif // WITH_EDITOR
 }
+
+#if WITH_EDITOR
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FManagedMontageAdoptionBatch1ATest,
+	"PolyQuest.Combat.ManagedMontageAdoptionBatch1A",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FManagedMontageAdoptionBatch1ATest::RunTest(const FString& Parameters)
+{
+	class FProxyAccess : public UAnimInstance
+	{
+	public:
+		static FAnimInstanceProxy& Get(UAnimInstance* Instance)
+		{
+			return *GetProxyOnGameThreadStatic<FAnimInstanceProxy>(Instance);
+		}
+	};
+	const TArray<TSubclassOf<UGameplayAbility>> Classes = {
+		UPlayerSmallHitReactionAbility::StaticClass(), UPlayerGuardAbility::StaticClass(),
+		UPlayerGuardBreakAbility::StaticClass(), UPlayerParryAbility::StaticClass()
+	};
+	// Each case has its own ASC and effects; no CDO or production asset is modified.
+	for (const TSubclassOf<UGameplayAbility>& AbilityClass : Classes)
+	// Natural, ASC cancel, late interruption, early interruption, immediate reactivation.
+	for (int32 ExitCase = 0; ExitCase < 5; ++ExitCase)
+	{
+		const FString Case = FString::Printf(TEXT("%s / exit %d"), *AbilityClass->GetName(), ExitCase);
+		if (!TestNotNull(TEXT("GEngine exists"), GEngine)) return false;
+		UWorld* World = UWorld::CreateWorld(EWorldType::Game, false);
+		if (!TestNotNull(*Case, World)) return false;
+		GEngine->CreateNewWorldContext(EWorldType::Game).SetCurrentWorld(World);
+		ManagedMontageAutomation::FTestWorldScope WorldScope{ World };
+		FURL URL;
+		World->InitializeActorsForPlay(URL);
+		World->BeginPlay();
+		APlayerCharacter* Player = FCombatAutomationFixture::SpawnPlayer(World);
+		if (!TestNotNull(*(Case + TEXT(" player")), Player)) return false;
+		UAbilitySystemComponent* ASC = Player->GetAbilitySystemComponent();
+		USkeletalMeshComponent* Mesh = Player->GetMesh();
+		UCharacterMovementComponent* Movement = Player->GetCharacterMovement();
+		if (!TestNotNull(*(Case + TEXT(" ASC")), ASC) || !Mesh || !Movement) return false;
+		const auto Setup = ManagedMontageAutomation::CreatePlayableTestMontage(*this, World);
+		UAnimMontage* Montage = Setup.Montage;
+		if (!TestNotNull(*(Case + TEXT(" montage")), Montage)) return false;
+		Montage->BlendOut.SetBlendTime(0.2f);
+		UAnimInstance* Anim = NewObject<UAnimInstance>(Mesh);
+		Anim->InitializeMontageOnly();
+		Anim->CurrentSkeleton = Montage->GetSkeleton();
+		UAnimInstance* PreviousAnim = Mesh->AnimScriptInstance;
+		Mesh->AnimScriptInstance = Anim;
+		ASC->RefreshAbilityActorInfo();
+		const bool bMeshTick = Mesh->IsComponentTickEnabled();
+		const bool bMovementTick = Movement->IsComponentTickEnabled();
+		const bool bAutonomousPose = Mesh->bIsAutonomousTickPose;
+		Mesh->SetComponentTickEnabled(false);
+		Movement->SetComponentTickEnabled(false);
+		ON_SCOPE_EXIT
+		{
+			ASC->CancelAllAbilities();
+			Mesh->AnimScriptInstance = PreviousAnim;
+			Mesh->SetComponentTickEnabled(bMeshTick);
+			Movement->SetComponentTickEnabled(bMovementTick);
+			Mesh->bIsAutonomousTickPose = bAutonomousPose;
+			ASC->RefreshAbilityActorInfo();
+		};
+		// Same single animation driver as ManagedMontageCancelWindow section 9.
+		FAnimInstanceProxy& Proxy = FProxyAccess::Get(Anim);
+		const FName Slot(TEXT("DefaultSlot"));
+		Proxy.RegisterSlotNodeWithAnimInstance(Slot);
+		const auto Advance = [&](float Seconds)
+		{
+			while (Seconds > KINDA_SMALL_NUMBER)
+			{
+				const float Step = FMath::Min(Seconds, 0.05f);
+				FCombatAutomationFixture::TickWorld(World, Step);
+				Proxy.UpdateSlotNodeWeight(Slot, 1.0f, 1.0f);
+				Proxy.FlipBufferWriteIndex();
+				Proxy.UpdateSlotNodeWeight(Slot, 1.0f, 1.0f);
+				Proxy.FlipBufferWriteIndex();
+				Mesh->bIsAutonomousTickPose = true;
+				Anim->TickMontageOnly(Step);
+				Anim->DispatchQueuedAnimEvents();
+				Mesh->bIsAutonomousTickPose = bAutonomousPose;
+				Seconds -= Step;
+			}
+		};
+		Movement->SetMovementMode(MOVE_Walking);
+		const bool bSmallHitReaction = AbilityClass == UPlayerSmallHitReactionAbility::StaticClass();
+		const bool bGuardBreak = AbilityClass == UPlayerGuardBreakAbility::StaticClass();
+		const bool bGuard = AbilityClass == UPlayerGuardAbility::StaticClass();
+		const bool bParry = AbilityClass == UPlayerParryAbility::StaticClass();
+		ASC->SetNumericAttributeBase(UCharacterAttributeSet::GetMaxStaminaAttribute(), 100.0f);
+		ASC->SetNumericAttributeBase(UCharacterAttributeSet::GetStaminaAttribute(), bGuardBreak ? 0.0f : 100.0f);
+		if (bGuard) Player->TriggerTestHandleCombatInputStarted(FGameplayTag::RequestGameplayTag(TEXT("Input.Guard")));
+		const FGameplayAbilitySpecHandle Handle = ASC->GiveAbility(FGameplayAbilitySpec(AbilityClass, 1, INDEX_NONE, Player));
+		FGameplayAbilitySpec* Spec = ASC->FindAbilitySpecFromHandle(Handle);
+		UGameplayAbility* Ability = Spec ? Spec->GetPrimaryInstance() : nullptr;
+		if (!TestNotNull(*(Case + TEXT(" primary instance")), Ability)) return false;
+		const auto Configure = [&](const FName Field, UObject* Value)
+		{
+			FObjectPropertyBase* Property = FindFProperty<FObjectPropertyBase>(Ability->GetClass(), Field);
+			if (!TestNotNull(*(Case + TEXT(" property ") + Field.ToString()), Property)) return false;
+			Property->SetObjectPropertyValue_InContainer(Ability, Value);
+			return true;
+		};
+		if (AbilityClass == UPlayerSmallHitReactionAbility::StaticClass())
+		{
+			for (const FName Field : { FName(TEXT("FrontSmallHitReactionMontage")), FName(TEXT("BackSmallHitReactionMontage")),
+				FName(TEXT("LeftSmallHitReactionMontage")), FName(TEXT("RightSmallHitReactionMontage")) })
+				if (!Configure(Field, Montage)) return false;
+		}
+		else if (!Configure(bGuard ? TEXT("GuardMontage") : bGuardBreak ? TEXT("GuardBreakMontage") : TEXT("ParryMontage"), Montage)) return false;
+		if (bGuard)
+		{
+			if (!Configure(TEXT("GuardMoveSpeedGameplayEffectClass"), UTestMobileBowMoveSpeedGE::StaticClass())
+				|| !Configure(TEXT("GuardStaminaRegenMultiplierGameplayEffectClass"), UTestMobileBowMoveSpeedGE::StaticClass())
+				|| !Configure(TEXT("GuardStaminaCostGameplayEffectClass"), UGameplayEffect::StaticClass())
+				|| !Configure(TEXT("StaminaRegenDelayGameplayEffectClass"), UGameplayEffect::StaticClass())) return false;
+		}
+		if (bParry)
+		{
+			if (!Configure(TEXT("CostGameplayEffectClass"), UGameplayEffect::StaticClass())
+				|| !Configure(TEXT("CooldownGameplayEffectClass"), UTestMobileBowMoveSpeedGE::StaticClass())
+				|| !Configure(TEXT("ParryCounterPoiseGameplayEffectClass"), UGameplayEffect::StaticClass())
+				|| !Configure(TEXT("StaminaRegenDelayGameplayEffectClass"), UGameplayEffect::StaticClass())) return false;
+		}
+		FGameplayEffectContextHandle SmallHitContext;
+		if (bSmallHitReaction)
+		{
+			FCombatImpactEffectContext* ImpactContext = new FCombatImpactEffectContext();
+			ImpactContext->SetWorldIncomingDirection(Player->GetActorForwardVector());
+			SmallHitContext = FGameplayEffectContextHandle(ImpactContext);
+			if (!TestTrue(*(Case + TEXT(" explicit hit direction context")), SmallHitContext.IsValid())) return false;
+		}
+		const auto ActivateRealAbility = [&]()
+		{
+			if (!bSmallHitReaction)
+			{
+				return ASC->TryActivateAbility(Handle);
+			}
+
+			const FGameplayTag SmallHitEventTag = FGameplayTag::RequestGameplayTag(TEXT("Event.Reaction.Player.Small"));
+			FGameplayEventData ReactionEventData;
+			ReactionEventData.EventTag = SmallHitEventTag;
+			ReactionEventData.Target = Player;
+			ReactionEventData.EventMagnitude = 1.0f;
+			ReactionEventData.ContextHandle = SmallHitContext;
+			return ASC->HandleGameplayEvent(SmallHitEventTag, &ReactionEventData) > 0;
+		};
+		int32 CooldownApplications = 0;
+		const FDelegateHandle EffectReceipt = ASC->OnGameplayEffectAppliedDelegateToSelf.AddLambda(
+			[&](UAbilitySystemComponent*, const FGameplayEffectSpec& EffectSpec, FActiveGameplayEffectHandle)
+			{
+				if (bParry && EffectSpec.Def == GetDefault<UTestMobileBowMoveSpeedGE>()) ++CooldownApplications;
+			});
+		ON_SCOPE_EXIT { ASC->OnGameplayEffectAppliedDelegateToSelf.Remove(EffectReceipt); };
+		if (!TestTrue(*(Case + TEXT(" real ASC activation")), ActivateRealAbility())
+			|| !TestTrue(*(Case + TEXT(" remains active")), Ability->IsActive())) return false;
+		const FObjectPropertyBase* TaskProperty = FindFProperty<FObjectPropertyBase>(Ability->GetClass(), TEXT("MontageTask"));
+		UAbilityTask_PlayActionMontage* Task = TaskProperty
+			? Cast<UAbilityTask_PlayActionMontage>(TaskProperty->GetObjectPropertyValue_InContainer(Ability)) : nullptr;
+		if (!TestNotNull(*(Case + TEXT(" actual standard Task")), Task)) return false;
+		TestEqual(*(Case + TEXT(" explicit None")), Task->GetCancelPolicy(), EActionMontageCancelPolicy::None);
+		TestFalse(*(Case + TEXT(" no bypass")), Task->GetTestBypassMontageActiveCheck());
+		TestEqual(*(Case + TEXT(" starts at zero")), Anim->Montage_GetPosition(Montage), 0.0f);
+		TestEqual(*(Case + TEXT(" root motion scale")), Player->GetAnimRootMotionTranslationScale(), 1.0f);
+		if (bGuard) TestTrue(*(Case + TEXT(" Guard effects confirmed")), CastChecked<UPlayerGuardAbility>(Ability)->IsGuardActive());
+		const int32 InstanceID = Task->GetBoundMontageInstanceID();
+		Advance(0.15f);
+		TestEqual(*(Case + TEXT(" authored rate window opens")), Task->GetRateWindowLifecycle().GetActiveWindowCount(), 1);
+		TestEqual(*(Case + TEXT(" authored rate applied")), Anim->Montage_GetPlayRate(Montage), 0.4f);
+		TestFalse(*(Case + TEXT(" no Dodge permission")), ASC->HasMatchingGameplayTag(FGameplayTag::RequestGameplayTag(TEXT("State.Action.CanCancel.Dodge"))));
+		TestFalse(*(Case + TEXT(" no Defense permission")), ASC->HasMatchingGameplayTag(FGameplayTag::RequestGameplayTag(TEXT("State.Action.CanCancel.Defense"))));
+		TestEqual(*(Case + TEXT(" cooldown not paid at activation")), CooldownApplications, 0);
+		if (ExitCase == 1)
+		{
+			ASC->CancelAbilityHandle(Handle);
+			if (const FAnimMontageInstance* Instance = Anim->GetMontageInstanceForID(InstanceID))
+				TestEqual(*(Case + TEXT(" cancel restores rate before stopping")), Instance->GetPlayRate(), 1.0f);
+		}
+		else if (ExitCase == 3)
+		{
+			Anim->Montage_Stop(0.2f, Montage);
+			Advance(0.05f);
+			const bool bWaitForFullBlend = AbilityClass != UPlayerSmallHitReactionAbility::StaticClass();
+			TestEqual(*(Case + TEXT(" preserves interrupted blend-out lifetime")), Ability->IsActive(), bWaitForFullBlend);
+			if (bGuard) TestTrue(*(Case + TEXT(" Guard effects remain through blend-out")), CastChecked<UPlayerGuardAbility>(Ability)->IsGuardActive());
+			if (bGuardBreak || bParry) TestEqual(*(Case + TEXT(" movement stays locked through blend-out")), Movement->MovementMode.GetValue(), MOVE_None);
+			TestEqual(*(Case + TEXT(" interrupted blend-out never commits cooldown")), CooldownApplications, 0);
+			Advance(0.3f);
+		}
+		else if (ExitCase == 4)
+		{
+			ASC->CancelAbilityHandle(Handle);
+			if (!TestTrue(*(Case + TEXT(" immediate real reactivation")), ActivateRealAbility())) return false;
+			UAbilityTask_PlayActionMontage* NewTask = Cast<UAbilityTask_PlayActionMontage>(TaskProperty->GetObjectPropertyValue_InContainer(Ability));
+			if (!TestNotNull(*(Case + TEXT(" new Task")), NewTask)) return false;
+			TestTrue(*(Case + TEXT(" new playback identity")), NewTask->GetBoundMontageInstanceID() != InstanceID);
+			Advance(0.05f);
+			TestTrue(*(Case + TEXT(" queued old End cannot end new activation")), Ability->IsActive());
+			TestFalse(*(Case + TEXT(" new Task survives old receipt")), NewTask->IsTerminated());
+			ASC->CancelAbilityHandle(Handle);
+			TestTrue(*(Case + TEXT(" new Task also cleans up")), NewTask->IsTerminated());
+		}
+		else
+		{
+			Advance(0.35f);
+			TestEqual(*(Case + TEXT(" authored End restores baseline")), Anim->Montage_GetPlayRate(Montage), 1.0f);
+			for (int32 Step = 0; Step < 60; ++Step)
+			{
+				const FAnimMontageInstance* Instance = Anim->GetMontageInstanceForID(InstanceID);
+				if (!Instance || Instance->IsStopped()) break;
+				Advance(0.025f);
+			}
+			FAnimMontageInstance* BlendingInstance = Anim->GetMontageInstanceForID(InstanceID);
+			if (!TestNotNull(*(Case + TEXT(" natural blend-out instance exists")), BlendingInstance)
+				|| !TestTrue(*(Case + TEXT(" reached natural blend-out")), BlendingInstance->IsStopped())) return false;
+			TestTrue(*(Case + TEXT(" natural blend-out is not completion")), Ability->IsActive());
+			TestEqual(*(Case + TEXT(" no cooldown at natural blend-out")), CooldownApplications, 0);
+			// Natural blend-out has left ActiveMontagesMap; stop the exact surviving instance.
+			if (ExitCase == 2) BlendingInstance->Stop(FAlphaBlend(0.0f), true);
+			Advance(0.4f);
+		}
+		TestFalse(*(Case + TEXT(" ability ended")), Ability->IsActive());
+		TestTrue(*(Case + TEXT(" task terminated")), Task->IsTerminated());
+		TestFalse(*(Case + TEXT(" rate lifecycle cleared")), Task->GetRateWindowLifecycle().IsBound());
+		TestEqual(*(Case + TEXT(" no window residue")), Task->GetRateWindowLifecycle().GetActiveWindowCount(), 0);
+		TestEqual(*(Case + TEXT(" only natural Parry completion commits cooldown")), CooldownApplications, bParry && ExitCase == 0 ? 1 : 0);
+		const FGameplayTag StateTag = FGameplayTag::RequestGameplayTag(bGuard ? TEXT("State.Action.Guarding")
+			: bParry ? TEXT("State.Action.Parrying") : bGuardBreak ? TEXT("State.Status.Stunned") : TEXT("State.Action.SmallHitReacting"));
+		TestFalse(*(Case + TEXT(" owned state cleared")), ASC->HasMatchingGameplayTag(StateTag));
+	}
+	return true;
+}
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FManagedMontageAdoptionBatch1BTest,
+	"PolyQuest.Combat.ManagedMontageAdoptionBatch1B",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FManagedMontageAdoptionBatch1BTest::RunTest(const FString& Parameters)
+{
+	class FProxyAccess : public UAnimInstance
+	{
+	public:
+		static FAnimInstanceProxy& Get(UAnimInstance* Instance)
+		{
+			return *GetProxyOnGameThreadStatic<FAnimInstanceProxy>(Instance);
+		}
+	};
+	const TArray<TSubclassOf<UGameplayAbility>> Classes = {
+		UEnemyHitReactionAbility::StaticClass(), UEnemyMeleeAbility::StaticClass(),
+		UEnemyLaunchReactionAbility::StaticClass(), UEnemyStanceBreakAbility::StaticClass()
+	};
+	// Each case has its own ASC and effects; no CDO or production asset is modified.
+	for (const TSubclassOf<UGameplayAbility>& AbilityClass : Classes)
+	// Natural, ASC cancel, late interruption, early interruption, immediate reactivation.
+	for (int32 ExitCase = 0; ExitCase < 5; ++ExitCase)
+	{
+		const FString Case = FString::Printf(TEXT("%s / exit %d"), *AbilityClass->GetName(), ExitCase);
+		if (!TestNotNull(TEXT("GEngine exists"), GEngine)) return false;
+		UWorld* World = UWorld::CreateWorld(EWorldType::Game, false);
+		if (!TestNotNull(*Case, World)) return false;
+		GEngine->CreateNewWorldContext(EWorldType::Game).SetCurrentWorld(World);
+		ManagedMontageAutomation::FTestWorldScope WorldScope{ World };
+		FURL URL;
+		World->InitializeActorsForPlay(URL);
+		World->BeginPlay();
+		const bool bMelee = AbilityClass == UEnemyMeleeAbility::StaticClass();
+		const bool bLaunch = AbilityClass == UEnemyLaunchReactionAbility::StaticClass();
+		const bool bStance = AbilityClass == UEnemyStanceBreakAbility::StaticClass();
+		const auto Setup = ManagedMontageAutomation::CreatePlayableTestMontage(*this, World);
+		UAnimMontage* Montage = Setup.Montage;
+		if (!TestNotNull(*(Case + TEXT(" montage")), Montage)) return false;
+		if (bLaunch)
+		{
+			CastChecked<UAnimSequence>(Montage->SlotAnimTracks[0].AnimTrack.AnimSegments[0].GetAnimReference())->bEnableRootMotion = true;
+			TestTrue(*(Case + TEXT(" authored root motion")), Montage->HasRootMotion());
+		}
+		UEnemyAttackProfile* Attack = NewObject<UEnemyAttackProfile>(World);
+		Attack->SetTestMontage(Montage);
+		Attack->SetTestDamageEffectClass(UTestProjectileDamageGE::StaticClass());
+		Attack->SetTestAttackRange(200.0f);
+		Attack->SetTestCooldown(0.0f);
+		Attack->SetTestGuardStaminaDamage(10.0f);
+		UEnemyAttackSet* AttackSet = NewObject<UEnemyAttackSet>(World);
+		AttackSet->SetTestEngagementRange(250.0f);
+		AttackSet->AddTestEntry(Attack, 1.0f);
+		UEnemyAIProfile* AIProfile = NewObject<UEnemyAIProfile>(World);
+		AIProfile->SetTestPreferredCombatDistance(180.0f);
+		AIProfile->SetTestLateralRepositionDistance(100.0f);
+		AIProfile->SetTestRepositionAcceptanceRadius(50.0f);
+		AIProfile->SetTestRepositionRetryDelay(1.0f);
+		AIProfile->SetTestLeashRadius(1000.0f);
+		AIProfile->SetTestApproachTimeout(5.0f);
+		AEnemyCharacter* Enemy = FCombatAutomationFixture::SpawnPassiveEnemy(World, FTransform::Identity,
+			[&](AEnemyCharacter& Spawned) { Spawned.SetTestAttackSet(AttackSet); Spawned.SetTestAIProfile(AIProfile); });
+		if (!TestNotNull(*(Case + TEXT(" enemy")), Enemy)) return false;
+		UAbilitySystemComponent* ASC = Enemy->GetAbilitySystemComponent();
+		USkeletalMeshComponent* Mesh = Enemy->GetMesh();
+		UCharacterMovementComponent* Movement = Enemy->GetCharacterMovement();
+		if (!TestNotNull(*(Case + TEXT(" ASC")), ASC) || !Mesh || !Movement) return false;
+		AEnemyAIController* AI = nullptr;
+		if (bMelee)
+		{
+			APlayerCharacter* Target = FCombatAutomationFixture::SpawnPlayer(World, FTransform(FVector(100.0f, 0.0f, 0.0f)));
+			AI = World->SpawnActor<AEnemyAIController>();
+			if (!TestNotNull(*(Case + TEXT(" target")), Target) || !TestNotNull(*(Case + TEXT(" AI")), AI)) return false;
+			AI->Possess(Enemy);
+			AI->SetTestTargetForAutomation(Target);
+		}
+		Montage->BlendOut.SetBlendTime(0.2f);
+		UAnimInstance* Anim = NewObject<UAnimInstance>(Mesh);
+		Anim->InitializeMontageOnly();
+		Anim->CurrentSkeleton = Montage->GetSkeleton();
+		UAnimInstance* PreviousAnim = Mesh->AnimScriptInstance;
+		Mesh->AnimScriptInstance = Anim;
+		ASC->RefreshAbilityActorInfo();
+		const bool bMeshTick = Mesh->IsComponentTickEnabled();
+		const bool bMovementTick = Movement->IsComponentTickEnabled();
+		const bool bAutonomousPose = Mesh->bIsAutonomousTickPose;
+		Mesh->SetComponentTickEnabled(false);
+		Movement->SetComponentTickEnabled(false);
+		ON_SCOPE_EXIT
+		{
+			ASC->CancelAllAbilities();
+			Mesh->AnimScriptInstance = PreviousAnim;
+			Mesh->SetComponentTickEnabled(bMeshTick);
+			Movement->SetComponentTickEnabled(bMovementTick);
+			Mesh->bIsAutonomousTickPose = bAutonomousPose;
+			ASC->RefreshAbilityActorInfo();
+		};
+		// Same single animation driver as ManagedMontageCancelWindow section 9.
+		FAnimInstanceProxy& Proxy = FProxyAccess::Get(Anim);
+		const FName Slot(TEXT("DefaultSlot"));
+		Proxy.RegisterSlotNodeWithAnimInstance(Slot);
+		const auto Advance = [&](float Seconds)
+		{
+			while (Seconds > KINDA_SMALL_NUMBER)
+			{
+				const float Step = FMath::Min(Seconds, 0.05f);
+				FCombatAutomationFixture::TickWorld(World, Step);
+				Proxy.UpdateSlotNodeWeight(Slot, 1.0f, 1.0f);
+				Proxy.FlipBufferWriteIndex();
+				Proxy.UpdateSlotNodeWeight(Slot, 1.0f, 1.0f);
+				Proxy.FlipBufferWriteIndex();
+				Mesh->bIsAutonomousTickPose = true;
+				Anim->TickMontageOnly(Step);
+				Anim->DispatchQueuedAnimEvents();
+				Mesh->bIsAutonomousTickPose = bAutonomousPose;
+				Seconds -= Step;
+			}
+		};
+		Movement->SetMovementMode(MOVE_Walking);
+		const bool bOriginalLedges = Movement->bCanWalkOffLedges;
+		const FGameplayAbilitySpecHandle Handle = ASC->GiveAbility(FGameplayAbilitySpec(AbilityClass, 1, INDEX_NONE, Enemy));
+		FGameplayAbilitySpec* Spec = ASC->FindAbilitySpecFromHandle(Handle);
+		UGameplayAbility* Ability = Spec ? Spec->GetPrimaryInstance() : nullptr;
+		if (!TestNotNull(*(Case + TEXT(" granted instance")), Ability)) return false;
+		if (UEnemyHitReactionAbility* Hit = Cast<UEnemyHitReactionAbility>(Ability))
+		{
+			for (const FName Field : { FName(TEXT("FrontHitReactionMontage")), FName(TEXT("BackHitReactionMontage")),
+				FName(TEXT("LeftHitReactionMontage")), FName(TEXT("RightHitReactionMontage")) })
+			{
+				FObjectPropertyBase* Property = FindFProperty<FObjectPropertyBase>(Hit->GetClass(), Field);
+				if (!TestNotNull(*(Case + TEXT(" direction property ") + Field.ToString()), Property)) return false;
+				Property->SetObjectPropertyValue_InContainer(Hit, Montage);
+			}
+		}
+		if (bLaunch) CastChecked<UEnemyLaunchReactionAbility>(Ability)->SetTestRootMotionKnockdownMontage(Montage);
+		if (bStance) CastChecked<UEnemyStanceBreakAbility>(Ability)->SetTestStanceBreakMontage(Montage);
+		const auto Activate = [&]()
+		{
+			if (bMelee) return AI->PreparePendingAttackProfile() && AI->TryRequestMeleeAttack();
+			if (bStance)
+			{
+				ASC->SetNumericAttributeBase(UCharacterAttributeSet::GetPoiseAttribute(), 0.0f);
+				return ASC->TryActivateAbility(Handle);
+			}
+			FCombatImpactEffectContext* Impact = new FCombatImpactEffectContext();
+			Impact->SetWorldIncomingDirection(Enemy->GetActorForwardVector());
+			FGameplayEventData Payload;
+			Payload.EventTag = FGameplayTag::RequestGameplayTag(bLaunch ? TEXT("Event.Reaction.Enemy.Launch") : TEXT("Event.Reaction.Enemy.Big"));
+			Payload.Target = Enemy;
+			Payload.EventMagnitude = 1.0f;
+			Payload.ContextHandle = FGameplayEffectContextHandle(Impact);
+			return ASC->HandleGameplayEvent(Payload.EventTag, &Payload) > 0;
+		};
+		if (!TestTrue(*(Case + TEXT(" real ASC activation")), Activate())
+			|| !TestTrue(*(Case + TEXT(" remains active")), Ability->IsActive())) return false;
+		const FObjectPropertyBase* TaskProperty = FindFProperty<FObjectPropertyBase>(Ability->GetClass(), TEXT("MontageTask"));
+		const auto GetTask = [&]() { return TaskProperty ? Cast<UAbilityTask_PlayActionMontage>(TaskProperty->GetObjectPropertyValue_InContainer(Ability)) : nullptr; };
+		UAbilityTask_PlayActionMontage* Task = GetTask();
+		if (!TestNotNull(*(Case + TEXT(" standard Task")), Task)) return false;
+		TestEqual(*(Case + TEXT(" None policy")), Task->GetCancelPolicy(), EActionMontageCancelPolicy::None);
+		TestFalse(*(Case + TEXT(" no bypass")), Task->GetTestBypassMontageActiveCheck());
+		TestEqual(*(Case + TEXT(" starts at zero")), Anim->Montage_GetPosition(Montage), 0.0f);
+		TestEqual(*(Case + TEXT(" root motion scale")), Enemy->GetAnimRootMotionTranslationScale(), 1.0f);
+		const int32 InstanceID = Task->GetBoundMontageInstanceID();
+		Advance(0.15f);
+		TestEqual(*(Case + TEXT(" native Rate Notify opens")), Task->GetRateWindowLifecycle().GetActiveWindowCount(), 1);
+		TestEqual(*(Case + TEXT(" native Rate Notify applies")), Anim->Montage_GetPlayRate(Montage), 0.4f);
+		TestFalse(*(Case + TEXT(" no Dodge permission")), ASC->HasMatchingGameplayTag(FGameplayTag::RequestGameplayTag(TEXT("State.Action.CanCancel.Dodge"))));
+		TestFalse(*(Case + TEXT(" no Defense permission")), ASC->HasMatchingGameplayTag(FGameplayTag::RequestGameplayTag(TEXT("State.Action.CanCancel.Defense"))));
+		if (ExitCase == 1 || ExitCase == 4)
+		{
+			UEnemyStanceBreakExecutionContext* OldContext = bStance ? CastChecked<UEnemyStanceBreakAbility>(Ability)->GetTestActiveContext() : nullptr;
+			ASC->CancelAbilityHandle(Handle);
+			if (const FAnimMontageInstance* OldInstance = Anim->GetMontageInstanceForID(InstanceID))
+				TestEqual(*(Case + TEXT(" cancellation restores rate before stop")), OldInstance->GetPlayRate(), 1.0f);
+			if (ExitCase == 4)
+			{
+				if (bMelee)
+				{
+					// The fractional world time must not round a zero cooldown into the future.
+					TestFalse(*(Case + TEXT(" zero cooldown permits same-frame reactivation")), AI->IsMeleeAttackOnCooldown());
+					TestFalse(*(Case + TEXT(" cancellation clears attacking state")), AI->IsEnemyMeleeAttackActive());
+					TestTrue(*(Case + TEXT(" reactivation target remains in range")), AI->IsCombatTargetInMeleeRange());
+				}
+				if (!TestTrue(*(Case + TEXT(" immediate reactivation")), Activate())) return false;
+				UAbilityTask_PlayActionMontage* NewTask = GetTask();
+				if (!TestNotNull(*(Case + TEXT(" new Task")), NewTask)) return false;
+				TestNotEqual(*(Case + TEXT(" new instance ID")), NewTask->GetBoundMontageInstanceID(), InstanceID);
+				if (OldContext) OldContext->OnMontageEnded(Montage, true);
+				Advance(0.05f);
+				TestTrue(*(Case + TEXT(" old completion cannot end new activation")), Ability->IsActive());
+				TestFalse(*(Case + TEXT(" new Task survives old end")), NewTask->IsTerminated());
+				ASC->CancelAbilityHandle(Handle);
+				TestTrue(*(Case + TEXT(" new Task cleans up")), NewTask->IsTerminated());
+			}
+		}
+		else if (ExitCase == 3)
+		{
+			Anim->Montage_Stop(0.2f, Montage);
+			Advance(0.05f);
+			TestTrue(*(Case + TEXT(" business remains active during interrupted blend")), Ability->IsActive());
+			if (bStance) TestEqual(*(Case + TEXT(" stance movement stays locked during blend")), Movement->MovementMode.GetValue(), MOVE_None);
+			if (!bMelee && !bStance) TestFalse(*(Case + TEXT(" reaction ledge protection stays during blend")), Movement->bCanWalkOffLedges);
+			Advance(0.3f);
+		}
+		else
+		{
+			Advance(0.35f);
+			TestEqual(*(Case + TEXT(" native Rate End restores baseline")), Anim->Montage_GetPlayRate(Montage), 1.0f);
+			for (int32 Step = 0; Step < 60; ++Step)
+			{
+				const FAnimMontageInstance* Instance = Anim->GetMontageInstanceForID(InstanceID);
+				if (!Instance || Instance->IsStopped()) break;
+				Advance(0.025f);
+			}
+			FAnimMontageInstance* Instance = Anim->GetMontageInstanceForID(InstanceID);
+			if (!TestNotNull(*(Case + TEXT(" natural blend instance exists")), Instance)
+				|| !TestTrue(*(Case + TEXT(" natural blend started")), Instance->IsStopped())) return false;
+			TestTrue(*(Case + TEXT(" natural blend is not business completion")), Ability->IsActive());
+			if (ExitCase == 2) Instance->Stop(FAlphaBlend(0.0f), true);
+			Advance(0.4f);
+		}
+		TestFalse(*(Case + TEXT(" ability ended")), Ability->IsActive());
+		TestTrue(*(Case + TEXT(" task terminated")), Task->IsTerminated());
+		TestFalse(*(Case + TEXT(" rate lifecycle cleared")), Task->GetRateWindowLifecycle().IsBound());
+		TestEqual(*(Case + TEXT(" no window residue")), Task->GetRateWindowLifecycle().GetActiveWindowCount(), 0);
+		TestEqual(*(Case + TEXT(" ledge state restored")), Movement->bCanWalkOffLedges, bOriginalLedges);
+		const FGameplayTag State = FGameplayTag::RequestGameplayTag(bMelee ? TEXT("State.Action.Attacking") : bStance ? TEXT("State.Status.Stunned") : TEXT("State.Action.HitReacting"));
+		TestFalse(*(Case + TEXT(" owned state cleared")), ASC->HasMatchingGameplayTag(State));
+		if (bStance)
+		{
+			TestEqual(*(Case + TEXT(" stance restores walking")), Movement->MovementMode.GetValue(), MOVE_Walking);
+			TestEqual(*(Case + TEXT(" stance restores Poise")), ASC->GetNumericAttribute(UCharacterAttributeSet::GetPoiseAttribute()), ASC->GetNumericAttribute(UCharacterAttributeSet::GetMaxPoiseAttribute()));
+		}
+	}
+	return true;
+}
+#endif // WITH_EDITOR
+
+#if WITH_EDITOR
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FManagedMontageAdoptionBatch3Test,
+	"PolyQuest.Combat.ManagedMontageAdoptionBatch3", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FManagedMontageAdoptionBatch3Test::RunTest(const FString& Parameters)
+{
+	class FProxyAccess : public UAnimInstance
+	{
+	public:
+		static FAnimInstanceProxy& Get(UAnimInstance* Anim) { return *GetProxyOnGameThreadStatic<FAnimInstanceProxy>(Anim); }
+	};
+	for (bool bFront : {true, false})
+	for (int32 Exit = 0; Exit < 3; ++Exit)
+	{
+		const FString Case = FString::Printf(TEXT("%s / exit %d"), bFront ? TEXT("Front") : TEXT("Backstab"), Exit);
+		UWorld* World = UWorld::CreateWorld(EWorldType::Game, false);
+		if (!TestNotNull(*Case, World)) return false;
+		GEngine->CreateNewWorldContext(EWorldType::Game).SetCurrentWorld(World);
+		ManagedMontageAutomation::FTestWorldScope WorldScope{World};
+		FURL URL; World->InitializeActorsForPlay(URL); World->BeginPlay();
+		APlayerCharacter* Player = FCombatAutomationFixture::SpawnPlayer(World);
+		AEnemyCharacter* Enemy = FCombatAutomationFixture::SpawnPassiveEnemy(World,
+			FTransform(FRotator(0.0f, bFront ? 180.0f : 0.0f, 0.0f), FVector(150.0f, 0.0f, 0.0f)));
+		auto* Controller = World->SpawnActor<APolyQuestPlayerController>();
+		if (!Player || !Enemy || !Controller) return false;
+		Controller->Possess(Player);
+		AActor* Floor = World->SpawnActor<AActor>();
+		UBoxComponent* Box = NewObject<UBoxComponent>(Floor);
+		Box->InitBoxExtent(FVector(5000.0f, 5000.0f, 50.0f));
+		Box->SetCollisionProfileName(TEXT("BlockAll"));
+		Floor->SetRootComponent(Box); Box->RegisterComponent();
+		Floor->SetActorLocation(FVector(0.0f, 0.0f, -Enemy->GetCapsuleComponent()->GetScaledCapsuleHalfHeight() - 50.0f));
+		Player->GetCapsuleComponent()->IgnoreActorWhenMoving(Floor, true);
+		Player->SetTestCombatTeamTag(FGameplayTag::RequestGameplayTag(TEXT("Team.Player")));
+		Enemy->SetTestCombatTeamTag(FGameplayTag::RequestGameplayTag(TEXT("Team.Enemy")));
+		Player->SetTestLockedTarget(Enemy);
+		UAbilitySystemComponent* PlayerASC = Player->GetAbilitySystemComponent();
+		UAbilitySystemComponent* EnemyASC = Enemy->GetAbilitySystemComponent();
+		UAnimMontage* Montage = ManagedMontageAutomation::CreatePlayableTestMontage(*this, World).Montage;
+		if (!TestNotNull(TEXT("Paired playable montage"), Montage)) return false;
+		Montage->BlendOut.SetBlendTime(0.2f);
+		TArray<ACharacter*> Characters = {Player, Enemy};
+		TArray<UAnimInstance*> Anims;
+		TArray<UAnimInstance*> PreviousAnims;
+		TArray<bool> MeshTicks, MovementTicks, Poses;
+		for (ACharacter* Character : Characters)
+		{
+			auto* Mesh = Character->GetMesh();
+			PreviousAnims.Add(Mesh->AnimScriptInstance);
+			MeshTicks.Add(Mesh->IsComponentTickEnabled());
+			MovementTicks.Add(Character->GetCharacterMovement()->IsComponentTickEnabled());
+			Poses.Add(Mesh->bIsAutonomousTickPose);
+			auto* Anim = NewObject<UAnimInstance>(Mesh);
+			Anim->InitializeMontageOnly(); Anim->CurrentSkeleton = Montage->GetSkeleton();
+			Mesh->AnimScriptInstance = Anim; Anims.Add(Anim);
+			Mesh->SetComponentTickEnabled(false);
+			Character->GetCharacterMovement()->SetComponentTickEnabled(false);
+			Character->GetCharacterMovement()->SetMovementMode(MOVE_Walking);
+			FProxyAccess::Get(Anim).RegisterSlotNodeWithAnimInstance(TEXT("DefaultSlot"));
+		}
+		PlayerASC->RefreshAbilityActorInfo(); EnemyASC->RefreshAbilityActorInfo();
+		ON_SCOPE_EXIT
+		{
+			PlayerASC->CancelAllAbilities(); EnemyASC->CancelAllAbilities();
+			for (int32 I = 0; I < Characters.Num(); ++I)
+			{
+				auto* Mesh = Characters[I]->GetMesh();
+				Mesh->AnimScriptInstance = PreviousAnims[I];
+				Mesh->SetComponentTickEnabled(MeshTicks[I]); Mesh->bIsAutonomousTickPose = Poses[I];
+				Characters[I]->GetCharacterMovement()->SetComponentTickEnabled(MovementTicks[I]);
+			}
+			PlayerASC->RefreshAbilityActorInfo(); EnemyASC->RefreshAbilityActorInfo();
+		};
+		const auto Advance = [&](float Seconds)
+		{
+			while (Seconds > KINDA_SMALL_NUMBER)
+			{
+				const float Step = FMath::Min(Seconds, 0.05f);
+				FCombatAutomationFixture::TickWorld(World, Step);
+				for (int32 I = 0; I < Anims.Num(); ++I)
+				{
+					auto& Proxy = FProxyAccess::Get(Anims[I]);
+					Proxy.UpdateSlotNodeWeight(TEXT("DefaultSlot"), 1.0f, 1.0f); Proxy.FlipBufferWriteIndex();
+					Proxy.UpdateSlotNodeWeight(TEXT("DefaultSlot"), 1.0f, 1.0f); Proxy.FlipBufferWriteIndex();
+					Characters[I]->GetMesh()->bIsAutonomousTickPose = true;
+					Anims[I]->TickMontageOnly(Step); Anims[I]->DispatchQueuedAnimEvents();
+					Characters[I]->GetMesh()->bIsAutonomousTickPose = Poses[I];
+				}
+				Seconds -= Step;
+			}
+		};
+		EnemyASC->SetNumericAttributeBase(UCharacterAttributeSet::GetHealthAttribute(), 100.0f);
+		if (bFront)
+		{
+			const auto Stance = FManagedMontageTestHelpers::ActivateExecutionStanceBreak(Enemy);
+			if (!TestTrue(TEXT("Front prerequisite is real active StanceBreak"), Stance.IsValid() && EnemyASC->FindAbilitySpecFromHandle(Stance)->IsActive())) return false;
+		}
+		const auto VictimHandle = EnemyASC->GiveAbility(FGameplayAbilitySpec(UEnemyVictimExecutionAbility::StaticClass(), 1, INDEX_NONE, Enemy));
+		auto* Victim = CastChecked<UEnemyVictimExecutionAbility>(EnemyASC->FindAbilitySpecFromHandle(VictimHandle)->GetPrimaryInstance());
+		Victim->SetTestVictimMontages(Montage, Montage);
+		const auto SourceHandle = PlayerASC->GiveAbility(FGameplayAbilitySpec(
+			bFront ? UPlayerFrontExecutionAbility::StaticClass() : UPlayerBackstabExecutionAbility::StaticClass(), 1, INDEX_NONE, Player));
+		UGameplayAbility* Source = PlayerASC->FindAbilitySpecFromHandle(SourceHandle)->GetPrimaryInstance();
+		auto* Front = Cast<UPlayerFrontExecutionAbility>(Source);
+		auto* Backstab = Cast<UPlayerBackstabExecutionAbility>(Source);
+		if (Front) { Front->SetTestExecutionMontage(Montage); Front->SetTestDamageGameplayEffectClass(UTestProjectileDamageGE::StaticClass()); Front->SetTestExecutionDistances(0.0f, 250.0f); }
+		else { Backstab->SetTestExecutionMontage(Montage); Backstab->SetTestDamageGameplayEffectClass(UTestProjectileDamageGE::StaticClass()); Backstab->SetTestExecutionDistances(0.0f, 250.0f); }
+		if (!TestTrue(*(Case + TEXT(" actual paired ASC activation")), PlayerASC->TryActivateAbility(SourceHandle) && Source->IsActive() && Victim->IsActive())) return false;
+		auto* SourceTask = Front ? Front->GetTestMontageTask() : Backstab->GetTestMontageTask();
+		if (!TestNotNull(TEXT("Player execution standard Task"), SourceTask)) return false;
+		TestEqual(TEXT("Player execution None"), SourceTask->GetCancelPolicy(), EActionMontageCancelPolicy::None);
+		TestEqual(TEXT("Player execution starts at zero"), Anims[0]->Montage_GetPosition(Montage), 0.0f);
+		TestEqual(TEXT("Player execution root motion scale"), Player->GetAnimRootMotionTranslationScale(), 1.0f);
+		TestNull(TEXT("Victim has no rate listener before recovery"), Victim->GetTestVictimMontageTask());
+		Advance(0.15f);
+		TestEqual(TEXT("Player execution native rate window"), SourceTask->GetRateWindowLifecycle().GetActiveWindowCount(), 1);
+		TestEqual(TEXT("Player execution native rate applied"), Anims[0]->Montage_GetPlayRate(Montage), 0.4f);
+		if (Exit == 1)
+		{
+			const int32 ID = SourceTask->GetBoundMontageInstanceID();
+			PlayerASC->CancelAbilityHandle(SourceHandle);
+			auto* Stopped = Anims[0]->GetMontageInstanceForID(ID);
+			if (!TestNotNull(TEXT("Player stop instance"), Stopped)) return false;
+			TestTrue(TEXT("Player cancelled playback"), Stopped->IsStopped());
+			TestEqual(TEXT("Player preserves 0.2 second blend"), Stopped->GetBlendTime(), 0.2f);
+			TestEqual(TEXT("Player restores rate before stop"), Stopped->GetPlayRate(), 1.0f);
+			TestFalse(TEXT("Cancellation releases paired victim"), Victim->IsActive());
+		}
+		else
+		{
+			// Business events use the real GAS handshake; rate windows are native animation events.
+			FGameplayEventData Event;
+			Event.Instigator = Player; Event.Target = Player; Event.OptionalObject = Montage;
+			Event.EventTag = FGameplayTag::RequestGameplayTag(TEXT("Event.Action.Execution.Hit"));
+			PlayerASC->HandleGameplayEvent(Event.EventTag, &Event);
+			Event.EventTag = FGameplayTag::RequestGameplayTag(TEXT("Event.Action.Execution.Request.VictimStart"));
+			PlayerASC->HandleGameplayEvent(Event.EventTag, &Event);
+			auto* VictimTask = Victim->GetTestVictimMontageTask();
+			if (!TestNotNull(TEXT("Victim standard Task"), VictimTask) || !TestTrue(TEXT("Victim entered recovery"), Victim->IsTestNonLethalRecoveryActive())) return false;
+			TestFalse(TEXT("Victim uses actual playback"), VictimTask->GetTestBypassMontageActiveCheck());
+			TestEqual(TEXT("Victim None"), VictimTask->GetCancelPolicy(), EActionMontageCancelPolicy::None);
+			TestEqual(TEXT("Victim starts at zero"), Anims[1]->Montage_GetPosition(Montage), 0.0f);
+			TestEqual(TEXT("Victim root motion scale"), Enemy->GetAnimRootMotionTranslationScale(), 1.0f);
+			Advance(0.15f);
+			TestEqual(TEXT("Victim native rate window"), VictimTask->GetRateWindowLifecycle().GetActiveWindowCount(), 1);
+			TestEqual(TEXT("Victim native rate applied"), Anims[1]->Montage_GetPlayRate(Montage), 0.4f);
+			if (Exit == 2) EnemyASC->CancelAbilityHandle(VictimHandle);
+			else Advance(3.0f);
+			TestFalse(TEXT("Victim ends after recovery or cancel"), Victim->IsActive());
+			TestTrue(TEXT("Victim Task cleaned"), VictimTask->IsTerminated());
+			TestFalse(TEXT("Victim rate lifecycle cleared"), VictimTask->GetRateWindowLifecycle().IsBound());
+			PlayerASC->CancelAbilityHandle(SourceHandle);
+		}
+		TestTrue(TEXT("Source Task cleaned"), SourceTask->IsTerminated());
+		TestFalse(TEXT("Source rate lifecycle cleared"), SourceTask->GetRateWindowLifecycle().IsBound());
+		for (auto* ASC : {PlayerASC, EnemyASC})
+		{
+			TestFalse(TEXT("Execution never grants Dodge"), ASC->HasMatchingGameplayTag(FGameplayTag::RequestGameplayTag(TEXT("State.Action.CanCancel.Dodge"))));
+			TestFalse(TEXT("Execution never grants Defense"), ASC->HasMatchingGameplayTag(FGameplayTag::RequestGameplayTag(TEXT("State.Action.CanCancel.Defense"))));
+		}
+	}
+	return true;
+}
+#endif
 
 #endif // WITH_DEV_AUTOMATION_TESTS

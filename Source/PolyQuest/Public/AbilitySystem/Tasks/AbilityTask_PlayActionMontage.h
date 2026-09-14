@@ -80,6 +80,15 @@ public:
 		bool bAllowInterruptAfterBlendOut = false,
 		EActionMontageCancelPolicy CancelPolicy = EActionMontageCancelPolicy::None);
 
+	/** Configure before activation only; negative values use the montage blend-out setting. */
+	bool SetOverrideBlendOutTime(float InOverrideBlendOutTime);
+
+	/** Configure before activation only; false leaves every proactive stop to the presentation owner. */
+	bool SetTaskOwnsMontageStop(bool bOwnsStop);
+
+	/** Retire windows before a replacement montage plays; retain stop responsibility until EndTask. */
+	void PrepareForMontageTransition();
+
 	virtual void Activate() override;
 	virtual void ExternalCancel() override;
 	virtual FString GetDebugString() const override;
@@ -173,7 +182,11 @@ private:
 	FDelegateHandle CancelWindowBeginHandle;
 	FDelegateHandle CancelWindowEndHandle;
 
+	float OverrideBlendOutTime = 0.0f;
+	bool bTaskOwnsMontageStop = true;
+	bool bActivationStarted = false;
 	bool bTerminated = false;
+	bool bMontageTransitionPrepared = false;
 	bool bAppliedRootMotionScale = false;
 
 #if WITH_DEV_AUTOMATION_TESTS
@@ -181,6 +194,7 @@ private:
 
 public:
 	int32 GetBoundMontageInstanceID() const { return BoundMontageInstanceID; }
+	const UGameplayAbility* GetTestOwningAbility() const { return Ability; }
 	void SetTestBoundMontageInstanceID(int32 InID) { BoundMontageInstanceID = InID; }
 	void SetTestBypassMontageActiveCheck(bool bBypass)
 	{

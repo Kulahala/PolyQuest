@@ -1,6 +1,6 @@
 #include "AbilitySystem/Abilities/PlayerSmallHitReactionAbility.h"
 
-#include "Abilities/Tasks/AbilityTask_PlayMontageAndWait.h"
+#include "AbilitySystem/Tasks/AbilityTask_PlayActionMontage.h"
 #include "AbilitySystemComponent.h"
 #include "Animation/AnimInstance.h"
 #include "Animation/AnimMontage.h"
@@ -98,16 +98,16 @@ void UPlayerSmallHitReactionAbility::ActivateAbility(
 		return;
 	}
 
-	UAbilityTask_PlayMontageAndWait* CreatedMontageTask = UAbilityTask_PlayMontageAndWait::CreatePlayMontageAndWaitProxy(
+	UAbilityTask_PlayActionMontage* CreatedMontageTask = UAbilityTask_PlayActionMontage::PlayActionMontage(
 		this,
 		NAME_None,
 		SelectedMontage,
 		1.0f,
 		NAME_None,
-		true,
-		1.0f,
-		0.0f,
-		true);
+		1.0f, // AnimRootMotionTranslationScale
+		0.0f, // StartTimeSeconds
+		true, // bAllowInterruptAfterBlendOut
+		EActionMontageCancelPolicy::None); // CancelPolicy
 	if (!CreatedMontageTask)
 	{
 		UE_LOG(LogPolyQuest, Warning, TEXT("Player small hit reaction activation aborted for '%s': failed to create a montage AbilityTask."), *GetNameSafe(PlayerCharacter));
@@ -138,12 +138,12 @@ void UPlayerSmallHitReactionAbility::ActivateAbility(
 
 	MontageTask->ReadyForActivation();
 
-	if (bEndAbilityRequested)
+	if (!IsActive() || bEndAbilityRequested || MontageTask.Get() != CreatedMontageTask)
 	{
 		return;
 	}
 
-	if (MontageTask.Get() != CreatedMontageTask || !IsValid(CreatedMontageTask) || CreatedMontageTask->IsFinished() || !CreatedMontageTask->IsActive())
+	if (!IsValid(CreatedMontageTask) || CreatedMontageTask->IsFinished() || !CreatedMontageTask->IsActive())
 	{
 		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
 		return;
@@ -178,14 +178,7 @@ void UPlayerSmallHitReactionAbility::EndAbility(
 		MontageTask->OnCancelled.RemoveDynamic(this, &UPlayerSmallHitReactionAbility::OnMontageCancelled);
 	}
 
-	if (BoundAnimInstance)
-	{
-		if (ActiveMontage && BoundAnimInstance->Montage_IsActive(ActiveMontage.Get()))
-		{
-			BoundAnimInstance->Montage_Stop(0.0f, ActiveMontage.Get());
-		}
-		BoundAnimInstance = nullptr;
-	}
+	BoundAnimInstance = nullptr;
 
 	if (MontageTask)
 	{
@@ -242,7 +235,7 @@ void UPlayerSmallHitReactionAbility::EndFromMontage(bool bWasCancelled)
 }
 
 #if WITH_DEV_AUTOMATION_TESTS
-void UPlayerSmallHitReactionAbility::TestBindTaskCallbacks(UAbilityTask_PlayMontageAndWait* InTask)
+void UPlayerSmallHitReactionAbility::TestBindTaskCallbacks(UAbilityTask_PlayActionMontage* InTask)
 {
 	if (InTask)
 	{
@@ -252,7 +245,7 @@ void UPlayerSmallHitReactionAbility::TestBindTaskCallbacks(UAbilityTask_PlayMont
 	}
 }
 
-void UPlayerSmallHitReactionAbility::TestUnbindTaskCallbacks(UAbilityTask_PlayMontageAndWait* InTask)
+void UPlayerSmallHitReactionAbility::TestUnbindTaskCallbacks(UAbilityTask_PlayActionMontage* InTask)
 {
 	if (InTask)
 	{

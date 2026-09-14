@@ -8,7 +8,7 @@
 
 class AEnemyCharacter;
 class APlayerCharacter;
-class UAbilityTask_PlayMontageAndWait;
+class UAbilityTask_PlayActionMontage;
 class UAbilityTask_WaitGameplayEvent;
 class UAnimMontage;
 class UExecutionLockContext;
@@ -78,6 +78,7 @@ public:
 	const FGameplayTagContainer& GetTestAbilityTags() const { return AbilityTags; }
 	void SetTestExecutionMontage(UAnimMontage* Montage);
 	UAnimMontage* GetTestActiveExecutionMontage() const { return ActiveExecutionMontage; }
+	UAbilityTask_PlayActionMontage* GetTestMontageTask() const { return MontageTask; }
 	const UMeleeWeaponDefinition* GetTestActiveExecutionWeaponDefinition() const { return ActiveExecutionWeaponDefinition; }
 	float GetTestActiveMinExecutionDistance() const { return ActiveMinExecutionDistance; }
 	float GetTestActiveMaxExecutionDistance() const { return ActiveMaxExecutionDistance; }
@@ -197,7 +198,7 @@ private:
 	uint32 CurrentActivationToken = 0;
 
 	UPROPERTY(Transient)
-	TObjectPtr<UAbilityTask_PlayMontageAndWait> MontageTask;
+	TObjectPtr<UAbilityTask_PlayActionMontage> MontageTask;
 
 	UPROPERTY(Transient)
 	TObjectPtr<UAbilityTask_WaitGameplayEvent> WaitHitEventTask;

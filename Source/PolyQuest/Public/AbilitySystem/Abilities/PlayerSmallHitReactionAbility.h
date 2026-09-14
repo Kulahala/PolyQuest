@@ -6,7 +6,7 @@
 #include "GameplayTagContainer.h"
 #include "PlayerSmallHitReactionAbility.generated.h"
 
-class UAbilityTask_PlayMontageAndWait;
+class UAbilityTask_PlayActionMontage;
 class UAnimInstance;
 class UAnimMontage;
 
@@ -48,20 +48,20 @@ public:
 	const TArray<FAbilityTriggerData>& GetTestAbilityTriggers() const { return AbilityTriggers; }
 	bool GetTestRetriggerInstancedAbility() const { return bRetriggerInstancedAbility; }
 	UAnimMontage* GetTestActiveMontage() const { return ActiveMontage.Get(); }
-	UAbilityTask_PlayMontageAndWait* GetTestMontageTask() const { return MontageTask.Get(); }
+	UAbilityTask_PlayActionMontage* GetTestMontageTask() const { return MontageTask.Get(); }
 	UAnimInstance* GetTestBoundAnimInstance() const { return BoundAnimInstance.Get(); }
 	bool GetTestEndAbilityRequested() const { return bEndAbilityRequested; }
 	void SetTestActiveMontage(UAnimMontage* InMontage) { ActiveMontage = InMontage; }
 	void SetTestBoundAnimInstance(UAnimInstance* InAnimInstance) { BoundAnimInstance = InAnimInstance; }
-	void SetTestMontageTask(UAbilityTask_PlayMontageAndWait* InTask) { MontageTask = InTask; }
+	void SetTestMontageTask(UAbilityTask_PlayActionMontage* InTask) { MontageTask = InTask; }
 	void SetTestCurrentActorInfo(const FGameplayAbilityActorInfo* InActorInfo) { CurrentActorInfo = InActorInfo; }
 	void SetTestCurrentSpecHandle(const FGameplayAbilitySpecHandle InHandle) { CurrentSpecHandle = InHandle; }
 	void SetTestFrontSmallHitReactionMontage(UAnimMontage* InMontage) { FrontSmallHitReactionMontage = InMontage; }
 	void SetTestBackSmallHitReactionMontage(UAnimMontage* InMontage) { BackSmallHitReactionMontage = InMontage; }
 	void SetTestLeftSmallHitReactionMontage(UAnimMontage* InMontage) { LeftSmallHitReactionMontage = InMontage; }
 	void SetTestRightSmallHitReactionMontage(UAnimMontage* InMontage) { RightSmallHitReactionMontage = InMontage; }
-	void TestBindTaskCallbacks(UAbilityTask_PlayMontageAndWait* InTask);
-	void TestUnbindTaskCallbacks(UAbilityTask_PlayMontageAndWait* InTask);
+	void TestBindTaskCallbacks(UAbilityTask_PlayActionMontage* InTask);
+	void TestUnbindTaskCallbacks(UAbilityTask_PlayActionMontage* InTask);
 	void TestOnMontageCompleted() { OnMontageCompleted(); }
 	void TestOnMontageInterrupted() { OnMontageInterrupted(); }
 	void TestOnMontageCancelled() { OnMontageCancelled(); }
@@ -81,7 +81,7 @@ private:
 	TObjectPtr<UAnimMontage> RightSmallHitReactionMontage;
 
 	UPROPERTY(Transient)
-	TObjectPtr<UAbilityTask_PlayMontageAndWait> MontageTask;
+	TObjectPtr<UAbilityTask_PlayActionMontage> MontageTask;
 
 	UPROPERTY(Transient)
 	TObjectPtr<UAnimInstance> BoundAnimInstance;

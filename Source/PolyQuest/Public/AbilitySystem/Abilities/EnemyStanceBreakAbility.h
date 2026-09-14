@@ -3,20 +3,15 @@
 #include "CoreMinimal.h"
 #include "Abilities/GameplayAbility.h"
 #include "Abilities/GameplayAbilityTypes.h"
-#include "AbilitySystem/Abilities/MontageRateWindowLifecycle.h"
 #include "GameplayTagContainer.h"
 #include "EnemyStanceBreakAbility.generated.h"
 
-class UAbilityTask_PlayMontageAndWait;
-class UAbilityTask_WaitGameplayEvent;
+class UAbilityTask_PlayActionMontage;
 class UAnimInstance;
 class UAnimMontage;
 class UEnemyStanceBreakAbility;
 
-/**
- * Per-activation callback context. A stale task or montage delegate must not
- * be able to terminate a later activation of the same InstancedPerActor ability.
- */
+/** Per-activation business completion callback; window ownership stays in the Task. */
 UCLASS(Transient)
 class POLYQUEST_API UEnemyStanceBreakExecutionContext : public UObject
 {
@@ -25,17 +20,10 @@ class POLYQUEST_API UEnemyStanceBreakExecutionContext : public UObject
 public:
 	UPROPERTY(Transient)
 	TWeakObjectPtr<UEnemyStanceBreakAbility> OwningAbility;
-
 	uint32 Token = 0;
 
 	UFUNCTION()
 	void OnMontageEnded(UAnimMontage* Montage, bool bInterrupted);
-
-	UFUNCTION()
-	void OnRateWindowBegin(FGameplayEventData Payload);
-
-	UFUNCTION()
-	void OnRateWindowEnd(FGameplayEventData Payload);
 };
 
 /**
@@ -76,23 +64,17 @@ public:
 	const FGameplayTagContainer& GetTestActivationBlockedTags() const { return ActivationBlockedTags; }
 	const FGameplayTagContainer& GetTestAbilityTags() const { return AbilityTags; }
 	const FGameplayTagContainer& GetAbilitiesToCancel() const { return AbilitiesToCancel; }
-	const FGameplayTag& GetRateWindowBeginEventTag() const { return RateWindowBeginEventTag; }
-	const FGameplayTag& GetRateWindowEndEventTag() const { return RateWindowEndEventTag; }
 	const FGameplayTag& GetTeardownOnUnpossessTag() const { return TeardownOnUnpossessTag; }
-	const FAbilityMontageRateWindowLifecycle& GetRateWindowLifecycle() const { return RateWindowLifecycle; }
-	FAbilityMontageRateWindowLifecycle& GetRateWindowLifecycle_Mutable() { return RateWindowLifecycle; }
+	UAbilityTask_PlayActionMontage* GetMontageTask() const { return MontageTask.Get(); }
 	uint32 GetTestActivationToken() const { return CurrentActivationToken; }
 	UEnemyStanceBreakExecutionContext* GetTestActiveContext() const { return ActiveContext.Get(); }
-	UAbilityTask_WaitGameplayEvent* GetRateWindowBeginTask() const { return RateWindowBeginTask.Get(); }
-	UAbilityTask_WaitGameplayEvent* GetRateWindowEndTask() const { return RateWindowEndTask.Get(); }
-	UAbilityTask_PlayMontageAndWait* GetMontageTask() const { return MontageTask.Get(); }
+	int32 GetTestActiveMontageInstanceID() const { return ActiveMontageInstanceID; }
 	void SetTestStanceBreakMontage(UAnimMontage* InMontage) { StanceBreakMontage = InMontage; }
 	UAnimMontage* GetTestStanceBreakMontage() const { return StanceBreakMontage.Get(); }
 	bool IsMovementLockedByStanceBreak() const { return bMovementLockedByStanceBreak; }
 	void SetTestBypassMontageActiveCheck(bool bBypass)
 	{
 		bTestBypassMontageActiveCheck = bBypass;
-		RateWindowLifecycle.SetTestBypassMontageActiveCheck(bBypass);
 	}
 	bool GetTestBypassMontageActiveCheck() const { return bTestBypassMontageActiveCheck; }
 	void SetTestBoundAnimInstance(UAnimInstance* InAnimInstance) { BoundAnimInstance = InAnimInstance; }
@@ -107,24 +89,16 @@ private:
 	TObjectPtr<UAnimMontage> StanceBreakMontage;
 
 	UPROPERTY(Transient)
-	TObjectPtr<UAbilityTask_PlayMontageAndWait> MontageTask;
+	TObjectPtr<UAbilityTask_PlayActionMontage> MontageTask;
 
 	UPROPERTY(Transient)
-	TObjectPtr<UAbilityTask_WaitGameplayEvent> RateWindowBeginTask;
-
-	UPROPERTY(Transient)
-	TObjectPtr<UAbilityTask_WaitGameplayEvent> RateWindowEndTask;
+	TObjectPtr<UEnemyStanceBreakExecutionContext> ActiveContext;
 
 	UPROPERTY(Transient)
 	TObjectPtr<UAnimInstance> BoundAnimInstance;
 
 	UPROPERTY(Transient)
 	TObjectPtr<UAnimMontage> ActiveMontage;
-
-	UPROPERTY(Transient)
-	TObjectPtr<UEnemyStanceBreakExecutionContext> ActiveContext;
-
-	FAbilityMontageRateWindowLifecycle RateWindowLifecycle;
 
 	UPROPERTY(Transient)
 	FGameplayTag StanceBreakAbilityTag;
@@ -154,12 +128,6 @@ private:
 	FGameplayTag EnemyLaunchReactionAbilityTag;
 
 	UPROPERTY(Transient)
-	FGameplayTag RateWindowBeginEventTag;
-
-	UPROPERTY(Transient)
-	FGameplayTag RateWindowEndEventTag;
-
-	UPROPERTY(Transient)
 	FGameplayTag TeardownOnUnpossessTag;
 
 	UPROPERTY(Transient)
@@ -170,14 +138,12 @@ private:
 
 	bool bMovementLockedByStanceBreak = false;
 	bool bEndAbilityRequested = false;
+	int32 ActiveMontageInstanceID = INDEX_NONE;
 	uint32 CurrentActivationToken = 0;
 
 	bool ValidateActivationSetup(const FGameplayAbilityActorInfo* ActorInfo) const;
 	void EndFromMontage(bool bWasCancelled);
 	void InvalidateCallbackContext();
 	void HandleMontageEnded(UAnimMontage* Montage, bool bInterrupted, uint32 InToken);
-	void HandleRateWindowBegin(FGameplayEventData Payload, uint32 InToken);
-	void HandleRateWindowEnd(FGameplayEventData Payload, uint32 InToken);
-
 	friend class UEnemyStanceBreakExecutionContext;
 };

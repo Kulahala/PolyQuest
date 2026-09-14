@@ -1,7 +1,7 @@
 #include "AbilitySystem/Abilities/EnemyLaunchReactionAbility.h"
 
 #include "Abilities/GameplayAbilityTriggerType.h"
-#include "Abilities/Tasks/AbilityTask_PlayMontageAndWait.h"
+#include "AbilitySystem/Tasks/AbilityTask_PlayActionMontage.h"
 #include "AbilitySystemComponent.h"
 #include "AIController.h"
 #include "Animation/AnimInstance.h"
@@ -10,30 +10,7 @@
 #include "Combat/Reaction/HitReactionImpactResolver.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "GameFramework/CharacterMovementComponent.h"
-#include "Abilities/Tasks/AbilityTask_WaitGameplayEvent.h"
 #include "PolyQuest.h"
-
-void UEnemyLaunchReactionRateWindowContext::OnRateWindowBegin(FGameplayEventData Payload)
-{
-	if (UEnemyLaunchReactionAbility* Ability = OwningAbility.Get())
-	{
-		if (Ability->CurrentActivationToken == Token)
-		{
-			Ability->OnRateWindowBegin(Payload);
-		}
-	}
-}
-
-void UEnemyLaunchReactionRateWindowContext::OnRateWindowEnd(FGameplayEventData Payload)
-{
-	if (UEnemyLaunchReactionAbility* Ability = OwningAbility.Get())
-	{
-		if (Ability->CurrentActivationToken == Token)
-		{
-			Ability->OnRateWindowEnd(Payload);
-		}
-	}
-}
 
 UEnemyLaunchReactionAbility::UEnemyLaunchReactionAbility()
 {
@@ -50,8 +27,6 @@ UEnemyLaunchReactionAbility::UEnemyLaunchReactionAbility()
 	HyperArmorStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Status.HyperArmor")), false);
 	EnemyMeleeAbilityTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Attack.Enemy.Melee")), false);
 	EnemySmallHitReactionAbilityTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Reaction.Enemy.Small")), false);
-	RateWindowBeginEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Action.RateWindow.Begin")), false);
-	RateWindowEndEventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Event.Action.RateWindow.End")), false);
 	TeardownOnUnpossessTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Ability.Action.Teardown.OnUnpossess")), false);
 	FacingBlockedStateTag = FGameplayTag::RequestGameplayTag(FName(TEXT("State.Block.Facing")), false);
 
@@ -180,25 +155,30 @@ void UEnemyLaunchReactionAbility::ActivateAbility(
 		return;
 	}
 
-	ClearRateWindow(false);
-
-	++CurrentActivationToken;
-	ActiveRateWindowContext = NewObject<UEnemyLaunchReactionRateWindowContext>(this);
-	ActiveRateWindowContext->OwningAbility = this;
-	ActiveRateWindowContext->Token = CurrentActivationToken;
-
 	// 1. Create Root Motion Montage Task
-	MontageTask = UAbilityTask_PlayMontageAndWait::CreatePlayMontageAndWaitProxy(this, NAME_None, RootMotionKnockdownMontage);
-	RateWindowBeginTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, RateWindowBeginEventTag, nullptr, false, true);
-	RateWindowEndTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, RateWindowEndEventTag, nullptr, false, true);
-	if (!MontageTask || !RateWindowBeginTask || !RateWindowEndTask)
+	MontageTask = UAbilityTask_PlayActionMontage::PlayActionMontage(
+		this, NAME_None, RootMotionKnockdownMontage, 1.0f, NAME_None,
+		1.0f, // AnimRootMotionTranslationScale
+		0.0f, // StartTimeSeconds
+		true, // bAllowInterruptAfterBlendOut; business teardown waits for global OnMontageEnded
+		EActionMontageCancelPolicy::None); // CancelPolicy
+	if (!MontageTask)
 	{
 		UE_LOG(LogPolyQuest, Warning, TEXT("Enemy launch reaction activation aborted for '%s': failed to create required AbilityTasks."), *GetNameSafe(EnemyCharacter));
 		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
 		return;
 	}
+	UAbilityTask_PlayActionMontage* CreatedMontageTask = MontageTask.Get();
+#if WITH_DEV_AUTOMATION_TESTS
+	MontageTask->SetTestBypassMontageActiveCheck(bTestBypassMontageActiveCheck);
+#endif
 
-	if (!CommitAbility(Handle, ActorInfo, ActivationInfo))
+	const bool bCommitted = CommitAbility(Handle, ActorInfo, ActivationInfo);
+	if (bEndAbilityRequested || !IsActive() || MontageTask.Get() != CreatedMontageTask)
+	{
+		return;
+	}
+	if (!bCommitted)
 	{
 		UE_LOG(LogPolyQuest, Verbose, TEXT("Enemy launch reaction activation rejected for '%s' because CommitAbility failed."), *GetNameSafe(EnemyCharacter));
 		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
@@ -210,23 +190,6 @@ void UEnemyLaunchReactionAbility::ActivateAbility(
 	BoundEnemyCharacter = EnemyCharacter;
 	CurrentPhase = ELaunchPhase::RootMotionKnockdown;
 
-	RateWindowBeginTask->EventReceived.AddDynamic(ActiveRateWindowContext.Get(), &UEnemyLaunchReactionRateWindowContext::OnRateWindowBegin);
-	RateWindowEndTask->EventReceived.AddDynamic(ActiveRateWindowContext.Get(), &UEnemyLaunchReactionRateWindowContext::OnRateWindowEnd);
-
-	RateWindowBeginTask->ReadyForActivation();
-	if (bEndAbilityRequested || !IsActive() || !RateWindowBeginTask || !RateWindowBeginTask->IsActive())
-	{
-		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
-		return;
-	}
-
-	RateWindowEndTask->ReadyForActivation();
-	if (bEndAbilityRequested || !IsActive() || !RateWindowEndTask || !RateWindowEndTask->IsActive())
-	{
-		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
-		return;
-	}
-
 	// 2. Stop AI navigation and current velocity
 	if (AAIController* AIController = EnemyCharacter->GetController<AAIController>())
 	{
@@ -236,7 +199,7 @@ void UEnemyLaunchReactionAbility::ActivateAbility(
 
 	// 3. Cancel enemy melee and small hit reaction before starting Root Motion
 	CharacterASC->CancelAbilities(&AbilitiesToCancel, nullptr, this);
-	if (bEndAbilityRequested)
+	if (bEndAbilityRequested || !IsActive() || MontageTask.Get() != CreatedMontageTask)
 	{
 		return;
 	}
@@ -283,8 +246,13 @@ void UEnemyLaunchReactionAbility::ActivateAbility(
 	// 8. Start Montage Task
 	MontageTask->ReadyForActivation();
 
-	if (bEndAbilityRequested)
+	if (bEndAbilityRequested || !IsActive() || MontageTask.Get() != CreatedMontageTask)
 	{
+		return;
+	}
+	if (!IsValid(CreatedMontageTask) || CreatedMontageTask->IsFinished() || !CreatedMontageTask->IsActive())
+	{
+		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
 		return;
 	}
 
@@ -301,16 +269,8 @@ void UEnemyLaunchReactionAbility::ActivateAbility(
 		return;
 	}
 
-	if (FAnimMontageInstance* Instance = BoundAnimInstance->GetActiveInstanceForMontage(ActiveMontage.Get()))
-	{
-		ActiveMontageInstanceID = Instance->GetInstanceID();
-	}
-	else
-	{
-		ActiveMontageInstanceID = INDEX_NONE;
-	}
-
-	RateWindowLifecycle.BindAndCapture(this, BoundAnimInstance.Get(), ActiveMontage.Get(), RateWindowBeginEventTag, RateWindowEndEventTag);
+	const FAnimMontageInstance* StartedInstance = BoundAnimInstance->GetActiveInstanceForMontage(ActiveMontage.Get());
+	ActiveMontageInstanceID = StartedInstance ? StartedInstance->GetInstanceID() : INDEX_NONE;
 
 	// 9. Begin stance break deferral after montage is demonstrably active
 	EnemyCharacter->BeginLaunchStanceBreakDeferral();
@@ -329,7 +289,6 @@ void UEnemyLaunchReactionAbility::EndAbility(
 	}
 
 	bEndAbilityRequested = true;
-	ClearRateWindow(true);
 	const bool bNaturalCompletion = bRootMotionKnockdownCompletedNaturally;
 	bRootMotionKnockdownCompletedNaturally = false;
 
@@ -357,15 +316,6 @@ void UEnemyLaunchReactionAbility::EndAbility(
 	if (BoundAnimInstance)
 	{
 		BoundAnimInstance->OnMontageEnded.RemoveDynamic(this, &UEnemyLaunchReactionAbility::OnActiveMontageEnded);
-		if (ActiveMontage && BoundAnimInstance->Montage_IsActive(ActiveMontage.Get()))
-		{
-			BoundAnimInstance->Montage_Stop(0.0f, ActiveMontage.Get());
-		}
-		if (RootMotionKnockdownMontage && BoundAnimInstance->Montage_IsActive(RootMotionKnockdownMontage.Get()))
-		{
-			BoundAnimInstance->Montage_Stop(0.0f, RootMotionKnockdownMontage.Get());
-		}
-		BoundAnimInstance = nullptr;
 	}
 
 	if (MontageTask)
@@ -373,8 +323,10 @@ void UEnemyLaunchReactionAbility::EndAbility(
 		MontageTask->EndTask();
 		MontageTask = nullptr;
 	}
+	BoundAnimInstance = nullptr;
 
 	ActiveMontage = nullptr;
+	ActiveMontageInstanceID = INDEX_NONE;
 
 	if (bLedgeSettingModified)
 	{
@@ -443,10 +395,27 @@ void UEnemyLaunchReactionAbility::OnActiveMontageEnded(UAnimMontage* Montage, bo
 		return;
 	}
 
+	const AEnemyCharacter* Enemy = Cast<AEnemyCharacter>(GetAvatarActorFromActorInfo());
+	if (!IsValid(Enemy) || Enemy->IsDead() || Enemy->IsActorBeingDestroyed())
+	{
+		EndFromMontage(true);
+		return;
+	}
+
 	if (Montage == RootMotionKnockdownMontage.Get())
 	{
 		if (CurrentPhase == ELaunchPhase::RootMotionKnockdown)
 		{
+			if (ActiveMontageInstanceID == INDEX_NONE)
+			{
+				return;
+			}
+			const FAnimMontageInstance* CurrentInstance = BoundAnimInstance
+				? BoundAnimInstance->GetMontageInstanceForID(ActiveMontageInstanceID) : nullptr;
+			if (CurrentInstance && CurrentInstance->IsValid())
+			{
+				return;
+			}
 			if (!bInterrupted)
 			{
 				bRootMotionKnockdownCompletedNaturally = true;
@@ -554,7 +523,6 @@ bool UEnemyLaunchReactionAbility::ValidateActivationSetup(const FGameplayAbility
 		&& EnemyLaunchReactionAbilityTag.IsValid() && EnemyLaunchReactionEventTag.IsValid()
 		&& HitReactingStateTag.IsValid() && StunnedStateTag.IsValid() && DeadStateTag.IsValid() && HyperArmorStateTag.IsValid()
 		&& EnemyMeleeAbilityTag.IsValid() && EnemySmallHitReactionAbilityTag.IsValid()
-		&& RateWindowBeginEventTag.IsValid() && RateWindowEndEventTag.IsValid()
 		&& TeardownOnUnpossessTag.IsValid() && FacingBlockedStateTag.IsValid()
 		&& AbilitiesToCancel.Num() == 2;
 
@@ -579,103 +547,29 @@ void UEnemyLaunchReactionAbility::EndFromMontage(bool bWasCancelled)
 	EndAbility(CurrentSpecHandle, ActorInfo, CurrentActivationInfo, true, bWasCancelled);
 }
 
-void UEnemyLaunchReactionAbility::OnRateWindowBegin(const FGameplayEventData& Payload)
-{
-	if (bEndAbilityRequested || !IsActive())
-	{
-		return;
-	}
-
 #if WITH_DEV_AUTOMATION_TESTS
-	const bool bInstanceValid = bTestBypassMontageActiveCheck || FAbilityMontageRateWindowLifecycle::IsCurrentMontageInstance(
-		BoundAnimInstance.Get(), ActiveMontage.Get(), ActiveMontageInstanceID);
-#else
-	const bool bInstanceValid = FAbilityMontageRateWindowLifecycle::IsCurrentMontageInstance(
-		BoundAnimInstance.Get(), ActiveMontage.Get(), ActiveMontageInstanceID);
-#endif
-	if (!bInstanceValid)
+void UEnemyLaunchReactionAbility::TriggerTestActiveMontageEnded(UAnimMontage* Montage, bool bInterrupted)
+{
+	const AEnemyCharacter* Enemy = Cast<AEnemyCharacter>(GetAvatarActorFromActorInfo());
+	if (!IsValid(Enemy) || Enemy->IsDead() || Enemy->IsActorBeingDestroyed())
 	{
+		OnActiveMontageEnded(Montage, bInterrupted);
 		return;
 	}
-
-	RateWindowLifecycle.HandleBegin(Payload);
+	// Existing deferral tests request completion of the current playback. Retire the
+	// real instance before dispatching Ended; a live-instance callback is now stale.
+	UAnimInstance* Anim = BoundAnimInstance.Get();
+	FAnimMontageInstance* Instance = Anim ? Anim->GetMontageInstanceForID(ActiveMontageInstanceID) : nullptr;
+	if (Instance && Instance->Montage == Montage && Instance->IsValid())
+	{
+		Instance->Stop(FAlphaBlend(0.0f), bInterrupted);
+		Anim->TickMontageOnly(0.001f);
+		Anim->DispatchQueuedAnimEvents();
+		return;
+	}
+	OnActiveMontageEnded(Montage, bInterrupted);
 }
 
-void UEnemyLaunchReactionAbility::OnRateWindowEnd(const FGameplayEventData& Payload)
-{
-	if (bEndAbilityRequested || !IsActive())
-	{
-		return;
-	}
-
-#if WITH_DEV_AUTOMATION_TESTS
-	const bool bInstanceValid = bTestBypassMontageActiveCheck || FAbilityMontageRateWindowLifecycle::IsCurrentMontageInstance(
-		BoundAnimInstance.Get(), ActiveMontage.Get(), ActiveMontageInstanceID);
-#else
-	const bool bInstanceValid = FAbilityMontageRateWindowLifecycle::IsCurrentMontageInstance(
-		BoundAnimInstance.Get(), ActiveMontage.Get(), ActiveMontageInstanceID);
-#endif
-	if (!bInstanceValid)
-	{
-		return;
-	}
-
-	RateWindowLifecycle.HandleEnd(Payload);
-}
-
-void UEnemyLaunchReactionAbility::ClearRateWindow(bool bRestoreRate)
-{
-	if (ActiveRateWindowContext)
-	{
-		ActiveRateWindowContext->OwningAbility.Reset();
-		ActiveRateWindowContext->Token = 0;
-		ActiveRateWindowContext = nullptr;
-	}
-
-	if (RateWindowBeginTask)
-	{
-		RateWindowBeginTask->EndTask();
-		RateWindowBeginTask = nullptr;
-	}
-
-	if (RateWindowEndTask)
-	{
-		RateWindowEndTask->EndTask();
-		RateWindowEndTask = nullptr;
-	}
-
-	if (bRestoreRate && RateWindowLifecycle.IsBound())
-	{
-#if WITH_DEV_AUTOMATION_TESTS
-		const bool bInstanceValid = bTestBypassMontageActiveCheck || FAbilityMontageRateWindowLifecycle::IsCurrentMontageInstance(
-			BoundAnimInstance.Get(), ActiveMontage.Get(), ActiveMontageInstanceID);
-#else
-		const bool bInstanceValid = FAbilityMontageRateWindowLifecycle::IsCurrentMontageInstance(
-			BoundAnimInstance.Get(), ActiveMontage.Get(), ActiveMontageInstanceID);
-#endif
-
-		if (bInstanceValid)
-		{
-			RateWindowLifecycle.RestoreAndClear();
-		}
-		else
-		{
-			RateWindowLifecycle = FAbilityMontageRateWindowLifecycle();
-		}
-	}
-	else
-	{
-		RateWindowLifecycle = FAbilityMontageRateWindowLifecycle();
-	}
-
-#if WITH_DEV_AUTOMATION_TESTS
-	bTestBypassMontageActiveCheck = false;
-#endif
-
-	ActiveMontageInstanceID = INDEX_NONE;
-}
-
-#if WITH_DEV_AUTOMATION_TESTS
 bool UEnemyLaunchReactionAbility::IsTestPhaseRootMotionKnockdown() const
 {
 	return CurrentPhase == ELaunchPhase::RootMotionKnockdown;

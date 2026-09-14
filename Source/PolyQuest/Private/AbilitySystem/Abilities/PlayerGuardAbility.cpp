@@ -2,7 +2,7 @@
 
 #include "AbilitySystem/CharacterAttributeSet.h"
 #include "AbilitySystemComponent.h"
-#include "Abilities/Tasks/AbilityTask_PlayMontageAndWait.h"
+#include "AbilitySystem/Tasks/AbilityTask_PlayActionMontage.h"
 #include "Abilities/Tasks/AbilityTask_WaitGameplayEvent.h"
 #include "Animation/AnimInstance.h"
 #include "Animation/AnimMontage.h"
@@ -103,10 +103,20 @@ void UPlayerGuardAbility::ActivateAbility(
 		return;
 	}
 
-	MontageTask = UAbilityTask_PlayMontageAndWait::CreatePlayMontageAndWaitProxy(this, NAME_None, GuardMontage);
+	UAbilityTask_PlayActionMontage* CreatedMontageTask = UAbilityTask_PlayActionMontage::PlayActionMontage(
+		this,
+		NAME_None,
+		GuardMontage,
+		1.0f,
+		NAME_None,
+		1.0f, // AnimRootMotionTranslationScale
+		0.0f, // StartTimeSeconds
+		true, // bAllowInterruptAfterBlendOut
+		EActionMontageCancelPolicy::None); // CancelPolicy
 	InputReleasedTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, InputReleasedEventTag, nullptr, false, true);
 	InputCanceledTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, InputCanceledEventTag, nullptr, false, true);
-	if (!MontageTask || !InputReleasedTask || !InputCanceledTask)
+	MontageTask = CreatedMontageTask;
+	if (!CreatedMontageTask || !InputReleasedTask || !InputCanceledTask)
 	{
 		UE_LOG(LogPolyQuest, Warning, TEXT("Player Guard activation aborted for '%s': failed to create an AbilityTask."), *GetNameSafe(PlayerCharacter));
 		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
@@ -115,6 +125,8 @@ void UPlayerGuardAbility::ActivateAbility(
 
 	BoundAnimInstance = AnimInstance;
 	ActiveMontage = GuardMontage;
+	ActiveMontageInstanceID = INDEX_NONE;
+	// Business teardown waits for the full blend-out; Task interruption reports its start.
 	BoundAnimInstance->OnMontageEnded.RemoveDynamic(this, &UPlayerGuardAbility::OnActiveMontageEnded);
 	BoundAnimInstance->OnMontageEnded.AddDynamic(this, &UPlayerGuardAbility::OnActiveMontageEnded);
 	InputReleasedTask->EventReceived.AddDynamic(this, &UPlayerGuardAbility::OnInputReleased);
@@ -123,17 +135,20 @@ void UPlayerGuardAbility::ActivateAbility(
 	InputCanceledTask->ReadyForActivation();
 	MontageTask->ReadyForActivation();
 
-	if (bEndAbilityRequested)
+	if (!IsActive() || bEndAbilityRequested || MontageTask.Get() != CreatedMontageTask)
 	{
 		return;
 	}
 
-	if (!BoundAnimInstance || !ActiveMontage || !BoundAnimInstance->Montage_IsActive(ActiveMontage.Get()))
+	if (!IsValid(CreatedMontageTask) || CreatedMontageTask->IsFinished() || !CreatedMontageTask->IsActive()
+		|| !BoundAnimInstance || !ActiveMontage || !BoundAnimInstance->Montage_IsActive(ActiveMontage.Get()))
 	{
 		UE_LOG(LogPolyQuest, Warning, TEXT("Player Guard activation aborted for '%s': montage '%s' did not start."), *GetNameSafe(PlayerCharacter), *GetNameSafe(GuardMontage));
 		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
 		return;
 	}
+
+	ActiveMontageInstanceID = CreatedMontageTask->GetBoundMontageInstanceID();
 
 	if (!ApplyGuardEffects())
 	{
@@ -170,10 +185,6 @@ void UPlayerGuardAbility::EndAbility(
 	if (BoundAnimInstance)
 	{
 		BoundAnimInstance->OnMontageEnded.RemoveDynamic(this, &UPlayerGuardAbility::OnActiveMontageEnded);
-		if (ActiveMontage && BoundAnimInstance->Montage_IsActive(ActiveMontage.Get()))
-		{
-			BoundAnimInstance->Montage_Stop(0.0f, ActiveMontage.Get());
-		}
 		BoundAnimInstance = nullptr;
 	}
 
@@ -196,6 +207,7 @@ void UPlayerGuardAbility::EndAbility(
 	}
 
 	ActiveMontage = nullptr;
+	ActiveMontageInstanceID = INDEX_NONE;
 	const UAbilitySystemComponent* CharacterASC = GetAbilitySystemComponentFromActorInfo();
 	const bool bShouldClearResume = !PlayerCharacter || !GuardInputTag.IsValid() || !PlayerCharacter->IsCombatInputHeld(GuardInputTag)
 		|| (DeadStateTag.IsValid() && CharacterASC && CharacterASC->HasMatchingGameplayTag(DeadStateTag))
@@ -272,7 +284,16 @@ bool UPlayerGuardAbility::TryGuardMeleeHit(
 
 void UPlayerGuardAbility::OnActiveMontageEnded(UAnimMontage* Montage, bool bInterrupted)
 {
-	if (bEndAbilityRequested || Montage != ActiveMontage.Get())
+	if (!IsActive() || bEndAbilityRequested || !CurrentActorInfo || Montage != ActiveMontage.Get()
+		|| ActiveMontageInstanceID == INDEX_NONE)
+	{
+		return;
+	}
+
+	// Global Ended can deliver a queued receipt from an older play of the same asset.
+	const FAnimMontageInstance* CurrentInstance = BoundAnimInstance
+		? BoundAnimInstance->GetMontageInstanceForID(ActiveMontageInstanceID) : nullptr;
+	if (CurrentInstance && CurrentInstance->IsValid())
 	{
 		return;
 	}

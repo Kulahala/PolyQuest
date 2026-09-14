@@ -24,6 +24,7 @@
 #include "GameplayTagContainer.h"
 #include "Kismet/GameplayStatics.h"
 #include "Tests/CombatAutomationFixture.h"
+#include "Tests/TestManagedMontageAbility.h"
 #include "Tests/TestProjectileDamageGE.h"
 #include "UObject/Package.h"
 
@@ -150,39 +151,7 @@ namespace ExecutionVictimRootMotionAutomation
 
 	FGameplayAbilitySpecHandle ActivateEnemyStanceBreak(AEnemyCharacter* InEnemy)
 	{
-		UAbilitySystemComponent* ASC = InEnemy ? InEnemy->GetAbilitySystemComponent() : nullptr;
-		if (!ASC)
-		{
-			return FGameplayAbilitySpecHandle();
-		}
-
-		ASC->SetNumericAttributeBase(UCharacterAttributeSet::GetPoiseAttribute(), 0.0f);
-
-		UAnimMontage* MockMontage = NewObject<UAnimMontage>(GetTransientPackage());
-		UAnimInstance* MockAnimInstance = NewObject<UAnimInstance>(InEnemy->GetMesh());
-
-		FGameplayAbilitySpec StanceBreakSpec(UEnemyStanceBreakAbility::StaticClass(), 1, INDEX_NONE, InEnemy);
-		const FGameplayAbilitySpecHandle StanceBreakHandle = ASC->GiveAbility(StanceBreakSpec);
-		if (FGameplayAbilitySpec* FoundSpec = ASC->FindAbilitySpecFromHandle(StanceBreakHandle))
-		{
-			if (UEnemyStanceBreakAbility* CDO = Cast<UEnemyStanceBreakAbility>(FoundSpec->Ability))
-			{
-				UAnimMontage* OldMontage = CDO->GetTestStanceBreakMontage();
-				UAnimInstance* OldAnim = CDO->GetTestBoundAnimInstance();
-				const bool bOldBypass = CDO->GetTestBypassMontageActiveCheck();
-
-				CDO->SetTestStanceBreakMontage(MockMontage);
-				CDO->SetTestBoundAnimInstance(MockAnimInstance);
-				CDO->SetTestBypassMontageActiveCheck(true);
-
-				ASC->TryActivateAbility(StanceBreakHandle);
-
-				CDO->SetTestStanceBreakMontage(OldMontage);
-				CDO->SetTestBoundAnimInstance(OldAnim);
-				CDO->SetTestBypassMontageActiveCheck(bOldBypass);
-			}
-		}
-		return StanceBreakHandle;
+		return FManagedMontageTestHelpers::ActivateExecutionStanceBreak(InEnemy);
 	}
 }
 

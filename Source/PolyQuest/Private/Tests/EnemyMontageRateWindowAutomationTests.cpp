@@ -4,8 +4,6 @@
 
 #include "AbilitySystemComponent.h"
 #include "Abilities/GameplayAbilityTypes.h"
-#include "Abilities/Tasks/AbilityTask_PlayMontageAndWait.h"
-#include "Abilities/Tasks/AbilityTask_WaitGameplayEvent.h"
 #include "AbilitySystem/Abilities/EnemyHitReactionAbility.h"
 #include "AbilitySystem/Abilities/EnemyLaunchReactionAbility.h"
 #include "AbilitySystem/Abilities/EnemyMeleeAbility.h"
@@ -240,11 +238,7 @@ bool FEnemyMontageRateWindowAutomationTest::RunTest(const FString& Parameters)
 			MeleeCDO->GetInstancingPolicy(), EGameplayAbilityInstancingPolicy::InstancedPerActor);
 		TestEqual(TEXT("EnemyMelee net execution is ServerOnly"),
 			MeleeCDO->GetNetExecutionPolicy(), EGameplayAbilityNetExecutionPolicy::ServerOnly);
-		TestTrue(TEXT("EnemyMelee RateWindowBegin tag matches Event.Action.RateWindow.Begin"),
-			MeleeCDO->GetTestRateWindowBeginEventTag() == TagRateWindowBegin);
-		TestTrue(TEXT("EnemyMelee RateWindowEnd tag matches Event.Action.RateWindow.End"),
-			MeleeCDO->GetTestRateWindowEndEventTag() == TagRateWindowEnd);
-		TestNull(TEXT("EnemyMelee CDO has null RateWindowContext"), MeleeCDO->GetTestActiveRateWindowContext());
+		TestNull(TEXT("EnemyMelee CDO has no runtime window Task"), MeleeCDO->GetTestMontageTask());
 	}
 
 	// 1.2 UEnemyHitReactionAbility CDO
@@ -256,11 +250,7 @@ bool FEnemyMontageRateWindowAutomationTest::RunTest(const FString& Parameters)
 			BigHitCDO->GetInstancingPolicy(), EGameplayAbilityInstancingPolicy::InstancedPerActor);
 		TestEqual(TEXT("EnemyHitReaction net execution is ServerOnly"),
 			BigHitCDO->GetNetExecutionPolicy(), EGameplayAbilityNetExecutionPolicy::ServerOnly);
-		TestTrue(TEXT("EnemyHitReaction RateWindowBegin tag matches Event.Action.RateWindow.Begin"),
-			BigHitCDO->GetTestRateWindowBeginEventTag() == TagRateWindowBegin);
-		TestTrue(TEXT("EnemyHitReaction RateWindowEnd tag matches Event.Action.RateWindow.End"),
-			BigHitCDO->GetTestRateWindowEndEventTag() == TagRateWindowEnd);
-		TestNull(TEXT("EnemyHitReaction CDO has null RateWindowContext"), BigHitCDO->GetTestActiveRateWindowContext());
+		TestNull(TEXT("EnemyHitReaction CDO has no runtime window Task"), BigHitCDO->GetTestMontageTask());
 	}
 
 	// 1.3 UEnemySmallHitReactionAbility CDO
@@ -283,11 +273,7 @@ bool FEnemyMontageRateWindowAutomationTest::RunTest(const FString& Parameters)
 			LaunchCDO->GetInstancingPolicy(), EGameplayAbilityInstancingPolicy::InstancedPerActor);
 		TestEqual(TEXT("EnemyLaunchReaction net execution is ServerOnly"),
 			LaunchCDO->GetNetExecutionPolicy(), EGameplayAbilityNetExecutionPolicy::ServerOnly);
-		TestTrue(TEXT("EnemyLaunchReaction RateWindowBegin tag matches Event.Action.RateWindow.Begin"),
-			LaunchCDO->GetTestRateWindowBeginEventTag() == TagRateWindowBegin);
-		TestTrue(TEXT("EnemyLaunchReaction RateWindowEnd tag matches Event.Action.RateWindow.End"),
-			LaunchCDO->GetTestRateWindowEndEventTag() == TagRateWindowEnd);
-		TestNull(TEXT("EnemyLaunchReaction CDO has null RateWindowContext"), LaunchCDO->GetTestActiveRateWindowContext());
+		TestNull(TEXT("EnemyLaunchReaction CDO has no runtime window Task"), LaunchCDO->GetTestMontageTask());
 	}
 
 	// 1.5 UEnemyVictimExecutionAbility CDO
@@ -299,11 +285,8 @@ bool FEnemyMontageRateWindowAutomationTest::RunTest(const FString& Parameters)
 			VictimCDO->GetInstancingPolicy(), EGameplayAbilityInstancingPolicy::InstancedPerActor);
 		TestEqual(TEXT("EnemyVictimExecution net execution is ServerOnly"),
 			VictimCDO->GetNetExecutionPolicy(), EGameplayAbilityNetExecutionPolicy::ServerOnly);
-		TestTrue(TEXT("EnemyVictimExecution RateWindowBegin tag matches Event.Action.RateWindow.Begin"),
-			VictimCDO->GetTestRateWindowBeginEventTag() == TagRateWindowBegin);
-		TestTrue(TEXT("EnemyVictimExecution RateWindowEnd tag matches Event.Action.RateWindow.End"),
-			VictimCDO->GetTestRateWindowEndEventTag() == TagRateWindowEnd);
-		TestNull(TEXT("EnemyVictimExecution CDO has null RateWindowContext"), VictimCDO->GetTestActiveRateWindowContext());
+		// Begin/End configuration assertions now inspect actual Task subscriptions in section 7.
+		TestNull(TEXT("EnemyVictimExecution CDO has no standard montage Task"), VictimCDO->GetTestVictimMontageTask());
 		TestFalse(TEXT("EnemyVictimExecution CDO is not in non-lethal recovery"), VictimCDO->IsTestNonLethalRecoveryActive());
 	}
 
@@ -431,6 +414,7 @@ bool FEnemyMontageRateWindowAutomationTest::RunTest(const FString& Parameters)
 	// =========================================================================
 	// 2.2 Helper Direct Multi-Instance Authorization & Play Rate Protection
 	// =========================================================================
+#if WITH_EDITOR // The playable fixture authors animation data through the Editor controller.
 	{
 		UAnimMontage* DirectPlayableMontage = EnemyMontageRateWindowAutomation::CreatePlayableRateMontage(*this, World);
 		if (TestNotNull(TEXT("Helper Direct: Playable montage created"), DirectPlayableMontage))
@@ -581,6 +565,7 @@ bool FEnemyMontageRateWindowAutomationTest::RunTest(const FString& Parameters)
 	}
 
 	// =========================================================================
+#endif
 	// 3. Near-Combat Melee (UEnemyMeleeAbility) RateWindow Integration
 	// =========================================================================
 	{
@@ -589,7 +574,17 @@ bool FEnemyMontageRateWindowAutomationTest::RunTest(const FString& Parameters)
 		MeleeAbility->SetTestAbilityActive(true);
 		MeleeAbility->SetTestBypassMontageActiveCheck(true);
 
-		FAbilityMontageRateWindowLifecycle& Lifecycle = MeleeAbility->GetTestRateWindowLifecycle_Mutable();
+		UAbilityTask_PlayActionMontage* WindowTask = UAbilityTask_PlayActionMontage::PlayActionMontage(MeleeAbility, NAME_None, ActiveMontage);
+		if (!TestNotNull(TEXT("Standard window Task created"), WindowTask))
+		{
+			return false;
+		}
+		ON_SCOPE_EXIT { WindowTask->EndTask(); };
+		WindowTask->TestBindRateWindowEvents(EnemyASC);
+		// Former per-Ability tag getters map to real subscriptions on the standard Task.
+		TestTrue(TEXT("Standard Task subscribes to RateWindow Begin tag"), EnemyASC->GenericGameplayEventCallbacks.FindChecked(TagRateWindowBegin).IsBoundToObject(WindowTask));
+		TestTrue(TEXT("Standard Task subscribes to RateWindow End tag"), EnemyASC->GenericGameplayEventCallbacks.FindChecked(TagRateWindowEnd).IsBoundToObject(WindowTask));
+		FAbilityMontageRateWindowLifecycle& Lifecycle = WindowTask->GetRateWindowLifecycle_Mutable();
 		Lifecycle.SetTestActiveContext(MeleeAbility, MockAnimInstance, ActiveMontage, TagRateWindowBegin, TagRateWindowEnd, 1.25f);
 		Lifecycle.SetTestBypassMontageActiveCheck(true);
 
@@ -636,7 +631,17 @@ bool FEnemyMontageRateWindowAutomationTest::RunTest(const FString& Parameters)
 		BigHitAbility->SetTestAbilityActive(true);
 		BigHitAbility->SetTestBypassMontageActiveCheck(true);
 
-		FAbilityMontageRateWindowLifecycle& Lifecycle = BigHitAbility->GetTestRateWindowLifecycle_Mutable();
+		UAbilityTask_PlayActionMontage* WindowTask = UAbilityTask_PlayActionMontage::PlayActionMontage(BigHitAbility, NAME_None, ActiveMontage);
+		if (!TestNotNull(TEXT("Standard window Task created"), WindowTask))
+		{
+			return false;
+		}
+		ON_SCOPE_EXIT { WindowTask->EndTask(); };
+		WindowTask->TestBindRateWindowEvents(EnemyASC);
+		// Former per-Ability tag getters map to real subscriptions on the standard Task.
+		TestTrue(TEXT("Standard Task subscribes to RateWindow Begin tag"), EnemyASC->GenericGameplayEventCallbacks.FindChecked(TagRateWindowBegin).IsBoundToObject(WindowTask));
+		TestTrue(TEXT("Standard Task subscribes to RateWindow End tag"), EnemyASC->GenericGameplayEventCallbacks.FindChecked(TagRateWindowEnd).IsBoundToObject(WindowTask));
+		FAbilityMontageRateWindowLifecycle& Lifecycle = WindowTask->GetRateWindowLifecycle_Mutable();
 		Lifecycle.SetTestActiveContext(BigHitAbility, MockAnimInstance, ActiveMontage, TagRateWindowBegin, TagRateWindowEnd, 1.0f);
 		Lifecycle.SetTestBypassMontageActiveCheck(true);
 
@@ -893,7 +898,17 @@ bool FEnemyMontageRateWindowAutomationTest::RunTest(const FString& Parameters)
 		LaunchAbility->SetTestAbilityActive(true);
 		LaunchAbility->SetTestBypassMontageActiveCheck(true);
 
-		FAbilityMontageRateWindowLifecycle& Lifecycle = LaunchAbility->GetTestRateWindowLifecycle_Mutable();
+		UAbilityTask_PlayActionMontage* WindowTask = UAbilityTask_PlayActionMontage::PlayActionMontage(LaunchAbility, NAME_None, ActiveMontage);
+		if (!TestNotNull(TEXT("Standard window Task created"), WindowTask))
+		{
+			return false;
+		}
+		ON_SCOPE_EXIT { WindowTask->EndTask(); };
+		WindowTask->TestBindRateWindowEvents(EnemyASC);
+		// Former per-Ability tag getters map to real subscriptions on the standard Task.
+		TestTrue(TEXT("Standard Task subscribes to RateWindow Begin tag"), EnemyASC->GenericGameplayEventCallbacks.FindChecked(TagRateWindowBegin).IsBoundToObject(WindowTask));
+		TestTrue(TEXT("Standard Task subscribes to RateWindow End tag"), EnemyASC->GenericGameplayEventCallbacks.FindChecked(TagRateWindowEnd).IsBoundToObject(WindowTask));
+		FAbilityMontageRateWindowLifecycle& Lifecycle = WindowTask->GetRateWindowLifecycle_Mutable();
 		Lifecycle.SetTestActiveContext(LaunchAbility, MockAnimInstance, ActiveMontage, TagRateWindowBegin, TagRateWindowEnd, 1.0f);
 		Lifecycle.SetTestBypassMontageActiveCheck(true);
 
@@ -925,13 +940,21 @@ bool FEnemyMontageRateWindowAutomationTest::RunTest(const FString& Parameters)
 
 		// 7.1 Stage 1: Victim locked but NOT in non-lethal recovery
 		TestFalse(TEXT("Victim: Not in non-lethal recovery initially"), VictimAbility->IsTestNonLethalRecoveryActive());
-		TestNull(TEXT("Victim: RateWindowContext is null before recovery"), VictimAbility->GetTestActiveRateWindowContext());
+		TestNull(TEXT("Victim: standard Task is null before recovery (former window Context)"), VictimAbility->GetTestVictimMontageTask());
 
 		// 7.2 Stage 2: Non-lethal recovery entered
 		VictimAbility->SetTestNonLethalRecovery(true, Player);
 		TestTrue(TEXT("Victim: Non-lethal recovery active"), VictimAbility->IsTestNonLethalRecoveryActive());
 
-		FAbilityMontageRateWindowLifecycle& Lifecycle = VictimAbility->GetTestRateWindowLifecycle_Mutable();
+		UAbilityTask_PlayActionMontage* WindowTask = UAbilityTask_PlayActionMontage::PlayActionMontage(VictimAbility, NAME_None, ActiveMontage);
+		if (!TestNotNull(TEXT("Victim: standard window Task created"), WindowTask)) return false;
+		ON_SCOPE_EXIT { WindowTask->EndTask(); };
+		WindowTask->SetTaskOwnsMontageStop(false);
+		WindowTask->TestBindRateWindowEvents(EnemyASC);
+		// Former per-Ability configured tags are now actual standard Task subscriptions.
+		TestTrue(TEXT("Victim: standard Begin subscription"), EnemyASC->GenericGameplayEventCallbacks.FindChecked(TagRateWindowBegin).IsBoundToObject(WindowTask));
+		TestTrue(TEXT("Victim: standard End subscription"), EnemyASC->GenericGameplayEventCallbacks.FindChecked(TagRateWindowEnd).IsBoundToObject(WindowTask));
+		FAbilityMontageRateWindowLifecycle& Lifecycle = WindowTask->GetRateWindowLifecycle_Mutable();
 		Lifecycle.SetTestActiveContext(VictimAbility, MockAnimInstance, ActiveMontage, TagRateWindowBegin, TagRateWindowEnd, 1.0f);
 		Lifecycle.SetTestBypassMontageActiveCheck(true);
 
@@ -1432,7 +1455,7 @@ bool FEnemyMontageRateWindowAutomationTest::RunTest(const FString& Parameters)
 				return false;
 			}
 
-			// 9. Inspect active Ability and Context.
+			// 9. Inspect active Ability and Task.
 			FGameplayAbilitySpec* Spec = EnemyASC->FindAbilitySpecFromHandle(MeleeHandle);
 			UEnemyMeleeAbility* Ability = Spec ? Cast<UEnemyMeleeAbility>(Spec->GetPrimaryInstance()) : nullptr;
 			if (!TestNotNull(FString::Printf(TEXT("H6-F01 (%s): live ability instance exists"), StepName), Ability))
@@ -1443,19 +1466,20 @@ bool FEnemyMontageRateWindowAutomationTest::RunTest(const FString& Parameters)
 
 			TestTrue(FString::Printf(TEXT("H6-F01 (%s): ability is active"), StepName), Ability->IsActive());
 			TestFalse(FString::Printf(TEXT("H6-F01 (%s): ability bypass is false"), StepName), Ability->GetTestBypassMontageActiveCheck());
-			TestFalse(FString::Printf(TEXT("H6-F01 (%s): helper bypass is false"), StepName), Ability->GetTestRateWindowLifecycle().GetTestBypassMontageActiveCheck());
 
-			UEnemyMeleeRateWindowContext* OldContext = Ability->GetTestActiveRateWindowContext();
-			if (!TestNotNull(FString::Printf(TEXT("H6-F01 (%s): live rate context exists"), StepName), OldContext))
+			UAbilityTask_PlayActionMontage* OldTask = Ability->GetTestMontageTask();
+			if (!TestNotNull(FString::Printf(TEXT("H6-F01 (%s): live rate Task exists"), StepName), OldTask))
 			{
 				EnemyASC->CancelAbilityHandle(MeleeHandle);
 				EnemyASC->ClearAbility(MeleeHandle);
 				return false;
 			}
 
+			TestFalse(FString::Printf(TEXT("H6-F01 (%s): helper bypass is false"), StepName), OldTask->GetRateWindowLifecycle().GetTestBypassMontageActiveCheck());
+
 			const int32 OldInstanceID = Ability->GetTestActiveMontageInstanceID();
 			TestNotEqual(FString::Printf(TEXT("H6-F01 (%s): captured instance ID is valid"), StepName), OldInstanceID, static_cast<int32>(INDEX_NONE));
-			TestTrue(FString::Printf(TEXT("H6-F01 (%s): helper is bound"), StepName), Ability->GetTestRateWindowLifecycle().IsBound());
+			TestTrue(FString::Printf(TEXT("H6-F01 (%s): helper is bound"), StepName), OldTask->GetRateWindowLifecycle().IsBound());
 
 			// 10. Enter Window A on old instance.
 			FAnimNotifyEvent* EventA = EnemyMontageRateWindowAutomation::FindRateWindowEvent(PlayableMontage, 0);
@@ -1468,8 +1492,12 @@ bool FEnemyMontageRateWindowAutomationTest::RunTest(const FString& Parameters)
 				return false;
 			}
 
+			FAnimNotifyEventReference EventRef(EventA, PlayableMontage);
+			EventRef.AddContextData<UE::Anim::FAnimNotifyMontageInstanceContext>(OldInstanceID);
 			CastChecked<UAnimNotifyState_MontageRateWindow>(EventA->NotifyStateClass)->NotifyBegin(
-				Mesh, PlayableMontage, 1.0f, FAnimNotifyEventReference(EventA, PlayableMontage));
+				Mesh, PlayableMontage, 1.0f, EventRef);
+			TestEqual(FString::Printf(TEXT("H6-F01 (%s): Window A is accepted on old instance"), StepName),
+				OldTask->GetRateWindowLifecycle().GetActiveWindowCount(), 1);
 			TestEqual(FString::Printf(TEXT("H6-F01 (%s): Window A sets rate to 0.5"), StepName), Anim->Montage_GetPlayRate(PlayableMontage), 0.5f);
 
 			// 11. Same-asset replay with rate 2.0 and bStopAllMontages = false.
@@ -1499,12 +1527,12 @@ bool FEnemyMontageRateWindowAutomationTest::RunTest(const FString& Parameters)
 			TestEqual(FString::Printf(TEXT("H6-F01 (%s): new instance play rate is 2.0"), StepName),
 				Anim->Montage_GetPlayRate(PlayableMontage), 2.0f);
 			TestTrue(FString::Printf(TEXT("H6-F01 (%s): ability remains active"), StepName), Ability->IsActive());
-			TestTrue(FString::Printf(TEXT("H6-F01 (%s): old context remains bound"), StepName),
-				Ability->GetTestActiveRateWindowContext() == OldContext);
+			TestTrue(FString::Printf(TEXT("H6-F01 (%s): old Task remains bound"), StepName),
+				Ability->GetTestMontageTask() == OldTask);
 			TestFalse(FString::Printf(TEXT("H6-F01 (%s): ability bypass remains false"), StepName),
 				Ability->GetTestBypassMontageActiveCheck());
 			TestFalse(FString::Printf(TEXT("H6-F01 (%s): helper bypass remains false"), StepName),
-				Ability->GetTestRateWindowLifecycle().GetTestBypassMontageActiveCheck());
+				OldTask->GetRateWindowLifecycle().GetTestBypassMontageActiveCheck());
 
 			// 13. Execute the specific negative step under test.
 			if (StepToTest == EMeleeNegativeStep::OldBegin)
@@ -1517,7 +1545,9 @@ bool FEnemyMontageRateWindowAutomationTest::RunTest(const FString& Parameters)
 				Payload.OptionalObject2 = EventB->NotifyStateClass;
 				Payload.EventMagnitude = 0.2f;
 
-				OldContext->OnRateWindowBegin(Payload);
+				Payload.TargetData = FManagedMontageTestHelpers::MakeRateWindowEventData(
+					TagRateWindowBegin, Anim, OldInstanceID, Payload.EventMagnitude, MeleeEnemy, PlayableMontage, Payload.OptionalObject2.Get()).TargetData;
+				EnemyASC->HandleGameplayEvent(TagRateWindowBegin, &Payload);
 				// Unfixed production code will overwrite new instance rate to 0.2f (EXPECTED FAILURE BEFORE FIX).
 				TestEqual(FString::Printf(TEXT("H6-F01 Reproduction (%s): old Begin cannot alter new rate"), StepName),
 					Anim->Montage_GetPlayRate(PlayableMontage), 2.0f);
@@ -1531,14 +1561,16 @@ bool FEnemyMontageRateWindowAutomationTest::RunTest(const FString& Parameters)
 				Payload.OptionalObject = PlayableMontage;
 				Payload.OptionalObject2 = EventA->NotifyStateClass;
 
-				OldContext->OnRateWindowEnd(Payload);
+				Payload.TargetData = FManagedMontageTestHelpers::MakeRateWindowEventData(
+					TagRateWindowEnd, Anim, OldInstanceID, Payload.EventMagnitude, MeleeEnemy, PlayableMontage, Payload.OptionalObject2.Get()).TargetData;
+				EnemyASC->HandleGameplayEvent(TagRateWindowEnd, &Payload);
 				// Unfixed production code will restore new instance to old baseline 1.0f (EXPECTED FAILURE BEFORE FIX).
 				TestEqual(FString::Printf(TEXT("H6-F01 Reproduction (%s): old End cannot alter new rate"), StepName),
 					Anim->Montage_GetPlayRate(PlayableMontage), 2.0f);
 			}
 			else if (StepToTest == EMeleeNegativeStep::OldClear)
 			{
-				Ability->TestClearRateWindow();
+				OldTask->TestCleanupTask(false);
 				// Unfixed production code will restore new instance to old baseline 1.0f (EXPECTED FAILURE BEFORE FIX).
 				TestEqual(FString::Printf(TEXT("H6-F01 Reproduction (%s): old Clear cannot alter new rate"), StepName),
 					Anim->Montage_GetPlayRate(PlayableMontage), 2.0f);
